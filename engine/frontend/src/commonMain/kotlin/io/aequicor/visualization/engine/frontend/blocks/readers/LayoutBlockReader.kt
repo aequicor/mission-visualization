@@ -1,0 +1,279 @@
+package io.aequicor.visualization.engine.frontend.blocks.readers
+
+import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
+import io.aequicor.visualization.engine.frontend.blocks.SizingPatch
+import io.aequicor.visualization.engine.frontend.yaml.YamlMap
+import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
+import io.aequicor.visualization.engine.frontend.yaml.YamlValue
+import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.DesignGap
+import io.aequicor.visualization.engine.ir.model.GridPlacement
+import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.GuideLine
+import io.aequicor.visualization.engine.ir.model.GuideOrientation
+import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
+import io.aequicor.visualization.engine.ir.model.LayoutGridDefinition
+
+private val knownKeys = setOf(
+    "mode", "padding", "gap", "align", "distribution", "wrap", "sizing", "clipContent",
+    "overflow", "scroll", "ignoreAutoLayout", "position", "columns", "rows", "placement",
+    "guides", "grids",
+)
+
+/** `layout:` block — auto layout, grid, absolute positioning, scroll, guides, grids. */
+internal fun readLayoutBlock(value: YamlValue, reading: BlockReading): LayoutPatch? {
+    val map = value as? YamlMap ?: run {
+        reading.error("`layout` must be a map", value)
+        return null
+    }
+    map.warnUnknownKeys(knownKeys, reading)
+
+    val padding = readPadding(map, reading)
+    val gap = readGap(map, reading)
+    val align = map.mapValue("align", reading)
+    val sizing = map.mapValue("sizing", reading)
+    val overflow = map.mapValue("overflow", reading)
+    val scroll = map.mapValue("scroll", reading)
+    val position = map.mapValue("position", reading)
+    val columns = readTrackAxis(map, "columns", reading)
+    val rows = readTrackAxis(map, "rows", reading)
+
+    return LayoutPatch(
+        mode = map.enum("mode", ReaderEnums.layoutMode, reading),
+        paddingBlockStart = padding.blockStart,
+        paddingInlineEnd = padding.inlineEnd,
+        paddingBlockEnd = padding.blockEnd,
+        paddingInlineStart = padding.inlineStart,
+        gap = gap.main,
+        rowGap = gap.row ?: rows?.gap,
+        columnGap = gap.column ?: columns?.gap,
+        alignInline = align?.enum("inline", ReaderEnums.align, reading),
+        alignBlock = align?.enum("block", ReaderEnums.align, reading),
+        baseline = align?.enum("baseline", ReaderEnums.baseline, reading),
+        distribution = map.enum("distribution", ReaderEnums.distribution, reading),
+        wrap = map.boolean("wrap", reading),
+        sizingWidth = sizing?.value("width")?.let { readSizingAxis(it, "width", reading) },
+        sizingHeight = sizing?.value("height")?.let { readSizingAxis(it, "height", reading) },
+        clipContent = map.boolean("clipContent", reading),
+        overflowX = overflow?.enum("x", ReaderEnums.overflow, reading),
+        overflowY = overflow?.enum("y", ReaderEnums.overflow, reading),
+        scrollDirection = scroll?.enum("direction", ReaderEnums.scrollDirection, reading),
+        scrollFixedChildren = scroll?.stringList("fixedChildren", reading),
+        ignoreAutoLayout = map.boolean("ignoreAutoLayout", reading),
+        positionMode = position?.enum("mode", positionModes, reading),
+        anchorInlineStart = position?.anchor("inlineStart", "left", reading),
+        anchorInlineEnd = position?.anchor("inlineEnd", "right", reading),
+        anchorBlockStart = position?.anchor("blockStart", "top", reading),
+        anchorBlockEnd = position?.anchor("blockEnd", "bottom", reading),
+        positionX = position?.double("x", reading),
+        positionY = position?.double("y", reading),
+        gridColumns = columns?.tracks,
+        gridRows = rows?.tracks,
+        implicitRows = rows?.implicitTrack,
+        implicitRowMin = rows?.min,
+        placement = readPlacement(map, reading),
+        guides = readGuides(map, reading),
+        grids = readGrids(map, reading),
+    )
+}
+
+// --- sizing ---
+
+/** `width: fill` shorthand or `{ type, value, min, max }` map. */
+internal fun readSizingAxis(value: YamlValue, axis: String, reading: BlockReading): SizingPatch? {
+    if (value is YamlScalar) {
+        val mode = enumOf(value, axis, ReaderEnums.sizingMode, reading) ?: return null
+        return SizingPatch(mode = mode)
+    }
+    val map = value as? YamlMap ?: run {
+        reading.warning("`$axis` sizing must be a mode name or a map", value)
+        return null
+    }
+    map.warnUnknownKeys(setOf("type", "value", "min", "max"), reading)
+    return SizingPatch(
+        mode = map.enum("type", ReaderEnums.sizingMode, reading),
+        value = map.double("value", reading),
+        min = map.double("min", reading),
+        max = map.double("max", reading),
+    )
+}
+
+// --- padding: logical + physical import compatibility ---
+
+private class PaddingSides(
+    val blockStart: Bindable<Double>?,
+    val inlineEnd: Bindable<Double>?,
+    val blockEnd: Bindable<Double>?,
+    val inlineStart: Bindable<Double>?,
+)
+
+private fun readPadding(map: YamlMap, reading: BlockReading): PaddingSides {
+    val value = map.value("padding") ?: return PaddingSides(null, null, null, null)
+    if (value is YamlScalar || varRefOf(value) != null) {
+        val all = bindableDouble(value, "padding", reading)
+        return PaddingSides(all, all, all, all)
+    }
+    val sides = value as? YamlMap ?: run {
+        reading.warning("`padding` must be a number or a per-side map", value)
+        return PaddingSides(null, null, null, null)
+    }
+    sides.warnUnknownKeys(
+        setOf(
+            "top", "right", "bottom", "left",
+            "inline", "block", "inlineStart", "inlineEnd", "blockStart", "blockEnd",
+        ),
+        reading,
+    )
+    val inline = sides.bindableDouble("inline", reading)
+    val block = sides.bindableDouble("block", reading)
+    return PaddingSides(
+        blockStart = sides.bindableDouble("blockStart", reading)
+            ?: sides.bindableDouble("top", reading) ?: block,
+        inlineEnd = sides.physical("inlineEnd", "right", reading) ?: inline,
+        blockEnd = sides.bindableDouble("blockEnd", reading)
+            ?: sides.bindableDouble("bottom", reading) ?: block,
+        inlineStart = sides.physical("inlineStart", "left", reading) ?: inline,
+    )
+}
+
+/** Logical key wins; physical `left`/`right` is accepted with an import-compat hint. */
+private fun YamlMap.physical(
+    logicalKey: String,
+    physicalKey: String,
+    reading: BlockReading,
+): Bindable<Double>? {
+    bindableDouble(logicalKey, reading)?.let { return it }
+    val physical = value(physicalKey) ?: return null
+    reading.info(
+        "Physical `$physicalKey` is normalized to logical `$logicalKey`",
+        physical,
+    )
+    return bindableDouble(physical, physicalKey, reading)
+}
+
+private fun YamlMap.anchor(
+    logicalKey: String,
+    physicalKey: String,
+    reading: BlockReading,
+): Bindable<Double>? = physical(logicalKey, physicalKey, reading)
+
+// --- gap ---
+
+private class GapSpec(
+    val main: DesignGap?,
+    val row: Bindable<Double>?,
+    val column: Bindable<Double>?,
+)
+
+private fun readGap(map: YamlMap, reading: BlockReading): GapSpec {
+    val value = map.value("gap") ?: return GapSpec(null, null, null)
+    if ((value as? YamlScalar)?.value == "auto") return GapSpec(DesignGap.Auto, null, null)
+    if (value is YamlMap && (value.entries.containsKey("row") || value.entries.containsKey("column"))) {
+        return GapSpec(
+            main = null,
+            row = value.bindableDouble("row", reading),
+            column = value.bindableDouble("column", reading),
+        )
+    }
+    val main = bindableDouble(value, "gap", reading) ?: return GapSpec(null, null, null)
+    return GapSpec(DesignGap.Fixed(main), null, null)
+}
+
+// --- grid tracks ---
+
+private class TrackAxis(
+    val tracks: List<GridTrack>?,
+    val gap: Bindable<Double>?,
+    val implicitTrack: GridTrack?,
+    val min: Double?,
+)
+
+private fun readTrackAxis(map: YamlMap, key: String, reading: BlockReading): TrackAxis? {
+    val axis = map.mapValue(key, reading) ?: return null
+    axis.warnUnknownKeys(setOf("count", "track", "gap", "auto", "min"), reading)
+    val count = axis.int("count", reading)
+    val track = axis.value("track")?.let { readTrack(it, reading) }
+    val auto = axis.boolean("auto", reading) ?: false
+    val tracks = when {
+        count != null && count > 0 -> List(count) { track ?: GridTrack.Flex(1.0) }
+        track != null -> listOf(track)
+        else -> null
+    }
+    return TrackAxis(
+        tracks = tracks,
+        gap = axis.bindableDouble("gap", reading),
+        implicitTrack = if (auto) track ?: GridTrack.Flex(1.0) else null,
+        min = axis.double("min", reading),
+    )
+}
+
+/** `1fr` -> Flex, number -> Fixed, `hug` -> Hug. */
+private fun readTrack(value: YamlValue, reading: BlockReading): GridTrack? {
+    val scalar = value as? YamlScalar
+    when (val raw = scalar?.value) {
+        is Double -> return GridTrack.Fixed(raw)
+        is String -> {
+            if (raw == "hug") return GridTrack.Hug
+            if (raw.endsWith("fr")) {
+                raw.removeSuffix("fr").toDoubleOrNull()?.let { return GridTrack.Flex(it) }
+            }
+        }
+        else -> {}
+    }
+    reading.warning("`track` must be a number, `Nfr` or `hug`", value)
+    return null
+}
+
+private fun readPlacement(map: YamlMap, reading: BlockReading): GridPlacement? {
+    val placement = map.mapValue("placement", reading) ?: return null
+    placement.warnUnknownKeys(setOf("column", "row", "columnSpan", "rowSpan"), reading)
+    return GridPlacement(
+        column = placement.int("column", reading) ?: 0,
+        row = placement.int("row", reading) ?: 0,
+        columnSpan = placement.int("columnSpan", reading) ?: 1,
+        rowSpan = placement.int("rowSpan", reading) ?: 1,
+    )
+}
+
+// --- guides + layout grid overlays ---
+
+private val guideOrientations = mapOf(
+    "horizontal" to GuideOrientation.Horizontal,
+    "vertical" to GuideOrientation.Vertical,
+)
+
+private fun readGuides(map: YamlMap, reading: BlockReading): List<GuideLine>? {
+    val list = map.listValue("guides", reading) ?: return null
+    return list.items.mapNotNull { item ->
+        val guide = item as? YamlMap ?: run {
+            reading.warning("`guides` items must be maps", item)
+            return@mapNotNull null
+        }
+        val orientation = guide.enum("orientation", guideOrientations, reading)
+        val position = guide.double("position", reading)
+        if (orientation == null || position == null) null else GuideLine(orientation, position)
+    }
+}
+
+private fun readGrids(map: YamlMap, reading: BlockReading): List<LayoutGridDefinition>? {
+    val list = map.listValue("grids", reading) ?: return null
+    return list.items.mapNotNull { item ->
+        val grid = item as? YamlMap ?: run {
+            reading.warning("`grids` items must be maps", item)
+            return@mapNotNull null
+        }
+        val type = grid.enum("type", ReaderEnums.gridType, reading) ?: return@mapNotNull null
+        LayoutGridDefinition(
+            type = type,
+            count = grid.int("count", reading),
+            size = grid.double("size", reading),
+            gutter = grid.double("gutter", reading) ?: 0.0,
+            margin = grid.double("margin", reading) ?: 0.0,
+            alignment = grid.enum("alignment", ReaderEnums.gridAlignment, reading)
+                ?: LayoutGridAlignment.Stretch,
+            color = grid.bindableColor("color", reading)
+                ?.let { (it as? Bindable.Value)?.value },
+            visible = grid.boolean("visible", reading) ?: true,
+        )
+    }
+}
