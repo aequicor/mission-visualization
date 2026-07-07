@@ -20,8 +20,6 @@ kotlin {
 
     sourceSets {
         commonMain {
-            kotlin.srcDir("../appPresentation/src/commonMain/kotlin")
-
             dependencies {
                 implementation(projects.shared)
 

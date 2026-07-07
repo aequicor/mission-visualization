@@ -6,14 +6,6 @@ plugins {
     alias(libs.plugins.composeCompiler)
 }
 
-kotlin {
-    sourceSets {
-        main {
-            kotlin.srcDir("../appPresentation/src/commonMain/kotlin")
-        }
-    }
-}
-
 dependencies {
     implementation(projects.shared)
 
