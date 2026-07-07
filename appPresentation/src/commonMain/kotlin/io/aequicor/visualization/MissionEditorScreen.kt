@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +25,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -40,7 +41,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -50,15 +50,26 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import io.aequicor.visualization.ui_engine.compose_render_engine.DefaultUiRenderEngine
-import io.aequicor.visualization.ui_engine.runtime_state.UiCommand
-import io.aequicor.visualization.ui_engine.runtime_state.UiVisualizationState
-import io.aequicor.visualization.ui_engine.runtime_state.createUiVisualizationState
-import io.aequicor.visualization.ui_engine.runtime_state.reduceUiVisualization
-import io.aequicor.visualization.ui_engine.ui_document_ir.UiDocument
-import io.aequicor.visualization.ui_engine.ui_document_ir.title
+import io.aequicor.visualization.designdoc.data.DefaultDesignDocumentRepository
+import io.aequicor.visualization.designdoc.domain.layout.LayoutBox
+import io.aequicor.visualization.designdoc.domain.model.DesignColor
+import io.aequicor.visualization.designdoc.domain.model.DesignDocument
+import io.aequicor.visualization.designdoc.domain.model.DesignNode
+import io.aequicor.visualization.designdoc.domain.model.DesignPage
+import io.aequicor.visualization.designdoc.domain.model.HorizontalConstraint
+import io.aequicor.visualization.designdoc.domain.model.LayoutMode
+import io.aequicor.visualization.designdoc.domain.model.SizingMode
+import io.aequicor.visualization.designdoc.domain.model.VerticalConstraint
+import io.aequicor.visualization.designdoc.domain.resolve.ResolvedEffect
+import io.aequicor.visualization.designdoc.domain.resolve.ResolvedPaint
+import io.aequicor.visualization.designdoc.domain.usecase.LoadDesignDocumentUseCase
+import io.aequicor.visualization.designdoc.presentation.DesignEditorIntent
+import io.aequicor.visualization.designdoc.presentation.DesignEditorState
+import io.aequicor.visualization.designdoc.presentation.createDesignEditorState
+import io.aequicor.visualization.designdoc.presentation.reduceDesignEditor
+import io.aequicor.visualization.designdoc.ui.DesignArtboard
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val AccentBlue = Color(0xFF1E88FF)
@@ -83,10 +94,10 @@ enum class InspectorTab(val title: String) {
     Comments("Comments"),
 }
 
-enum class DeviceMode(val title: String) {
-    Pc("PC"),
-    Mob("MOB"),
-    Tab("TAB"),
+enum class DeviceMode(val title: String, val width: Double?, val height: Double?) {
+    Pc("PC", null, null),
+    Mob("MOB", 375.0, 812.0),
+    Tab("TAB", 768.0, 1024.0),
 }
 
 enum class ToolMode(val label: String) {
@@ -108,64 +119,34 @@ enum class InspectorSection(val title: String) {
     Constraints("Constraints"),
 }
 
-data class InspectorDraft(
-    val x: String = "72",
-    val y: String = "72",
-    val width: String = "1440",
-    val height: String = "1024",
-    val widthMode: String = "Fixed",
-    val heightMode: String = "Fixed",
-    val clipContent: Boolean = true,
-    val opacity: Float = 100f,
-    val fill: String = "#FFFFFF",
-    val fillOpacity: String = "100%",
-    val stroke: String = "#1E88FF",
-    val strokeWidth: String = "1",
-    val radius: String = "8",
-    val shadow: String = "None",
-    val horizontalConstraint: String = "Left",
-    val verticalConstraint: String = "Top",
-    val fixedWhenScrolling: Boolean = false,
-)
-
 data class MissionEditorViewState(
     val sourceTab: SourceTab = SourceTab.Markdown,
     val inspectorTab: InspectorTab = InspectorTab.Design,
     val deviceMode: DeviceMode = DeviceMode.Pc,
     val toolMode: ToolMode = ToolMode.Select,
-    val selectedScreenId: String = "",
-    val selectedNodeId: String = "",
     val expandedSections: Set<InspectorSection> = InspectorSection.entries.toSet(),
-    val inspectorDraft: InspectorDraft = InspectorDraft(),
 )
 
 @Stable
-class MissionEditorStateHolder {
-    var runtimeState by mutableStateOf(createUiVisualizationState())
+class MissionEditorStateHolder(
+    loadDesignDocument: LoadDesignDocumentUseCase,
+) {
+    var designState by mutableStateOf(createDesignEditorState(loadDesignDocument()))
         private set
 
-    var viewState by mutableStateOf(
-        MissionEditorViewState(
-            selectedScreenId = runtimeState.selectedScreenId,
-            selectedNodeId = runtimeState.selectedNodeId,
-        ),
-    )
+    var viewState by mutableStateOf(MissionEditorViewState())
         private set
 
-    fun dispatchDomain(command: UiCommand) {
-        runtimeState = reduceUiVisualization(runtimeState, command)
-        viewState = viewState.copy(
-            selectedScreenId = runtimeState.selectedScreenId,
-            selectedNodeId = runtimeState.selectedNodeId,
-        )
+    /** Last computed layout of the previewed frame, in document coordinates. */
+    var artboardLayout by mutableStateOf<LayoutBox?>(null)
+        private set
+
+    fun dispatch(intent: DesignEditorIntent) {
+        designState = reduceDesignEditor(designState, intent)
     }
 
-    fun selectScreen(screenId: String) {
-        if (runtimeState.documentOrNull?.screenById(screenId) != null) {
-            dispatchDomain(UiCommand.SelectScreen(screenId))
-        } else {
-            viewState = viewState.copy(selectedScreenId = screenId, selectedNodeId = "")
-        }
+    fun onArtboardLayout(layout: LayoutBox?) {
+        artboardLayout = layout
     }
 
     fun selectSourceTab(tab: SourceTab) {
@@ -190,16 +171,16 @@ class MissionEditorStateHolder {
             expandedSections = if (section in expanded) expanded - section else expanded + section,
         )
     }
-
-    fun updateDraft(update: (InspectorDraft) -> InspectorDraft) {
-        viewState = viewState.copy(inspectorDraft = update(viewState.inspectorDraft))
-    }
 }
 
 @Composable
 fun MissionEditorApp() {
     MissionEditorTheme {
-        val state = remember { MissionEditorStateHolder() }
+        val state = remember {
+            MissionEditorStateHolder(
+                loadDesignDocument = LoadDesignDocumentUseCase(DefaultDesignDocumentRepository()),
+            )
+        }
         MissionEditorScreen(state)
     }
 }
@@ -269,6 +250,8 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
     }
 }
 
+// --- Source pane -------------------------------------------------------------
+
 @Composable
 private fun SourcePane(
     state: MissionEditorStateHolder,
@@ -296,7 +279,7 @@ private fun SourcePane(
                 when (state.viewState.sourceTab) {
                     SourceTab.Markdown -> SourceEditor()
                     SourceTab.Resources -> EmptySourceTab("Resources")
-                    SourceTab.Layers -> EmptySourceTab("Layers")
+                    SourceTab.Layers -> LayersTree(state)
                 }
             }
         }
@@ -396,17 +379,76 @@ private fun EmptySourceTab(title: String) {
 }
 
 @Composable
+private fun LayersTree(state: MissionEditorStateHolder) {
+    val page = state.designState.document?.pageById(state.designState.selectedPageId)
+    val rows = remember(page) { page?.let { flattenLayerRows(it) } ?: emptyList() }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFFBFDFF))
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+    ) {
+        rows.forEach { row ->
+            val selected = row.node.id == state.designState.selectedNodeId
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp)
+                    .background(if (selected) Color(0xFFEAF4FF) else Color.Transparent)
+                    .clickable { state.dispatch(DesignEditorIntent.SelectNode(row.node.id)) }
+                    .padding(start = (14 + row.depth * 18).dp, end = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    layerGlyph(row.node.type),
+                    color = if (selected) AccentBlue else MutedInk,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text(
+                    row.node.name.ifBlank { row.node.id },
+                    color = if (selected) AccentBlue else Ink,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+private data class LayerRow(val node: DesignNode, val depth: Int)
+
+private fun flattenLayerRows(page: DesignPage): List<LayerRow> {
+    val rows = mutableListOf<LayerRow>()
+    fun visit(node: DesignNode, depth: Int) {
+        rows += LayerRow(node, depth)
+        node.children.forEach { visit(it, depth + 1) }
+    }
+    page.children.forEach { visit(it, 0) }
+    return rows
+}
+
+private fun layerGlyph(type: String): String =
+    when (type) {
+        "frame", "group", "section" -> "[]"
+        "text" -> "T"
+        "instance" -> "<>"
+        "ellipse" -> "()"
+        else -> "--"
+    }
+
+// --- Screens panel -------------------------------------------------------------
+
+@Composable
 private fun ScreensPanel(
     state: MissionEditorStateHolder,
     modifier: Modifier = Modifier,
 ) {
-    val screenRows = remember(state.runtimeState.documentOrNull) {
-        listOf(
-            ScreenRowModel("mission-overview", "Mission Overview", "/screens/mission-overview.md", Green),
-            ScreenRowModel("telemetry", "Telemetry", "/screens/telemetry.md", Amber),
-            ScreenRowModel("event-log", "Event Log", "/screens/event-log.md", Red),
-        )
-    }
+    val document = state.designState.document
+    val statusColors = listOf(Green, Amber, Red)
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
@@ -423,16 +465,14 @@ private fun ScreensPanel(
                 Spacer(Modifier.width(8.dp))
                 SmallSquareButton("v", onClick = {})
             }
-            val selectedScreenId = screenRows
-                .firstOrNull { it.id == state.viewState.selectedScreenId }
-                ?.id
-                ?: screenRows.firstOrNull()?.id.orEmpty()
             Column {
-                screenRows.forEach { screen ->
+                document?.pages?.forEachIndexed { index, page ->
                     ScreenListRow(
-                        model = screen,
-                        selected = screen.id == selectedScreenId,
-                        onClick = { state.selectScreen(screen.id) },
+                        title = page.name.ifBlank { page.id },
+                        path = "/screens/${page.name.slugify()}.json",
+                        status = statusColors[index % statusColors.size],
+                        selected = page.id == state.designState.selectedPageId,
+                        onClick = { state.dispatch(DesignEditorIntent.SelectPage(page.id)) },
                     )
                 }
             }
@@ -440,16 +480,14 @@ private fun ScreensPanel(
     }
 }
 
-private data class ScreenRowModel(
-    val id: String,
-    val title: String,
-    val path: String,
-    val status: Color,
-)
+private fun String.slugify(): String =
+    lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
 
 @Composable
 private fun ScreenListRow(
-    model: ScreenRowModel,
+    title: String,
+    path: String,
+    status: Color,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -466,26 +504,33 @@ private fun ScreenListRow(
     ) {
         MiniThumbnail(selected)
         Column(Modifier.weight(1f)) {
-            Text(model.title, style = MaterialTheme.typography.bodyMedium, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text(model.path, style = MaterialTheme.typography.bodySmall, color = Color(0xFF41617E), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(path, style = MaterialTheme.typography.bodySmall, color = Color(0xFF41617E), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Box(Modifier.size(12.dp).background(model.status, CircleShape))
+        Box(Modifier.size(12.dp).background(status, CircleShape))
         Text(":", style = MaterialTheme.typography.titleMedium, color = Color.Black)
     }
 }
+
+// --- Preview pane -------------------------------------------------------------
 
 @Composable
 private fun PreviewPane(
     state: MissionEditorStateHolder,
     modifier: Modifier = Modifier,
 ) {
+    val pageName = state.designState.document
+        ?.pageById(state.designState.selectedPageId)
+        ?.name
+        .orEmpty()
+        .ifBlank { "Untitled" }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "Preview: Mission Overview",
+                "Preview: $pageName",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
@@ -507,17 +552,20 @@ private fun PreviewPane(
             ArtboardPreview(state)
         }
 
-        Box(Modifier.fillMaxWidth().height(58.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(58.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             DeviceControl(
                 selected = state.viewState.deviceMode,
                 onSelect = state::selectDeviceMode,
-                modifier = Modifier.align(Alignment.CenterStart),
             )
-            FloatingToolbar(
-                selected = state.viewState.toolMode,
-                onSelect = state::selectToolMode,
-                modifier = Modifier.align(Alignment.Center),
-            )
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                FloatingToolbar(
+                    selected = state.viewState.toolMode,
+                    onSelect = state::selectToolMode,
+                )
+            }
         }
     }
 }
@@ -525,10 +573,23 @@ private fun PreviewPane(
 @Composable
 private fun ArtboardPreview(state: MissionEditorStateHolder) {
     BoxWithConstraints(Modifier.fillMaxSize().padding(20.dp), contentAlignment = Alignment.Center) {
-        val maxArtboardWidth = (maxWidth - 104.dp).coerceAtLeast(360.dp)
-        val artboardWidth = minOf(maxArtboardWidth, 760.dp)
-        val artboardHeight = (artboardWidth.value * 1024f / 1440f).dp
-        val document = state.runtimeState.documentOrNull
+        val document = state.designState.document
+        val device = state.viewState.deviceMode
+        val rootNode = document
+            ?.pageById(state.designState.selectedPageId)
+            ?.children
+            ?.firstOrNull()
+        val docWidth = device.width ?: state.artboardLayout?.width ?: rootNode?.size?.width ?: 1440.0
+        val docHeight = device.height ?: state.artboardLayout?.height ?: rootNode?.size?.height ?: 1024.0
+
+        val availableWidth = (maxWidth - 104.dp).coerceAtLeast(280.dp)
+        val availableHeight = (maxHeight - 76.dp).coerceAtLeast(280.dp)
+        val fit = minOf(
+            availableWidth.value / docWidth.toFloat(),
+            availableHeight.value / docHeight.toFloat(),
+        )
+        val artboardWidth = (docWidth.toFloat() * fit).dp
+        val artboardHeight = (docHeight.toFloat() * fit).dp
 
         Canvas(Modifier.matchParentSize()) {
             val step = 12.dp.toPx()
@@ -543,6 +604,9 @@ private fun ArtboardPreview(state: MissionEditorStateHolder) {
             }
         }
 
+        val rootSelected = rootNode != null && rootNode.id == state.designState.selectedNodeId
+        val marginLabel = rootNode?.position?.x?.formatPx() ?: "72"
+
         Box(
             modifier = Modifier
                 .width(artboardWidth + 72.dp)
@@ -553,10 +617,10 @@ private fun ArtboardPreview(state: MissionEditorStateHolder) {
             GuideLine(Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp), horizontal = true)
             GuideLine(Modifier.align(Alignment.CenterStart).padding(start = 18.dp), horizontal = false)
             GuideLine(Modifier.align(Alignment.CenterEnd).padding(end = 18.dp), horizontal = false)
-            DimensionBadge("1440", Modifier.align(Alignment.TopCenter))
-            DimensionBadge("1024", Modifier.align(Alignment.CenterStart).graphicsLayer { rotationZ = -90f })
-            Text("72", modifier = Modifier.align(Alignment.TopStart).padding(start = 42.dp, top = 4.dp), color = AccentBlue, style = MaterialTheme.typography.labelSmall)
-            Text("72", modifier = Modifier.align(Alignment.TopEnd).padding(end = 42.dp, top = 4.dp), color = AccentBlue, style = MaterialTheme.typography.labelSmall)
+            DimensionBadge(docWidth.formatPx(), Modifier.align(Alignment.TopCenter))
+            DimensionBadge(docHeight.formatPx(), Modifier.align(Alignment.CenterStart).graphicsLayer { rotationZ = -90f })
+            Text(marginLabel, modifier = Modifier.align(Alignment.TopStart).padding(start = 42.dp, top = 4.dp), color = AccentBlue, style = MaterialTheme.typography.labelSmall)
+            Text(marginLabel, modifier = Modifier.align(Alignment.TopEnd).padding(end = 42.dp, top = 4.dp), color = AccentBlue, style = MaterialTheme.typography.labelSmall)
 
             Box(
                 modifier = Modifier
@@ -564,33 +628,38 @@ private fun ArtboardPreview(state: MissionEditorStateHolder) {
                     .background(Color.White.copy(alpha = 0.98f))
                     .border(2.dp, AccentBlue),
             ) {
-                DottedArtboardBackground()
-                if (document != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(12.dp)
-                            .alpha(0.34f),
-                    ) {
-                        DefaultUiRenderEngine.Render(document, state.runtimeState, state::dispatchDomain)
-                    }
+                if (document != null && rootNode != null) {
+                    DesignArtboard(
+                        document = document,
+                        pageId = state.designState.selectedPageId,
+                        modifier = Modifier.fillMaxSize(),
+                        deviceWidth = device.width,
+                        deviceHeight = device.height,
+                        selectedNodeId = state.designState.selectedNodeId,
+                        onSelectNode = { nodeId -> state.dispatch(DesignEditorIntent.SelectNode(nodeId)) },
+                        onLayoutComputed = state::onArtboardLayout,
+                    )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("No preview", color = MutedInk)
                     }
                 }
-                SelectionHandle(Alignment.TopStart)
-                SelectionHandle(Alignment.TopCenter)
-                SelectionHandle(Alignment.TopEnd)
-                SelectionHandle(Alignment.CenterStart)
-                SelectionHandle(Alignment.CenterEnd)
-                SelectionHandle(Alignment.BottomStart)
-                SelectionHandle(Alignment.BottomCenter)
-                SelectionHandle(Alignment.BottomEnd)
+                if (rootSelected || rootNode == null) {
+                    SelectionHandle(Alignment.TopStart)
+                    SelectionHandle(Alignment.TopCenter)
+                    SelectionHandle(Alignment.TopEnd)
+                    SelectionHandle(Alignment.CenterStart)
+                    SelectionHandle(Alignment.CenterEnd)
+                    SelectionHandle(Alignment.BottomStart)
+                    SelectionHandle(Alignment.BottomCenter)
+                    SelectionHandle(Alignment.BottomEnd)
+                }
             }
         }
     }
 }
+
+// --- Inspector -------------------------------------------------------------
 
 @Composable
 private fun InspectorPane(
@@ -620,7 +689,7 @@ private fun InspectorPane(
                 )
                 when (state.viewState.inspectorTab) {
                     InspectorTab.Design -> InspectorDesign(state)
-                    InspectorTab.Comments -> InspectorComments(state.runtimeState.documentOrNull, state.runtimeState)
+                    InspectorTab.Comments -> InspectorComments()
                 }
             }
         }
@@ -629,22 +698,25 @@ private fun InspectorPane(
 
 @Composable
 private fun InspectorDesign(state: MissionEditorStateHolder) {
+    val designState = state.designState
+    val selectedNode = designState.selectedNode
+    val selectedBox = state.artboardLayout?.findBySourceId(designState.selectedNodeId)
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState()),
     ) {
         InspectorSectionBlock(state, InspectorSection.Position) {
-            PositionControls(state)
+            PositionControls(state, designState, selectedNode, selectedBox)
         }
         InspectorSectionBlock(state, InspectorSection.Size) {
-            SizeControls(state)
+            SizeControls(state, designState, selectedNode, selectedBox)
         }
         InspectorSectionBlock(state, InspectorSection.Appearance) {
-            AppearanceControls(state)
+            AppearanceControls(state, designState, selectedBox)
         }
         InspectorSectionBlock(state, InspectorSection.Constraints) {
-            ConstraintControls(state)
+            ConstraintControls(state, designState, selectedNode)
         }
     }
 }
@@ -677,89 +749,218 @@ private fun InspectorSectionBlock(
 }
 
 @Composable
-private fun PositionControls(state: MissionEditorStateHolder) {
-    val draft = state.viewState.inspectorDraft
+private fun PositionControls(
+    state: MissionEditorStateHolder,
+    designState: DesignEditorState,
+    selectedNode: DesignNode?,
+    selectedBox: LayoutBox?,
+) {
+    val nodeId = designState.selectedNodeId
+    val isRoot = state.artboardLayout?.node?.sourceId == nodeId
+    val page = designState.document?.pageOfNode(nodeId)
+    val parentNode = page?.let { findParentNode(it.children, nodeId) }
+
+    // Only nodes positioned by coordinates are editable: the frame root, absolute
+    // children, and children of constraint-mode parents. Flow children show their
+    // computed offsets read-only, like Figma greys out X/Y in auto-layout.
+    val positioned = isRoot ||
+        selectedNode?.layoutChild?.absolute == true ||
+        (parentNode != null && parentNode.layout.mode == LayoutMode.None)
+    val parentBox = state.artboardLayout?.let { root -> findParentBox(root, nodeId) }
+    val x = when {
+        positioned -> selectedNode?.position?.x ?: 0.0
+        selectedBox != null -> selectedBox.x - (parentBox?.x ?: 0.0)
+        else -> 0.0
+    }
+    val y = when {
+        positioned -> selectedNode?.position?.y ?: 0.0
+        selectedBox != null -> selectedBox.y - (parentBox?.y ?: 0.0)
+        else -> 0.0
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalAlignment = Alignment.CenterVertically) {
         AnchorGrid()
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            InspectorInput("X", draft.x, "px") { value -> state.updateDraft { current -> current.copy(x = value.sanitizeInput()) } }
-            InspectorInput("Y", draft.y, "px") { value -> state.updateDraft { current -> current.copy(y = value.sanitizeInput()) } }
+            InspectorNumberField("X", x.formatPx(), "px", nodeId, enabled = positioned) { value ->
+                state.dispatch(DesignEditorIntent.UpdatePosition(nodeId, x = value))
+            }
+            InspectorNumberField("Y", y.formatPx(), "px", nodeId, enabled = positioned) { value ->
+                state.dispatch(DesignEditorIntent.UpdatePosition(nodeId, y = value))
+            }
         }
     }
 }
 
+private fun findParentNode(roots: List<DesignNode>, nodeId: String): DesignNode? {
+    roots.forEach { root ->
+        if (root.children.any { it.id == nodeId }) return root
+        findParentNode(root.children, nodeId)?.let { return it }
+    }
+    return null
+}
+
 @Composable
-private fun SizeControls(state: MissionEditorStateHolder) {
-    val draft = state.viewState.inspectorDraft
+private fun SizeControls(
+    state: MissionEditorStateHolder,
+    designState: DesignEditorState,
+    selectedNode: DesignNode?,
+    selectedBox: LayoutBox?,
+) {
+    val nodeId = designState.selectedNodeId
+    val width = selectedBox?.width ?: selectedNode?.size?.width ?: 0.0
+    val height = selectedBox?.height ?: selectedNode?.size?.height ?: 0.0
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        InspectorInput("W", draft.width, "px", Modifier.weight(1f)) { value -> state.updateDraft { current -> current.copy(width = value.sanitizeInput()) } }
-        InspectorInput("H", draft.height, "px", Modifier.weight(1f)) { value -> state.updateDraft { current -> current.copy(height = value.sanitizeInput()) } }
+        InspectorNumberField("W", width.formatPx(), "px", nodeId, Modifier.weight(1f)) { value ->
+            state.dispatch(DesignEditorIntent.UpdateSize(nodeId, width = value))
+        }
+        InspectorNumberField("H", height.formatPx(), "px", nodeId, Modifier.weight(1f)) { value ->
+            state.dispatch(DesignEditorIntent.UpdateSize(nodeId, height = value))
+        }
     }
     Spacer(Modifier.height(10.dp))
+    val effectiveSizing = selectedBox?.node?.sizing ?: selectedNode?.sizing
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        SelectLike(draft.widthMode, Modifier.weight(1f))
-        SelectLike(draft.heightMode, Modifier.weight(1f))
+        SelectField(
+            value = effectiveSizing?.horizontal?.label() ?: "Fixed",
+            options = SizingMode.entries.map { it.label() },
+            onSelect = { label ->
+                state.dispatch(DesignEditorIntent.UpdateSizingMode(nodeId, horizontal = sizingFromLabel(label)))
+            },
+            modifier = Modifier.weight(1f),
+        )
+        SelectField(
+            value = effectiveSizing?.vertical?.label() ?: "Fixed",
+            options = SizingMode.entries.map { it.label() },
+            onSelect = { label ->
+                state.dispatch(DesignEditorIntent.UpdateSizingMode(nodeId, vertical = sizingFromLabel(label)))
+            },
+            modifier = Modifier.weight(1f),
+        )
     }
     Spacer(Modifier.height(8.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(draft.clipContent, onCheckedChange = { checked -> state.updateDraft { it.copy(clipContent = checked) } })
+        Checkbox(
+            checked = selectedNode?.layout?.clipsContent ?: false,
+            onCheckedChange = { checked -> state.dispatch(DesignEditorIntent.SetClipsContent(nodeId, checked)) },
+        )
         Text("Clip content", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-private fun AppearanceControls(state: MissionEditorStateHolder) {
-    val draft = state.viewState.inspectorDraft
+private fun AppearanceControls(
+    state: MissionEditorStateHolder,
+    designState: DesignEditorState,
+    selectedBox: LayoutBox?,
+) {
+    val nodeId = designState.selectedNodeId
+    val resolved = selectedBox?.node
+    val opacityPercent = ((resolved?.opacity ?: 1.0) * 100).toFloat()
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("eye", style = MaterialTheme.typography.bodySmall, color = Color(0xFF31516E))
-        Text("${draft.opacity.roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+        Text("${opacityPercent.roundToInt()}%", style = MaterialTheme.typography.bodySmall)
         Slider(
-            value = draft.opacity,
-            onValueChange = { value -> state.updateDraft { it.copy(opacity = value) } },
+            value = opacityPercent,
+            onValueChange = { value -> state.dispatch(DesignEditorIntent.UpdateOpacity(nodeId, value / 100.0)) },
             valueRange = 0f..100f,
             modifier = Modifier.weight(1f),
         )
         SmallSquareButton("eye", onClick = {})
     }
     Spacer(Modifier.height(10.dp))
+
+    val fillSolid = resolved?.fills?.filterIsInstance<ResolvedPaint.Solid>()?.firstOrNull()
+    val fillHex = fillSolid?.color?.toHex() ?: "#FFFFFF"
     LabeledField("Fill") {
-        SwatchField(Color.White, draft.fill, draft.fillOpacity)
+        SwatchField(
+            color = fillSolid?.color?.toComposeColorOrWhite() ?: Color.White,
+            value = fillHex,
+            rightValue = "${((fillSolid?.opacity ?: 1.0) * 100).roundToInt()}%",
+            nodeId = nodeId,
+            onCommitHex = { hex ->
+                DesignColor.fromHex(hex)?.let { state.dispatch(DesignEditorIntent.UpdateSolidFill(nodeId, it)) }
+            },
+        )
     }
     Spacer(Modifier.height(10.dp))
+
+    val strokeSolid = resolved?.strokes?.paints?.filterIsInstance<ResolvedPaint.Solid>()?.firstOrNull()
+    val strokeHex = strokeSolid?.color?.toHex() ?: "#1E88FF"
     LabeledField("Stroke") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            SwatchField(AccentBlue, draft.stroke, draft.strokeWidth)
+            SwatchField(
+                color = strokeSolid?.color?.toComposeColorOrWhite() ?: AccentBlue,
+                value = strokeHex,
+                rightValue = (resolved?.strokes?.weight ?: 1.0).formatPx(),
+                nodeId = nodeId,
+                onCommitHex = { hex ->
+                    DesignColor.fromHex(hex)?.let { state.dispatch(DesignEditorIntent.UpdateStroke(nodeId, color = it)) }
+                },
+                modifier = Modifier.weight(1f),
+            )
             SelectLike("list", Modifier.width(70.dp))
         }
     }
     Spacer(Modifier.height(10.dp))
-    InspectorInput("Radius", draft.radius, "px") { value -> state.updateDraft { current -> current.copy(radius = value.sanitizeInput()) } }
+
+    val radius = resolved?.cornerRadius?.topLeft ?: 0.0
+    InspectorNumberField("Radius", radius.formatPx(), "px", nodeId) { value ->
+        state.dispatch(DesignEditorIntent.UpdateCornerRadius(nodeId, value))
+    }
     Spacer(Modifier.height(10.dp))
+    val shadowLabel = when {
+        resolved?.effects?.any { it is ResolvedEffect.DropShadow } == true -> "Drop shadow"
+        resolved?.effects?.any { it is ResolvedEffect.InnerShadow } == true -> "Inner shadow"
+        else -> "None"
+    }
     LabeledField("Shadow") {
-        SelectLike(draft.shadow, Modifier.fillMaxWidth())
+        SelectLike(shadowLabel, Modifier.fillMaxWidth())
     }
 }
 
 @Composable
-private fun ConstraintControls(state: MissionEditorStateHolder) {
-    val draft = state.viewState.inspectorDraft
+private fun ConstraintControls(
+    state: MissionEditorStateHolder,
+    designState: DesignEditorState,
+    selectedNode: DesignNode?,
+) {
+    val nodeId = designState.selectedNodeId
     Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
         ConstraintGlyph()
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SelectLike(draft.horizontalConstraint, Modifier.fillMaxWidth())
-            SelectLike(draft.verticalConstraint, Modifier.fillMaxWidth())
+            SelectField(
+                value = (selectedNode?.constraints?.horizontal ?: HorizontalConstraint.Left).label(),
+                options = HorizontalConstraint.entries.map { it.label() },
+                onSelect = { label ->
+                    state.dispatch(
+                        DesignEditorIntent.UpdateConstraints(nodeId, horizontal = horizontalConstraintFromLabel(label)),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            SelectField(
+                value = (selectedNode?.constraints?.vertical ?: VerticalConstraint.Top).label(),
+                options = VerticalConstraint.entries.map { it.label() },
+                onSelect = { label ->
+                    state.dispatch(
+                        DesignEditorIntent.UpdateConstraints(nodeId, vertical = verticalConstraintFromLabel(label)),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
     Spacer(Modifier.height(10.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(draft.fixedWhenScrolling, onCheckedChange = { checked -> state.updateDraft { it.copy(fixedWhenScrolling = checked) } })
+        Checkbox(
+            checked = selectedNode?.scroll?.sticky ?: false,
+            onCheckedChange = { checked -> state.dispatch(DesignEditorIntent.SetSticky(nodeId, checked)) },
+        )
         Text("Fix position when scrolling", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-private fun InspectorComments(document: UiDocument?, runtimeState: UiVisualizationState) {
-    val comments = document?.comments.orEmpty()
+private fun InspectorComments() {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -767,25 +968,11 @@ private fun InspectorComments(document: UiDocument?, runtimeState: UiVisualizati
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (comments.isEmpty()) {
-            Text("No comments yet.", color = MutedInk, style = MaterialTheme.typography.bodySmall)
-        } else {
-            comments.forEach { comment ->
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (comment.targetId == runtimeState.selectedNodeId) Color(0xFFEAF4FF) else Color(0xFFFFFBF7),
-                    border = BorderStroke(1.dp, SoftStroke),
-                ) {
-                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(comment.author, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                        Text(comment.body, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        }
+        Text("No comments yet.", color = MutedInk, style = MaterialTheme.typography.bodySmall)
     }
 }
+
+// --- Shared controls -------------------------------------------------------------
 
 @Composable
 private fun <T> TabStrip(
@@ -830,21 +1017,36 @@ private fun <T> TabStrip(
     }
 }
 
+/**
+ * Numeric inspector input bound to a computed value: the draft resets whenever the
+ * selection or the externally computed value changes, and valid numbers commit
+ * immediately (Figma-like live editing).
+ */
 @Composable
-private fun InspectorInput(
+private fun InspectorNumberField(
     label: String,
     value: String,
     suffix: String,
+    nodeId: String,
     modifier: Modifier = Modifier,
-    onChange: (String) -> Unit,
+    enabled: Boolean = true,
+    onCommit: (Double) -> Unit,
 ) {
+    var draft by remember(nodeId, value) { mutableStateOf(value) }
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(label, modifier = Modifier.width(26.dp), style = MaterialTheme.typography.bodySmall, color = Color.Black)
+        Text(label, modifier = Modifier.widthIn(min = 26.dp), style = MaterialTheme.typography.bodySmall, color = Color.Black)
         OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
+            value = draft,
+            onValueChange = { input ->
+                val sanitized = input.filter { it.isDigit() || it == '.' || it == '-' }
+                draft = sanitized
+                sanitized.toDoubleOrNull()?.let { parsed ->
+                    if (parsed != value.toDoubleOrNull()) onCommit(parsed)
+                }
+            },
             modifier = Modifier.weight(1f),
             singleLine = true,
+            enabled = enabled,
             textStyle = MaterialTheme.typography.bodySmall,
             trailingIcon = { Text(suffix, style = MaterialTheme.typography.bodySmall, color = Color.Black) },
         )
@@ -867,16 +1069,31 @@ private fun SwatchField(
     color: Color,
     value: String,
     rightValue: String,
+    nodeId: String,
+    onCommitHex: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    var draft by remember(nodeId, value) { mutableStateOf(value) }
     Surface(
-        modifier = Modifier.fillMaxWidth().height(38.dp),
+        modifier = modifier.fillMaxWidth().height(38.dp),
         shape = RoundedCornerShape(6.dp),
         color = Color.White,
         border = BorderStroke(1.dp, SoftStroke),
     ) {
         Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(22.dp).background(color, RoundedCornerShape(4.dp)).border(1.dp, SoftStroke, RoundedCornerShape(4.dp)))
-            Text(value, modifier = Modifier.padding(start = 6.dp).weight(1f), style = MaterialTheme.typography.bodySmall)
+            androidx.compose.foundation.text.BasicTextField(
+                value = draft,
+                onValueChange = { input ->
+                    draft = input.take(9)
+                    if (Regex("^#?[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$").matches(input.trim())) {
+                        onCommitHex(if (input.startsWith("#")) input.trim() else "#${input.trim()}")
+                    }
+                },
+                modifier = Modifier.padding(start = 6.dp).weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = Ink),
+            )
             Text(rightValue, style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -893,6 +1110,40 @@ private fun SelectLike(value: String, modifier: Modifier = Modifier) {
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
             Text("v", style = MaterialTheme.typography.bodySmall, color = Color(0xFF31516E))
+        }
+    }
+}
+
+@Composable
+private fun SelectField(
+    value: String,
+    options: List<String>,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(38.dp).clickable { expanded = true },
+            shape = RoundedCornerShape(6.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, SoftStroke),
+        ) {
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                Text("v", style = MaterialTheme.typography.bodySmall, color = Color(0xFF31516E))
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option, style = MaterialTheme.typography.bodySmall) },
+                    onClick = {
+                        expanded = false
+                        onSelect(option)
+                    },
+                )
+            }
         }
     }
 }
@@ -941,7 +1192,7 @@ private fun FloatingToolbar(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.height(54.dp).widthIn(min = 500.dp, max = 560.dp),
+        modifier = modifier.height(54.dp).widthIn(max = 560.dp),
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
         border = BorderStroke(1.dp, PanelStroke),
@@ -1078,23 +1329,6 @@ private fun ConstraintGlyph() {
 }
 
 @Composable
-private fun DottedArtboardBackground() {
-    Canvas(Modifier.fillMaxSize()) {
-        drawRect(Color.White)
-        val step = 14.dp.toPx()
-        var x = step
-        while (x < size.width) {
-            var y = step
-            while (y < size.height) {
-                drawCircle(Color(0xFFEAF0F6), radius = 0.55.dp.toPx(), center = Offset(x, y))
-                y += step
-            }
-            x += step
-        }
-    }
-}
-
-@Composable
 private fun SelectionHandle(alignment: Alignment) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -1150,5 +1384,60 @@ private fun VerticalDivider() {
     Box(Modifier.fillMaxHeight().width(1.dp).background(Color(0xFFCFE0EF)))
 }
 
-private fun String.sanitizeInput(): String =
-    filter { it.isDigit() || it == '.' }.ifBlank { this }
+// --- Value helpers -------------------------------------------------------------
+
+private fun findParentBox(root: LayoutBox, sourceId: String): LayoutBox? {
+    if (root.children.any { it.node.sourceId == sourceId }) return root
+    return root.children.firstNotNullOfOrNull { findParentBox(it, sourceId) }
+}
+
+private fun Double.formatPx(): String {
+    val rounded = roundToInt()
+    return if (abs(this - rounded) < 0.05) rounded.toString() else ((this * 10).roundToInt() / 10.0).toString()
+}
+
+private fun io.aequicor.visualization.designdoc.domain.model.DesignColor.toHex(): String {
+    fun component(value: Int): String = value.toString(16).uppercase().padStart(2, '0')
+    return "#${component(red)}${component(green)}${component(blue)}"
+}
+
+private fun io.aequicor.visualization.designdoc.domain.model.DesignColor.toComposeColorOrWhite(): Color =
+    Color(red = red / 255f, green = green / 255f, blue = blue / 255f, alpha = alpha / 255f)
+
+private fun SizingMode.label(): String =
+    when (this) {
+        SizingMode.Fixed -> "Fixed"
+        SizingMode.Hug -> "Hug"
+        SizingMode.Fill -> "Fill"
+    }
+
+private fun sizingFromLabel(label: String): SizingMode =
+    when (label) {
+        "Hug" -> SizingMode.Hug
+        "Fill" -> SizingMode.Fill
+        else -> SizingMode.Fixed
+    }
+
+private fun HorizontalConstraint.label(): String =
+    when (this) {
+        HorizontalConstraint.Left -> "Left"
+        HorizontalConstraint.Right -> "Right"
+        HorizontalConstraint.Center -> "Center"
+        HorizontalConstraint.LeftRight -> "Left & Right"
+        HorizontalConstraint.Scale -> "Scale"
+    }
+
+private fun horizontalConstraintFromLabel(label: String): HorizontalConstraint =
+    HorizontalConstraint.entries.firstOrNull { it.label() == label } ?: HorizontalConstraint.Left
+
+private fun VerticalConstraint.label(): String =
+    when (this) {
+        VerticalConstraint.Top -> "Top"
+        VerticalConstraint.Bottom -> "Bottom"
+        VerticalConstraint.Center -> "Center"
+        VerticalConstraint.TopBottom -> "Top & Bottom"
+        VerticalConstraint.Scale -> "Scale"
+    }
+
+private fun verticalConstraintFromLabel(label: String): VerticalConstraint =
+    VerticalConstraint.entries.firstOrNull { it.label() == label } ?: VerticalConstraint.Top
