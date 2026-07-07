@@ -2,8 +2,9 @@ package io.aequicor.visualization.engine.ir.model
 
 /**
  * A scalar that is either a literal value, a design-token reference (`{"$var": id}`),
- * or a component-property reference (`{"$prop": name}`). One mechanism for themes,
- * modes, and component parameterization.
+ * a component-property reference (`{"$prop": name}`), or a data-binding expression
+ * (`{"$data": expr}` / `{{expr}}`). One mechanism for themes, modes, component
+ * parameterization, and data binding.
  */
 sealed interface Bindable<out T> {
     data class Value<T>(val value: T) : Bindable<T>
@@ -11,6 +12,8 @@ sealed interface Bindable<out T> {
     data class VarRef(val id: String) : Bindable<Nothing>
 
     data class PropRef(val name: String) : Bindable<Nothing>
+
+    data class DataRef(val expression: DesignExpression) : Bindable<Nothing>
 }
 
 fun <T> T.bindable(): Bindable<T> = Bindable.Value(this)
@@ -74,7 +77,12 @@ data class UnitValue(
 enum class DesignUnit { Px, Percent }
 
 data class SourceLocation(
-    val pointer: String,
+    /** JSON pointer into the parsed document. */
+    val pointer: String = "",
+    /** SLM source file the node was compiled from. */
+    val file: String = "",
+    /** 1-based source line; 0 = unknown. */
+    val line: Int = 0,
 )
 
 enum class DesignSeverity { Error, Warning }
@@ -83,4 +91,6 @@ data class DesignDiagnostic(
     val severity: DesignSeverity,
     val message: String,
     val location: SourceLocation? = null,
+    /** Stable diagnostic code, e.g. "IR-STRUCT-001". */
+    val code: String = "",
 )

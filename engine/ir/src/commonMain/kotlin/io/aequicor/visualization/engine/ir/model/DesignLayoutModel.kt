@@ -36,14 +36,39 @@ data class DesignAutoLayout(
     val crossGap: Bindable<Double>? = null,
     val wrap: Boolean = false,
     val padding: DesignInsets = DesignInsets(),
+    /** Direction-aware padding; wins over [padding], mapped physical by the resolver. */
+    val paddingLogical: DesignLogicalInsets? = null,
     val alignItems: AlignItems = AlignItems.Start,
     val justifyContent: JustifyContent = JustifyContent.Start,
+    val baseline: BaselineAlign = BaselineAlign.First,
     val clipsContent: Boolean = false,
     val columns: List<GridTrack> = emptyList(),
     val rows: List<GridTrack> = emptyList(),
     val columnGap: Bindable<Double>? = null,
     val rowGap: Bindable<Double>? = null,
+    /** Template for implicit rows (`rows.auto: true`) when [rows] is empty. */
+    val implicitRows: GridTrack? = null,
+    /** Minimum implicit row size (`rows.min`). */
+    val implicitRowMin: Double? = null,
 )
+
+/** Direction-aware insets: inline = reading direction, block = perpendicular. */
+data class DesignLogicalInsets(
+    val blockStart: Bindable<Double>? = null,
+    val inlineEnd: Bindable<Double>? = null,
+    val blockEnd: Bindable<Double>? = null,
+    val inlineStart: Bindable<Double>? = null,
+)
+
+/** Logical anchors for absolute children; the resolver maps them by direction. */
+data class DesignAnchors(
+    val inlineStart: Bindable<Double>? = null,
+    val inlineEnd: Bindable<Double>? = null,
+    val blockStart: Bindable<Double>? = null,
+    val blockEnd: Bindable<Double>? = null,
+)
+
+enum class BaselineAlign { First, Last }
 
 sealed interface GridTrack {
     data class Fixed(val value: Double) : GridTrack
@@ -73,7 +98,38 @@ data class DesignLayoutChild(
 
 enum class ScrollOverflow { None, Horizontal, Vertical, Both }
 
+enum class OverflowMode { Visible, Hidden, Auto }
+
 data class DesignScroll(
+    /** Scroll direction (legacy shorthand). */
     val overflow: ScrollOverflow = ScrollOverflow.None,
     val sticky: Boolean = false,
+    val overflowX: OverflowMode = OverflowMode.Visible,
+    val overflowY: OverflowMode = OverflowMode.Visible,
+    /** Child ids pinned in place while this container scrolls. */
+    val fixedChildren: List<String> = emptyList(),
 )
+
+/** Layout grid overlay definition (frame prop or grid style); no layout effect. */
+data class LayoutGridDefinition(
+    val type: LayoutGridType,
+    val count: Int? = null,
+    val size: Double? = null,
+    val gutter: Double = 0.0,
+    val margin: Double = 0.0,
+    val alignment: LayoutGridAlignment = LayoutGridAlignment.Stretch,
+    val color: DesignColor? = null,
+    val visible: Boolean = true,
+)
+
+enum class LayoutGridType { Columns, Rows, Grid }
+
+enum class LayoutGridAlignment { Stretch, Start, Center, End }
+
+/** Canvas ruler guide; overlay + validator only. */
+data class GuideLine(
+    val orientation: GuideOrientation,
+    val position: Double,
+)
+
+enum class GuideOrientation { Horizontal, Vertical }

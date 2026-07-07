@@ -8,6 +8,7 @@ import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
+import io.aequicor.visualization.engine.ir.model.DesignExpression
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
@@ -215,6 +216,9 @@ class DesignResolver(private val document: DesignDocument) {
                 characters = next.characters ?: merged.characters,
                 textStyle = merged.textStyle?.mergedWith(next.textStyle) ?: next.textStyle,
                 cornerRadius = next.cornerRadius ?: merged.cornerRadius,
+                variant = next.variant ?: merged.variant,
+                props = next.props ?: merged.props,
+                slotContent = next.slotContent ?: merged.slotContent,
             )
         }
     }
@@ -292,6 +296,13 @@ class DesignResolver(private val document: DesignDocument) {
                 opacity = opacity,
             )
             is DesignPaint.Image -> ResolvedPaint.Image(
+                assetId = paint.assetId,
+                url = document.assets[paint.assetId]?.url.orEmpty(),
+                scaleMode = paint.scaleMode,
+                opacity = opacity,
+            )
+            // Until video rendering lands, a video paint draws like the image placeholder.
+            is DesignPaint.Video -> ResolvedPaint.Image(
                 assetId = paint.assetId,
                 url = document.assets[paint.assetId]?.url.orEmpty(),
                 scaleMode = paint.scaleMode,
@@ -398,6 +409,10 @@ class DesignResolver(private val document: DesignDocument) {
                     fallback
                 }
             }
+            is Bindable.DataRef -> {
+                warnUnevaluatedExpression(bindable.expression)
+                fallback
+            }
         }
 
     private fun resolveString(bindable: Bindable<String>, scope: Scope, fallback: String): String =
@@ -411,10 +426,20 @@ class DesignResolver(private val document: DesignDocument) {
                 is PropValue.Text -> prop.value
                 is PropValue.Number -> formatNumber(prop.value)
                 is PropValue.Bool -> prop.value.toString()
+                is PropValue.Content -> prop.content.defaultText
+                is PropValue.Data -> {
+                    warnUnevaluatedExpression(prop.expression)
+                    fallback
+                }
+                is PropValue.SlotContent -> fallback
                 else -> {
                     warn("Prop '${bindable.name}' did not resolve to a string")
                     fallback
                 }
+            }
+            is Bindable.DataRef -> {
+                warnUnevaluatedExpression(bindable.expression)
+                fallback
             }
         }
 
@@ -432,6 +457,10 @@ class DesignResolver(private val document: DesignDocument) {
                     fallback
                 }
             }
+            is Bindable.DataRef -> {
+                warnUnevaluatedExpression(bindable.expression)
+                fallback
+            }
         }
 
     private fun resolveColor(bindable: Bindable<DesignColor>, scope: Scope): DesignColor =
@@ -445,7 +474,16 @@ class DesignResolver(private val document: DesignDocument) {
                 warn("Prop '${bindable.name}' cannot provide a color")
                 DesignColor.Black
             }
+            is Bindable.DataRef -> {
+                warnUnevaluatedExpression(bindable.expression)
+                DesignColor.Black
+            }
         }
+
+    /** No expression evaluator yet (stage 5.3): data bindings warn and use the fallback. */
+    private fun warnUnevaluatedExpression(expression: DesignExpression) {
+        warn("Data binding '{{${expression.raw}}}' is not evaluated yet; using fallback")
+    }
 
     /** Resolves a variable to a concrete scalar, following alias chains cycle-safely. */
     private fun resolveVariable(varId: String, scope: Scope, visited: Set<String> = emptySet()): Any? {

@@ -16,6 +16,8 @@ data class DesignTextStyle(
     val textCase: TextCase? = null,
     val textDecoration: TextDecorationKind? = null,
     val fontFeatures: Map<String, Boolean> = emptyMap(),
+    /** Variable font axes, e.g. "opsz" -> 24.0. */
+    val variableAxes: Map<String, Double> = emptyMap(),
 ) {
     /** Returns this style with [override]'s non-null fields taking precedence. */
     fun mergedWith(override: DesignTextStyle?): DesignTextStyle {
@@ -32,6 +34,7 @@ data class DesignTextStyle(
             textCase = override.textCase ?: textCase,
             textDecoration = override.textDecoration ?: textDecoration,
             fontFeatures = fontFeatures + override.fontFeatures,
+            variableAxes = variableAxes + override.variableAxes,
         )
     }
 }
@@ -59,8 +62,10 @@ data class TextStyleRange(
     val fills: List<DesignPaint>? = null,
 )
 
+/** Exactly one of [url] (external) or [nodeTarget] (internal navigation) is set. */
 data class TextLink(
     val start: Int,
     val end: Int,
     val url: String,
+    val nodeTarget: String = "",
 )

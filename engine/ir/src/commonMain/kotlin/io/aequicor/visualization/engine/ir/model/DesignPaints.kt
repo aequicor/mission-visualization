@@ -26,6 +26,22 @@ sealed interface DesignPaint {
     data class Image(
         val assetId: String,
         val scaleMode: ImageScaleMode = ImageScaleMode.Fill,
+        /** Normalized 0..1 crop focus inside the asset. */
+        val focalPoint: DesignPoint? = null,
+        val replaceable: Boolean = false,
+        override val visible: Bindable<Boolean> = true.bindable(),
+        override val opacity: Bindable<Double> = 1.0.bindable(),
+        override val blendMode: String = "normal",
+    ) : DesignPaint
+
+    data class Video(
+        val assetId: String,
+        val scaleMode: ImageScaleMode = ImageScaleMode.Fill,
+        val focalPoint: DesignPoint? = null,
+        val posterAssetId: String = "",
+        val autoplay: Boolean = false,
+        val loop: Boolean = false,
+        val muted: Boolean = true,
         override val visible: Bindable<Boolean> = true.bindable(),
         override val opacity: Bindable<Double> = 1.0.bindable(),
         override val blendMode: String = "normal",
@@ -47,7 +63,7 @@ data class GradientStop(
     val color: Bindable<DesignColor>,
 )
 
-enum class ImageScaleMode { Fill, Fit, Crop, Tile }
+enum class ImageScaleMode { Fill, Fit, Crop, Tile, Stretch }
 
 data class DesignStrokes(
     val paints: List<DesignPaint> = emptyList(),
