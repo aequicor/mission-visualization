@@ -1,6 +1,6 @@
-package io.aequicor.visualization.designdoc.data
+package io.aequicor.visualization.editor.data
 
-import io.aequicor.visualization.designdoc.domain.repository.DesignDocumentRepository
+import io.aequicor.visualization.editor.domain.DesignDocumentRepository
 
 /** Serves the bundled mission design document JSON. */
 class DefaultDesignDocumentRepository : DesignDocumentRepository {

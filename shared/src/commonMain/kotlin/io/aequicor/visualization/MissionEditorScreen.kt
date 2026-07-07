@@ -51,7 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.aequicor.visualization.designdoc.data.DefaultDesignDocumentRepository
+import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
@@ -63,11 +63,11 @@ import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedEffect
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
-import io.aequicor.visualization.designdoc.domain.usecase.LoadDesignDocumentUseCase
-import io.aequicor.visualization.designdoc.presentation.DesignEditorIntent
-import io.aequicor.visualization.designdoc.presentation.DesignEditorState
-import io.aequicor.visualization.designdoc.presentation.createDesignEditorState
-import io.aequicor.visualization.designdoc.presentation.reduceDesignEditor
+import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
+import io.aequicor.visualization.editor.presentation.DesignEditorIntent
+import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.createDesignEditorState
+import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import kotlin.math.abs
 import kotlin.math.roundToInt

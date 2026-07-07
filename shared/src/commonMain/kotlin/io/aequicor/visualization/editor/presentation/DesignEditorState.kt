@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.presentation
+package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignColor

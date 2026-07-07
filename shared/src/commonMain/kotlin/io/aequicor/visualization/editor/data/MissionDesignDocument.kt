@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.data
+package io.aequicor.visualization.editor.data
 
 /**
  * Bundled mission design document in the Figma-like JSON format: three pages

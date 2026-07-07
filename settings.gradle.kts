@@ -35,6 +35,7 @@ plugins {
 include(":androidApp")
 include(":desktopApp")
 include(":engine:backend-compose")
+include(":engine:frontend")
 include(":engine:ir")
 include(":shared")
 include(":webApp")

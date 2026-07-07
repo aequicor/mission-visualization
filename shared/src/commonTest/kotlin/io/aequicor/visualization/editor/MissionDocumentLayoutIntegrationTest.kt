@@ -1,6 +1,6 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.designdoc.data.MissionDesignJson
+import io.aequicor.visualization.editor.data.MissionDesignJson
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver

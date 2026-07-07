@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.domain.repository
+package io.aequicor.visualization.editor.domain
 
 /** Access to design-document sources; implementations live in the data layer. */
 interface DesignDocumentRepository {
