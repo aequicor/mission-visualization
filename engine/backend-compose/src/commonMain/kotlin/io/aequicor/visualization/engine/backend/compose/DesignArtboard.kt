@@ -20,6 +20,7 @@ import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
+import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
 
 /**
  * Renders the first top-level frame of a page through the resolve -> layout -> draw
@@ -28,6 +29,16 @@ import io.aequicor.visualization.engine.ir.resolve.DesignResolver
  * The canvas draws in document pixels under a uniform zoom that fits the frame into
  * the composable bounds; [onLayoutComputed] reports the laid-out tree (document
  * coordinates) so the inspector can show computed geometry.
+ *
+ * [overlayOptions] toggles editor overlays (guides, layout grids, annotation pins)
+ * drawn over the content; all off by default.
+ *
+ * Tap precedence: when [onInteraction] is provided and the tapped node — or the
+ * nearest ancestor — carries an `onClick`/`onPress` interaction, the interaction
+ * preview wins: [onInteraction] is invoked with that interaction and its box, and
+ * [onSelectNode] is NOT called for that tap. Taps on nodes without a click-like
+ * interaction, or when [onInteraction] is null, keep the selection behavior
+ * unchanged. No prototype state machine runs — the callback only reports.
  */
 @Composable
 fun DesignArtboard(
@@ -38,6 +49,8 @@ fun DesignArtboard(
     deviceHeight: Double? = null,
     selectedNodeId: String = "",
     showSelection: Boolean = true,
+    overlayOptions: DesignOverlayOptions = DesignOverlayOptions(),
+    onInteraction: ((ResolvedInteraction, LayoutBox) -> Unit)? = null,
     onSelectNode: (String) -> Unit = {},
     onLayoutComputed: (LayoutBox?) -> Unit = {},
 ) {
@@ -56,6 +69,7 @@ fun DesignArtboard(
         resolved?.let { engine.layout(it, deviceWidth, deviceHeight) }
     }
     val currentOnSelectNode = rememberUpdatedState(onSelectNode)
+    val currentOnInteraction = rememberUpdatedState(onInteraction)
     val currentOnLayoutComputed = rememberUpdatedState(onLayoutComputed)
     LaunchedEffect(layoutBox) {
         currentOnLayoutComputed.value(layoutBox)
@@ -75,6 +89,15 @@ fun DesignArtboard(
                     (offset.x / zoom).toDouble(),
                     (offset.y / zoom).toDouble(),
                 ) ?: layoutBox
+                // Interaction preview wins over selection when a callback is provided.
+                val interactionCallback = currentOnInteraction.value
+                if (interactionCallback != null) {
+                    val clickable = clickableInteractionAt(layoutBox, hit)
+                    if (clickable != null) {
+                        interactionCallback(clickable.first, clickable.second)
+                        return@detectTapGestures
+                    }
+                }
                 currentOnSelectNode.value(selectableNodeId(hit))
             }
         },
@@ -83,6 +106,9 @@ fun DesignArtboard(
         if (zoom <= 0f) return@Canvas
         scale(zoom, zoom, pivot = Offset.Zero) {
             drawDesignBox(layoutBox, drawDesignContext)
+            if (overlayOptions.anyEnabled) {
+                drawDesignOverlays(layoutBox, overlayOptions, drawDesignContext, hairline = 1f / zoom)
+            }
         }
         if (showSelection && selectedNodeId.isNotBlank() && selectedNodeId != layoutBox.node.sourceId) {
             layoutBox.findBySourceId(selectedNodeId)?.let { selection ->

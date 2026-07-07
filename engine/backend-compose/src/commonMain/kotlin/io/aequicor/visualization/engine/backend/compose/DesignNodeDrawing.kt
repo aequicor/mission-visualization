@@ -16,19 +16,27 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.GradientKind
+import io.aequicor.visualization.engine.ir.model.ImageScaleMode
+import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.resolve.ResolvedCornerRadius
 import io.aequicor.visualization.engine.ir.resolve.ResolvedEffect
+import io.aequicor.visualization.engine.ir.resolve.ResolvedMedia
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -92,6 +100,8 @@ private fun DrawScope.drawDesignBoxContent(box: LayoutBox, context: DesignDrawCo
         }
     }
 
+    node.media?.let { media -> drawMediaPlaceholder(box, media, outline, context) }
+
     node.text?.let { text ->
         val color = node.fills.firstSolidColor() ?: Color.Black
         val layout = measureResolvedText(
@@ -113,14 +123,63 @@ private fun DrawScope.drawDesignBoxContent(box: LayoutBox, context: DesignDrawCo
     if (box.children.isNotEmpty()) {
         if (node.layout.clipsContent) {
             clipPath(outline) {
-                box.children.forEach { child -> drawDesignBox(child, context) }
+                drawChildBoxes(box, context)
             }
         } else {
-            box.children.forEach { child -> drawDesignBox(child, context) }
+            drawChildBoxes(box, context)
         }
     }
 
+    if (node.type == "table") drawTableDecorations(box)
+
     node.strokes?.let { strokes -> drawStrokes(strokes, box) }
+}
+
+/**
+ * Draws children in document order with the mask approximation: a sibling
+ * carrying a [io.aequicor.visualization.engine.ir.resolve.ResolvedMask] is not
+ * painted itself — its geometry clips the siblings it applies to (explicit
+ * `appliesTo` ids, else every following sibling). Alpha and luminance masks
+ * both reduce to this shape clip; no alpha sampling happens.
+ */
+private fun DrawScope.drawChildBoxes(box: LayoutBox, context: DesignDrawContext) {
+    val children = box.children
+    val masks = children.withIndex().filter { (_, child) -> child.node.mask != null }
+    if (masks.isEmpty()) {
+        children.forEach { child -> drawDesignBox(child, context) }
+        return
+    }
+    children.forEachIndexed { index, child ->
+        if (child.node.mask != null) return@forEachIndexed // clip geometry only, never painted
+        val clips = masks
+            .filter { (maskIndex, mask) -> maskAppliesTo(mask, maskIndex, child, index) }
+            .map { (_, mask) -> maskClipPath(mask) }
+        drawClippedBy(clips, 0) { drawDesignBox(child, context) }
+    }
+}
+
+private fun DrawScope.drawClippedBy(clips: List<Path>, index: Int, block: DrawScope.() -> Unit) {
+    if (index >= clips.size) {
+        block()
+        return
+    }
+    clipPath(clips[index]) { drawClippedBy(clips, index + 1, block) }
+}
+
+/** Clip geometry of a mask node; the shape choice lives in [maskShapeFor]. */
+private fun maskClipPath(mask: LayoutBox): Path {
+    val rect = Rect(
+        mask.x.toFloat(),
+        mask.y.toFloat(),
+        mask.right.toFloat(),
+        mask.bottom.toFloat(),
+    )
+    return when (maskShapeFor(mask.node)) {
+        MaskShape.RoundedRect -> roundedRectPath(rect, mask.node.cornerRadius)
+        MaskShape.Ellipse -> Path().apply { addOval(rect) }
+        MaskShape.VectorPath -> vectorPath(mask, rect)
+        MaskShape.BoundingBox -> Path().apply { addRect(rect) }
+    }
 }
 
 private fun DrawScope.drawResolvedPaint(
@@ -169,6 +228,197 @@ private fun DrawScope.drawInnerShadow(shadow: ResolvedEffect.InnerShadow, outlin
             )
         }
     }
+}
+
+// --- Media placeholder -------------------------------------------------------
+
+private val MediaAdornColor = Color(0xFF5B6B7F)
+private val MediaCheckerColor = Color(0xFFC7D2DE)
+private val MediaGlyphInk = Color(0xCC172033)
+private const val MediaCheckerCell = 8.0
+private const val MediaLabelFontSize = 9.0
+
+/**
+ * Adornments over the flat media placeholder fill: the notional crop window per
+ * `fillMode` + `focalPoint` (no decoding — [mediaContentRect] only projects the
+ * intrinsic size), a subtle focal crosshair, the asset id label, a checker
+ * pattern for `Tile`, and a play glyph (+ poster label) for video.
+ */
+private fun DrawScope.drawMediaPlaceholder(
+    box: LayoutBox,
+    media: ResolvedMedia,
+    outline: Path,
+    context: DesignDrawContext,
+) {
+    val bounds = RenderRect(box.x, box.y, box.width, box.height)
+    val focalX = media.focalPoint?.x ?: 0.5
+    val focalY = media.focalPoint?.y ?: 0.5
+    clipPath(outline) {
+        when (media.fillMode) {
+            ImageScaleMode.Tile -> checkerDarkCells(bounds, MediaCheckerCell).forEach { cell ->
+                drawRect(
+                    color = MediaCheckerColor,
+                    topLeft = Offset(cell.x.toFloat(), cell.y.toFloat()),
+                    size = Size(cell.width.toFloat(), cell.height.toFloat()),
+                )
+            }
+            ImageScaleMode.Fill,
+            ImageScaleMode.Crop,
+            ImageScaleMode.Fit,
+            ImageScaleMode.Stretch,
+            -> {
+                val content = mediaContentRect(
+                    box = bounds,
+                    intrinsicWidth = media.intrinsicWidth,
+                    intrinsicHeight = media.intrinsicHeight,
+                    fillMode = media.fillMode,
+                    focalX = focalX,
+                    focalY = focalY,
+                )
+                if (content != bounds) drawCropWindow(content)
+                val (markerX, markerY) = focalMarker(content, focalX, focalY)
+                drawFocalCrosshair(markerX, markerY)
+            }
+        }
+        if (media.kind == MediaKind.Video) drawPlayGlyph(box)
+        drawMediaLabel(box, media, context)
+    }
+}
+
+private fun DrawScope.drawCropWindow(content: RenderRect) {
+    drawRect(
+        color = MediaAdornColor,
+        topLeft = Offset(content.x.toFloat(), content.y.toFloat()),
+        size = Size(content.width.toFloat(), content.height.toFloat()),
+        alpha = 0.4f,
+        style = Stroke(
+            width = 1f,
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 3f)),
+        ),
+    )
+}
+
+private fun DrawScope.drawFocalCrosshair(x: Double, y: Double) {
+    val center = Offset(x.toFloat(), y.toFloat())
+    val arm = 5f
+    drawLine(
+        color = MediaAdornColor,
+        start = Offset(center.x - arm, center.y),
+        end = Offset(center.x + arm, center.y),
+        strokeWidth = 1f,
+        alpha = 0.6f,
+    )
+    drawLine(
+        color = MediaAdornColor,
+        start = Offset(center.x, center.y - arm),
+        end = Offset(center.x, center.y + arm),
+        strokeWidth = 1f,
+        alpha = 0.6f,
+    )
+    drawCircle(
+        color = MediaAdornColor,
+        radius = 2.5f,
+        center = center,
+        alpha = 0.6f,
+        style = Stroke(width = 1f),
+    )
+}
+
+private fun DrawScope.drawPlayGlyph(box: LayoutBox) {
+    val radius = (min(box.width, box.height) * 0.18).coerceIn(6.0, 28.0).toFloat()
+    val center = Offset(
+        (box.x + box.width / 2).toFloat(),
+        (box.y + box.height / 2).toFloat(),
+    )
+    drawCircle(color = MediaGlyphInk, radius = radius, center = center)
+    val triangle = Path().apply {
+        moveTo(center.x - radius * 0.35f, center.y - radius * 0.5f)
+        lineTo(center.x - radius * 0.35f, center.y + radius * 0.5f)
+        lineTo(center.x + radius * 0.55f, center.y)
+        close()
+    }
+    drawPath(triangle, Color.White)
+}
+
+private fun DrawScope.drawMediaLabel(
+    box: LayoutBox,
+    media: ResolvedMedia,
+    context: DesignDrawContext,
+) {
+    if (box.width < 32.0 || box.height < 16.0) return
+    val label = buildString {
+        append(media.assetId)
+        if (media.kind == MediaKind.Video && media.posterAssetId.isNotEmpty()) {
+            append(" · poster: ").append(media.posterAssetId)
+        }
+    }
+    if (label.isBlank()) return
+    val maxWidth = ceil(box.width - 8.0).toInt().coerceAtLeast(1)
+    val layout = context.textMeasurer.measure(
+        text = AnnotatedString(label),
+        style = TextStyle(
+            color = MediaAdornColor,
+            fontSize = docPxToSp(MediaLabelFontSize, context.density),
+        ),
+        overflow = TextOverflow.Ellipsis,
+        maxLines = 1,
+        constraints = Constraints(maxWidth = maxWidth),
+    )
+    drawText(
+        textLayoutResult = layout,
+        topLeft = Offset(
+            (box.x + 4.0).toFloat(),
+            (box.bottom - layout.size.height - 3.0).toFloat(),
+        ),
+    )
+}
+
+// --- Table hairlines -----------------------------------------------------------
+
+private val TableHairlineColor = Color(0x33172033)
+private val TableHeaderTint = Color(0x141F5FA8)
+
+/**
+ * Minimal table dressing for nodes lowered from `table`: 1px hairlines on the
+ * grid track boundaries (derived from laid-out cell edges, lines centered in
+ * the gutters) plus a translucent tint over the first grid row as the header
+ * band. No per-cell alignment logic.
+ */
+private fun DrawScope.drawTableDecorations(box: LayoutBox) {
+    val cells = box.children.filter { !it.node.layoutChild.absolute }
+    if (cells.isEmpty()) return
+    val layout = box.node.layout
+
+    val firstRow = cells.mapNotNull { it.node.gridPlacement?.row }.minOrNull()
+    val headerBottom = firstRow?.let { row ->
+        cells.filter { it.node.gridPlacement?.row == row }.maxOfOrNull { it.bottom }
+    }
+    if (headerBottom != null && headerBottom > box.y) {
+        drawRect(
+            color = TableHeaderTint,
+            topLeft = Offset(box.x.toFloat(), box.y.toFloat()),
+            size = Size(box.width.toFloat(), (headerBottom - box.y).toFloat()),
+        )
+    }
+
+    interiorTrackBoundaries(cells.map { it.x }, box.x + layout.paddingLeft, layout.columnGap)
+        .forEach { x ->
+            drawLine(
+                color = TableHairlineColor,
+                start = Offset(x.toFloat(), box.y.toFloat()),
+                end = Offset(x.toFloat(), box.bottom.toFloat()),
+                strokeWidth = 1f,
+            )
+        }
+    interiorTrackBoundaries(cells.map { it.y }, box.y + layout.paddingTop, layout.rowGap)
+        .forEach { y ->
+            drawLine(
+                color = TableHairlineColor,
+                start = Offset(box.x.toFloat(), y.toFloat()),
+                end = Offset(box.right.toFloat(), y.toFloat()),
+                strokeWidth = 1f,
+            )
+        }
 }
 
 private fun ResolvedPaint.Gradient.toBrush(box: LayoutBox): Brush {

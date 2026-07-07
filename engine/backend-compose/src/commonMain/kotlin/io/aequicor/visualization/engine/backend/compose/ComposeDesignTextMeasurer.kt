@@ -44,6 +44,19 @@ class ComposeDesignTextMeasurer(
         )
         return MeasuredText(result.size.width.toDouble(), result.size.height.toDouble())
     }
+
+    /** Real first-line baseline from the measured paragraph, not the 0.8em default. */
+    override fun firstBaseline(text: ResolvedText, maxWidth: Double?): Double {
+        val result = measureResolvedText(
+            measurer = textMeasurer,
+            density = density,
+            text = text,
+            color = Color.Black,
+            maxWidth = maxWidth,
+        )
+        if (result.lineCount == 0) return text.style.fontSize * 0.8
+        return result.getLineBaseline(0).toDouble()
+    }
 }
 
 internal fun measureResolvedText(
