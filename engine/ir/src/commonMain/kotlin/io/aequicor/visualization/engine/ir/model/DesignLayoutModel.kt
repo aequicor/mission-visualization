@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.domain.model
+package io.aequicor.visualization.engine.ir.model
 
 /** `fixed` — from `size`; `hug` — wrap content; `fill` — stretch inside the parent. */
 enum class SizingMode { Fixed, Hug, Fill }

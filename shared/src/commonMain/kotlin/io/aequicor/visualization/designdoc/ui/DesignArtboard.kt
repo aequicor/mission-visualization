@@ -16,10 +16,10 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.rememberTextMeasurer
-import io.aequicor.visualization.designdoc.domain.layout.DesignLayoutEngine
-import io.aequicor.visualization.designdoc.domain.layout.LayoutBox
-import io.aequicor.visualization.designdoc.domain.model.DesignDocument
-import io.aequicor.visualization.designdoc.domain.resolve.DesignResolver
+import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
+import io.aequicor.visualization.engine.ir.layout.LayoutBox
+import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 
 /**
  * Renders the first top-level frame of a page through the resolve -> layout -> draw

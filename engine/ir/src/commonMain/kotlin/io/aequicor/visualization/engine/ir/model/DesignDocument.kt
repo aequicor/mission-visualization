@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.domain.model
+package io.aequicor.visualization.engine.ir.model
 
 /**
  * Root of a Figma-like design document. Top-level dictionaries map id -> entity;

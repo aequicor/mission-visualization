@@ -1,14 +1,14 @@
-package io.aequicor.visualization.designdoc.parser
+package io.aequicor.visualization.engine.ir.serialization
 
-import io.aequicor.visualization.designdoc.domain.model.Bindable
-import io.aequicor.visualization.designdoc.domain.model.DesignGap
-import io.aequicor.visualization.designdoc.domain.model.DesignNodeKind
-import io.aequicor.visualization.designdoc.domain.model.DesignPaint
-import io.aequicor.visualization.designdoc.domain.model.DesignSeverity
-import io.aequicor.visualization.designdoc.domain.model.LayoutMode
-import io.aequicor.visualization.designdoc.domain.model.SizingMode
-import io.aequicor.visualization.designdoc.domain.parser.DesignParseResult
-import io.aequicor.visualization.designdoc.domain.parser.parseDesignDocument
+import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.DesignGap
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.serialization.DesignParseResult
+import io.aequicor.visualization.engine.ir.serialization.parseDesignDocument
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs

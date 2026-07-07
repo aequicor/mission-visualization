@@ -1,11 +1,11 @@
-package io.aequicor.visualization.designdoc.resolve
+package io.aequicor.visualization.engine.ir.resolve
 
-import io.aequicor.visualization.designdoc.domain.model.DesignColor
-import io.aequicor.visualization.designdoc.domain.parser.DesignParseResult
-import io.aequicor.visualization.designdoc.domain.parser.parseDesignDocument
-import io.aequicor.visualization.designdoc.domain.resolve.DesignResolver
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedNode
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedPaint
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.serialization.DesignParseResult
+import io.aequicor.visualization.engine.ir.serialization.parseDesignDocument
+import io.aequicor.visualization.engine.ir.resolve.DesignResolver
+import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
+import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -296,7 +296,7 @@ class DesignResolverTest {
         assertEquals(DesignColor.fromHex("#FF8800"), tile.solidFill(), "instance-authored fills win")
         assertEquals(16.0, tile.cornerRadius.topLeft, "instance-authored radius wins")
         assertEquals(
-            io.aequicor.visualization.designdoc.domain.model.SizingMode.Fixed,
+            io.aequicor.visualization.engine.ir.model.SizingMode.Fixed,
             tile.sizing.horizontal,
             "instance-authored sizing wins over the component root",
         )

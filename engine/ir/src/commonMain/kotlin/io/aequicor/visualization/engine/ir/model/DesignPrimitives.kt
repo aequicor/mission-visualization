@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.domain.model
+package io.aequicor.visualization.engine.ir.model
 
 /**
  * A scalar that is either a literal value, a design-token reference (`{"$var": id}`),

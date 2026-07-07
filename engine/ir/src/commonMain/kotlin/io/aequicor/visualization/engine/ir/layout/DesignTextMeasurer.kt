@@ -1,6 +1,6 @@
-package io.aequicor.visualization.designdoc.domain.layout
+package io.aequicor.visualization.engine.ir.layout
 
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedText
+import io.aequicor.visualization.engine.ir.resolve.ResolvedText
 
 /**
  * Platform text measurement injected into the layout engine so the engine itself

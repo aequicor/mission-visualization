@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.domain.model
+package io.aequicor.visualization.engine.ir.model
 
 /**
  * Everything is a node in the tree — page frame, text, icon, component instance —

@@ -1,7 +1,7 @@
-package io.aequicor.visualization.designdoc.domain.parser
+package io.aequicor.visualization.engine.ir.serialization
 
-import io.aequicor.visualization.designdoc.domain.model.DesignDiagnostic
-import io.aequicor.visualization.designdoc.domain.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
+import io.aequicor.visualization.engine.ir.model.DesignDocument
 
 sealed interface DesignParseResult {
     val diagnostics: List<DesignDiagnostic>

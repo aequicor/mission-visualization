@@ -1,7 +1,7 @@
 package io.aequicor.visualization.designdoc.domain.usecase
 
-import io.aequicor.visualization.designdoc.domain.parser.DesignParseResult
-import io.aequicor.visualization.designdoc.domain.parser.parseDesignDocument
+import io.aequicor.visualization.engine.ir.serialization.DesignParseResult
+import io.aequicor.visualization.engine.ir.serialization.parseDesignDocument
 import io.aequicor.visualization.designdoc.domain.repository.DesignDocumentRepository
 
 /** Loads and parses the bundled mission design document. */

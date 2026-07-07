@@ -1,27 +1,27 @@
-package io.aequicor.visualization.designdoc.domain.resolve
+package io.aequicor.visualization.engine.ir.resolve
 
-import io.aequicor.visualization.designdoc.domain.model.AlignItems
-import io.aequicor.visualization.designdoc.domain.model.DesignColor
-import io.aequicor.visualization.designdoc.domain.model.DesignConstraints
-import io.aequicor.visualization.designdoc.domain.model.DesignLayoutChild
-import io.aequicor.visualization.designdoc.domain.model.DesignNodeKind
-import io.aequicor.visualization.designdoc.domain.model.DesignPoint
-import io.aequicor.visualization.designdoc.domain.model.DesignScroll
-import io.aequicor.visualization.designdoc.domain.model.DesignSize
-import io.aequicor.visualization.designdoc.domain.model.DesignSizing
-import io.aequicor.visualization.designdoc.domain.model.GradientKind
-import io.aequicor.visualization.designdoc.domain.model.GridPlacement
-import io.aequicor.visualization.designdoc.domain.model.GridTrack
-import io.aequicor.visualization.designdoc.domain.model.ImageScaleMode
-import io.aequicor.visualization.designdoc.domain.model.JustifyContent
-import io.aequicor.visualization.designdoc.domain.model.LayoutMode
-import io.aequicor.visualization.designdoc.domain.model.StrokeAlign
-import io.aequicor.visualization.designdoc.domain.model.TextAlignHorizontal
-import io.aequicor.visualization.designdoc.domain.model.TextAlignVertical
-import io.aequicor.visualization.designdoc.domain.model.TextAutoResize
-import io.aequicor.visualization.designdoc.domain.model.TextCase
-import io.aequicor.visualization.designdoc.domain.model.TextDecorationKind
-import io.aequicor.visualization.designdoc.domain.model.TextTruncate
+import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignConstraints
+import io.aequicor.visualization.engine.ir.model.DesignLayoutChild
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignScroll
+import io.aequicor.visualization.engine.ir.model.DesignSize
+import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.GradientKind
+import io.aequicor.visualization.engine.ir.model.GridPlacement
+import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.ImageScaleMode
+import io.aequicor.visualization.engine.ir.model.JustifyContent
+import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.StrokeAlign
+import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
+import io.aequicor.visualization.engine.ir.model.TextAlignVertical
+import io.aequicor.visualization.engine.ir.model.TextAutoResize
+import io.aequicor.visualization.engine.ir.model.TextCase
+import io.aequicor.visualization.engine.ir.model.TextDecorationKind
+import io.aequicor.visualization.engine.ir.model.TextTruncate
 
 /**
  * Node tree after variable, style, prop, and instance resolution: every value is

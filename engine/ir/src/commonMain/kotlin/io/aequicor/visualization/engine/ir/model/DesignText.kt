@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.domain.model
+package io.aequicor.visualization.engine.ir.model
 
 /**
  * Text style; every field is optional so the same type doubles as a partial override

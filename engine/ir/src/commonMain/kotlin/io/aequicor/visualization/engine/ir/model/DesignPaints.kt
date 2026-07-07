@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.domain.model
+package io.aequicor.visualization.engine.ir.model
 
 /** One paint layer; `fills` is always a bottom-to-top list of layers. */
 sealed interface DesignPaint {

@@ -14,15 +14,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
-import io.aequicor.visualization.designdoc.domain.layout.DesignTextMeasurer
-import io.aequicor.visualization.designdoc.domain.layout.MeasuredText
-import io.aequicor.visualization.designdoc.domain.model.DesignColor
-import io.aequicor.visualization.designdoc.domain.model.TextAlignHorizontal
-import io.aequicor.visualization.designdoc.domain.model.TextCase
-import io.aequicor.visualization.designdoc.domain.model.TextDecorationKind
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedPaint
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedText
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedTextStyle
+import io.aequicor.visualization.engine.ir.layout.DesignTextMeasurer
+import io.aequicor.visualization.engine.ir.layout.MeasuredText
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
+import io.aequicor.visualization.engine.ir.model.TextCase
+import io.aequicor.visualization.engine.ir.model.TextDecorationKind
+import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
+import io.aequicor.visualization.engine.ir.resolve.ResolvedText
+import io.aequicor.visualization.engine.ir.resolve.ResolvedTextStyle
 import kotlin.math.ceil
 
 /**

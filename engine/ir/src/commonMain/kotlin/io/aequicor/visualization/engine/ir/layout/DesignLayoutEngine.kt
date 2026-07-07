@@ -1,14 +1,14 @@
-package io.aequicor.visualization.designdoc.domain.layout
+package io.aequicor.visualization.engine.ir.layout
 
-import io.aequicor.visualization.designdoc.domain.model.AlignItems
-import io.aequicor.visualization.designdoc.domain.model.GridTrack
-import io.aequicor.visualization.designdoc.domain.model.HorizontalConstraint
-import io.aequicor.visualization.designdoc.domain.model.JustifyContent
-import io.aequicor.visualization.designdoc.domain.model.LayoutMode
-import io.aequicor.visualization.designdoc.domain.model.SizingMode
-import io.aequicor.visualization.designdoc.domain.model.TextAutoResize
-import io.aequicor.visualization.designdoc.domain.model.VerticalConstraint
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedNode
+import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
+import io.aequicor.visualization.engine.ir.model.JustifyContent
+import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.TextAutoResize
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin

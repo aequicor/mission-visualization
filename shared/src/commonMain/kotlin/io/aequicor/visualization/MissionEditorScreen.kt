@@ -52,17 +52,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.designdoc.data.DefaultDesignDocumentRepository
-import io.aequicor.visualization.designdoc.domain.layout.LayoutBox
-import io.aequicor.visualization.designdoc.domain.model.DesignColor
-import io.aequicor.visualization.designdoc.domain.model.DesignDocument
-import io.aequicor.visualization.designdoc.domain.model.DesignNode
-import io.aequicor.visualization.designdoc.domain.model.DesignPage
-import io.aequicor.visualization.designdoc.domain.model.HorizontalConstraint
-import io.aequicor.visualization.designdoc.domain.model.LayoutMode
-import io.aequicor.visualization.designdoc.domain.model.SizingMode
-import io.aequicor.visualization.designdoc.domain.model.VerticalConstraint
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedEffect
-import io.aequicor.visualization.designdoc.domain.resolve.ResolvedPaint
+import io.aequicor.visualization.engine.ir.layout.LayoutBox
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.DesignPage
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
+import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.engine.ir.resolve.ResolvedEffect
+import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.designdoc.domain.usecase.LoadDesignDocumentUseCase
 import io.aequicor.visualization.designdoc.presentation.DesignEditorIntent
 import io.aequicor.visualization.designdoc.presentation.DesignEditorState
@@ -1396,12 +1396,12 @@ private fun Double.formatPx(): String {
     return if (abs(this - rounded) < 0.05) rounded.toString() else ((this * 10).roundToInt() / 10.0).toString()
 }
 
-private fun io.aequicor.visualization.designdoc.domain.model.DesignColor.toHex(): String {
+private fun io.aequicor.visualization.engine.ir.model.DesignColor.toHex(): String {
     fun component(value: Int): String = value.toString(16).uppercase().padStart(2, '0')
     return "#${component(red)}${component(green)}${component(blue)}"
 }
 
-private fun io.aequicor.visualization.designdoc.domain.model.DesignColor.toComposeColorOrWhite(): Color =
+private fun io.aequicor.visualization.engine.ir.model.DesignColor.toComposeColorOrWhite(): Color =
     Color(red = red / 255f, green = green / 255f, blue = blue / 255f, alpha = alpha / 255f)
 
 private fun SizingMode.label(): String =

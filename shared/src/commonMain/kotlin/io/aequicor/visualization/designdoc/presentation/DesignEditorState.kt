@@ -1,22 +1,22 @@
 package io.aequicor.visualization.designdoc.presentation
 
-import io.aequicor.visualization.designdoc.domain.model.Bindable
-import io.aequicor.visualization.designdoc.domain.model.DesignColor
-import io.aequicor.visualization.designdoc.domain.model.DesignCornerRadius
-import io.aequicor.visualization.designdoc.domain.model.DesignDiagnostic
-import io.aequicor.visualization.designdoc.domain.model.DesignDocument
-import io.aequicor.visualization.designdoc.domain.model.DesignNode
-import io.aequicor.visualization.designdoc.domain.model.DesignPaint
-import io.aequicor.visualization.designdoc.domain.model.DesignPoint
-import io.aequicor.visualization.designdoc.domain.model.DesignSize
-import io.aequicor.visualization.designdoc.domain.model.DesignSizing
-import io.aequicor.visualization.designdoc.domain.model.DesignStrokes
-import io.aequicor.visualization.designdoc.domain.model.HorizontalConstraint
-import io.aequicor.visualization.designdoc.domain.model.SizingMode
-import io.aequicor.visualization.designdoc.domain.model.VerticalConstraint
-import io.aequicor.visualization.designdoc.domain.model.bindable
-import io.aequicor.visualization.designdoc.domain.parser.DesignParseResult
-import io.aequicor.visualization.designdoc.domain.parser.documentOrNull
+import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
+import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
+import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignSize
+import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.DesignStrokes
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
+import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.engine.ir.model.bindable
+import io.aequicor.visualization.engine.ir.serialization.DesignParseResult
+import io.aequicor.visualization.engine.ir.serialization.documentOrNull
 
 /**
  * Immutable editor state over a parsed design document. Selection is tracked by
