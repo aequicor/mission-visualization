@@ -68,7 +68,7 @@ import io.aequicor.visualization.designdoc.presentation.DesignEditorIntent
 import io.aequicor.visualization.designdoc.presentation.DesignEditorState
 import io.aequicor.visualization.designdoc.presentation.createDesignEditorState
 import io.aequicor.visualization.designdoc.presentation.reduceDesignEditor
-import io.aequicor.visualization.designdoc.ui.DesignArtboard
+import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import kotlin.math.abs
 import kotlin.math.roundToInt
 

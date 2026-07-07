@@ -52,6 +52,7 @@ kotlin {
         }
         commonMain.dependencies {
             api(projects.engine.ir)
+            implementation(projects.engine.backendCompose)
 
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)

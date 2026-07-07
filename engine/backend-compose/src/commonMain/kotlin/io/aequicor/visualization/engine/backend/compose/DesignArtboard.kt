@@ -1,4 +1,4 @@
-package io.aequicor.visualization.designdoc.ui
+package io.aequicor.visualization.engine.backend.compose
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
