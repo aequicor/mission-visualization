@@ -1,49 +1,84 @@
 # Mission Visualization
 
 Mission Visualization is a Kotlin Multiplatform + Compose Multiplatform library
-and demo application for visualizing screens and user scenarios from
-agent-authored Markdown. It is intended to work without Figma: agents describe a
-strict `mission-visualization` YAML block, and the app renders polished mockups,
-lets reviewers select components, attach comments, and generate deterministic
-design-edit prompts.
+and demo application for visualizing agent-authored UI documents. Agents write a
+strict standalone `.mv.yaml` document, the library parses and validates it into a
+typed IR, and the app renders a Compose preview with Canvas overlays for
+selection, comments, and scenario flow.
 
 ## Current Shape
 
-- `shared` contains the reusable KMP library, parser, domain model, reducer, and
-  Compose UI.
+- `shared` contains the reusable KMP parser, IR model, validator, reducer, and
+  Compose renderer.
 - `desktopApp` and `webApp` are the primary MVP demos.
-- `example` is a consumer module plus ready-to-paste Markdown examples.
+- `example` is a consumer module plus ready-to-paste `.mv.yaml` examples.
 - `androidApp` and `iosApp` remain thin launch wrappers around the shared UI.
-- The future MCP integration should call the same `VisualizationCommand` API
-  that the UI uses today.
+- Future integrations should call the same `UiCommand` and `loadUiDocument`
+  APIs that the UI uses today.
 
-## Markdown Contract
+## Engine Packages
 
-Each document must contain exactly one fenced block:
+The UI engine is split by pipeline stage:
 
-````markdown
-```mission-visualization
+- `ui_engine.mv_yaml_source`: bundled `.mv.yaml` sample source.
+- `ui_engine.parser`: standalone YAML parser and syntax diagnostics.
+- `ui_engine.ui_document_ir`: `UiDocument` IR, diagnostics, and helpers.
+- `ui_engine.validator`: semantic validation and document loading pipeline.
+- `ui_engine.runtime_state`: commands, state transitions, selection, comments,
+  input state, and prompt generation.
+- `ui_engine.compose_render_engine`: Compose render engine, renderer registry,
+  shared render contracts, and preview wiring.
+- `ui_engine.compose_ui`: application shell around source editor, preview, and
+  inspector panes.
+- `ui_engine.canvas_overlays`: overlay drawing for selection, comments, and
+  scenario links.
+- `ui_engine.components.<component>`: one isolated renderer provider per UI
+  component type.
+
+## UI Document Contract
+
+Each document is standalone YAML:
+
+```yaml
 version: 1
-title: Example Mission
+title: Example UI
 screens:
   - id: dashboard
     title: Dashboard
-    components:
+    layout:
+      type: column
+      padding: lg
+      gap: md
+    children:
       - id: primary-action
         type: button
-        text: Review scenario
-scenarios:
+        style:
+          variant: primary
+        props:
+          text: Review scenario
+        action:
+          type: navigate
+          target: review
   - id: review
+    title: Review
+    children:
+      - id: review-card
+        type: card
+        props:
+          title: Generated prompt
+          body: Review the generated design patch.
+scenarios:
+  - id: review-flow
     title: Review flow
     steps:
       - screenId: dashboard
-        componentId: primary-action
+        nodeId: primary-action
         action: Select the primary action.
 ```
-````
 
-The MVP YAML subset supports maps, lists, strings, numbers, booleans, and null.
-It intentionally does not support anchors, aliases, tags, or multiline scalars.
+The YAML subset supports maps, lists, strings, numbers, booleans, and null. It
+intentionally does not support anchors, aliases, tags, or multiline scalars.
+The schema artifact lives at `shared/src/commonMain/resources/schema/ui-document.schema.json`.
 
 ## Running
 

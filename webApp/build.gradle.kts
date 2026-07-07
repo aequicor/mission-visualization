@@ -19,10 +19,17 @@ kotlin {
     }
 
     sourceSets {
-        commonMain.dependencies {
-            implementation(projects.shared)
+        commonMain {
+            kotlin.srcDir("../appPresentation/src/commonMain/kotlin")
 
-            implementation(libs.compose.ui)
+            dependencies {
+                implementation(projects.shared)
+
+                implementation(libs.compose.runtime)
+                implementation(libs.compose.foundation)
+                implementation(libs.compose.material3)
+                implementation(libs.compose.ui)
+            }
         }
     }
 }

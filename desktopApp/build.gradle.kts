@@ -6,12 +6,24 @@ plugins {
     alias(libs.plugins.composeCompiler)
 }
 
+kotlin {
+    sourceSets {
+        main {
+            kotlin.srcDir("../appPresentation/src/commonMain/kotlin")
+        }
+    }
+}
+
 dependencies {
     implementation(projects.shared)
 
     implementation(compose.desktop.currentOs)
     implementation(libs.kotlinx.coroutinesSwing)
 
+    implementation(libs.compose.runtime)
+    implementation(libs.compose.foundation)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.ui)
     implementation(libs.compose.uiToolingPreview)
 }
 
