@@ -21,7 +21,7 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "io.aequicor.visualization"
+            packageName = "mission-visualization"
             packageVersion = "1.0.0"
         }
     }

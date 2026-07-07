@@ -1,48 +1,61 @@
-This is a Kotlin Multiplatform project targeting Android, iOS, Web, Desktop (JVM).
+# Mission Visualization
 
-* [/iosApp](./iosApp/iosApp) contains an iOS application. Even if you’re sharing your UI with Compose Multiplatform,
-  you need this entry point for your iOS app. This is also where you should add SwiftUI code for your project.
+Mission Visualization is a Kotlin Multiplatform + Compose Multiplatform library
+and demo application for visualizing screens and user scenarios from
+agent-authored Markdown. It is intended to work without Figma: agents describe a
+strict `mission-visualization` YAML block, and the app renders polished mockups,
+lets reviewers select components, attach comments, and generate deterministic
+design-edit prompts.
 
-* [/shared](./shared/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-    - [commonMain](./shared/src/commonMain/kotlin) is for code that’s common for all targets.
-    - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-      For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-      the [iosMain](./shared/src/iosMain/kotlin) folder would be the right place for such calls.
-      Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./shared/src/jvmMain/kotlin)
-      folder is the appropriate location.
+## Current Shape
 
-### Running the apps
+- `shared` contains the reusable KMP library, parser, domain model, reducer, and
+  Compose UI.
+- `desktopApp` and `webApp` are the primary MVP demos.
+- `example` is a consumer module plus ready-to-paste Markdown examples.
+- `androidApp` and `iosApp` remain thin launch wrappers around the shared UI.
+- The future MCP integration should call the same `VisualizationCommand` API
+  that the UI uses today.
 
-Use the run configurations provided by the run widget in your IDE's toolbar. You can also use these commands and
-options:
+## Markdown Contract
 
-- Android app: `./gradlew :androidApp:assembleDebug`
-- Desktop app:
-    - Hot reload: `./gradlew :desktopApp:hotRun --auto`
-    - Standard run: `./gradlew :desktopApp:run`
-- Web app:
-    - Wasm target (faster, modern browsers): `./gradlew :webApp:wasmJsBrowserDevelopmentRun`
-    - JS target (slower, supports older browsers): `./gradlew :webApp:jsBrowserDevelopmentRun`
-- iOS app: open the [/iosApp](./iosApp) directory in Xcode and run it from there.
+Each document must contain exactly one fenced block:
 
-### Running tests
+````markdown
+```mission-visualization
+version: 1
+title: Example Mission
+screens:
+  - id: dashboard
+    title: Dashboard
+    components:
+      - id: primary-action
+        type: button
+        text: Review scenario
+scenarios:
+  - id: review
+    title: Review flow
+    steps:
+      - screenId: dashboard
+        componentId: primary-action
+        action: Select the primary action.
+```
+````
 
-Use the run button in your IDE's editor gutter, or run tests using Gradle tasks:
+The MVP YAML subset supports maps, lists, strings, numbers, booleans, and null.
+It intentionally does not support anchors, aliases, tags, or multiline scalars.
 
-- Android tests: `./gradlew :shared:testAndroidHostTest`
-- Desktop tests: `./gradlew :shared:jvmTest`
-- Web tests:
-    - Wasm target: `./gradlew :shared:wasmJsTest`
-    - JS target: `./gradlew :shared:jsTest`
-- iOS tests: `./gradlew :shared:iosSimulatorArm64Test`
+## Running
 
----
+- Desktop: `./gradlew :desktopApp:run`
+- Web Wasm: `./gradlew :webApp:wasmJsBrowserDevelopmentRun`
+- Example Desktop: `./gradlew :example:run`
+- Example Web Wasm: `./gradlew :example:wasmJsBrowserDevelopmentRun`
+- Android: `./gradlew :androidApp:assembleDebug`
 
-Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html),
-[Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform/#compose-multiplatform),
-[Kotlin/Wasm](https://kotl.in/wasm/)…
+## Tests
 
-We would appreciate your feedback on Compose/Web and Kotlin/Wasm in the public Slack
-channel [#compose-web](https://slack-chats.kotlinlang.org/c/compose-web).
-If you face any issues, please report them on [YouTrack](https://youtrack.jetbrains.com/newIssue?project=CMP).
+- Shared JVM tests: `./gradlew :shared:jvmTest`
+- Desktop compile check: `./gradlew :desktopApp:compileKotlin`
+- Web distribution check:
+  `./gradlew :webApp:wasmJsBrowserDevelopmentExecutableDistribution`

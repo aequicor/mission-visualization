@@ -1,4 +1,4 @@
-rootProject.name = "visualization"
+rootProject.name = "mission-visualization"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {
@@ -34,5 +34,6 @@ plugins {
 
 include(":androidApp")
 include(":desktopApp")
+include(":example")
 include(":shared")
 include(":webApp")
