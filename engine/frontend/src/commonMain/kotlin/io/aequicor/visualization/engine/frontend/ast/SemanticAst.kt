@@ -20,6 +20,8 @@ data class SemanticScreen(
     val root: SemanticNode,
     /** `Component:`-marked subtrees, lifted out of the visible tree. */
     val componentDefs: List<SemanticNode> = emptyList(),
+    /** Mode values contributed by extraction rules (e.g. `density` -> `compact`). */
+    val modes: Map<String, String> = emptyMap(),
 )
 
 enum class SemanticKind {
@@ -39,6 +41,8 @@ data class SemanticNode(
     val condition: SlmExpression? = null,
     val componentRef: String? = null,
     val variant: Map<String, String> = emptyMap(),
+    /** Data bindings for synthesized instances, prop name -> expression. */
+    val propBindings: Map<String, SlmExpression> = emptyMap(),
     /** Typed attribute block entries bound to this node's anchor, document order. */
     val explicitPatches: List<TypedEntry> = emptyList(),
     /** Patches contributed by extraction rules; explicit patches take precedence. */
@@ -58,22 +62,40 @@ data class SemanticAction(
     val label: SemanticText? = null,
 )
 
-/** Key-generation hint carried by every extracted text until stage 7.8 assigns keys. */
+/** Key-generation hint carried by every extracted text; consumed by the i18n stage. */
 sealed interface KeyHint {
+    /** H1 -> `{screen}.title`. */
     data object ScreenTitle : KeyHint
 
+    /** Section/group title -> `{screen}.sections.{slugPath}.title`. [path] holds slugs or raw names. */
     data class SectionTitle(val path: List<String>) : KeyHint
 
+    /** Plain text in a section -> `{screen}.sections.{slugPath}.text{N}` (N only when >1). */
+    data class SectionText(val path: List<String>) : KeyHint
+
+    /** Action label -> `{screen}.actions.{slug}`. */
     data class ActionLabel(val slug: String) : KeyHint
 
+    /** Empty-state first sentence -> `{screen}.empty.title`. */
     data object EmptyTitle : KeyHint
 
+    /** Repeat card field -> `{screen}.{collection}.card.{field}` (both pre-slugged). */
     data class CardField(val collection: String, val field: String) : KeyHint
 
+    /** Media alt -> `{screen}.{nodeId}.alt`. */
     data object MediaAlt : KeyHint
 
-    data object TableHeader : KeyHint
+    /** Table header cell -> `{screen}.{table}.columns.{colSlug}`. */
+    data class TableHeader(val table: String, val column: String) : KeyHint
 
+    /** Component text prop default -> `components.{componentSlug}.{prop}`. */
+    data class ComponentProp(
+        val componentId: String,
+        val componentSlug: String,
+        val prop: String,
+    ) : KeyHint
+
+    /** No structural context -> `{screen}.text{N}`. */
     data object Plain : KeyHint
 }
 
@@ -89,7 +111,7 @@ data class SemanticText(
     val span: SlmSourceSpan,
 )
 
-/** Raw ```ir fence content; parsed by the escape hatch in a later stage. */
+/** Raw ```ir fence content; parsed by `escape/IrEscapeHatch`. */
 data class IrSpliceBlock(
     val json: String,
     val contentStartLine: Int,

@@ -159,11 +159,16 @@ class SlmCompileSmokeTest {
     }
 
     @Test
-    fun collectsPlaceholderResourcesForSourceLocale() {
+    fun collectsResourcesForSourceLocale() {
         val result = compileSlm(source)
         val bundle = assertNotNull(result.resources[SlmLocale("ru-RU")])
-        assertEquals("Панель миссий", bundle["slm.text.missionDashboard"])
-        assertTrue(bundle.keys.all { it.startsWith(PLACEHOLDER_TEXT_KEY_PREFIX) })
+        // Explicit text.key wins the key; the generated screen title moves aside.
+        assertEquals("Mission Control", bundle["missionDashboard.title"])
+        assertEquals("Панель миссий", bundle["missionDashboard.title.2"])
+        assertEquals("Mission name", bundle["components.missionCard.title"])
+        // The target locale ships an empty bundle plus one summary warning.
+        assertEquals(emptyMap(), result.resources[SlmLocale("en-US")])
+        assertTrue(result.diagnostics.any { "en-US" in it.message && "untranslated" in it.message })
     }
 
     @Test

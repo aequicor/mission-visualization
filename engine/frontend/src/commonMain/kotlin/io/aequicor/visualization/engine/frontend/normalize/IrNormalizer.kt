@@ -27,6 +27,7 @@ import io.aequicor.visualization.engine.frontend.blocks.VariablesPatch
 import io.aequicor.visualization.engine.frontend.blocks.VectorPatch
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.edit.SlmEditIndex
+import io.aequicor.visualization.engine.frontend.escape.IrEscapeHatch
 import io.aequicor.visualization.engine.frontend.expr.ComparisonOp
 import io.aequicor.visualization.engine.frontend.expr.SlmExpression
 import io.aequicor.visualization.engine.frontend.i18n.TextEntry
@@ -54,8 +55,10 @@ import io.aequicor.visualization.engine.ir.model.DesignTable
 import io.aequicor.visualization.engine.ir.model.DesignVariables
 import io.aequicor.visualization.engine.ir.model.FramePreset
 import io.aequicor.visualization.engine.ir.model.CanvasPlacement
+import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
 import io.aequicor.visualization.engine.ir.model.DesignFlow
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
+import io.aequicor.visualization.engine.ir.model.PropValue
 import io.aequicor.visualization.engine.ir.model.PrototypeVariable
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.SourceLocation
@@ -93,6 +96,7 @@ private class Normalization(
     private val slugGenerator = SlugGenerator(diagnostics)
     private val merger = PatchMerger(diagnostics, screen.sourceLocale.tag, fileName)
     private val lifter = ComponentLifter(diagnostics)
+    private val escapeHatch = IrEscapeHatch(diagnostics, fileName)
     private val textEntries = mutableListOf<TextEntry>()
     private val anchorOwners = mutableMapOf<String, SlmSourceSpan>()
     private val irSpliceNodes = mutableSetOf<String>()
@@ -102,10 +106,12 @@ private class Normalization(
 
     fun run(): NormalizedScreen {
         val frontmatter = screen.frontmatter
-        var root = materialize(screen.root, isRoot = true)
+        var root = checkNotNull(materialize(screen.root, isRoot = true)) {
+            "The screen root is never an ir splice"
+        }
 
-        val defs = screen.componentDefs.map { def ->
-            val defRoot = materialize(def, isRoot = false)
+        val defs = screen.componentDefs.mapNotNull { def ->
+            val defRoot = materialize(def, isRoot = false) ?: return@mapNotNull null
             // Re-read without the shared collector: materialize already reported
             // this node's block diagnostics.
             val componentPatch = def.explicitPatches
@@ -113,6 +119,7 @@ private class Normalization(
                 .filterIsInstance<ComponentPatch>()
                 .lastOrNull()
             lifter.register(defRoot, componentPatch, def.span.startLine)
+            collectComponentPropTexts(defRoot.id, componentPatch, def.span)
             defRoot
         }
         // Validate instance refs used inside the definition trees as well.
@@ -138,7 +145,8 @@ private class Normalization(
                 id = frontmatter.screen,
                 name = screen.title?.defaultText ?: frontmatter.screen,
                 page = frontmatter.page,
-                modes = frontmatter.modes,
+                // Explicit frontmatter modes win over prose-extracted ones.
+                modes = screen.modes + frontmatter.modes,
                 frame = frontmatter.frame?.let {
                     FramePreset(preset = it.preset, width = it.width, height = it.height)
                 },
@@ -168,7 +176,9 @@ private class Normalization(
 
     // --- node materialization ---
 
-    private fun materialize(node: SemanticNode, isRoot: Boolean): DesignNode {
+    /** Null only when an ```ir splice fails to parse (the node is skipped). */
+    private fun materialize(node: SemanticNode, isRoot: Boolean): DesignNode? {
+        if (node.kind == SemanticKind.IrSplice) return splice(node)
         val explicit = readPatches(node)
         val semantic = node.semanticPatches.map {
             AppliedPatch(it, blockKeyOf(it), node.span.startLine)
@@ -196,7 +206,17 @@ private class Normalization(
         var design = baseNode(node, id, isRoot)
         design = merger.apply(design, semantic, explicit)
 
-        val children = node.children.map { materialize(it, isRoot = false) }
+        // `props.i18nKey` is an explicit key override for the instance label.
+        var i18nKeyProp: String? = null
+        (design.kind as? DesignNodeKind.Instance)?.let { kind ->
+            val keyProp = kind.props["i18nKey"]
+            if (keyProp is PropValue.Text) {
+                i18nKeyProp = keyProp.value
+                design = design.copy(kind = kind.copy(props = kind.props - "i18nKey"))
+            }
+        }
+
+        val children = node.children.mapNotNull { materialize(it, isRoot = false) }
         val ordered = resolveOrder(children, diagnostics, parentLabel = id, line = node.span.startLine)
 
         val blockSourceMaps = node.explicitPatches.associate { entry ->
@@ -209,10 +229,79 @@ private class Normalization(
         )
 
         if (node.isAnchor) anchorOwners[id] = node.span
-        if (node.kind == SemanticKind.IrSplice) irSpliceNodes += id
-        node.text?.let { collectText(it, id) }
-        node.action?.label?.let { collectText(it, id) }
+        collectNodeTexts(node, id, explicit, i18nKeyProp)
         return design
+    }
+
+    private fun splice(node: SemanticNode): DesignNode? {
+        val block = node.irSplice ?: return null
+        var spliced = escapeHatch.splice(block, slugGenerator) ?: return null
+        irSpliceNodes += spliced.id
+        node.condition?.let {
+            spliced = spliced.copy(condition = DesignCondition(DesignExpression(renderExpression(it))))
+        }
+        return spliced
+    }
+
+    /**
+     * Collects the node's localizable text: the semantic text (or action label)
+     * with any explicit `text.key`/`text.defaultText`/`props.i18nKey` override
+     * applied, or a patch-only text when there is no semantic one.
+     */
+    private fun collectNodeTexts(
+        node: SemanticNode,
+        id: String,
+        explicit: List<AppliedPatch>,
+        i18nKeyProp: String?,
+    ) {
+        val textPatch = explicit.map { it.patch }.filterIsInstance<TextPatch>()
+            .lastOrNull { it.key != null || it.defaultText != null }
+        val semanticText = node.text ?: node.action?.label
+        when {
+            semanticText != null -> textEntries += TextEntry(
+                keyHint = semanticText.keyHint,
+                explicitKey = i18nKeyProp ?: textPatch?.key ?: semanticText.explicitKey,
+                defaultText = textPatch?.defaultText ?: semanticText.defaultText,
+                params = semanticText.params,
+                span = semanticText.span,
+                nodeId = id,
+            )
+            textPatch != null -> textEntries += TextEntry(
+                keyHint = KeyHint.Plain,
+                explicitKey = i18nKeyProp ?: textPatch.key,
+                defaultText = textPatch.defaultText.orEmpty(),
+                params = emptyMap(),
+                span = node.span,
+                nodeId = id,
+            )
+        }
+    }
+
+    /** Component text-prop defaults become `components.{slug}.{prop}` resources. */
+    private fun collectComponentPropTexts(
+        componentId: String,
+        patch: ComponentPatch?,
+        span: SlmSourceSpan,
+    ) {
+        val properties = patch?.properties ?: return
+        val slug = componentSlug(patch.name.orEmpty(), componentId)
+        properties.forEach { (propName, definition) ->
+            if (definition.type != ComponentPropertyType.Text) return@forEach
+            val (explicitKey, defaultText) = when (val default = definition.default) {
+                is PropValue.Content ->
+                    default.content.key.takeIf { it.isNotEmpty() } to default.content.defaultText
+                is PropValue.Text -> null to default.value
+                else -> return@forEach
+            }
+            textEntries += TextEntry(
+                keyHint = KeyHint.ComponentProp(componentId, slug, propName),
+                explicitKey = explicitKey,
+                defaultText = defaultText,
+                params = emptyMap(),
+                span = span,
+                nodeId = componentId,
+            )
+        }
     }
 
     private fun baseNode(node: SemanticNode, id: String, isRoot: Boolean): DesignNode {
@@ -290,6 +379,14 @@ private class Normalization(
         SemanticKind.Instance -> DesignNodeKind.Instance(
             componentId = node.componentRef.orEmpty().bindable(),
             variant = node.variant,
+            props = buildMap {
+                (node.text ?: node.action?.label)?.let {
+                    put("label", PropValue.Content(contentOf(it)))
+                }
+                node.propBindings.forEach { (name, expression) ->
+                    put(name, PropValue.Data(DesignExpression(renderExpression(expression))))
+                }
+            },
         )
         SemanticKind.Media -> DesignNodeKind.Media(
             DesignMedia(
@@ -303,8 +400,9 @@ private class Normalization(
     }
 
     /**
-     * IR text content for a semantic text. The key stays empty for now — key
-     * generation is the i18n stage (7.8); explicit keys are carried through.
+     * IR text content for a semantic text. Explicit keys are carried through;
+     * generated keys are wired in afterwards by the i18n stage
+     * (`i18n/applyGeneratedKeys`).
      */
     private fun contentOf(text: SemanticText): TextContent = TextContent(
         key = text.explicitKey.orEmpty(),
@@ -355,6 +453,17 @@ private class Normalization(
                 else -> {}
             }
         }
+    }
+}
+
+/** `ds/MissionCard` -> `missionCard`; falls back to [fallback] (the component id). */
+internal fun componentSlug(name: String, fallback: String): String {
+    val base = name.substringAfterLast('/').trim()
+    if (base.isEmpty()) return fallback
+    return if (base.any { !it.isLetterOrDigit() }) {
+        latinizeToCamelCase(base).ifEmpty { fallback }
+    } else {
+        base.replaceFirstChar { it.lowercaseChar() }
     }
 }
 
