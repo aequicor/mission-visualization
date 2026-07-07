@@ -1,26 +1,37 @@
 package io.aequicor.visualization.engine.ir.resolve
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.DesignAction
+import io.aequicor.visualization.engine.ir.model.DesignAnnotation
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignConstraints
 import io.aequicor.visualization.engine.ir.model.DesignLayoutChild
+import io.aequicor.visualization.engine.ir.model.DesignMotion
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignScroll
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.ExportSetting
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GridPlacement
 import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.GuideLine
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
+import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.JustifyContent
+import io.aequicor.visualization.engine.ir.model.LayoutGridDefinition
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.MaskType
+import io.aequicor.visualization.engine.ir.model.MediaKind
+import io.aequicor.visualization.engine.ir.model.SourceLocation
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextCase
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
+import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextTruncate
 
 /**
@@ -58,7 +69,63 @@ data class ResolvedNode(
     val text: ResolvedText? = null,
     val shape: DesignNodeKind.Shape? = null,
     val scroll: DesignScroll = DesignScroll(),
+    /** Semantic role from SLM; carried through, resolve-neutral. */
+    val role: String = "",
+    val blendMode: String = "normal",
+    val interactions: List<ResolvedInteraction> = emptyList(),
+    /** Media payload of a lowered `media` node (its placeholder paint is in [fills]). */
+    val media: ResolvedMedia? = null,
+    val mask: ResolvedMask? = null,
+    val motion: DesignMotion? = null,
+    val exportSettings: List<ExportSetting> = emptyList(),
+    /** Overlay/validator metadata only; no layout effect. */
+    val layoutGrids: List<LayoutGridDefinition> = emptyList(),
+    val guides: List<GuideLine> = emptyList(),
+    /** Payload of an `annotation` node; handoff metadata, never affects geometry. */
+    val annotation: DesignAnnotation? = null,
+    val sourceMap: SourceLocation? = null,
+    /** True when the node came from an instance authored with `detach: true`. */
+    val detached: Boolean = false,
     val children: List<ResolvedNode> = emptyList(),
+)
+
+/**
+ * Prototyping interaction carried through resolution; bindable action values
+ * ([DesignAction.SetVariable]) are substituted with literals where possible.
+ */
+data class ResolvedInteraction(
+    val trigger: InteractionTrigger,
+    val key: String = "",
+    val delayMs: Double? = null,
+    val variable: String = "",
+    val actions: List<DesignAction> = emptyList(),
+    val sourceMap: SourceLocation? = null,
+)
+
+/** Media payload carried alongside the placeholder fill of a lowered `media` node. */
+data class ResolvedMedia(
+    val assetId: String,
+    val url: String = "",
+    val kind: MediaKind = MediaKind.Image,
+    val fillMode: ImageScaleMode = ImageScaleMode.Fill,
+    /** Normalized 0..1 crop focus inside the asset. */
+    val focalPoint: DesignPoint? = null,
+    /** Alt text resolved through the i18n path. */
+    val altText: String = "",
+    val posterAssetId: String = "",
+    val autoplay: Boolean = false,
+    val loop: Boolean = false,
+    val muted: Boolean = true,
+    /** Intrinsic asset size for Hug sizing; null when the asset does not declare one. */
+    val intrinsicWidth: Double? = null,
+    val intrinsicHeight: Double? = null,
+)
+
+/** Mask carried on the resolved node; the legacy `isMask` flag normalizes to Alpha. */
+data class ResolvedMask(
+    val type: MaskType = MaskType.Alpha,
+    /** Resolved ids clipped by this mask. Empty = legacy Figma semantics (following siblings). */
+    val appliesTo: List<String> = emptyList(),
 )
 
 data class ResolvedAutoLayout(
@@ -162,6 +229,9 @@ data class ResolvedText(
     val autoResize: TextAutoResize = TextAutoResize.None,
     val truncate: TextTruncate? = null,
     val ranges: List<ResolvedTextRange> = emptyList(),
+    val list: TextListSettings = TextListSettings(),
+    /** i18n resource key the characters came from; "" for raw/legacy content. */
+    val contentKey: String = "",
 )
 
 data class ResolvedTextStyle(

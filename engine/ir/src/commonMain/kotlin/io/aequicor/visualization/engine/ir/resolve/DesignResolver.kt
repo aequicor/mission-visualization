@@ -1,29 +1,48 @@
 package io.aequicor.visualization.engine.ir.resolve
 
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
+import io.aequicor.visualization.engine.ir.model.DataValue
+import io.aequicor.visualization.engine.ir.model.DesignAction
+import io.aequicor.visualization.engine.ir.model.DesignAnchors
 import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignConstraints
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignExpression
 import io.aequicor.visualization.engine.ir.model.DesignGap
+import io.aequicor.visualization.engine.ir.model.DesignInteraction
+import io.aequicor.visualization.engine.ir.model.DesignMask
+import io.aequicor.visualization.engine.ir.model.DesignMedia
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignNodePatch
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignRepeat
 import io.aequicor.visualization.engine.ir.model.DesignScroll
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignStyle
+import io.aequicor.visualization.engine.ir.model.DesignTable
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
+import io.aequicor.visualization.engine.ir.model.GridPlacement
+import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.InstanceOverride
+import io.aequicor.visualization.engine.ir.model.JustifyContent
+import io.aequicor.visualization.engine.ir.model.LayoutGridDefinition
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.PropValue
+import io.aequicor.visualization.engine.ir.model.ResponsiveDimension
+import io.aequicor.visualization.engine.ir.model.ResponsiveVariant
+import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextCase
@@ -31,13 +50,16 @@ import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.VariableValue
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.engine.ir.model.appliedTo
 
 /**
- * Turns the authored [DesignDocument] tree into a [ResolvedNode] tree: resolves
- * `$var` bindings against variable collections and active modes, `$prop` bindings
- * against component properties, shared styles, i18n text content against the active
- * locale, and expands component instances (variant selection, prop substitution,
- * id-path overrides).
+ * Turns the authored [DesignDocument] tree into a [ResolvedNode] tree.
+ *
+ * Per-node resolution order (design section B): responsive patch -> condition ->
+ * repeat -> variables/modes -> instances/components/props (incl. libraries, slots,
+ * nested overrides) -> i18n text -> `{{...}}` data bindings -> lowering (media,
+ * tables, logical padding/anchors, RTL rows, explicit order, mask normalization).
  */
 class DesignResolver(
     private val document: DesignDocument,
@@ -49,6 +71,32 @@ class DesignResolver(
 
     /** Layout direction: explicit in the context, else derived from [activeLocale]. */
     val direction: LayoutDirection = context.direction ?: directionForLocale(activeLocale)
+
+    /** Explicit context breakpoint, else the first document breakpoint containing the viewport width. */
+    val activeBreakpointId: String? = context.breakpointId
+        ?: context.viewport?.width?.let { width ->
+            document.breakpoints.firstOrNull { breakpoint ->
+                (breakpoint.minWidth == null || width >= breakpoint.minWidth) &&
+                    (breakpoint.maxWidth == null || width <= breakpoint.maxWidth)
+            }?.id
+        }
+
+    /**
+     * Active responsive dimension values, matched by [ResponsiveVariant.selectors]:
+     * `screen.modes` defaults, then the derived Breakpoint/Locale/Direction entries,
+     * then explicit [ResolveContext.dimensions] overrides.
+     */
+    val activeDimensions: Map<ResponsiveDimension, String> = buildMap {
+        document.screen?.modes?.forEach { (name, value) ->
+            ResponsiveDimension.entries
+                .firstOrNull { it.name.equals(name, ignoreCase = true) }
+                ?.let { put(it, value) }
+        }
+        put(ResponsiveDimension.Locale, activeLocale)
+        put(ResponsiveDimension.Direction, if (direction == LayoutDirection.Rtl) "rtl" else "ltr")
+        activeBreakpointId?.let { put(ResponsiveDimension.Breakpoint, it) }
+        putAll(context.dimensions)
+    }
 
     /** Context resources win over the document bundles, per locale and key. */
     private val mergedResources: Map<String, Map<String, String>> =
@@ -69,15 +117,140 @@ class DesignResolver(
         val componentChain: List<String> = emptyList(),
         /** Authored id of the outermost instance being expanded, if any. */
         val selectableRootId: String? = null,
+        /** Library whose document defines the component subtree being expanded; "" = host. */
+        val libraryId: String = "",
+        /** Layered `{{...}}` data: repeat item bindings over [ResolveContext.data]. */
+        val data: EvalScope = EvalScope(),
     )
 
-    private fun rootScope(): Scope = Scope(modes = context.modeSelections)
+    private fun rootScope(): Scope =
+        Scope(modes = context.modeSelections, data = EvalScope(bindings = context.data))
 
     fun resolvePage(page: DesignPage): List<ResolvedNode> =
-        page.children.mapNotNull { resolveNode(it, rootScope()) }
+        page.children.flatMap { resolveNodes(it, rootScope()) }
 
     fun resolveNodeTree(node: DesignNode): ResolvedNode? =
-        resolveNode(node, rootScope())
+        resolveNodes(node, rootScope()).firstOrNull()
+
+    // --- Steps 2-4: responsive patch, condition, repeat -----------------------
+
+    private fun resolveNodes(node: DesignNode, scope: Scope): List<ResolvedNode> {
+        val patched = applyResponsive(node)
+        patched.repeat?.let { repeat -> return expandRepeat(patched, repeat, scope) }
+        if (!passesCondition(patched, scope)) return emptyList()
+        return listOfNotNull(resolveNode(patched, scope))
+    }
+
+    /** Best-matching responsive variants patch the raw node before anything else resolves. */
+    private fun applyResponsive(node: DesignNode): DesignNode {
+        if (node.responsive.isEmpty()) return node
+        val applicable = node.responsive.filter { variant ->
+            variant.selectors.all { (dimension, value) -> activeDimensions[dimension] == value }
+        }
+        if (applicable.isEmpty()) return node
+        return mergedPatch(applicable, node.id).appliedTo(node)
+    }
+
+    /**
+     * Per property group the variant with the most selectors wins; an equal-specificity
+     * conflict on the same group warns and keeps the first-declared variant (the
+     * validator reports it as an ambiguity error separately).
+     */
+    private fun mergedPatch(variants: List<ResponsiveVariant>, nodeId: String): DesignNodePatch {
+        fun <T : Any> pick(group: String, property: (DesignNodePatch) -> T?): T? {
+            val candidates = variants.filter { property(it.patch) != null }
+            val winner = candidates.maxByOrNull { it.selectors.size } ?: return null
+            if (candidates.count { it.selectors.size == winner.selectors.size } > 1) {
+                warn(
+                    "Responsive variants of equal specificity both patch '$group' " +
+                        "on '$nodeId'; first declared wins",
+                )
+            }
+            return property(winner.patch)
+        }
+        return DesignNodePatch(
+            visible = pick("visible") { it.visible },
+            opacity = pick("opacity") { it.opacity },
+            layout = pick("layout") { it.layout },
+            layoutChild = pick("layoutChild") { it.layoutChild },
+            gridPlacement = pick("gridPlacement") { it.gridPlacement },
+            sizing = pick("sizing") { it.sizing },
+            size = pick("size") { it.size },
+            minSize = pick("minSize") { it.minSize },
+            maxSize = pick("maxSize") { it.maxSize },
+            fills = pick("fills") { it.fills },
+            strokes = pick("strokes") { it.strokes },
+            effects = pick("effects") { it.effects },
+            cornerRadius = pick("cornerRadius") { it.cornerRadius },
+            textStyle = pick("textStyle") { it.textStyle },
+            scroll = pick("scroll") { it.scroll },
+        )
+    }
+
+    /** A false condition drops the node; an unevaluable one keeps it and warns. */
+    private fun passesCondition(node: DesignNode, scope: Scope): Boolean {
+        val condition = node.condition ?: return true
+        val value = ExpressionEvaluator.evaluate(condition.expression, scope.data) { failure ->
+            warn(
+                "Condition '{{${condition.expression.raw}}}' on '${node.id}' " +
+                    "failed to evaluate ($failure); node kept",
+            )
+        }
+        return when (value) {
+            is DataValue.Bool -> value.value
+            DataValue.Null -> false
+            null -> true
+            else -> {
+                warn("Condition '{{${condition.expression.raw}}}' on '${node.id}' is not a boolean; node kept")
+                true
+            }
+        }
+    }
+
+    /**
+     * One clone per collection item with a stable id `"<id>[<key>]"` (key expression
+     * result, else the index); clone descendants are namespaced under `"<id>[<key>]/"`
+     * and see the item (and index) bindings layered over the data scope. A per-item
+     * condition is evaluated inside the item scope.
+     *
+     * Preview mode (documented): when the collection cannot be evaluated — typically no
+     * runtime data is wired yet — the node passes through once, without a repeat warning.
+     */
+    private fun expandRepeat(node: DesignNode, repeat: DesignRepeat, scope: Scope): List<ResolvedNode> {
+        val collection = ExpressionEvaluator.evaluate(repeat.collection, scope.data)
+        val items = (collection as? DataValue.ListValue)?.items
+        val template = node.copy(repeat = null)
+        if (items == null) {
+            if (!passesCondition(template, scope)) return emptyList()
+            return listOfNotNull(resolveNode(template, scope))
+        }
+        return items.mapIndexedNotNull { index, item ->
+            val bindings = buildMap {
+                put(repeat.itemName, item)
+                repeat.indexName?.let { put(it, DataValue.Num(index.toDouble())) }
+            }
+            val itemData = EvalScope(scope.data, bindings)
+            val key = repeat.key
+                ?.let { keyExpression ->
+                    ExpressionEvaluator.evaluate(keyExpression, itemData) { failure ->
+                        warn(
+                            "Repeat key '{{${keyExpression.raw}}}' on '${node.id}' " +
+                                "failed to evaluate ($failure); using index",
+                        )
+                    }?.let(::scalarToString)
+                }
+                ?: index.toString()
+            val cloneId = "${node.id}[$key]"
+            val itemScope = scope.copy(
+                idPrefix = "${scope.idPrefix}$cloneId/",
+                data = itemData,
+            )
+            if (!passesCondition(template, itemScope)) return@mapIndexedNotNull null
+            resolveNode(template, itemScope)?.copy(id = scope.idPrefix + cloneId)
+        }
+    }
+
+    // --- Steps 5-9: variables, instances, text, bindings, lowering -------------
 
     private fun resolveNode(node: DesignNode, outerScope: Scope): ResolvedNode? {
         val scope = outerScope.copy(modes = outerScope.modes + node.variableModes)
@@ -92,6 +265,15 @@ class DesignResolver(
         val childScope = scope.copy(
             overrides = scope.overrides.filterNot { it.target.size == 1 && it.target.first() == node.id },
         )
+        val layout = resolveAutoLayout(node.layout, scope)
+        val table = (node.kind as? DesignNodeKind.Table)?.table
+        val (effectiveLayout, children) = if (table != null) {
+            lowerTable(node, table, layout, childScope, scope)
+        } else {
+            layout to resolveChildren(node, childNodesFor(node, override, scope), layout, childScope)
+        }
+        val media = (node.kind as? DesignNodeKind.Media)?.media
+        val resolvedMedia = media?.let { resolveMedia(it, scope) }
         return ResolvedNode(
             id = scope.idPrefix + node.id,
             sourceId = node.id,
@@ -107,19 +289,68 @@ class DesignResolver(
             sizing = node.sizing ?: DesignSizing(),
             minSize = node.minSize,
             maxSize = node.maxSize,
-            layout = resolveAutoLayout(node.layout, scope),
+            layout = effectiveLayout,
             layoutChild = node.layoutChild,
             gridPlacement = node.gridPlacement,
-            fills = resolveFills(node, override, scope),
+            fills = resolveFills(node, override, scope) +
+                listOfNotNull(media?.let { mediaFill(it, resolvedMedia!!, scope) }),
             strokes = resolveStrokes(node, override, scope),
             effects = resolveEffects(node, scope),
             cornerRadius = resolveCornerRadius(override?.cornerRadius ?: node.cornerRadius, scope),
             text = (node.kind as? DesignNodeKind.Text)?.let { resolveText(it, override, scope) },
             shape = node.kind as? DesignNodeKind.Shape,
             scroll = node.scroll,
-            children = node.children.mapNotNull { resolveNode(it, childScope) },
+            role = node.role,
+            blendMode = node.blendMode,
+            interactions = node.interactions.map { resolveInteraction(it, scope) },
+            media = resolvedMedia,
+            mask = resolveMask(node, scope),
+            motion = node.motion,
+            exportSettings = node.exportSettings,
+            layoutGrids = resolveLayoutGrids(node),
+            guides = node.guides,
+            annotation = (node.kind as? DesignNodeKind.Annotation)?.annotation,
+            sourceMap = node.sourceMap,
+            children = children,
         )
     }
+
+    /** Slot fill priority: override slotContent -> SlotContent prop of the same name -> authored children. */
+    private fun childNodesFor(node: DesignNode, override: InstanceOverride?, scope: Scope): List<DesignNode> {
+        val slot = node.kind as? DesignNodeKind.Slot ?: return node.children
+        return override?.slotContent
+            ?: (scope.props[slot.slotName] as? PropValue.SlotContent)?.nodes
+            ?: node.children
+    }
+
+    /**
+     * Resolves children with logical anchors mapped to physical position/constraints,
+     * explicit `order` applied (stable sort; unordered nodes keep document position),
+     * and RTL horizontal rows reversed so the layout engine stays direction-free.
+     */
+    private fun resolveChildren(
+        parent: DesignNode,
+        children: List<DesignNode>,
+        layout: ResolvedAutoLayout,
+        scope: Scope,
+    ): List<ResolvedNode> {
+        val resolved = children.flatMap { child ->
+            resolveNodes(child, scope).map { resolvedChild ->
+                val anchored = child.anchors
+                    ?.let { anchors -> applyAnchors(resolvedChild, anchors, parent, scope) }
+                    ?: resolvedChild
+                anchored to (child.order ?: 0)
+            }
+        }
+        val ordered = resolved.sortedBy { (_, order) -> order }.map { (child, _) -> child }
+        return if (direction == LayoutDirection.Rtl && layout.mode == LayoutMode.Horizontal) {
+            ordered.reversed()
+        } else {
+            ordered
+        }
+    }
+
+    // --- Instances -------------------------------------------------------------
 
     private fun expandInstance(
         node: DesignNode,
@@ -127,30 +358,55 @@ class DesignResolver(
         scope: Scope,
         override: InstanceOverride?,
     ): ResolvedNode? {
+        // Nested-instance overrides (variant/props at the instance's id path) apply
+        // before expansion; resetOverrides drops the instance's own baked overrides.
+        val selection = instance.variant + (override?.variant ?: emptyMap())
+        val instanceProps = instance.props + (override?.props ?: emptyMap())
+        val instanceOverrides = if (instance.resetOverrides) emptyList() else instance.overrides
+        val resolvedInstanceId = scope.idPrefix + node.id
+
+        // libraryRef (or a "<libId>/" componentId prefix known to the context's library
+        // registry) routes the component lookup through that library's document.
         val requestedId = resolveString(instance.componentId, scope, "")
-        val componentId = document.componentSets[requestedId]
+        var libraryId = scope.libraryId
+        var lookupId = requestedId
+        if (instance.libraryRef.isNotEmpty()) {
+            libraryId = instance.libraryRef
+        } else {
+            val prefix = requestedId.substringBefore('/')
+            if (prefix != requestedId && prefix in context.libraries) {
+                libraryId = prefix
+                lookupId = requestedId.substringAfter('/')
+            }
+        }
+        val host = if (libraryId.isEmpty()) document else context.libraries[libraryId]
+        if (host == null) {
+            warn("Unknown library '$libraryId' for instance '${node.id}'")
+            return instancePlaceholder(node, resolvedInstanceId, scope)
+        }
+        val componentId = host.componentSets[lookupId]
             ?.let { set ->
-                set.resolveVariant(instance.variant) ?: run {
-                    warn("Component set '$requestedId' has no variant for ${instance.variant}")
+                set.resolveVariant(selection) ?: run {
+                    warn("Component set '$lookupId' has no variant for $selection")
                     null
                 }
             }
-            ?: requestedId
-        val component = document.components[componentId]
-        val resolvedInstanceId = scope.idPrefix + node.id
+            ?: lookupId
+        val component = host.components[componentId]
         if (component == null) {
             warn("Unknown component '$requestedId' for instance '${node.id}'")
             return instancePlaceholder(node, resolvedInstanceId, scope)
         }
-        if (componentId in scope.componentChain) {
-            warn("Component cycle detected at '$componentId'; instance '${node.id}' truncated")
+        val chainId = if (libraryId.isEmpty()) componentId else "$libraryId/$componentId"
+        if (chainId in scope.componentChain) {
+            warn("Component cycle detected at '$chainId'; instance '${node.id}' truncated")
             return instancePlaceholder(node, resolvedInstanceId, scope)
         }
 
         val defaults = component.properties.mapNotNull { (name, definition) ->
             definition.default?.let { name to it }
         }.toMap()
-        val variantProps = instance.variant.mapValues { (_, value) -> PropValue.Text(value) }
+        val variantProps = selection.mapValues { (_, value) -> PropValue.Text(value) }
 
         // Visual attributes authored on the instance node itself, and any override
         // targeting the instance, are re-targeted at the component root. Order matters:
@@ -165,19 +421,21 @@ class DesignResolver(
         val overrideForRoot = override?.copy(target = rootTarget, opacity = null, visible = null)
         val innerScope = Scope(
             modes = scope.modes,
-            props = defaults + variantProps + instance.props,
+            props = defaults + variantProps + instanceProps,
             idPrefix = "$resolvedInstanceId/",
-            overrides = instance.overrides +
+            overrides = instanceOverrides +
                 listOfNotNull(authoredAsOverride) +
                 scope.overrides
                     .filter { it.target.size > 1 && it.target.first() == node.id }
                     .map { it.copy(target = it.target.drop(1)) } +
                 listOfNotNull(overrideForRoot),
-            componentChain = scope.componentChain + componentId,
+            componentChain = scope.componentChain + chainId,
             selectableRootId = scope.selectableRootId ?: node.id,
+            libraryId = libraryId,
+            data = scope.data,
         )
 
-        val root = resolveNode(component.root, innerScope) ?: return null
+        val root = resolveNode(applyResponsive(component.root), innerScope) ?: return null
         val instanceOpacity = override?.opacity?.let { resolveDouble(it, scope, 1.0) }
             ?: resolveDouble(node.opacity, scope, 1.0)
         return root.copy(
@@ -202,6 +460,16 @@ class DesignResolver(
             effects = if (node.effects.isEmpty()) root.effects else node.effects.mapNotNull { resolveEffect(it, scope) },
             layout = if (node.layout.clipsContent) root.layout.copy(clipsContent = true) else root.layout,
             scroll = if (node.scroll != DesignScroll()) node.scroll else root.scroll,
+            role = node.role.ifEmpty { root.role },
+            blendMode = if (node.blendMode != "normal") node.blendMode else root.blendMode,
+            interactions = node.interactions.map { resolveInteraction(it, scope) }.ifEmpty { root.interactions },
+            mask = resolveMask(node, scope) ?: root.mask,
+            motion = node.motion ?: root.motion,
+            exportSettings = node.exportSettings.ifEmpty { root.exportSettings },
+            layoutGrids = resolveLayoutGrids(node).ifEmpty { root.layoutGrids },
+            guides = node.guides.ifEmpty { root.guides },
+            sourceMap = node.sourceMap ?: root.sourceMap,
+            detached = instance.detach,
         )
     }
 
@@ -220,6 +488,10 @@ class DesignResolver(
             layoutChild = node.layoutChild,
             gridPlacement = node.gridPlacement,
             fills = listOf(ResolvedPaint.Unknown("missingComponent")),
+            role = node.role,
+            blendMode = node.blendMode,
+            interactions = node.interactions.map { resolveInteraction(it, scope) },
+            sourceMap = node.sourceMap,
         )
 
     private fun mergedOverrideFor(node: DesignNode, scope: Scope): InstanceOverride? {
@@ -241,6 +513,229 @@ class DesignResolver(
             )
         }
     }
+
+    // --- Lowering (step 9) ------------------------------------------------------
+
+    /**
+     * A table lowers to a grid: row frames flatten away, their cells get explicit
+     * gridPlacement (1-based row/column, authored spans preserved). Empty table
+     * columns become one equal flex track per widest row.
+     */
+    private fun lowerTable(
+        node: DesignNode,
+        table: DesignTable,
+        layout: ResolvedAutoLayout,
+        childScope: Scope,
+        scope: Scope,
+    ): Pair<ResolvedAutoLayout, List<ResolvedNode>> {
+        val rows = node.children.flatMap { resolveNodes(it, childScope) }
+        var columnCount = 0
+        val cells = rows.flatMapIndexed { rowIndex, row ->
+            var column = 1
+            val rowCells = row.children.map { cell ->
+                val columnSpan = (cell.gridPlacement?.columnSpan ?: 1).coerceAtLeast(1)
+                val rowSpan = (cell.gridPlacement?.rowSpan ?: 1).coerceAtLeast(1)
+                val placed = cell.copy(
+                    gridPlacement = GridPlacement(
+                        column = column,
+                        row = rowIndex + 1,
+                        columnSpan = columnSpan,
+                        rowSpan = rowSpan,
+                    ),
+                )
+                column += columnSpan
+                placed
+            }
+            columnCount = maxOf(columnCount, column - 1)
+            rowCells
+        }
+        val lowered = layout.copy(
+            mode = LayoutMode.Grid,
+            columns = table.columns.ifEmpty { List(columnCount.coerceAtLeast(1)) { GridTrack.Flex(1.0) } },
+            rows = emptyList(),
+            columnGap = resolveDouble(table.columnGap, scope, 0.0),
+            rowGap = resolveDouble(table.rowGap, scope, 0.0),
+        )
+        return lowered to cells
+    }
+
+    /** Media lowers to an image/video placeholder fill plus a carried [ResolvedMedia]. */
+    private fun resolveMedia(media: DesignMedia, scope: Scope): ResolvedMedia {
+        val asset = document.assets[media.assetId]
+        return ResolvedMedia(
+            assetId = media.assetId,
+            url = asset?.url.orEmpty(),
+            kind = media.kind,
+            fillMode = media.fillMode,
+            focalPoint = media.focalPoint,
+            altText = media.alt?.let { resolveTextContent(it, scope) }.orEmpty(),
+            posterAssetId = media.posterAssetId,
+            autoplay = media.autoplay,
+            loop = media.loop,
+            muted = media.muted,
+            intrinsicWidth = asset?.width,
+            intrinsicHeight = asset?.height,
+        )
+    }
+
+    /** Video draws like the image placeholder until video rendering lands. */
+    private fun mediaFill(media: DesignMedia, resolved: ResolvedMedia, scope: Scope): ResolvedPaint =
+        ResolvedPaint.Image(
+            assetId = resolved.assetId,
+            url = resolved.url,
+            scaleMode = resolved.fillMode,
+            opacity = resolveDouble(media.opacity, scope, 1.0),
+        )
+
+    /** The legacy `isMask` flag normalizes to an alpha mask over following siblings. */
+    private fun resolveMask(node: DesignNode, scope: Scope): ResolvedMask? {
+        val mask = node.mask ?: DesignMask().takeIf { node.isMask } ?: return null
+        return ResolvedMask(
+            type = mask.type,
+            appliesTo = mask.appliesTo.map { scope.idPrefix + it },
+        )
+    }
+
+    private fun resolveLayoutGrids(node: DesignNode): List<LayoutGridDefinition> =
+        node.layoutGrids.ifEmpty {
+            (document.styles[node.gridStyleId] as? DesignStyle.Grid)?.value ?: emptyList()
+        }
+
+    /**
+     * Logical anchors -> the physical position + constraints the layout engine already
+     * understands for absolute children (inlineEnd in LTR pins to the right edge, in
+     * RTL to the left). Offsets from an end edge need the parent's (and the child's)
+     * authored size; when missing, the constraint is still set but the authored
+     * position is kept, with a warning.
+     */
+    private fun applyAnchors(
+        child: ResolvedNode,
+        anchors: DesignAnchors,
+        parent: DesignNode,
+        scope: Scope,
+    ): ResolvedNode {
+        val rtl = direction == LayoutDirection.Rtl
+        val start = anchors.inlineStart?.let { resolveDouble(it, scope, 0.0) }
+        val end = anchors.inlineEnd?.let { resolveDouble(it, scope, 0.0) }
+        val left = if (rtl) end else start
+        val right = if (rtl) start else end
+        val top = anchors.blockStart?.let { resolveDouble(it, scope, 0.0) }
+        val bottom = anchors.blockEnd?.let { resolveDouble(it, scope, 0.0) }
+
+        var x = child.position?.x ?: 0.0
+        var y = child.position?.y ?: 0.0
+        var width = child.size.width
+        var height = child.size.height
+        var sizing = child.sizing
+        var horizontal = child.constraints.horizontal
+        var vertical = child.constraints.vertical
+
+        val parentWidth = parent.size.width
+        when {
+            left != null && right != null -> {
+                horizontal = HorizontalConstraint.LeftRight
+                x = left
+                if (parentWidth != null) {
+                    width = (parentWidth - left - right).coerceAtLeast(0.0)
+                    sizing = sizing.copy(horizontal = SizingMode.Fixed)
+                } else {
+                    warnAnchorNeedsSize(child, "inline")
+                }
+            }
+            left != null -> {
+                horizontal = HorizontalConstraint.Left
+                x = left
+            }
+            right != null -> {
+                horizontal = HorizontalConstraint.Right
+                if (parentWidth != null && width != null) {
+                    x = parentWidth - right - width
+                } else {
+                    warnAnchorNeedsSize(child, "inline")
+                }
+            }
+        }
+        val parentHeight = parent.size.height
+        when {
+            top != null && bottom != null -> {
+                vertical = VerticalConstraint.TopBottom
+                y = top
+                if (parentHeight != null) {
+                    height = (parentHeight - top - bottom).coerceAtLeast(0.0)
+                    sizing = sizing.copy(vertical = SizingMode.Fixed)
+                } else {
+                    warnAnchorNeedsSize(child, "block")
+                }
+            }
+            top != null -> {
+                vertical = VerticalConstraint.Top
+                y = top
+            }
+            bottom != null -> {
+                vertical = VerticalConstraint.Bottom
+                if (parentHeight != null && height != null) {
+                    y = parentHeight - bottom - height
+                } else {
+                    warnAnchorNeedsSize(child, "block")
+                }
+            }
+        }
+        return child.copy(
+            position = DesignPoint(x, y),
+            constraints = DesignConstraints(horizontal, vertical),
+            size = DesignSize(width, height),
+            sizing = sizing,
+            layoutChild = child.layoutChild.copy(absolute = true),
+        )
+    }
+
+    private fun warnAnchorNeedsSize(child: ResolvedNode, axis: String) {
+        warn(
+            "Anchor on '${child.sourceId}' needs fixed parent/child sizes on the $axis axis; " +
+                "keeping the authored position",
+        )
+    }
+
+    // --- Interactions ------------------------------------------------------------
+
+    /** Interactions carry through with bindable action values resolved to literals where possible. */
+    private fun resolveInteraction(interaction: DesignInteraction, scope: Scope): ResolvedInteraction =
+        ResolvedInteraction(
+            trigger = interaction.trigger,
+            key = interaction.key,
+            delayMs = interaction.delayMs,
+            variable = interaction.variable,
+            actions = interaction.actions.map { resolveAction(it, scope) },
+            sourceMap = interaction.sourceMap,
+        )
+
+    private fun resolveAction(action: DesignAction, scope: Scope): DesignAction =
+        when (action) {
+            is DesignAction.SetVariable -> action.copy(value = resolveToLiteral(action.value, scope))
+            else -> action
+        }
+
+    /** Best-effort literal substitution; an unresolvable binding keeps its original form. */
+    private fun resolveToLiteral(value: Bindable<String>, scope: Scope): Bindable<String> =
+        when (value) {
+            is Bindable.Value -> value
+            is Bindable.VarRef -> when (val resolved = resolveVariable(value.id, scope)) {
+                is String -> Bindable.Value(resolved)
+                is Double -> Bindable.Value(formatNumber(resolved))
+                is Boolean -> Bindable.Value(resolved.toString())
+                else -> value
+            }
+            is Bindable.PropRef -> when (val prop = scope.props[value.name]) {
+                is PropValue.Text -> Bindable.Value(prop.value)
+                is PropValue.Number -> Bindable.Value(formatNumber(prop.value))
+                is PropValue.Bool -> Bindable.Value(prop.value.toString())
+                else -> value
+            }
+            is Bindable.DataRef -> ExpressionEvaluator.evaluate(value.expression, scope.data)
+                ?.let(::scalarToString)
+                ?.let { Bindable.Value(it) }
+                ?: value
+        }
 
     // --- Visual attributes --------------------------------------------------
 
@@ -368,6 +863,8 @@ class DesignResolver(
                     fills = range.fills?.mapNotNull { resolvePaint(it, scope) },
                 )
             },
+            list = text.list,
+            contentKey = text.content?.key.orEmpty(),
         )
     }
 
@@ -401,11 +898,14 @@ class DesignResolver(
             }
         }
         val params = content.params.mapNotNull { (name, value) ->
-            // Data-bound params are skipped until the expression evaluator lands (stage 5.3);
-            // their placeholders stay verbatim in the formatted text.
             if (value is Bindable.DataRef) {
-                warnUnevaluatedExpression(value.expression)
-                null
+                // A failed binding keeps the ICU {param} placeholder verbatim.
+                evaluateBinding(value.expression, scope)
+                    ?.let { evaluated ->
+                        scalarToString(evaluated)
+                            ?: bindingMismatch(value.expression, "scalar", null)
+                    }
+                    ?.let { name to it }
             } else {
                 name to resolveString(value, scope, "")
             }
@@ -436,20 +936,42 @@ class DesignResolver(
             DesignUnit.Percent -> fontSize * value / 100.0
         }
 
+    /**
+     * Logical padding wins over physical per side, mapped by [direction]
+     * (LTR: inlineStart -> left; RTL: inlineStart -> right). RTL horizontal rows also
+     * flip JustifyContent Start/End; their children are reversed in [resolveChildren].
+     */
     private fun resolveAutoLayout(layout: DesignAutoLayout, scope: Scope): ResolvedAutoLayout {
         val fixedGap = (layout.gap as? DesignGap.Fixed)?.let { resolveDouble(it.value, scope, 0.0) } ?: 0.0
+        val rtl = direction == LayoutDirection.Rtl
+        val logical = layout.paddingLogical
+        val inlineStart = logical?.inlineStart?.let { resolveDouble(it, scope, 0.0) }
+        val inlineEnd = logical?.inlineEnd?.let { resolveDouble(it, scope, 0.0) }
+        val justifyContent = if (rtl && layout.mode == LayoutMode.Horizontal) {
+            when (layout.justifyContent) {
+                JustifyContent.Start -> JustifyContent.End
+                JustifyContent.End -> JustifyContent.Start
+                else -> layout.justifyContent
+            }
+        } else {
+            layout.justifyContent
+        }
         return ResolvedAutoLayout(
             mode = layout.mode,
             gap = fixedGap,
             gapAuto = layout.gap is DesignGap.Auto,
             crossGap = layout.crossGap?.let { resolveDouble(it, scope, 0.0) } ?: fixedGap,
             wrap = layout.wrap,
-            paddingTop = resolveDouble(layout.padding.top, scope, 0.0),
-            paddingRight = resolveDouble(layout.padding.right, scope, 0.0),
-            paddingBottom = resolveDouble(layout.padding.bottom, scope, 0.0),
-            paddingLeft = resolveDouble(layout.padding.left, scope, 0.0),
+            paddingTop = logical?.blockStart?.let { resolveDouble(it, scope, 0.0) }
+                ?: resolveDouble(layout.padding.top, scope, 0.0),
+            paddingRight = (if (rtl) inlineStart else inlineEnd)
+                ?: resolveDouble(layout.padding.right, scope, 0.0),
+            paddingBottom = logical?.blockEnd?.let { resolveDouble(it, scope, 0.0) }
+                ?: resolveDouble(layout.padding.bottom, scope, 0.0),
+            paddingLeft = (if (rtl) inlineEnd else inlineStart)
+                ?: resolveDouble(layout.padding.left, scope, 0.0),
             alignItems = layout.alignItems,
-            justifyContent = layout.justifyContent,
+            justifyContent = justifyContent,
             clipsContent = layout.clipsContent,
             columns = layout.columns,
             rows = layout.rows,
@@ -469,14 +991,20 @@ class DesignResolver(
             }
             is Bindable.PropRef -> when (val prop = scope.props[bindable.name]) {
                 is PropValue.Number -> prop.value
+                is PropValue.Data -> when (val value = evaluateBinding(prop.expression, scope)) {
+                    is DataValue.Num -> value.value
+                    null -> fallback
+                    else -> bindingMismatch(prop.expression, "number", fallback)
+                }
                 else -> {
                     warn("Prop '${bindable.name}' did not resolve to a number")
                     fallback
                 }
             }
-            is Bindable.DataRef -> {
-                warnUnevaluatedExpression(bindable.expression)
-                fallback
+            is Bindable.DataRef -> when (val value = evaluateBinding(bindable.expression, scope)) {
+                is DataValue.Num -> value.value
+                null -> fallback
+                else -> bindingMismatch(bindable.expression, "number", fallback)
             }
         }
 
@@ -492,9 +1020,12 @@ class DesignResolver(
                 is PropValue.Number -> formatNumber(prop.value)
                 is PropValue.Bool -> prop.value.toString()
                 is PropValue.Content -> resolveTextContent(prop.content, scope)
-                is PropValue.Data -> {
-                    warnUnevaluatedExpression(prop.expression)
-                    fallback
+                is PropValue.Data -> when (val value = evaluateBinding(prop.expression, scope)) {
+                    is DataValue.Str -> value.value
+                    is DataValue.Num -> formatNumber(value.value)
+                    is DataValue.Bool -> value.value.toString()
+                    null -> fallback
+                    else -> bindingMismatch(prop.expression, "string", fallback)
                 }
                 is PropValue.SlotContent -> fallback
                 else -> {
@@ -502,9 +1033,10 @@ class DesignResolver(
                     fallback
                 }
             }
-            is Bindable.DataRef -> {
-                warnUnevaluatedExpression(bindable.expression)
-                fallback
+            is Bindable.DataRef -> when (val value = evaluateBinding(bindable.expression, scope)) {
+                is DataValue.Str -> value.value
+                null -> fallback
+                else -> bindingMismatch(bindable.expression, "string", fallback)
             }
         }
 
@@ -517,14 +1049,20 @@ class DesignResolver(
             }
             is Bindable.PropRef -> when (val prop = scope.props[bindable.name]) {
                 is PropValue.Bool -> prop.value
+                is PropValue.Data -> when (val value = evaluateBinding(prop.expression, scope)) {
+                    is DataValue.Bool -> value.value
+                    null -> fallback
+                    else -> bindingMismatch(prop.expression, "boolean", fallback)
+                }
                 else -> {
                     warn("Prop '${bindable.name}' did not resolve to a boolean")
                     fallback
                 }
             }
-            is Bindable.DataRef -> {
-                warnUnevaluatedExpression(bindable.expression)
-                fallback
+            is Bindable.DataRef -> when (val value = evaluateBinding(bindable.expression, scope)) {
+                is DataValue.Bool -> value.value
+                null -> fallback
+                else -> bindingMismatch(bindable.expression, "boolean", fallback)
             }
         }
 
@@ -540,15 +1078,31 @@ class DesignResolver(
                 DesignColor.Black
             }
             is Bindable.DataRef -> {
-                warnUnevaluatedExpression(bindable.expression)
+                if (evaluateBinding(bindable.expression, scope) != null) {
+                    bindingMismatch(bindable.expression, "color", Unit)
+                }
                 DesignColor.Black
             }
         }
 
-    /** No expression evaluator yet (stage 5.3): data bindings warn and use the fallback. */
-    private fun warnUnevaluatedExpression(expression: DesignExpression) {
-        warn("Data binding '{{${expression.raw}}}' is not evaluated yet; using fallback")
+    /** Evaluates a `{{...}}` binding, reporting parse/eval failures as warnings. */
+    private fun evaluateBinding(expression: DesignExpression, scope: Scope): DataValue? =
+        ExpressionEvaluator.evaluate(expression, scope.data) { failure ->
+            warn("Data binding '{{${expression.raw}}}' failed to evaluate: $failure")
+        }
+
+    private fun <T> bindingMismatch(expression: DesignExpression, expected: String, fallback: T): T {
+        warn("Data binding '{{${expression.raw}}}' did not resolve to a $expected; using fallback")
+        return fallback
     }
+
+    private fun scalarToString(value: DataValue): String? =
+        when (value) {
+            is DataValue.Str -> value.value
+            is DataValue.Num -> formatNumber(value.value)
+            is DataValue.Bool -> value.value.toString()
+            else -> null
+        }
 
     /** Resolves a variable to a concrete scalar, following alias chains cycle-safely. */
     private fun resolveVariable(varId: String, scope: Scope, visited: Set<String> = emptySet()): Any? {
