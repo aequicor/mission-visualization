@@ -27,6 +27,7 @@ import io.aequicor.visualization.engine.ir.model.PropValue
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextCase
+import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.VariableValue
@@ -34,10 +35,26 @@ import io.aequicor.visualization.engine.ir.model.VariableValue
 /**
  * Turns the authored [DesignDocument] tree into a [ResolvedNode] tree: resolves
  * `$var` bindings against variable collections and active modes, `$prop` bindings
- * against component properties, shared styles, and expands component instances
- * (variant selection, prop substitution, id-path overrides).
+ * against component properties, shared styles, i18n text content against the active
+ * locale, and expands component instances (variant selection, prop substitution,
+ * id-path overrides).
  */
-class DesignResolver(private val document: DesignDocument) {
+class DesignResolver(
+    private val document: DesignDocument,
+    private val context: ResolveContext = ResolveContext(),
+) {
+
+    /** Locale used for i18n text resolution: explicit context locale, else the source locale. */
+    val activeLocale: String = context.locale ?: document.i18n.sourceLocale
+
+    /** Layout direction: explicit in the context, else derived from [activeLocale]. */
+    val direction: LayoutDirection = context.direction ?: directionForLocale(activeLocale)
+
+    /** Context resources win over the document bundles, per locale and key. */
+    private val mergedResources: Map<String, Map<String, String>> =
+        (document.i18n.resources.keys + context.resources.keys).associateWith { locale ->
+            document.i18n.resources[locale].orEmpty() + context.resources[locale].orEmpty()
+        }
 
     private val collectedDiagnostics = mutableListOf<DesignDiagnostic>()
 
@@ -54,11 +71,13 @@ class DesignResolver(private val document: DesignDocument) {
         val selectableRootId: String? = null,
     )
 
+    private fun rootScope(): Scope = Scope(modes = context.modeSelections)
+
     fun resolvePage(page: DesignPage): List<ResolvedNode> =
-        page.children.mapNotNull { resolveNode(it, Scope()) }
+        page.children.mapNotNull { resolveNode(it, rootScope()) }
 
     fun resolveNodeTree(node: DesignNode): ResolvedNode? =
-        resolveNode(node, Scope())
+        resolveNode(node, rootScope())
 
     private fun resolveNode(node: DesignNode, outerScope: Scope): ResolvedNode? {
         val scope = outerScope.copy(modes = outerScope.modes + node.variableModes)
@@ -331,9 +350,13 @@ class DesignResolver(private val document: DesignDocument) {
         val sharedStyle = (document.styles[text.textStyleId] as? DesignStyle.Text)?.value ?: DesignTextStyle()
         val baseStyle = sharedStyle.mergedWith(text.textStyle).mergedWith(override?.textStyle)
         val resolvedBase = resolveTextStyle(baseStyle, scope)
+        val rawCharacters = {
+            override?.characters?.let { resolveString(it, scope, "") }
+                ?: resolveString(text.characters, scope, "")
+        }
         return ResolvedText(
-            characters = override?.characters?.let { resolveString(it, scope, "") }
-                ?: resolveString(text.characters, scope, ""),
+            characters = text.content?.let { resolveTextContent(it, scope, rawCharacters) }
+                ?: rawCharacters(),
             style = resolvedBase,
             autoResize = text.autoResize,
             truncate = text.truncate,
@@ -346,6 +369,48 @@ class DesignResolver(private val document: DesignDocument) {
                 )
             },
         )
+    }
+
+    /**
+     * i18n text resolution (fallback chain, each fallback step warns when a key lookup
+     * was intended): merged `resources[activeLocale][key]` -> `defaultText` ->
+     * [rawCharacters]. The winning message is ICU-formatted with the content params.
+     */
+    private fun resolveTextContent(
+        content: TextContent,
+        scope: Scope,
+        rawCharacters: (() -> String)? = null,
+    ): String {
+        val message = mergedResources[activeLocale]?.get(content.key)
+        val template = when {
+            message != null -> message
+            content.defaultText.isNotEmpty() -> {
+                if (content.key.isNotEmpty()) {
+                    warn("Missing i18n resource '${content.key}' for locale '$activeLocale'; using defaultText")
+                }
+                content.defaultText
+            }
+            else -> {
+                if (content.key.isNotEmpty()) {
+                    warn(
+                        "Missing i18n resource '${content.key}' for locale '$activeLocale' " +
+                            "and no defaultText; using characters",
+                    )
+                }
+                rawCharacters?.invoke().orEmpty()
+            }
+        }
+        val params = content.params.mapNotNull { (name, value) ->
+            // Data-bound params are skipped until the expression evaluator lands (stage 5.3);
+            // their placeholders stay verbatim in the formatted text.
+            if (value is Bindable.DataRef) {
+                warnUnevaluatedExpression(value.expression)
+                null
+            } else {
+                name to resolveString(value, scope, "")
+            }
+        }.toMap()
+        return IcuLiteFormatter.format(template, params, activeLocale) { failure -> warn(failure) }
     }
 
     private fun resolveTextStyle(style: DesignTextStyle, scope: Scope): ResolvedTextStyle {
@@ -426,7 +491,7 @@ class DesignResolver(private val document: DesignDocument) {
                 is PropValue.Text -> prop.value
                 is PropValue.Number -> formatNumber(prop.value)
                 is PropValue.Bool -> prop.value.toString()
-                is PropValue.Content -> prop.content.defaultText
+                is PropValue.Content -> resolveTextContent(prop.content, scope)
                 is PropValue.Data -> {
                     warnUnevaluatedExpression(prop.expression)
                     fallback

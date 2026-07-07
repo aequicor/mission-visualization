@@ -64,6 +64,42 @@ fun parseDesignDocument(source: String): DesignParseResult {
     return DesignParseResult.Success(document, parser.diagnostics)
 }
 
+/**
+ * Parses a single node subtree (the ```ir escape hatch): the JSON root must be one node
+ * object. [pointerBase] anchors diagnostic/source-map pointers; when the JSON carries no
+ * `sourceMap` of its own, the root node is seeded with ([file], [line]).
+ */
+fun parseDesignNode(
+    source: String,
+    pointerBase: String = "",
+    file: String = "",
+    line: Int = 0,
+): DesignNodeParseResult {
+    val json = Json { ignoreUnknownKeys = true }
+    val root = try {
+        json.parseToJsonElement(source)
+    } catch (failure: Exception) {
+        return DesignNodeParseResult.Failure(
+            listOf(
+                DesignDiagnostic(
+                    DesignSeverity.Error,
+                    "Malformed JSON: ${failure.message.orEmpty().take(200)}",
+                    SourceLocation(pointer = pointerBase, file = file, line = line),
+                ),
+            ),
+        )
+    }
+    val reader = DesignDocumentReader()
+    val node = reader.readNode(root, pointerBase)
+        ?: return DesignNodeParseResult.Failure(reader.diagnostics)
+    val seeded = if (node.sourceMap == null && (file.isNotEmpty() || line != 0)) {
+        node.copy(sourceMap = SourceLocation(pointer = pointerBase, file = file, line = line))
+    } else {
+        node
+    }
+    return DesignNodeParseResult.Success(seeded, reader.diagnostics)
+}
+
 /** Legacy "1.x" documents and "slm-ir/1.x" documents parse identically. */
 private val SupportedSchemaVersion = Regex("""(\d+\.|slm-ir/1\.).*""")
 
