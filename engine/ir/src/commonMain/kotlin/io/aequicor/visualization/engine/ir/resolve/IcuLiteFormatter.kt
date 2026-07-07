@@ -41,6 +41,58 @@ object IcuLiteFormatter {
     private fun languageOf(locale: String): String =
         locale.substringBefore('-').substringBefore('_').trim().lowercase()
 
+    /**
+     * Parse-only inspection for validators: walks the whole message — every argument and
+     * every plural/select branch, not just the branch formatting would pick — and reports
+     * the first syntax error plus all arguments seen so far.
+     */
+    fun inspect(message: String): IcuInspection {
+        val arguments = mutableListOf<IcuArgument>()
+        return try {
+            inspectPart(message, arguments)
+            IcuInspection(syntaxError = null, arguments = arguments)
+        } catch (failure: IcuSyntaxException) {
+            IcuInspection(syntaxError = failure.message, arguments = arguments)
+        }
+    }
+
+    private fun inspectPart(part: String, sink: MutableList<IcuArgument>) {
+        var index = 0
+        while (index < part.length) {
+            when (part[index]) {
+                '{' -> {
+                    val end = matchingBrace(part, index)
+                    inspectArgument(part.substring(index + 1, end), sink)
+                    index = end + 1
+                }
+                '}' -> throw IcuSyntaxException("unexpected '}'")
+                else -> index++
+            }
+        }
+    }
+
+    private fun inspectArgument(body: String, sink: MutableList<IcuArgument>) {
+        val firstComma = topLevelComma(body)
+        if (firstComma < 0) {
+            val name = body.trim()
+            if (name.isEmpty()) throw IcuSyntaxException("empty argument name")
+            sink += IcuArgument(name = name, type = "", selectors = emptyList())
+            return
+        }
+        val name = body.take(firstComma).trim()
+        if (name.isEmpty()) throw IcuSyntaxException("empty argument name")
+        val rest = body.substring(firstComma + 1)
+        val secondComma = topLevelComma(rest)
+        if (secondComma < 0) throw IcuSyntaxException("argument '$name' is missing branches")
+        val keyword = rest.take(secondComma).trim()
+        if (keyword != "plural" && keyword != "select") {
+            throw IcuSyntaxException("unsupported argument type '$keyword'")
+        }
+        val branches = parseBranches(rest.substring(secondComma + 1), name)
+        sink += IcuArgument(name = name, type = keyword, selectors = branches.map { it.first })
+        branches.forEach { (_, content) -> inspectPart(content, sink) }
+    }
+
     private fun formatPart(
         part: String,
         params: Map<String, String>,
@@ -225,3 +277,16 @@ object IcuLiteFormatter {
 
     private class IcuSyntaxException(message: String) : Exception(message)
 }
+
+/** Result of [IcuLiteFormatter.inspect]: first syntax error (if any) and the arguments seen. */
+data class IcuInspection(
+    val syntaxError: String?,
+    val arguments: List<IcuArgument>,
+)
+
+/** One ICU argument occurrence: `{name}` (type "") or `{name, plural|select, ...}`. */
+data class IcuArgument(
+    val name: String,
+    val type: String,
+    val selectors: List<String>,
+)

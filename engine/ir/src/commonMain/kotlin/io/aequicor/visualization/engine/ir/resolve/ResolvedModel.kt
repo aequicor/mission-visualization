@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.ir.resolve
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -140,11 +141,17 @@ data class ResolvedAutoLayout(
     val paddingLeft: Double = 0.0,
     val alignItems: AlignItems = AlignItems.Start,
     val justifyContent: JustifyContent = JustifyContent.Start,
+    /** Which text baseline [AlignItems.Baseline] aligns on. */
+    val baseline: BaselineAlign = BaselineAlign.First,
     val clipsContent: Boolean = false,
     val columns: List<GridTrack> = emptyList(),
     val rows: List<GridTrack> = emptyList(),
     val columnGap: Double = 0.0,
     val rowGap: Double = 0.0,
+    /** Template for implicit grid rows when [rows] is empty. */
+    val implicitRows: GridTrack? = null,
+    /** Minimum implicit row size. */
+    val implicitRowMin: Double? = null,
 )
 
 sealed interface ResolvedPaint {

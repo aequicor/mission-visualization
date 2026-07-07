@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.ir.layout
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.GridTrack
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.JustifyContent
@@ -9,12 +10,23 @@ import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
+import io.aequicor.visualization.engine.ir.resolve.ResolvedText
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
 /**
  * A laid-out node: absolute rect in root-frame coordinates plus laid-out children.
+ *
+ * [contentWidth]/[contentHeight] report the natural extent of the content in the
+ * node's own coordinate space: the box size grown by whatever the children (and a
+ * text node's measured text) overflow past the right/bottom edges. They equal
+ * [width]/[height] when everything fits; overflow/scroll settings only ever affect
+ * clipping and reporting, never measurement.
+ *
+ * [fixed] marks a child pinned while its parent scrolls: its id (or source id) is
+ * listed in the parent's `scroll.fixedChildren`, or the node itself carries the
+ * legacy `scroll.sticky` flag.
  */
 data class LayoutBox(
     val node: ResolvedNode,
@@ -22,6 +34,9 @@ data class LayoutBox(
     val y: Double,
     val width: Double,
     val height: Double,
+    val contentWidth: Double = width,
+    val contentHeight: Double = height,
+    val fixed: Boolean = false,
     val children: List<LayoutBox> = emptyList(),
 ) {
     val right: Double get() = x + width
@@ -97,8 +112,11 @@ class DesignLayoutEngine(
     /** Width the node wants when nothing forces it: fixed size or hugged content. */
     fun naturalWidth(node: ResolvedNode): Double {
         val fixed = node.size.width
+        val intrinsic = node.media?.intrinsicWidth
         val width = when {
             node.sizing.horizontal == SizingMode.Fixed && fixed != null -> fixed
+            // A hugging media node without an authored size hugs the asset's intrinsic size.
+            node.sizing.horizontal == SizingMode.Hug && fixed == null && intrinsic != null -> intrinsic
             node.text != null -> textNaturalWidth(node)
             node.children.isEmpty() -> fixed ?: 0.0
             else -> when (node.layout.mode) {
@@ -135,8 +153,10 @@ class DesignLayoutEngine(
     /** Height the node wants given a final [width]. */
     fun naturalHeight(node: ResolvedNode, width: Double): Double {
         val fixed = node.size.height
+        val intrinsic = node.media?.intrinsicHeight
         val height = when {
             node.sizing.vertical == SizingMode.Fixed && fixed != null -> fixed
+            node.sizing.vertical == SizingMode.Hug && fixed == null && intrinsic != null -> intrinsic
             node.text != null -> textNaturalHeight(node, width)
             node.children.isEmpty() -> fixed ?: 0.0
             else -> when (node.layout.mode) {
@@ -168,23 +188,57 @@ class DesignLayoutEngine(
 
     // --- Placement ----------------------------------------------------------
 
-    private fun place(node: ResolvedNode, x: Double, y: Double, width: Double, height: Double): LayoutBox {
+    private fun place(
+        node: ResolvedNode,
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+        fixed: Boolean = false,
+    ): LayoutBox {
         val children = when {
             node.children.isEmpty() -> emptyList()
             node.layout.mode == LayoutMode.None -> placeConstrained(node, x, y, width, height, node.children)
             else -> {
                 val flow = layoutChildren(node, width, height).boxes.map { placed ->
-                    place(placed.child, x + placed.x, y + placed.y, placed.width, placed.height)
+                    place(
+                        placed.child, x + placed.x, y + placed.y, placed.width, placed.height,
+                        fixed = isFixedChild(node, placed.child),
+                    )
                 }
                 val absolute = placeConstrained(
                     node, x, y, width, height,
-                    node.children.filter { it.layoutChild.absolute },
+                    node.children.filter { it.layoutChild.absolute || isAnnotationMarker(it) },
                 )
                 orderBySource(node, flow + absolute)
             }
         }
-        return LayoutBox(node, x, y, width, height, children)
+        val measuredText = node.text?.let { textMeasurer.measure(it, width) }
+        val contentWidth = maxOf(
+            width,
+            children.maxOfOrNull { it.right - x } ?: 0.0,
+            measuredText?.width ?: 0.0,
+        )
+        val contentHeight = maxOf(
+            height,
+            children.maxOfOrNull { it.bottom - y } ?: 0.0,
+            measuredText?.height ?: 0.0,
+        )
+        return LayoutBox(node, x, y, width, height, contentWidth, contentHeight, fixed, children)
     }
+
+    /** See [LayoutBox.fixed]: pinned via the parent's `fixedChildren` or the legacy sticky flag. */
+    private fun isFixedChild(parent: ResolvedNode, child: ResolvedNode): Boolean =
+        child.scroll.sticky ||
+            child.id in parent.scroll.fixedChildren ||
+            child.sourceId in parent.scroll.fixedChildren
+
+    /**
+     * Annotation-kind nodes without an authored size are handoff markers: they leave
+     * the flow like absolute children and occupy zero geometry.
+     */
+    private fun isAnnotationMarker(node: ResolvedNode): Boolean =
+        node.annotation != null && node.size.width == null && node.size.height == null
 
     /** Keeps paint order equal to the authored children order. */
     private fun orderBySource(node: ResolvedNode, boxes: List<LayoutBox>): List<LayoutBox> {
@@ -232,6 +286,7 @@ class DesignLayoutEngine(
                 parentY + cy,
                 clampWidth(child, cw),
                 clampHeight(child, ch),
+                fixed = isFixedChild(parent, child),
             )
         }
     }
@@ -298,7 +353,7 @@ class DesignLayoutEngine(
     )
 
     private fun flowChildren(node: ResolvedNode): List<ResolvedNode> =
-        node.children.filterNot { it.layoutChild.absolute }
+        node.children.filterNot { it.layoutChild.absolute || isAnnotationMarker(it) }
 
     private fun fixedGapTotal(node: ResolvedNode, childCount: Int): Double {
         if (childCount <= 1) return 0.0
@@ -320,12 +375,75 @@ class DesignLayoutEngine(
     private fun effectiveAlign(alignItems: AlignItems, child: ResolvedNode): AlignItems =
         child.layoutChild.alignSelf ?: alignItems
 
+    /**
+     * Cross-axis offset for non-baseline alignment. [AlignItems.Baseline] maps to the
+     * start here; horizontal flow overrides it with real baseline offsets, and on other
+     * axes (vertical flow cross axis, grid cells) baseline degrades to start.
+     */
     private fun alignmentOffset(align: AlignItems, lineCross: Double, childCross: Double): Double =
         when (align) {
-            AlignItems.Center, AlignItems.Baseline -> (lineCross - childCross) / 2.0
+            AlignItems.Center -> (lineCross - childCross) / 2.0
             AlignItems.End -> lineCross - childCross
             else -> 0.0
         }
+
+    // --- Baseline alignment ---------------------------------------------------
+
+    /**
+     * Baseline of a child inside a horizontal line, measured from the child's top:
+     * the first text descendant's baseline (in placement order), via
+     * [DesignTextMeasurer.firstBaseline]. Non-text children without any text
+     * descendant align by their bottom edge (null here).
+     *
+     * [BaselineAlign.Last] approximates the last line as
+     * `firstBaseline + (lineCount - 1) * lineHeight`, with the line count derived
+     * from the measured height; when the line height is not measurable it falls
+     * back to [BaselineAlign.First].
+     */
+    private fun childBaseline(
+        node: ResolvedNode,
+        width: Double,
+        height: Double?,
+        align: BaselineAlign,
+    ): Double? {
+        node.text?.let { return textBaseline(it, width, align) }
+        if (node.children.isEmpty() || node.layout.mode == LayoutMode.None) return null
+        layoutChildren(node, width, height).boxes.forEach { placed ->
+            childBaseline(placed.child, placed.width, placed.height, align)
+                ?.let { return placed.y + it }
+        }
+        return null
+    }
+
+    private fun textBaseline(text: ResolvedText, width: Double, align: BaselineAlign): Double {
+        val first = textMeasurer.firstBaseline(text, width)
+        if (align == BaselineAlign.Last) {
+            val lineHeight = if (text.style.lineHeight > 0.0) text.style.lineHeight else text.style.fontSize * 1.25
+            if (lineHeight > 0.0) {
+                val lineCount = (textMeasurer.measure(text, width).height / lineHeight).toInt().coerceAtLeast(1)
+                return first + (lineCount - 1) * lineHeight
+            }
+        }
+        return first
+    }
+
+    /** Offsets from the line top for the line's baseline-aligned children, keyed by child index. */
+    private fun baselineOffsets(
+        node: ResolvedNode,
+        line: List<Int>,
+        children: List<ResolvedNode>,
+        widths: List<Double>,
+        heights: List<Double>,
+    ): Map<Int, Double> {
+        val layout = node.layout
+        val baselineIndices = line.filter { effectiveAlign(layout.alignItems, children[it]) == AlignItems.Baseline }
+        if (baselineIndices.isEmpty()) return emptyMap()
+        val baselines = baselineIndices.associateWith { index ->
+            childBaseline(children[index], widths[index], heights[index], layout.baseline) ?: heights[index]
+        }
+        val maxBaseline = baselines.values.max()
+        return baselines.mapValues { (_, baseline) -> maxBaseline - baseline }
+    }
 
     /**
      * Distributes main-axis leftover space. Returns start offset and effective gap.
@@ -420,7 +538,7 @@ class DesignLayoutEngine(
             }
         }
 
-        // 4. Place line by line.
+        // 4. Place line by line; baseline-aligned children share the line's max baseline.
         val placed = mutableListOf<PlacedChild>()
         var lineY = layout.paddingTop
         lines.forEachIndexed { lineIndex, line ->
@@ -432,14 +550,18 @@ class DesignLayoutEngine(
                 mainAvail = mainAvail,
                 hasFills = fillIndices.isNotEmpty(),
             )
+            val baselineOffsets = baselineOffsets(node, line, children, widths, heights)
             var xCursor = layout.paddingLeft + startOffset
+            var lineExtent = lineCross[lineIndex]
             line.forEach { index ->
                 val child = children[index]
-                val yOffset = alignmentOffset(effectiveAlign(layout.alignItems, child), lineCross[lineIndex], heights[index])
+                val yOffset = baselineOffsets[index]
+                    ?: alignmentOffset(effectiveAlign(layout.alignItems, child), lineCross[lineIndex], heights[index])
                 placed += PlacedChild(child, xCursor, lineY + yOffset, widths[index], heights[index])
                 xCursor += widths[index] + gap
+                lineExtent = maxOf(lineExtent, yOffset + heights[index])
             }
-            lineY += lineCross[lineIndex] + layout.crossGap
+            lineY += lineExtent + layout.crossGap
         }
 
         val contentHeight = lineY - layout.crossGap + layout.paddingBottom
@@ -645,7 +767,10 @@ class DesignLayoutEngine(
         val cells = assignGridCells(node, columns.size)
 
         val rowCount = (cells.maxOfOrNull { it.row + it.rowSpan } ?: 0).coerceAtLeast(layout.rows.size)
-        val rows = List(rowCount) { index -> layout.rows.getOrNull(index) ?: GridTrack.Hug }
+        // Implicit rows: with no explicit row tracks, every occupied row instantiates
+        // the implicitRows template; its resolved size is clamped to implicitRowMin.
+        val implicitTemplate = layout.implicitRows.takeIf { layout.rows.isEmpty() }
+        val rows = List(rowCount) { index -> layout.rows.getOrNull(index) ?: implicitTemplate ?: GridTrack.Hug }
 
         // On a hug axis, flex tracks have no free space to share: size them by content
         // so measurement (available == null) and placement agree.
@@ -656,7 +781,7 @@ class DesignLayoutEngine(
             gap = layout.columnGap,
         ) { columnIndex -> gridColumnHugWidth(cells, columnIndex) }
 
-        val rowHeights = resolveTracks(
+        val resolvedRowHeights = resolveTracks(
             tracks = rows,
             available = height
                 ?.takeUnless { node.sizing.vertical == SizingMode.Hug }
@@ -673,6 +798,12 @@ class DesignLayoutEngine(
                     }
                     naturalHeight(cell.child, childWidth)
                 } ?: 0.0
+        }
+        val implicitMin = layout.implicitRowMin.takeIf { implicitTemplate != null }
+        val rowHeights = if (implicitMin != null) {
+            resolvedRowHeights.map { it.coerceAtLeast(implicitMin) }
+        } else {
+            resolvedRowHeights
         }
 
         val columnOffsets = trackOffsets(columnWidths, layout.columnGap, layout.paddingLeft)

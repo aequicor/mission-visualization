@@ -46,6 +46,34 @@ object ExpressionEvaluator {
             null
         }
 
+    /**
+     * Parse-only validation entry: checks that [expression] matches the grammar without
+     * evaluating it against any data. Returns the syntax error, or null when it parses.
+     */
+    fun syntaxErrorOrNull(expression: DesignExpression): String? =
+        try {
+            checkSyntax(expression.raw.trim())
+            null
+        } catch (failure: EvalException) {
+            failure.message ?: "expression failed to parse"
+        }
+
+    private fun checkSyntax(raw: String) {
+        if (raw.isEmpty()) throw EvalException("empty expression")
+        if (raw.startsWith("!") && !raw.startsWith("!=")) {
+            checkSyntax(raw.drop(1).trim())
+            return
+        }
+        val comparison = splitComparison(raw)
+        if (comparison != null) {
+            val (leftRaw, _, rightRaw) = comparison
+            parsePath(leftRaw.trim())
+            parseLiteral(rightRaw.trim())
+            return
+        }
+        parsePath(raw)
+    }
+
     private fun evaluateExpression(raw: String, scope: EvalScope): DataValue {
         if (raw.isEmpty()) throw EvalException("empty expression")
         if (raw.startsWith("!") && !raw.startsWith("!=")) {

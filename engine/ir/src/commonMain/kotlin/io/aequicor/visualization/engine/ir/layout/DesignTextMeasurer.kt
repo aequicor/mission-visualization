@@ -9,6 +9,14 @@ import io.aequicor.visualization.engine.ir.resolve.ResolvedText
  */
 interface DesignTextMeasurer {
     fun measure(text: ResolvedText, maxWidth: Double? = null): MeasuredText
+
+    /**
+     * Distance from the text box top to the first line's alphabetic baseline.
+     * Default approximation: `0.8 * fontSize` (typical ascent share); platform
+     * implementations return the real measured baseline.
+     */
+    fun firstBaseline(text: ResolvedText, maxWidth: Double? = null): Double =
+        text.style.fontSize * 0.8
 }
 
 data class MeasuredText(

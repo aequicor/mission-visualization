@@ -972,11 +972,14 @@ class DesignResolver(
                 ?: resolveDouble(layout.padding.left, scope, 0.0),
             alignItems = layout.alignItems,
             justifyContent = justifyContent,
+            baseline = layout.baseline,
             clipsContent = layout.clipsContent,
             columns = layout.columns,
             rows = layout.rows,
             columnGap = layout.columnGap?.let { resolveDouble(it, scope, 0.0) } ?: fixedGap,
             rowGap = layout.rowGap?.let { resolveDouble(it, scope, 0.0) } ?: fixedGap,
+            implicitRows = layout.implicitRows,
+            implicitRowMin = layout.implicitRowMin,
         )
     }
 
