@@ -1929,7 +1929,7 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
                     EditorSvgIcon(
                         icon = toolIcon(tool),
                         contentDescription = tool.label,
-                        modifier = Modifier.size(19.dp),
+                        modifier = Modifier.size(24.dp),
                         tint = if (active) Color.White else colors.ink,
                     )
                 }
