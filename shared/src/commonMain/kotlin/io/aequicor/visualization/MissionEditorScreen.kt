@@ -54,6 +54,7 @@ import io.aequicor.visualization.editor.ui.horizontalResizeCursor
 import io.aequicor.visualization.editor.ui.theme.EditorTheme
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
+import io.aequicor.visualization.engine.ir.model.DesignColor
 
 /**
  * Presentation holder for the Mission Editor: keeps the design-document state
@@ -75,6 +76,35 @@ class MissionEditorStateHolder(
     var artboardLayout by mutableStateOf<LayoutBox?>(null)
         private set
 
+    /** True while a canvas move/resize drag is live; Escape then cancels it. */
+    var activeDrag by mutableStateOf(false)
+        private set
+
+    private var cancelDragRequested = false
+
+    /** Marks the start/end of a live canvas drag (see [requestCancelDrag]). */
+    fun beginDrag() {
+        activeDrag = true
+        cancelDragRequested = false
+    }
+
+    fun endDrag() {
+        activeDrag = false
+        cancelDragRequested = false
+    }
+
+    /** Escape while dragging: request the in-progress gesture abort itself. */
+    fun requestCancelDrag() {
+        if (activeDrag) cancelDragRequested = true
+    }
+
+    /** The gesture loop polls this; true once means "abort this drag". */
+    fun consumeCancelDrag(): Boolean {
+        val requested = cancelDragRequested
+        cancelDragRequested = false
+        return requested
+    }
+
     fun dispatch(intent: DesignEditorIntent) {
         designState = reduceDesignEditor(designState, intent)
     }
@@ -91,6 +121,13 @@ class MissionEditorStateHolder(
         updateWorkspace { ws ->
             val expanded = ws.expandedSections
             ws.copy(expandedSections = if (section in expanded) expanded - section else expanded + section)
+        }
+    }
+
+    /** Records a committed color as most-recent (deduped, capped) for the color picker. */
+    fun addRecentColor(color: DesignColor) {
+        updateWorkspace { ws ->
+            ws.copy(recentColors = (listOf(color) + ws.recentColors.filter { it != color }).take(12))
         }
     }
 }

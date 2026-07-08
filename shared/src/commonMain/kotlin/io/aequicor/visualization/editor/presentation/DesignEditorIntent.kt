@@ -186,6 +186,12 @@ sealed interface DesignEditorIntent {
     /** Ends a drag: subsequent edits resume taking their own checkpoints. */
     data object EndInteraction : DesignEditorIntent
 
+    /**
+     * Aborts an in-progress drag (Escape): reverts the document to the checkpoint taken
+     * at [BeginInteraction] and records no undo entry.
+     */
+    data object CancelInteraction : DesignEditorIntent
+
     // --- History -----------------------------------------------------------
 
     data object Undo : DesignEditorIntent

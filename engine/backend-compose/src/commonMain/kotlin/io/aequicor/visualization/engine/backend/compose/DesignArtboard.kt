@@ -60,6 +60,8 @@ fun DesignArtboard(
     selectedNodeId: String = "",
     selectedNodeIds: Set<String> = emptySet(),
     hoveredNodeId: String = "",
+    /** Node in vector point-edit mode: its object resize handles are suppressed. */
+    vectorEditNodeId: String = "",
     viewport: CanvasViewport? = null,
     showSelection: Boolean = true,
     /** When false the artboard installs no tap handler; the caller owns all gestures. */
@@ -139,7 +141,9 @@ fun DesignArtboard(
             allSelected.forEach { id ->
                 if (id != layoutBox.node.sourceId || allSelected.size == 1) {
                     layoutBox.findBySourceId(id)?.let { box ->
-                        drawSelectionOverlay(box, zoom, panX, panY, handles = id == selectedNodeId || allSelected.size == 1)
+                        // Point-edit mode replaces object handles with path anchors, so suppress them.
+                        val handles = (id == selectedNodeId || allSelected.size == 1) && id != vectorEditNodeId
+                        drawSelectionOverlay(box, zoom, panX, panY, handles = handles)
                     }
                 }
             }

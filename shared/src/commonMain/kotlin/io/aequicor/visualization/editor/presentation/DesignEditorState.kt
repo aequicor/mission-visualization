@@ -96,6 +96,24 @@ internal fun DesignEditorState.editNode(
     return commitDocument(document, document.updateNode(nodeId, transform))
 }
 
+/**
+ * Like [editNode] but a no-op when the target is locked. Used for geometry, appearance,
+ * typography and vector edits so a locked layer cannot be moved/resized/edited from the
+ * canvas or the inspector (design-book §7). Visibility, lock and rename intentionally
+ * stay on [editNode] so a locked layer can still be revealed, renamed or unlocked.
+ */
+internal fun DesignEditorState.editUnlockedNode(
+    nodeId: String,
+    transform: (DesignNode) -> DesignNode,
+): DesignEditorState {
+    if (document?.nodeById(nodeId)?.locked == true) return this
+    return editNode(nodeId, transform)
+}
+
+/** True when the node exists and is locked (drives inspector field disabling). */
+fun DesignEditorState.isNodeLocked(nodeId: String): Boolean =
+    document?.nodeById(nodeId)?.locked == true
+
 /** Applies a whole-document [transform] (undoable). */
 internal fun DesignEditorState.editDocument(
     transform: (DesignDocument) -> DesignDocument,

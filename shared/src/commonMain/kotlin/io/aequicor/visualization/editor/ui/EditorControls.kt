@@ -110,6 +110,7 @@ internal fun InspectorNumberField(
     resetKey: String,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    placeholder: String = "",
     onCommit: (Double) -> Unit,
 ) {
     var draft by remember(resetKey, value) { mutableStateOf(value) }
@@ -130,6 +131,9 @@ internal fun InspectorNumberField(
             singleLine = true,
             enabled = enabled,
             textStyle = MaterialTheme.typography.bodySmall,
+            placeholder = if (placeholder.isEmpty()) null else {
+                { Text(placeholder, style = MaterialTheme.typography.bodySmall, color = LocalEditorColors.current.mutedInk) }
+            },
             trailingIcon = if (suffix.isEmpty()) null else {
                 { Text(suffix, style = MaterialTheme.typography.bodySmall, color = Color.Black) }
             },
@@ -190,6 +194,44 @@ internal fun InspectorCommitNumberField(
             },
         )
     }
+}
+
+/**
+ * A [androidx.compose.material3.Slider] whose whole drag coalesces into a single undo
+ * entry: [onBegin] fires on the first change of a gesture, [onEnd] on release. Use for
+ * any inspector slider that mutates the document (opacity, effects) so a drag is one
+ * undoable step rather than one-per-frame.
+ */
+@Composable
+internal fun UndoableSlider(
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onBegin: () -> Unit,
+    onChange: (Float) -> Unit,
+    onEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    var dragging by remember { mutableStateOf(false) }
+    androidx.compose.material3.Slider(
+        value = value,
+        onValueChange = { next ->
+            if (!dragging) {
+                dragging = true
+                onBegin()
+            }
+            onChange(next)
+        },
+        onValueChangeFinished = {
+            if (dragging) {
+                dragging = false
+                onEnd()
+            }
+        },
+        valueRange = valueRange,
+        enabled = enabled,
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -338,16 +380,27 @@ internal fun <T> SegmentedControl(
 // --- Buttons -----------------------------------------------------------------
 
 @Composable
-internal fun SmallSquareButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, active: Boolean = false) {
+internal fun SmallSquareButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    enabled: Boolean = true,
+) {
     val colors = LocalEditorColors.current
     Surface(
-        modifier = modifier.size(34.dp).clickable(onClick = onClick),
+        modifier = modifier.size(34.dp).clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(7.dp),
         color = if (active) colors.selectionFill else Color.White,
         border = BorderStroke(1.dp, if (active) colors.selectionStroke else colors.panelStroke),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = if (active) colors.accent else colors.ink, maxLines = 1)
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (!enabled) colors.mutedInk else if (active) colors.accent else colors.ink,
+                maxLines = 1,
+            )
         }
     }
 }

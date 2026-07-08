@@ -49,6 +49,10 @@ internal class DesignDrawContext(
 private val PlaceholderImageColor = Color(0xFFD9E1EA)
 private val UnknownPaintColor = Color(0xFFC9CFD6)
 
+/** Explicit "missing asset" fill: an image paint with no bound asset id or url. */
+private val MissingAssetColor = Color(0xFFF3D6DE)
+private val MissingAssetHatch = Color(0x66B0455F)
+
 /** Draws a laid-out node tree in document coordinates (the caller applies zoom). */
 internal fun DrawScope.drawDesignBox(box: LayoutBox, context: DesignDrawContext) {
     val node = box.node
@@ -208,11 +212,40 @@ private fun DrawScope.drawResolvedPaint(
                 drawPath(outline, paint.toBrush(box), alpha = paint.opacity.toFloat(), style = style)
         }
         is ResolvedPaint.Image -> {
-            drawPath(outline, PlaceholderImageColor, alpha = paint.opacity.toFloat(), style = style)
+            val missing = paint.assetId.isBlank() && paint.url.isBlank()
+            if (missing) {
+                // Explicit missing-asset state: a warning tint + a hatch so it never reads
+                // as a valid, deliberately-flat placeholder.
+                drawPath(outline, MissingAssetColor, alpha = paint.opacity.toFloat(), style = style)
+                if (style == androidx.compose.ui.graphics.drawscope.Fill) {
+                    clipPath(outline) { drawMissingAssetHatch(box) }
+                }
+            } else {
+                drawPath(outline, PlaceholderImageColor, alpha = paint.opacity.toFloat(), style = style)
+            }
         }
         is ResolvedPaint.Unknown -> {
             drawPath(outline, UnknownPaintColor, alpha = paint.opacity.toFloat(), style = style)
         }
+    }
+}
+
+/** Diagonal hatch marking a missing image asset (caller clips to the node outline). */
+private fun DrawScope.drawMissingAssetHatch(box: LayoutBox) {
+    val top = box.y.toFloat()
+    val bottom = box.bottom.toFloat()
+    val right = box.right.toFloat()
+    val span = bottom - top
+    val step = 10f
+    var x = box.x.toFloat() - span
+    while (x < right) {
+        drawLine(
+            color = MissingAssetHatch,
+            start = Offset(x, bottom),
+            end = Offset(x + span, top),
+            strokeWidth = 1.5f,
+        )
+        x += step
     }
 }
 

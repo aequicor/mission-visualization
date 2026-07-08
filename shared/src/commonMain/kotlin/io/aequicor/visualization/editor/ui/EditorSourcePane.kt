@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,10 +48,15 @@ import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.ScreenPreset
 import io.aequicor.visualization.editor.presentation.SourceTab
 import io.aequicor.visualization.editor.presentation.ZOrderMove
+import io.aequicor.visualization.editor.presentation.isSelfOrAncestor
+import io.aequicor.visualization.editor.presentation.parentNodeOf
+import io.aequicor.visualization.editor.presentation.siblingsOf
+import io.aequicor.visualization.editor.presentation.topLevelOwnerPage
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import kotlin.math.roundToInt
 
 /** Left column: Source / Resources / Layers tabs plus the Screens list. */
 @Composable
@@ -172,12 +179,34 @@ private fun LayersTree(state: MissionEditorStateHolder) {
     val rows = remember(page, ws.collapsedLayers) {
         page?.let { flattenLayers(it, ws.collapsedLayers) } ?: emptyList()
     }
+    val rowHeightPx = with(LocalDensity.current) { LayerRowHeight.toPx() }
+    // Drag-to-reorder / reparent state, local to the tree.
+    var dragId by remember { mutableStateOf("") }
+    var dragFrom by remember { mutableStateOf(-1) }
+    var dragAccumY by remember { mutableStateOf(0f) }
+    var dragOver by remember { mutableStateOf(-1) }
     Column(
         modifier = Modifier.fillMaxSize().background(colors.paneSurface)
             .verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
     ) {
-        rows.forEach { row ->
-            LayerRowView(state, row)
+        rows.forEachIndexed { index, row ->
+            LayerRowView(
+                state = state,
+                row = row,
+                isDropTarget = dragId.isNotEmpty() && dragOver == index && row.node.id != dragId,
+                onDragStart = { dragId = row.node.id; dragFrom = index; dragAccumY = 0f; dragOver = index },
+                onDrag = { dy ->
+                    if (dragFrom >= 0) {
+                        dragAccumY += dy
+                        dragOver = (dragFrom + (dragAccumY / rowHeightPx).roundToInt()).coerceIn(0, rows.size - 1)
+                    }
+                },
+                onDrop = {
+                    if (dragId.isNotEmpty() && dragOver in rows.indices) applyLayerDrop(state, rows, dragId, dragOver)
+                    dragId = ""; dragFrom = -1; dragOver = -1
+                },
+                onDragCancel = { dragId = ""; dragFrom = -1; dragOver = -1 },
+            )
         }
         if (rows.isEmpty()) {
             Text("Empty screen", color = colors.mutedInk, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
@@ -185,8 +214,39 @@ private fun LayersTree(state: MissionEditorStateHolder) {
     }
 }
 
+private val LayerRowHeight = 30.dp
+
+/**
+ * Resolves a layers drag drop: dropping onto a frame/container reparents into it,
+ * otherwise the node reorders next to the target within the target's parent. Invalid
+ * drops (self / own descendant) are rejected here and again by the reducer.
+ */
+private fun applyLayerDrop(state: MissionEditorStateHolder, rows: List<LayerRow>, dragId: String, overIndex: Int) {
+    val doc = state.designState.document ?: return
+    val overNode = rows.getOrNull(overIndex)?.node ?: return
+    if (overNode.id == dragId) return
+    if (doc.isSelfOrAncestor(overNode.id, dragId)) return
+    val dragParent = doc.parentNodeOf(dragId)?.id ?: doc.topLevelOwnerPage(dragId)?.id
+    val overIsContainer = overNode.kind is io.aequicor.visualization.engine.ir.model.DesignNodeKind.Frame || overNode.children.isNotEmpty()
+    if (overIsContainer && overNode.id != dragParent) {
+        state.dispatch(DesignEditorIntent.ReparentNode(dragId, overNode.id))
+        return
+    }
+    val overParent = doc.parentNodeOf(overNode.id)?.id ?: doc.topLevelOwnerPage(overNode.id)?.id ?: return
+    val targetIndex = doc.siblingsOf(overNode.id).indexOfFirst { it.id == overNode.id }
+    state.dispatch(DesignEditorIntent.ReparentNode(dragId, overParent, targetIndex))
+}
+
 @Composable
-private fun LayerRowView(state: MissionEditorStateHolder, row: LayerRow) {
+private fun LayerRowView(
+    state: MissionEditorStateHolder,
+    row: LayerRow,
+    isDropTarget: Boolean,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDrop: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
     val colors = LocalEditorColors.current
     val design = state.designState
     val ws = state.workspace
@@ -197,7 +257,7 @@ private fun LayerRowView(state: MissionEditorStateHolder, row: LayerRow) {
     val collapsed = node.id in ws.collapsedLayers
     val visible = node.visible.literalOrNull() ?: true
     Row(
-        modifier = Modifier.fillMaxWidth().height(30.dp)
+        modifier = Modifier.fillMaxWidth().height(LayerRowHeight)
             .background(
                 when {
                     selected -> colors.selectionFill
@@ -205,6 +265,7 @@ private fun LayerRowView(state: MissionEditorStateHolder, row: LayerRow) {
                     else -> Color.Transparent
                 },
             )
+            .then(if (isDropTarget) Modifier.border(BorderStroke(1.5.dp, colors.accent)) else Modifier)
             .pointerInput(node.id) {
                 awaitPointerEventScope {
                     while (true) {
@@ -213,6 +274,13 @@ private fun LayerRowView(state: MissionEditorStateHolder, row: LayerRow) {
                         if (e.type == PointerEventType.Exit && ws.hoveredNodeId == node.id) state.updateWorkspace { it.copy(hoveredNodeId = "") }
                     }
                 }
+            }
+            .pointerInput(node.id) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDrop() },
+                    onDragCancel = { onDragCancel() },
+                ) { change, dragAmount -> change.consume(); onDrag(dragAmount.y) }
             }
             .clickable { state.dispatch(DesignEditorIntent.SelectNode(node.id)) }
             .padding(start = (8 + row.depth * 16).dp, end = 8.dp),

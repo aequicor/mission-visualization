@@ -66,14 +66,17 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             val ids = state.document?.pageById(state.selectedPageId)?.children?.map { it.id }?.toSet().orEmpty()
             state.selectMany(ids)
         }
-        is DesignEditorIntent.SetEditingText -> state.copy(editingTextNodeId = intent.nodeId)
+        is DesignEditorIntent.SetEditingText ->
+            // Exiting ("" ) is always allowed; entering edit mode on a locked node is not.
+            if (intent.nodeId.isNotBlank() && state.isNodeLocked(intent.nodeId)) state
+            else state.copy(editingTextNodeId = intent.nodeId)
 
         // --- Position / size / transform ---
-        is DesignEditorIntent.UpdatePosition -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.UpdatePosition -> state.editUnlockedNode(intent.nodeId) { node ->
             val current = node.position ?: DesignPoint()
             node.copy(position = DesignPoint(intent.x ?: current.x, intent.y ?: current.y))
         }
-        is DesignEditorIntent.UpdateSize -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.UpdateSize -> state.editUnlockedNode(intent.nodeId) { node ->
             val sizing = node.sizing ?: DesignSizing()
             node.copy(
                 size = DesignSize(intent.width ?: node.size.width, intent.height ?: node.size.height),
@@ -85,24 +88,25 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         }
         is DesignEditorIntent.ResizeNode -> state.resizeNodeWriteBack(intent)
         is DesignEditorIntent.MoveNodes -> state.moveNodes(intent)
-        is DesignEditorIntent.UpdateSizingMode -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.UpdateSizingMode -> state.editUnlockedNode(intent.nodeId) { node ->
             val sizing = node.sizing ?: DesignSizing()
             node.copy(sizing = sizing.copy(
                 horizontal = intent.horizontal ?: sizing.horizontal,
                 vertical = intent.vertical ?: sizing.vertical,
             ))
         }
-        is DesignEditorIntent.UpdateConstraints -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.UpdateConstraints -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(constraints = node.constraints.copy(
                 horizontal = intent.horizontal ?: node.constraints.horizontal,
                 vertical = intent.vertical ?: node.constraints.vertical,
             ))
         }
-        is DesignEditorIntent.SetRotation -> state.editNode(intent.nodeId) { it.copy(rotation = intent.degrees) }
+        is DesignEditorIntent.SetRotation -> state.editUnlockedNode(intent.nodeId) { it.copy(rotation = intent.degrees) }
         is DesignEditorIntent.FlipHorizontal -> state.flip(intent.nodeIds, horizontal = true)
         is DesignEditorIntent.FlipVertical -> state.flip(intent.nodeIds, horizontal = false)
 
         // --- Visibility / lock / structure ---
+        // These stay editable on a locked node so it can still be revealed, unlocked or renamed.
         is DesignEditorIntent.SetVisible -> state.editNode(intent.nodeId) { it.copy(visible = intent.visible.bindable()) }
         is DesignEditorIntent.SetLocked -> state.editNode(intent.nodeId) { it.copy(locked = intent.locked) }
         is DesignEditorIntent.RenameNode -> state.editNode(intent.nodeId) { it.copy(name = intent.name) }
@@ -114,33 +118,33 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.CreateScreen -> state.createScreen(intent)
 
         // --- Layout container ---
-        is DesignEditorIntent.SetLayoutMode -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.SetLayoutMode -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(layout = node.layout.copy(mode = intent.mode.toLayoutMode()))
         }
-        is DesignEditorIntent.SetLayoutGap -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.SetLayoutGap -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(layout = node.layout.copy(gap = DesignGap.Fixed(intent.gap.bindable())))
         }
-        is DesignEditorIntent.SetLayoutPadding -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.SetLayoutPadding -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(layout = node.layout.copy(padding = node.layout.padding.withSide(intent.side, intent.value)))
         }
-        is DesignEditorIntent.SetLayoutAlign -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.SetLayoutAlign -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(layout = node.layout.copy(
                 alignItems = intent.alignItems ?: node.layout.alignItems,
                 justifyContent = intent.justifyContent ?: node.layout.justifyContent,
             ))
         }
-        is DesignEditorIntent.SetClipsContent -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.SetClipsContent -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(layout = node.layout.copy(clipsContent = intent.clips))
         }
-        is DesignEditorIntent.SetSticky -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.SetSticky -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(scroll = node.scroll.copy(sticky = intent.sticky))
         }
 
         // --- Appearance / fill / stroke / effects ---
-        is DesignEditorIntent.UpdateOpacity -> state.editNode(intent.nodeId) { it.copy(opacity = intent.opacity.coerceIn(0.0, 1.0).bindable()) }
-        is DesignEditorIntent.SetBlendMode -> state.editNode(intent.nodeId) { it.copy(blendMode = intent.blendMode) }
-        is DesignEditorIntent.UpdateCornerRadius -> state.editNode(intent.nodeId) { it.copy(cornerRadius = DesignCornerRadius.all(intent.radius.coerceAtLeast(0.0).bindable())) }
-        is DesignEditorIntent.UpdateCornerRadiusPerCorner -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.UpdateOpacity -> state.editUnlockedNode(intent.nodeId) { it.copy(opacity = intent.opacity.coerceIn(0.0, 1.0).bindable()) }
+        is DesignEditorIntent.SetBlendMode -> state.editUnlockedNode(intent.nodeId) { it.copy(blendMode = intent.blendMode) }
+        is DesignEditorIntent.UpdateCornerRadius -> state.editUnlockedNode(intent.nodeId) { it.copy(cornerRadius = DesignCornerRadius.all(intent.radius.coerceAtLeast(0.0).bindable())) }
+        is DesignEditorIntent.UpdateCornerRadiusPerCorner -> state.editUnlockedNode(intent.nodeId) { node ->
             val current = node.cornerRadius ?: DesignCornerRadius()
             node.copy(cornerRadius = current.copy(
                 topLeft = intent.topLeft?.coerceAtLeast(0.0)?.bindable() ?: current.topLeft,
@@ -149,13 +153,13 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
                 bottomLeft = intent.bottomLeft?.coerceAtLeast(0.0)?.bindable() ?: current.bottomLeft,
             ))
         }
-        is DesignEditorIntent.UpdateSolidFill -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.UpdateSolidFill -> state.editUnlockedNode(intent.nodeId) { node ->
             val solid = DesignPaint.Solid(intent.color.bindable())
             val fills = node.fills.orEmpty()
             node.copy(fills = if (fills.isEmpty()) listOf(solid) else listOf(solid) + fills.drop(1), fillStyleId = "")
         }
-        is DesignEditorIntent.FillCommand -> state.editNode(intent.nodeId) { it.applyFillOp(intent.op) }
-        is DesignEditorIntent.UpdateStroke -> state.editNode(intent.nodeId) { node ->
+        is DesignEditorIntent.FillCommand -> state.editUnlockedNode(intent.nodeId) { it.applyFillOp(intent.op) }
+        is DesignEditorIntent.UpdateStroke -> state.editUnlockedNode(intent.nodeId) { node ->
             val current = node.strokes ?: DesignStrokes()
             val paints = if (intent.color != null) {
                 listOf(DesignPaint.Solid(intent.color.bindable())) + current.paints.drop(1)
@@ -164,26 +168,27 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             }
             node.copy(strokes = current.copy(paints = paints, weight = intent.weight?.bindable() ?: current.weight), strokeStyleId = "")
         }
-        is DesignEditorIntent.StrokeCommand -> state.editNode(intent.nodeId) { it.applyStrokeOp(intent.op) }
-        is DesignEditorIntent.EffectCommand -> state.editNode(intent.nodeId) { it.applyEffectOp(intent.op) }
+        is DesignEditorIntent.StrokeCommand -> state.editUnlockedNode(intent.nodeId) { it.applyStrokeOp(intent.op) }
+        is DesignEditorIntent.EffectCommand -> state.editUnlockedNode(intent.nodeId) { it.applyEffectOp(intent.op) }
 
         // --- Typography ---
-        is DesignEditorIntent.UpdateTypography -> state.editNode(intent.nodeId) { it.applyTypography(intent.patch) }
-        is DesignEditorIntent.SetTextCharacters -> state.editNode(intent.nodeId) { node ->
-            val kind = node.kind as? DesignNodeKind.Text ?: return@editNode node
+        is DesignEditorIntent.UpdateTypography -> state.editUnlockedNode(intent.nodeId) { it.applyTypography(intent.patch) }
+        is DesignEditorIntent.SetTextCharacters -> state.editUnlockedNode(intent.nodeId) { node ->
+            val kind = node.kind as? DesignNodeKind.Text ?: return@editUnlockedNode node
             node.copy(kind = kind.copy(characters = intent.text.bindable(), content = null))
         }
-        is DesignEditorIntent.SetTextAutoResize -> state.editNode(intent.nodeId) { node ->
-            val kind = node.kind as? DesignNodeKind.Text ?: return@editNode node
+        is DesignEditorIntent.SetTextAutoResize -> state.editUnlockedNode(intent.nodeId) { node ->
+            val kind = node.kind as? DesignNodeKind.Text ?: return@editUnlockedNode node
             node.copy(kind = kind.copy(autoResize = intent.mode))
         }
 
         // --- Vector ---
-        is DesignEditorIntent.MoveVectorPoint -> state.editNode(intent.nodeId) { it.moveVectorPoint(intent) }
+        is DesignEditorIntent.MoveVectorPoint -> state.editUnlockedNode(intent.nodeId) { it.moveVectorPoint(intent) }
 
         // --- Interaction checkpoints ---
         DesignEditorIntent.BeginInteraction -> state.beginInteraction()
-        DesignEditorIntent.EndInteraction -> state.copy(interacting = false)
+        DesignEditorIntent.EndInteraction -> state.endInteraction()
+        DesignEditorIntent.CancelInteraction -> state.cancelInteraction()
 
         // --- History ---
         DesignEditorIntent.Undo -> state.undo()
@@ -197,6 +202,31 @@ private fun DesignEditorState.beginInteraction(): DesignEditorState {
         undoStack = (undoStack + document).takeLast(MaxDocumentHistory),
         redoStack = emptyList(),
     )
+}
+
+/**
+ * Ends a drag. Drops the checkpoint taken at [beginInteraction] when the drag changed
+ * nothing (a locked or auto-layout node that never moved), so an inert drag leaves no
+ * "dead" undo entry.
+ */
+private fun DesignEditorState.endInteraction(): DesignEditorState {
+    val document = document
+    val inert = document != null && undoStack.lastOrNull() == document
+    val trimmed = if (inert) copy(undoStack = undoStack.dropLast(1)) else this
+    return trimmed.copy(interacting = false)
+}
+
+/**
+ * Cancels a drag (Escape): restores the pre-drag document from the checkpoint and drops
+ * it, so an aborted drag records no undo entry.
+ */
+private fun DesignEditorState.cancelInteraction(): DesignEditorState {
+    val checkpoint = undoStack.lastOrNull() ?: return copy(interacting = false)
+    return copy(
+        document = checkpoint,
+        undoStack = undoStack.dropLast(1),
+        interacting = false,
+    ).pruneSelection()
 }
 
 // --- Selection helpers -------------------------------------------------------
@@ -407,6 +437,7 @@ private fun DesignEditorState.pruneSelection(): DesignEditorState {
 private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.ResizeNode): DesignEditorState {
     if (intent.width == null && intent.height == null) return this
     if (intent.nodeId.isBlank() || sources.isEmpty() || sources.size != compiledResults.size) return this
+    if (isNodeLocked(intent.nodeId)) return this
     val document = document ?: return this
     val edit = SetSizing(
         nodeId = intent.nodeId,

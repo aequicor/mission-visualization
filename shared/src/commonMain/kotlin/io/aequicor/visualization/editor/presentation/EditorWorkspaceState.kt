@@ -1,5 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
+import io.aequicor.visualization.engine.ir.model.DesignColor
+
 /**
  * Editor workspace / view state, kept strictly separate from the design document
  * (`DesignEditorState`). This is the user's personal layout of the workbench —
@@ -33,6 +35,8 @@ data class EditorWorkspaceState(
     val vectorSelectedPoint: VectorPointRef? = null,
     /** A pending fit-to request the canvas applies on its next layout pass. */
     val pendingFit: PendingFit = PendingFit.None,
+    /** Recently committed colors (most-recent first), surfaced by the color picker. */
+    val recentColors: List<DesignColor> = emptyList(),
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 

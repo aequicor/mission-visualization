@@ -284,6 +284,76 @@ class DesignEditorReducerCommandsTest {
         assertTrue(state.redoStack.isEmpty(), "resize cleared the redo stack")
     }
 
+    // --- Lock guard ---
+
+    @Test
+    fun lockedNodeIsNotResizedMovedOrRestyled() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        val child = assertNotNull(state.document?.nodeById(root)?.children?.firstOrNull()?.id)
+        state = reduceDesignEditor(state, DesignEditorIntent.SetLocked(child, true))
+        val sizeBefore = state.document?.nodeById(child)?.size
+        val opacityBefore = state.document?.nodeById(child)?.opacity?.literalOrNull()
+        state = reduceDesignEditor(state, DesignEditorIntent.UpdateSize(child, width = 999.0, height = 999.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.UpdatePosition(child, x = 12.0, y = 34.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.UpdateOpacity(child, 0.1))
+        state = reduceDesignEditor(state, DesignEditorIntent.FillCommand(child, FillOp.Add))
+        assertEquals(sizeBefore, state.document?.nodeById(child)?.size, "locked size unchanged")
+        assertEquals(opacityBefore, state.document?.nodeById(child)?.opacity?.literalOrNull(), "locked opacity unchanged")
+    }
+
+    @Test
+    fun lockedNodeCanStillBeUnlockedAndRevealed() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        state = reduceDesignEditor(state, DesignEditorIntent.SetLocked(root, true))
+        // Visibility + unlock must still apply on a locked node.
+        state = reduceDesignEditor(state, DesignEditorIntent.SetVisible(root, false))
+        assertEquals(false, state.document?.nodeById(root)?.visible?.literalOrNull())
+        state = reduceDesignEditor(state, DesignEditorIntent.SetLocked(root, false))
+        assertFalse(state.document?.nodeById(root)?.locked ?: true)
+    }
+
+    @Test
+    fun lockedTextCannotEnterEditMode() {
+        var state = freshState()
+        val textId = assertNotNull(
+            state.document?.pages?.flatMap { it.allNodes() }?.firstOrNull { it.kind is DesignNodeKind.Text }?.id,
+        )
+        state = reduceDesignEditor(state, DesignEditorIntent.SetLocked(textId, true))
+        state = reduceDesignEditor(state, DesignEditorIntent.SetEditingText(textId))
+        assertEquals("", state.editingTextNodeId, "locked text stays out of edit mode")
+    }
+
+    // --- Interaction lifecycle ---
+
+    @Test
+    fun cancelInteractionRevertsDragAndLeavesNoUndoEntry() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        val undoBefore = state.undoStack.size
+        val posBefore = state.document?.nodeById(root)?.position
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        repeat(5) { state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(root), 10.0, 10.0)) }
+        state = reduceDesignEditor(state, DesignEditorIntent.CancelInteraction)
+        assertEquals(posBefore, state.document?.nodeById(root)?.position, "drag reverted")
+        assertEquals(undoBefore, state.undoStack.size, "canceled drag left no undo entry")
+        assertFalse(state.interacting)
+    }
+
+    @Test
+    fun inertDragLeavesNoUndoEntry() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        state = reduceDesignEditor(state, DesignEditorIntent.SetLocked(root, true))
+        val undoBefore = state.undoStack.size
+        // A drag that touches only a locked node changes nothing.
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        repeat(5) { state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(root), 10.0, 10.0)) }
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
+        assertEquals(undoBefore, state.undoStack.size, "inert drag left no dead undo entry")
+    }
+
     @Test
     fun reparentIntoOwnDescendantIsRejected() {
         var state = freshState()
