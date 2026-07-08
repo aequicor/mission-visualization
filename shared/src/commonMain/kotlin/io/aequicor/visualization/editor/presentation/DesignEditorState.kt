@@ -11,20 +11,25 @@ import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
+import io.aequicor.visualization.editor.domain.MissionDocumentSource
+import io.aequicor.visualization.editor.domain.MissionDocuments
+import io.aequicor.visualization.engine.frontend.SlmCompileResult
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.bindable
-import io.aequicor.visualization.engine.ir.serialization.DesignParseResult
-import io.aequicor.visualization.engine.ir.serialization.documentOrNull
 
 /**
- * Immutable editor state over a parsed design document. Selection is tracked by
- * page id and authored node id; document edits go through [reduceDesignEditor].
+ * Immutable editor state over the compiled mission design. Selection is tracked
+ * by page id and authored node id; document edits go through [reduceDesignEditor].
+ * The per-document SLM [sources] and [compiledResults] (fingerprint + edit index)
+ * are carried for the upcoming resize write-back stage.
  */
 data class DesignEditorState(
     val document: DesignDocument? = null,
     val diagnostics: List<DesignDiagnostic> = emptyList(),
+    val sources: List<MissionDocumentSource> = emptyList(),
+    val compiledResults: List<SlmCompileResult> = emptyList(),
     val selectedPageId: String = "",
     val selectedNodeId: String = "",
 ) {
@@ -32,12 +37,14 @@ data class DesignEditorState(
         get() = document?.nodeById(selectedNodeId)
 }
 
-fun createDesignEditorState(parseResult: DesignParseResult): DesignEditorState {
-    val document = parseResult.documentOrNull()
+fun createDesignEditorState(documents: MissionDocuments): DesignEditorState {
+    val document = documents.document
     val firstPage = document?.pages?.firstOrNull()
     return DesignEditorState(
         document = document,
-        diagnostics = parseResult.diagnostics,
+        diagnostics = documents.diagnostics,
+        sources = documents.sources,
+        compiledResults = documents.compiled,
         selectedPageId = firstPage?.id.orEmpty(),
         selectedNodeId = firstPage?.children?.firstOrNull()?.id.orEmpty(),
     )

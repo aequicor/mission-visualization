@@ -1,19 +1,20 @@
 package io.aequicor.visualization.editor.domain
 
-import io.aequicor.visualization.engine.ir.serialization.DesignParseResult
-import io.aequicor.visualization.engine.ir.serialization.parseDesignDocument
-import io.aequicor.visualization.editor.domain.DesignDocumentRepository
+import io.aequicor.visualization.engine.frontend.SlmCompileOptions
+import io.aequicor.visualization.engine.frontend.compileSlm
 
-/** Loads and parses the bundled mission design document. */
+/**
+ * Loads the bundled mission SLM sources, compiles each standalone document and
+ * merges them into one multi-page design document.
+ */
 class LoadDesignDocumentUseCase(
     private val repository: DesignDocumentRepository,
 ) {
-    operator fun invoke(): DesignParseResult =
-        parseDesignDocument(repository.missionDocumentSource())
-}
-
-/** Parses an arbitrary design-document JSON source. */
-class ParseDesignDocumentUseCase {
-    operator fun invoke(source: String): DesignParseResult =
-        parseDesignDocument(source)
+    operator fun invoke(): MissionDocuments {
+        val sources = repository.missionDocumentSources()
+        val compiled = sources.map { source ->
+            compileSlm(source.content, SlmCompileOptions(fileName = source.fileName))
+        }
+        return mergeMissionDocuments(sources, compiled)
+    }
 }

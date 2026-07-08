@@ -53,7 +53,8 @@ kotlin {
         commonMain.dependencies {
             api(projects.engine.ir)
             implementation(projects.engine.backendCompose)
-            implementation(projects.engine.frontend)
+            // api: editor state / use-case API exposes SlmCompileResult.
+            api(projects.engine.frontend)
 
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
