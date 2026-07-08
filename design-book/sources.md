@@ -23,10 +23,18 @@ region; перед продуктовым использованием нужн�
 - [Select layers and objects](https://help.figma.com/hc/en-us/articles/360040449873-Select-layers-and-objects)
 - [Parent, child, and sibling relationships](https://help.figma.com/hc/en-us/articles/360039959014-Parent-child-and-sibling-relationships)
 - [Rename Layers](https://help.figma.com/hc/en-us/articles/360039958934-Rename-Layers)
+- [Lock and unlock layers](https://help.figma.com/hc/en-us/articles/360041596573-Lock-and-unlock-layers)
+- [Toggle visibility to hide layers](https://help.figma.com/hc/en-us/articles/360041112614-Toggle-visibility-to-hide-layers)
 - [Explore the navigation bar and left sidebar](https://help.figma.com/hc/en-us/articles/360039831974-Explore-the-navigation-bar-and-left-sidebar)
+- [Explore design files](https://help.figma.com/hc/en-us/articles/15297425105303-Explore-design-files)
+- [Explore FigJam files](https://help.figma.com/hc/en-us/articles/15300412458647-Explore-FigJam-files)
+- [Pan and zoom in FigJam](https://help.figma.com/hc/en-us/articles/1500004414582-Pan-and-zoom-in-FigJam)
 - [Design, prototype, and explore layer properties in the right sidebar](https://help.figma.com/hc/en-us/articles/360039832014-Design-prototype-and-explore-layer-properties-in-the-right-sidebar)
 - [Hide or minimize the UI](https://help.figma.com/hc/en-us/articles/41414918021271-Hide-or-minimize-the-UI)
 - [Adjust your zoom and view options](https://help.figma.com/hc/en-us/articles/360041065034-Adjust-your-zoom-and-view-options)
+- [Use Figma products with a keyboard](https://help.figma.com/hc/en-us/articles/360040328653-Use-Figma-products-with-a-keyboard)
+- [Select keyboard layout](https://help.figma.com/hc/en-us/articles/5665442977431-Select-keyboard-layout)
+- [Use the actions menu in Figma Design](https://help.figma.com/hc/en-us/articles/23570416033943-Use-the-actions-menu-in-Figma-Design)
 
 ## Layout
 
@@ -39,6 +47,8 @@ region; перед продуктовым использованием нужн�
 - [Prototype scroll and overflow behavior](https://help.figma.com/hc/en-us/articles/360039818734-Prototype-scroll-and-overflow-behavior)
 - [Adjust alignment, rotation, position, and dimensions](https://help.figma.com/hc/en-us/articles/360039956914-Adjust-alignment-rotation-position-and-dimensions)
 - [Scale layers while maintaining proportions](https://help.figma.com/hc/en-us/articles/360040451453-Scale-layers-while-maintaining-proportions)
+- [Arrange layers with Smart selection](https://help.figma.com/hc/en-us/articles/360040450233-Arrange-layers-with-Smart-selection)
+- [Copy and paste objects](https://help.figma.com/hc/en-us/articles/4409078832791-Copy-and-paste-objects)
 
 ## Components, variants and design systems
 
@@ -54,6 +64,7 @@ region; перед продуктовым использованием нужн�
 
 - [Guide to text in Figma Design](https://help.figma.com/hc/en-us/articles/360039956434-Guide-to-text-in-Figma-Design)
 - [Explore text properties](https://help.figma.com/hc/en-us/articles/360039956634-Explore-text-properties)
+- [Adjust text dimensions and resizing](https://help.figma.com/hc/en-us/articles/27378154668951-Adjust-text-dimensions-and-resizing)
 - [Create and apply text styles](https://help.figma.com/hc/en-us/articles/360039957034-Create-and-apply-text-styles)
 - [Convert text to vector paths](https://help.figma.com/hc/en-us/articles/360047239073-Convert-text-to-vector-paths)
 - [Add links to text](https://help.figma.com/hc/en-us/articles/360045942953-Add-links-to-text)
@@ -97,6 +108,8 @@ region; перед продуктовым использованием нужн�
 - [Use gradients as a fill or stroke](https://help.figma.com/hc/en-us/articles/34208860210199-Use-gradients-as-a-fill-or-stroke)
 - [Use patterns as a fill or stroke](https://help.figma.com/hc/en-us/articles/31616030150167-Use-patterns-as-a-fill-or-stroke)
 - [Adjust the properties of an image](https://help.figma.com/hc/en-us/articles/360041098433-Adjust-the-properties-of-an-image)
+- [Add images and videos to designs](https://help.figma.com/hc/en-us/articles/360040028034-Add-images-and-videos-to-designs)
+- [Crop an image](https://help.figma.com/hc/en-us/articles/360040675194-Crop-an-image)
 - [Apply and adjust stroke properties](https://help.figma.com/hc/en-us/articles/360049283914-Apply-and-adjust-stroke-properties)
 - [Apply effects to layers](https://help.figma.com/hc/en-us/articles/360041488473-Apply-effects-to-layers)
 - [Apply blend modes to layers, fills, and effects](https://help.figma.com/hc/en-us/articles/360040667874-Apply-blend-modes-to-layers-fills-and-effects)
@@ -125,3 +138,12 @@ region; перед продуктовым использованием нужн�
 - [Export from Figma Slides](https://help.figma.com/hc/en-us/articles/24848334599447-Export-from-Figma-Slides)
 - [Config 2026 recap](https://www.figma.com/blog/config-2026-recap/)
 - [What's new from Config 2026](https://help.figma.com/hc/en-us/articles/39582753756695-What-s-new-from-Config-2026)
+
+## Community behavior reports
+
+These are not treated as product truth, but they are useful evidence of
+desktop-user expectations around mouse navigation.
+
+- [Pan and zoom gesture on middle mouse click](https://forum.figma.com/suggest-a-feature-11/pan-and-zoom-gesture-on-middle-mouse-click-34952)
+- [Move around with middle click?](https://forum.figma.com/ask-the-community-7/move-around-with-middle-click-windows-33263)
+- [Right click drag to pan](https://forum.figma.com/suggest-a-feature-11/right-click-drag-to-pan-16264)

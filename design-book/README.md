@@ -59,11 +59,14 @@
    stroke fill, weight, position, individual sides, endpoints, joins and dashes.
 16. [Typography: text layers and type controls](16-editor-typography.md) -
    text creation/editing, typography controls, resizing, truncation and styles.
-17. [Semantic Layout Markdown с i18n](semantic-layout-markdown-i18n.md) -
+17. [Ресерч: управление в Figma](17-figma-control-research.md) -
+   workspace controls, canvas navigation, selection, drag/resize, layers,
+   inspector, color, text, vector, prototype and keyboard control patterns.
+18. [Semantic Layout Markdown с i18n](semantic-layout-markdown-i18n.md) -
    semantic extraction, language-neutral IR and i18n resources.
-18. [Аудит полноты SLM относительно Figma-фич](slm-feature-completeness-audit.md) -
+19. [Аудит полноты SLM относительно Figma-фич](slm-feature-completeness-audit.md) -
    проверка, может ли SLM описать любой Figma screen.
-19. [Источники](sources.md) - официальные ссылки Figma.
+20. [Источники](sources.md) - официальные ссылки Figma.
 
 ## Большая карта фич
 
@@ -84,6 +87,7 @@
 | Stroke | Stroke fills, weight, position, individual sides, caps, joins, dashed styles | daily/advanced |
 | Vector | Shapes, vector networks, pen, point/path editing, boolean operations, masks | daily/advanced |
 | Prototyping | Interactions, prototype connections, overlays, smart animate, scroll/overflow, variables | daily/advanced |
+| Control research | Workspace, canvas, tools, selection, transforms, panels, shortcuts and modes as one interaction system | base/advanced |
 | Collaboration | Multiplayer editing, comments, mentions, version history, branches, sharing | daily |
 | Handoff | Dev Mode, inspect, measurements, annotations, export settings, code/connectors | advanced |
 | AI | Figma agent, First Draft, Make/Edit image, rename layers, search and helper tools | new/cool |
