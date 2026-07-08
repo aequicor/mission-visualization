@@ -82,7 +82,7 @@ internal class TypedBlockInsertion(
     val blankLineBefore: Boolean,
 )
 
-private fun unaddressableMessage(nodeId: String, editIndex: SlmEditIndex): String =
+internal fun unaddressableMessage(nodeId: String, editIndex: SlmEditIndex): String =
     if (nodeId in editIndex.irSpliceNodes) {
         "Node \"$nodeId\" originates from a ```ir block; edit the embedded JSON directly"
     } else {

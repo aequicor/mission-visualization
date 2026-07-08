@@ -102,21 +102,30 @@ private fun applyResolved(
         SlmEditResult(newSource = null, appliedRange = null, diagnostics = diagnostics.diagnostics)
 
     val lineIndex = LineIndex(source)
-    val target = when (val resolution = resolveEditTarget(source, edit.nodeId, editIndex, lineIndex, fileName)) {
-        is EditTargetResolution.Failed -> {
-            diagnostics.error(resolution.message)
-            return failed()
+    // Structural edits (create/delete/move) synthesize or drop whole heading sections and
+    // resolve their footprint arithmetically; attribute edits patch a scalar/list in place.
+    var anchorLine = 0
+    val plan = if (edit is StructuralSlmEdit) {
+        structuralPlan(edit, editIndex, source, lineIndex, fileName)
+    } else {
+        val target = when (val resolution = resolveEditTarget(source, edit.nodeId, editIndex, lineIndex, fileName)) {
+            is EditTargetResolution.Failed -> {
+                diagnostics.error(resolution.message)
+                return failed()
+            }
+            is EditTargetResolution.Resolved -> resolution.target
         }
-        is EditTargetResolution.Resolved -> resolution.target
-    }
-    val compiledEdit = when (val outcome = editPayload(edit, target)) {
-        is PayloadOutcome.Invalid -> {
-            diagnostics.error(outcome.message, target.anchorSpan.startLine)
-            return failed()
+        anchorLine = target.anchorSpan.startLine
+        val compiledEdit = when (val outcome = editPayload(edit, target)) {
+            is PayloadOutcome.Invalid -> {
+                diagnostics.error(outcome.message, anchorLine)
+                return failed()
+            }
+            is PayloadOutcome.Ok -> outcome
         }
-        is PayloadOutcome.Ok -> outcome
+        YamlPathWriter(lineIndex).plan(target, compiledEdit.blockKind, compiledEdit.payload)
     }
-    val ops = when (val plan = YamlPathWriter(lineIndex).plan(target, compiledEdit.blockKind, compiledEdit.payload)) {
+    val ops = when (plan) {
         is WritePlan.Failed -> {
             diagnostics.error(plan.message, plan.line)
             return failed()
@@ -129,12 +138,55 @@ private fun applyResolved(
     val ordered = ops.sortedBy { it.start }
     ordered.zipWithNext().forEach { (previous, next) ->
         if (next.start < previous.end) {
-            diagnostics.error("Internal patcher error: overlapping write operations", target.anchorSpan.startLine)
+            diagnostics.error("Internal patcher error: overlapping write operations", anchorLine)
             return failed()
         }
     }
     val (newSource, range) = applyOps(source, ordered)
     return SlmEditResult(newSource = newSource, appliedRange = range, diagnostics = diagnostics.diagnostics)
+}
+
+/**
+ * Resolves a structural edit's anchor(s) via [SlmEditIndex.anchorOwners] and hands the footprint
+ * arithmetic to [SectionWriter]. An unaddressable node (prose segment, ir-splice, missing sibling)
+ * fails with the same "promote it to its own heading / edit the embedded JSON" guidance as the
+ * attribute path, so the caller can fall back to an in-memory edit.
+ */
+private fun structuralPlan(
+    edit: StructuralSlmEdit,
+    editIndex: SlmEditIndex,
+    source: String,
+    lineIndex: LineIndex,
+    fileName: String,
+): WritePlan {
+    val writer = SectionWriter(source, lineIndex, fileName)
+    return when (edit) {
+        is DeleteSection -> {
+            val span = editIndex.anchorOwners[edit.nodeId]
+                ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
+            writer.delete(span)
+        }
+        is InsertChildSubtree -> {
+            val parentSpan = editIndex.anchorOwners[edit.nodeId]
+                ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
+            val afterSpan = edit.afterSiblingId?.let { sibling ->
+                editIndex.anchorOwners[sibling]
+                    ?: return WritePlan.Failed(unaddressableMessage(sibling, editIndex), 0)
+            }
+            writer.insert(parentSpan, edit.subtree, afterSpan)
+        }
+        is MoveSection -> {
+            val subtreeSpan = editIndex.anchorOwners[edit.nodeId]
+                ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
+            val parentSpan = editIndex.anchorOwners[edit.newParentId]
+                ?: return WritePlan.Failed(unaddressableMessage(edit.newParentId, editIndex), 0)
+            val afterSpan = edit.afterSiblingId?.let { sibling ->
+                editIndex.anchorOwners[sibling]
+                    ?: return WritePlan.Failed(unaddressableMessage(sibling, editIndex), 0)
+            }
+            writer.move(subtreeSpan, parentSpan, afterSpan)
+        }
+    }
 }
 
 private fun applyOps(source: String, ordered: List<TextOp>): Pair<String, SlmTextRange> {
@@ -227,6 +279,29 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
         TypedBlockKind.Text,
         YamlPayload.Mapping(listOf("defaultText" to scalar(YamlScalarValue.Str(edit.defaultText)))),
     )
+
+    is SetFills -> PayloadOutcome.Ok(
+        TypedBlockKind.Style,
+        YamlPayload.Mapping(listOf("fills" to StyleYamlWriter.fills(edit.fills))),
+    )
+
+    is SetStrokes -> PayloadOutcome.Ok(
+        TypedBlockKind.Style,
+        YamlPayload.Mapping(listOf("strokes" to StyleYamlWriter.strokes(edit.strokes))),
+    )
+
+    is SetEffects -> PayloadOutcome.Ok(
+        TypedBlockKind.Style,
+        YamlPayload.Mapping(listOf("effects" to StyleYamlWriter.effects(edit.effects))),
+    )
+
+    is SetTextStyle -> PayloadOutcome.Ok(
+        TypedBlockKind.Text,
+        YamlPayload.Mapping(listOf("typography" to TypographyYamlWriter.typography(edit.style))),
+    )
+
+    // Structural edits never reach here: they are dispatched to SectionWriter upstream.
+    is StructuralSlmEdit -> PayloadOutcome.Invalid("Structural edits do not compile to a typed-block payload")
 }
 
 private fun sizingPayload(edit: SetSizing, target: EditTarget): PayloadOutcome {

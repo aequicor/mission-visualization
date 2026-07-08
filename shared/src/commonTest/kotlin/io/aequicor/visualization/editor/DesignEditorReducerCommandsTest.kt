@@ -20,6 +20,7 @@ import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.literalOrNull
@@ -41,6 +42,24 @@ class DesignEditorReducerCommandsTest {
 
     private fun DesignEditorState.rootFrameId(): String =
         assertNotNull(document?.pageById(selectedPageId)?.children?.firstOrNull()?.id, "no root frame")
+
+    /**
+     * A structural / typography command that faithfully round-trips into SLM rewrites exactly one
+     * owning `*.layout.md` (every other source stays byte-identical), records a source-undo entry,
+     * and surfaces no error diagnostics. This proves the command is wired to real write-back, not
+     * an in-memory-only edit; the dedicated write-back suites pin the exact serialized bytes.
+     */
+    private fun DesignEditorState.assertWroteBackToOneSource(before: DesignEditorState) {
+        val changed = sources.filter { after ->
+            before.sources.firstOrNull { it.fileName == after.fileName }?.content != after.content
+        }
+        assertEquals(1, changed.size, "exactly one owning source rewritten (changed: ${changed.map { it.fileName }})")
+        assertTrue(
+            diagnostics.none { it.severity == DesignSeverity.Error },
+            "write-back errors: ${diagnostics.filter { it.severity == DesignSeverity.Error }}",
+        )
+        assertEquals(listOf(before.sources), previousSources, "source undo captured the pre-edit sources")
+    }
 
     // --- Selection ---
 
@@ -142,11 +161,11 @@ class DesignEditorReducerCommandsTest {
 
     @Test
     fun createObjectAddsChildAndSelectsIt() {
-        var state = freshState()
-        val root = state.rootFrameId()
-        val countBefore = state.document?.nodeById(root)?.children?.size ?: 0
-        state = reduceDesignEditor(
-            state,
+        val before = freshState()
+        val root = before.rootFrameId()
+        val countBefore = before.document?.nodeById(root)?.children?.size ?: 0
+        val state = reduceDesignEditor(
+            before,
             DesignEditorIntent.CreateObject(NewObjectKind.Rectangle, parentId = root, x = 20.0, y = 20.0, width = 100.0, height = 60.0),
         )
         val root2 = assertNotNull(state.document?.nodeById(root))
@@ -154,18 +173,33 @@ class DesignEditorReducerCommandsTest {
         val created = root2.children.last()
         assertEquals(state.selectedNodeId, created.id)
         assertTrue(created.kind is DesignNodeKind.Shape && (created.kind as DesignNodeKind.Shape).shape == ShapeType.Rectangle)
+
+        // A rectangle under a heading-anchored frame is faithfully expressible → it writes a fresh
+        // section carrying the minted id into the owning source (others byte-identical).
+        state.assertWroteBackToOneSource(before)
+        assertTrue(state.sources.any { created.id in it.content }, "minted id written to a source")
     }
 
     @Test
     fun createScreenAppendsPageAndSelectsRoot() {
         var state = freshState()
         val pagesBefore = state.document?.pages?.size ?: 0
+        val before = state
         state = reduceDesignEditor(state, DesignEditorIntent.CreateScreen(ScreenPreset.Mobile, "New Screen"))
         assertEquals(pagesBefore + 1, state.document?.pages?.size)
         val page = assertNotNull(state.document?.pageById(state.selectedPageId))
         assertEquals("New Screen", page.name)
         assertEquals(page.children.first().id, state.selectedNodeId)
         assertEquals(375.0, page.children.first().size.width)
+
+        // The created screen also grows the source list with its own `*.layout.md`, leaving every
+        // pre-existing source byte-identical (a new screen has no owning source to patch).
+        assertEquals(before.sources.size + 1, state.sources.size, "a new source was appended")
+        assertEquals("${page.id}.layout.md", state.sources.last().fileName)
+        before.sources.forEach { source ->
+            val kept = assertNotNull(state.sources.firstOrNull { it.fileName == source.fileName })
+            assertEquals(source.content, kept.content, "${source.fileName} stays byte-identical")
+        }
     }
 
     @Test
@@ -174,33 +208,49 @@ class DesignEditorReducerCommandsTest {
         val root = state.rootFrameId()
         val child = assertNotNull(state.document?.nodeById(root)?.children?.firstOrNull()?.id)
         state = reduceDesignEditor(state, DesignEditorIntent.SelectNode(child))
+        val before = state
         state = reduceDesignEditor(state, DesignEditorIntent.DeleteNodes(setOf(child)))
         assertNull(state.document?.nodeById(child))
         assertFalse(child in state.selectedNodeIds)
+
+        // The first child is a heading-anchored shape → the delete drops its section from the owning
+        // source and the recompiled id set matches, so the write-back is accepted (not vetoed).
+        state.assertWroteBackToOneSource(before)
+        assertTrue(state.sources.none { child in it.content }, "deleted node's section removed from source")
     }
 
     @Test
     fun duplicateCreatesFreshIdsAndSelectsCopies() {
-        var state = freshState()
-        val root = state.rootFrameId()
-        val child = assertNotNull(state.document?.nodeById(root)?.children?.firstOrNull()?.id)
-        val countBefore = state.document?.nodeById(root)?.children?.size ?: 0
-        state = reduceDesignEditor(state, DesignEditorIntent.DuplicateNodes(setOf(child)))
+        val before = freshState()
+        val root = before.rootFrameId()
+        val child = assertNotNull(before.document?.nodeById(root)?.children?.firstOrNull()?.id)
+        val countBefore = before.document?.nodeById(root)?.children?.size ?: 0
+        val state = reduceDesignEditor(before, DesignEditorIntent.DuplicateNodes(setOf(child)))
         assertEquals(countBefore + 1, state.document?.nodeById(root)?.children?.size)
         assertEquals(1, state.selectedNodeIds.size)
         val copyId = state.selectedNodeIds.first()
         assertTrue(copyId != child)
         assertNotNull(state.document?.nodeById(copyId))
+
+        // The first child is a pure shape → its clone is emitted as a fresh section with the minted
+        // id in the owning source, while the original id is preserved (others byte-identical).
+        state.assertWroteBackToOneSource(before)
+        assertTrue(state.sources.any { copyId in it.content }, "clone id written to a source")
     }
 
     @Test
     fun reorderMovesNodeToFrontOfSiblings() {
-        var state = freshState()
-        val root = state.rootFrameId()
-        val children = assertNotNull(state.document?.nodeById(root)?.children)
+        val before = freshState()
+        val root = before.rootFrameId()
+        val children = assertNotNull(before.document?.nodeById(root)?.children)
         val first = children.first().id
-        state = reduceDesignEditor(state, DesignEditorIntent.ReorderNode(first, ZOrderMove.ToFront))
+        val state = reduceDesignEditor(before, DesignEditorIntent.ReorderNode(first, ZOrderMove.ToFront))
         assertEquals(first, state.document?.nodeById(root)?.children?.last()?.id)
+
+        // The whole top-level run is heading-anchored → the reorder persists as `order:` scalars
+        // across the siblings in the owning source (others byte-identical).
+        state.assertWroteBackToOneSource(before)
+        assertTrue(state.sources.any { "order:" in it.content }, "order scalars written to a source")
     }
 
     @Test
@@ -328,16 +378,21 @@ class DesignEditorReducerCommandsTest {
 
     @Test
     fun typographyUpdatesTextStyle() {
-        var state = freshState()
-        // Find any text node in the document.
+        val before = freshState()
+        // Find any text node in the document (the sample's first is heading-anchored → expressible).
         val textId = assertNotNull(
-            state.document?.pages?.flatMap { it.allNodes() }?.firstOrNull { it.kind is DesignNodeKind.Text }?.id,
+            before.document?.pages?.flatMap { it.allNodes() }?.firstOrNull { it.kind is DesignNodeKind.Text }?.id,
             "sample has a text node",
         )
-        state = reduceDesignEditor(state, DesignEditorIntent.UpdateTypography(textId, TypographyPatch(fontSize = 24.0, fontWeight = 700.0)))
+        val state = reduceDesignEditor(before, DesignEditorIntent.UpdateTypography(textId, TypographyPatch(fontSize = 24.0, fontWeight = 700.0)))
         val kind = state.document?.nodeById(textId)?.kind as? DesignNodeKind.Text
         assertEquals(24.0, kind?.textStyle?.fontSize?.literalOrNull())
         assertEquals(700.0, kind?.textStyle?.fontWeight?.literalOrNull())
+
+        // The merged text style is serialized into the node's `text.typography` block in the owning
+        // source (others byte-identical).
+        state.assertWroteBackToOneSource(before)
+        assertTrue(state.sources.any { "fontSize: 24" in it.content }, "fontSize written to a source")
     }
 
     // --- Undo / redo ---
@@ -372,15 +427,20 @@ class DesignEditorReducerCommandsTest {
 
     @Test
     fun reparentMovesNodeUnderNewParent() {
-        var state = freshState()
-        val root = state.rootFrameId()
-        val children = assertNotNull(state.document?.nodeById(root)?.children)
+        val before = freshState()
+        val root = before.rootFrameId()
+        val children = assertNotNull(before.document?.nodeById(root)?.children)
         // Find a container child to receive a sibling.
         val container = children.firstOrNull { it.children.isNotEmpty() } ?: children.first()
         val mover = children.firstOrNull { it.id != container.id } ?: return
-        state = reduceDesignEditor(state, DesignEditorIntent.ReparentNode(mover.id, container.id))
+        val state = reduceDesignEditor(before, DesignEditorIntent.ReparentNode(mover.id, container.id))
         assertTrue(state.document?.nodeById(container.id)?.children?.any { it.id == mover.id } == true)
         assertFalse(state.document?.nodeById(root)?.children?.any { it.id == mover.id } == true)
+
+        // Both ends are same-page, heading-anchored, faithfully-expressible → the mover's section is
+        // re-leveled and relocated under the container in the owning source (others byte-identical),
+        // and the id + parent-of veto both pass so the patch is accepted.
+        state.assertWroteBackToOneSource(before)
     }
 
     @Test

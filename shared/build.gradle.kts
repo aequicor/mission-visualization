@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.androidMultiplatformLibrary)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.kotlinSerialization)
 }
 
 compose.resources {
@@ -59,6 +60,10 @@ kotlin {
             implementation(projects.engine.backendCompose)
             // api: editor state / use-case API exposes SlmCompileResult.
             api(projects.engine.frontend)
+
+            // Local draft persistence: coroutines for autosave flow, serialization for the envelope.
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.serialization.json)
 
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)

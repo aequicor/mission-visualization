@@ -1,6 +1,11 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.ir.model.DesignEffect
+import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignStrokes
+import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
@@ -102,6 +107,99 @@ data class SetText(
     override val nodeId: String,
     val defaultText: String,
 ) : SlmEdit
+
+/**
+ * Rewrites the whole `style.fills` list from the working node's paint layers, preserving
+ * design-token colors as `token:` refs and literals as `#hex`. The list is replaced
+ * wholesale (the working document owns the authoritative order and contents), creating
+ * the `style:` block or the `fills:` key when absent.
+ */
+data class SetFills(
+    override val nodeId: String,
+    val fills: List<DesignPaint>,
+) : SlmEdit
+
+/** Rewrites the whole `style.strokes` list from the node's stroke layers + attributes. */
+data class SetStrokes(
+    override val nodeId: String,
+    val strokes: DesignStrokes,
+) : SlmEdit
+
+/** Rewrites the whole `style.effects` list from the node's effects. */
+data class SetEffects(
+    override val nodeId: String,
+    val effects: List<DesignEffect>,
+) : SlmEdit
+
+/**
+ * Rewrites the node's `text.typography` block from a [DesignTextStyle]. The typography map
+ * is merged field by field into any existing one (authored `openType`/`variableFont` the
+ * editor never touches stay verbatim), creating the `text:` block or the `typography:` key
+ * when absent. Token font weight/size round-trip as `$token` refs; a px `lineHeight` /
+ * `letterSpacing` renders as a bare number, a percent as a `{ unit: percent, value }` map.
+ * Writing a px value onto an authored percent map (or vice versa) is not expressible in
+ * place and fails cleanly, so the caller can fall back in-memory.
+ */
+data class SetTextStyle(
+    override val nodeId: String,
+    val style: DesignTextStyle,
+) : SlmEdit
+
+/**
+ * Structural edits that change the *set* of nodes (create/delete/move), not just their
+ * attributes. Unlike the attribute edits they synthesize or remove whole `#`-heading
+ * sections; they resolve differently in [applySlmEdit] (heading footprint arithmetic via
+ * [SectionWriter], not [YamlPathWriter]). Every node whose id must survive a recompile is
+ * addressed by an explicit `node: id:`, so ids never drift.
+ */
+sealed interface StructuralSlmEdit : SlmEdit
+
+/**
+ * Inserts [subtree] as a child heading section under the node [nodeId] (the parent). The
+ * subtree is emitted as a fresh `#`-heading section (one level deeper than the parent, each
+ * descendant one level deeper still) with a mandatory explicit `node: id:` for every node,
+ * framed by blank lines so the SLM parser never absorbs the `node:` line as prose. When
+ * [afterSiblingId] is non-null the section lands right after that sibling's footprint;
+ * otherwise it is appended at the end of the parent's footprint. Fails cleanly (leaving the
+ * source untouched) when the parent has no addressable heading anchor (prose / ir-splice) or
+ * the resulting depth would exceed the ATX maximum of 6.
+ */
+data class InsertChildSubtree(
+    override val nodeId: String,
+    val subtree: DesignNode,
+    val afterSiblingId: String? = null,
+) : StructuralSlmEdit
+
+/**
+ * Removes the heading section owning [nodeId] together with its typed blocks and every
+ * descendant, from the heading line through to (but not including) the next same-or-shallower
+ * heading — the leading blank line before the section is left in place so siblings stay
+ * cleanly separated. Fails cleanly for the screen root, list-item / prose / ir-splice anchors,
+ * so the caller can fall back to an in-memory delete.
+ */
+data class DeleteSection(
+    override val nodeId: String,
+) : StructuralSlmEdit
+
+/**
+ * Moves the heading section owning [nodeId] — with its whole subtree — to become a child of
+ * [newParentId], re-leveling every heading line in the subtree by the depth delta so the moved
+ * root lands exactly one level under the new parent (its descendants keep their relative depth).
+ * When [afterSiblingId] is non-null the section lands right after that sibling's footprint;
+ * otherwise it is appended at the end of the new parent's footprint. The subtree text (including
+ * every explicit `node: id:`) is carried verbatim, so all moved ids survive the recompile.
+ *
+ * Fails cleanly (leaving the source untouched) when either end has no addressable heading anchor
+ * (prose / ir-splice / the screen root), when the new parent is the moved node's own descendant,
+ * or when the re-leveled depth would exceed the ATX maximum of 6 — so the caller can fall back to
+ * an in-memory reparent. Cross-source (two-file) moves are not expressible by a single-source
+ * patch and are gated out by the caller.
+ */
+data class MoveSection(
+    override val nodeId: String,
+    val newParentId: String,
+    val afterSiblingId: String? = null,
+) : StructuralSlmEdit
 
 /** Scalar written into YAML; rendering canon lives in [ScalarFormatter]. */
 sealed interface YamlScalarValue {

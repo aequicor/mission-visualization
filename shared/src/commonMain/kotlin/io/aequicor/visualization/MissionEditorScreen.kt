@@ -24,11 +24,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -40,8 +43,15 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
+import io.aequicor.visualization.editor.data.DefaultDraftRepository
+import io.aequicor.visualization.editor.data.createKeyValueStore
+import io.aequicor.visualization.editor.domain.ClearDraftUseCase
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
+import io.aequicor.visualization.editor.domain.RestoreDraftSourcesUseCase
+import io.aequicor.visualization.editor.domain.SaveDraftUseCase
+import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
+import io.aequicor.visualization.editor.presentation.DraftController
 import io.aequicor.visualization.editor.presentation.EditorWorkspaceState
 import io.aequicor.visualization.editor.presentation.FocusMode
 import io.aequicor.visualization.editor.presentation.InspectorSection
@@ -49,6 +59,11 @@ import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import io.aequicor.visualization.editor.ui.EditorIcon
 import io.aequicor.visualization.editor.ui.EditorInspectorPane
 import io.aequicor.visualization.editor.ui.EditorSourcePane
@@ -65,9 +80,13 @@ import io.aequicor.visualization.engine.ir.model.DesignColor
  * the design book. Document actions flow through [dispatch] into the pure reducer;
  * workspace changes go through [updateWorkspace] and never touch the document.
  */
+/** Debounce before autosaving a source change, so a burst of edits coalesces into one write. */
+private const val AutosaveDebounceMs: Long = 600L
+
 @Stable
 class MissionEditorStateHolder(
-    loadDesignDocument: LoadDesignDocumentUseCase,
+    private val loadDesignDocument: LoadDesignDocumentUseCase,
+    private val draft: DraftController? = null,
 ) {
     var designState by mutableStateOf(createDesignEditorState(loadDesignDocument()))
         private set
@@ -112,6 +131,42 @@ class MissionEditorStateHolder(
         designState = reduceDesignEditor(designState, intent)
     }
 
+    /**
+     * Restores a persisted draft (if any) into the editor, then autosaves subsequent
+     * SLM-source changes (debounced). Runs until cancelled; call once from a
+     * `LaunchedEffect`. A null [draft] disables persistence.
+     */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    suspend fun runPersistence() {
+        val draft = draft ?: return
+        draft.restore()?.let { sources ->
+            designState = createDesignEditorState(compileMissionDocuments(sources))
+        }
+        // Only the SLM `sources` are persisted; edits that do not write back leave them
+        // unchanged, so snapshotFlow never emits for them. drop(1) skips the just-restored
+        // value so restore does not immediately re-save.
+        snapshotFlow { designState.sources }
+            .drop(1)
+            .distinctUntilChanged()
+            .debounce(AutosaveDebounceMs)
+            .collect { sources -> draft.save(sources) }
+    }
+
+    /** Explicit Save: force-flush the current SLM sources to the draft now. */
+    fun saveDraftNow() {
+        draft?.saveNow(designState.sources)
+    }
+
+    /** Reset: discard the draft and reseed the editor from the bundled default sources. */
+    fun resetToDefaults() {
+        val draft = draft
+        if (draft == null) {
+            designState = createDesignEditorState(loadDesignDocument())
+            return
+        }
+        draft.reset { designState = createDesignEditorState(loadDesignDocument()) }
+    }
+
     fun onArtboardLayout(layout: LayoutBox?) {
         artboardLayout = layout
     }
@@ -138,11 +193,22 @@ class MissionEditorStateHolder(
 @Composable
 fun MissionEditorApp() {
     EditorTheme {
+        val scope = rememberCoroutineScope()
         val state = remember {
+            // Composition root: wire the persistence slice. The dispatcher is injected
+            // here (the boundary), not taken from Dispatchers.* inside the repository.
+            val draftRepository = DefaultDraftRepository(createKeyValueStore(), Dispatchers.Default)
             MissionEditorStateHolder(
                 loadDesignDocument = LoadDesignDocumentUseCase(DefaultDesignDocumentRepository()),
+                draft = DraftController(
+                    saveDraft = SaveDraftUseCase(draftRepository),
+                    clearDraft = ClearDraftUseCase(draftRepository),
+                    restoreDraftSources = RestoreDraftSourcesUseCase(draftRepository),
+                    scope = scope,
+                ),
             )
         }
+        LaunchedEffect(state) { state.runPersistence() }
         MissionEditorScreen(state)
     }
 }

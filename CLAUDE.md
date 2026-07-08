@@ -16,9 +16,20 @@ Compose-превью с оверлеями (выделение, инспекто
   Таргеты: Android, JVM, JS, wasmJs, iOS. Редактор: `editor.presentation` — иммутабельный
   `DesignEditorState` (документ) + `EditorWorkspaceState` (вид, **отдельно** от документа),
   sealed `DesignEditorIntent` и чистый `reduceDesignEditor`; `editor.ui` — панели
-  (`EditorSourcePane`/`EditorCanvasPane`/`EditorInspectorPane`). Только `ResizeNode` пишет
-  обратно в SLM-исходник (`SlmPatcher`); прочие правки — in-memory (патчер не умеет
-  вставлять/удалять/двигать узлы). Реализованный scope и gaps редактора — в `EDITOR.md`.
+  (`EditorSourcePane`/`EditorCanvasPane`/`EditorInspectorPane`). Правки геометрии,
+  контракта узла, скаляров layout/appearance и списков стилей (fills/strokes/effects) пишут
+  обратно в SLM (`SlmPatcher`, хелпер `writeBackEdits`) и **сохраняются локально** (web —
+  `localStorage`, desktop — файл, Android — SharedPreferences; автосейв + Save/Reset,
+  restore при старте; `editor.data.DraftRepository`/`KeyValueStore`). Теперь пишут обратно и
+  **типографика** (`text:` style через `SetTextStyle`/`TypographyYamlWriter`), и **структурные
+  правки** — create/delete/duplicate/reorder/reparent (секционный эмиттер `NodeSectionWriter`/
+  `SectionWriter` + `InsertChildSubtree`/`DeleteSection`/`MoveSection`); create-screen добавляет
+  новый `*.layout.md` источник (`ScreenSourceWriter`). Стабильность id держит явный id в
+  синтезируемой секции + пост-recompile сверка набора id (`withStructuralSource`): при любом
+  дрейфе патч откатывается, правка остаётся in-memory (исходник не портится). In-memory-фолбэк
+  (не выразимо одним источником): cross-page reparent, reparent глубже ATX-6, узлы без
+  heading-якоря (`ir`-splice/prose), instance/media/vector-path субдеревья, multi-page delete.
+  Scope и gaps — в `EDITOR.md`.
 - `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — тонкие обёртки над shared UI.
 
 Документация конвейера — `engine/README.md`; спецификация SLM —

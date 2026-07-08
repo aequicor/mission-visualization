@@ -15,7 +15,13 @@ internal sealed interface YamlPayload {
 
     data class Mapping(val entries: List<Pair<String, YamlPayload>>) : YamlPayload
 
-    data class Sequence(val items: List<YamlPayload>) : YamlPayload
+    /**
+     * A list payload. With [replaceWhole] = false (the default) a write into an existing
+     * list replaces only its first scalar item (single-token style edits); with
+     * [replaceWhole] = true the entire existing list is rewritten from [items] — used by
+     * fills/strokes/effects write-back, where the working document owns the full list.
+     */
+    data class Sequence(val items: List<YamlPayload>, val replaceWhole: Boolean = false) : YamlPayload
 }
 
 /** Wraps [leaf] into nested single-key mappings along [path]. */
@@ -67,11 +73,11 @@ internal class YamlPathWriter(
         val lastGroup = target.boundGroups.lastOrNull()
         val op = if (lastGroup != null) {
             val indent = lineIndex.indentOf(lastGroup.span.startLine)
-            insertAt(lastGroup.span.endLine + 1, renderEntryLines(key, payload, indent))
+            insertAt(lastGroup.span.endLine + 1, SlmBlockRenderer.entryLines(key, payload, indent))
         } else {
             insertAt(
                 beforeLine = target.insertion.line,
-                lines = renderEntryLines(key, payload, target.insertion.indent),
+                lines = SlmBlockRenderer.entryLines(key, payload, target.insertion.indent),
                 blankBefore = target.insertion.blankLineBefore,
             )
         }
@@ -113,13 +119,13 @@ internal class YamlPathWriter(
     ): Failure? = when {
         existing is YamlScalar && existing.isEmptyValue -> {
             val indent = lineIndex.indentOf(existing.line) + 2
-            ops += insertAt(existing.line + 1, renderMappingLines(payload, indent))
+            ops += insertAt(existing.line + 1, SlmBlockRenderer.mappingLines(payload, indent))
             null
         }
         // Shape upgrade: shorthand scalar needing a map -> single-line inline map.
         existing is YamlScalar -> {
             val start = lineIndex.offsetOf(existing.line, existing.column)
-            ops += TextOp(start, start + existing.raw.length, renderInline(payload))
+            ops += TextOp(start, start + existing.raw.length, SlmBlockRenderer.inline(payload))
             null
         }
         existing is YamlMap && isFlow(existing) -> mergeFlowMap(existing, payload, ops)
@@ -144,7 +150,7 @@ internal class YamlPathWriter(
         if (missing.isNotEmpty()) {
             // New keys append after the existing siblings' subtree end.
             val indent = map.column - 1
-            val lines = missing.flatMap { (key, child) -> renderEntryLines(key, child, indent) }
+            val lines = missing.flatMap { (key, child) -> SlmBlockRenderer.entryLines(key, child, indent) }
             ops += insertAt(map.endLine + 1, lines)
         }
         return null
@@ -165,7 +171,7 @@ internal class YamlPathWriter(
             }
         }
         if (missing.isNotEmpty()) {
-            val rendered = missing.joinToString(", ") { (key, child) -> "$key: ${renderInline(child)}" }
+            val rendered = missing.joinToString(", ") { (key, child) -> "$key: ${SlmBlockRenderer.inline(child)}" }
             val lineText = lineIndex.lineText(map.endLine)
             // Insert after the last non-space character before the closing brace.
             var column = map.endColumn - 1
@@ -183,14 +189,15 @@ internal class YamlPathWriter(
     ): Failure? = when {
         existing is YamlScalar && existing.isEmptyValue -> {
             val indent = lineIndex.indentOf(existing.line) + 2
-            ops += insertAt(existing.line + 1, renderSequenceLines(payload, indent))
+            ops += insertAt(existing.line + 1, SlmBlockRenderer.sequenceLines(payload, indent))
             null
         }
         existing is YamlScalar -> {
             val start = lineIndex.offsetOf(existing.line, existing.column)
-            ops += TextOp(start, start + existing.raw.length, renderInline(payload))
+            ops += TextOp(start, start + existing.raw.length, SlmBlockRenderer.inline(payload))
             null
         }
+        existing is YamlList && payload.replaceWhole -> replaceWholeList(existing, payload, ops)
         existing is YamlList -> {
             val item = payload.items.singleOrNull()
             val first = existing.items.firstOrNull()
@@ -207,6 +214,34 @@ internal class YamlPathWriter(
             }
         }
         else -> Failure("Cannot replace a map with a list", existing.line)
+    }
+
+    /**
+     * Rewrites an entire existing list from [payload]. Block-style lists are re-rendered
+     * as block items at the list's indent (each item an inline flow value); flow lists
+     * (`[ ... ]`) are re-rendered inline. An empty payload fails so the caller can fall
+     * back rather than leave a danging `key:`.
+     */
+    private fun replaceWholeList(
+        list: YamlList,
+        payload: YamlPayload.Sequence,
+        ops: MutableList<TextOp>,
+    ): Failure? {
+        if (payload.items.isEmpty()) return Failure("Cannot write an empty list in place", list.line)
+        val isFlow = lineIndex.lineText(list.line).getOrNull(list.column - 1) == '['
+        if (isFlow) {
+            val start = lineIndex.offsetOf(list.line, list.column)
+            val end = lineIndex.offsetOf(list.endLine, list.endColumn)
+            ops += TextOp(start, end, SlmBlockRenderer.inline(payload))
+            return null
+        }
+        val body = SlmBlockRenderer.sequenceLines(payload, list.column - 1).joinToString("\n")
+        // Replace from the start of the first item's line (indent included) through the
+        // last item's end, so no stale item lines survive.
+        val start = lineIndex.lineStartOffset(list.line)
+        val end = lineIndex.offsetOf(list.endLine, list.endColumn)
+        ops += TextOp(start, end, body)
+        return null
     }
 
     // --- text op construction ---
@@ -241,38 +276,6 @@ internal class YamlPathWriter(
     /** Flow maps start with `{` at their value column; block maps start at a key. */
     private fun isFlow(map: YamlMap): Boolean =
         lineIndex.lineText(map.line).getOrNull(map.column - 1) == '{'
-
-    // --- rendering ---
-
-    private fun renderEntryLines(key: String, payload: YamlPayload, indent: Int): List<String> {
-        val pad = " ".repeat(indent)
-        return when (payload) {
-            is YamlPayload.Scalar -> listOf("$pad$key: ${ScalarFormatter.format(payload.value)}")
-            is YamlPayload.Mapping -> buildList {
-                add("$pad$key:")
-                addAll(renderMappingLines(payload, indent + 2))
-            }
-            is YamlPayload.Sequence -> buildList {
-                add("$pad$key:")
-                addAll(renderSequenceLines(payload, indent + 2))
-            }
-        }
-    }
-
-    private fun renderMappingLines(payload: YamlPayload.Mapping, indent: Int): List<String> =
-        payload.entries.flatMap { (key, child) -> renderEntryLines(key, child, indent) }
-
-    private fun renderSequenceLines(payload: YamlPayload.Sequence, indent: Int): List<String> {
-        val pad = " ".repeat(indent)
-        return payload.items.map { "$pad- ${renderInline(it)}" }
-    }
-
-    private fun renderInline(payload: YamlPayload): String = when (payload) {
-        is YamlPayload.Scalar -> ScalarFormatter.format(payload.value)
-        is YamlPayload.Mapping ->
-            "{ " + payload.entries.joinToString(", ") { (k, v) -> "$k: ${renderInline(v)}" } + " }"
-        is YamlPayload.Sequence -> "[" + payload.items.joinToString(", ") { renderInline(it) } + "]"
-    }
 }
 
 private val YamlScalar.isEmptyValue: Boolean get() = raw.isEmpty() && value == null

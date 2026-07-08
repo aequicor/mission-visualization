@@ -26,18 +26,43 @@ pure renderer given an explicit `CanvasViewport`; all gestures live in the app l
 
 ### Persistence model (important)
 
-`ResizeNode` is the one intent that writes **back into the SLM source**: it patches
-the owning `*.layout.md` via `SlmPatcher`, recompiles it (keeping the fingerprint
-chain valid) and also updates the in-memory node. Every **other** edit — create,
-delete, duplicate, reorder, reparent, move, fills/strokes/effects, typography,
-layout, appearance — mutates the **in-memory working document only**.
+Property edits that SLM can express **write back into the owning `*.layout.md`** via
+`SlmPatcher` (recompile keeps the fingerprint chain valid, and the in-memory node is
+mirrored in lock-step) and are **saved locally** (browser `localStorage` on web, a file
+on desktop, SharedPreferences on Android) with debounced autosave + Save/Reset, restored
+on boot. Covered today, all through the `writeBackEdits` helper (`DesignEditorReducer`):
 
-Why: `SlmPatcher` is a surgical scalar patcher by design; it *cannot insert, delete
-or move nodes* (that would break the stable-id contract), and it only addresses a
-fixed set of property paths. So structural and most property edits cannot round-trip
-to source with the current write-back layer. The working document is therefore the
-single source of truth for the session; the samples still load and compile unchanged
-(backwards compatibility preserved). Extending write-back is a follow-up (below).
+- **Geometry / node contract:** resize, position, constraints, visibility, lock, rename.
+- **Layout / appearance scalars:** layout mode, gap, padding; opacity, corner radius; text.
+- **Style lists (Tier-2):** fills, strokes, effects — the whole list is re-serialized from
+  the IR via `StyleYamlWriter` (`SetFills`/`SetStrokes`/`SetEffects`), preserving `token:`
+  refs and `#hex` literals; `YamlPayload.Sequence.replaceWhole` rewrites the existing list.
+
+A non-anchor / in-memory-created node (no source span) falls back to an **in-memory-only**
+edit, so the canvas still reflects it. **Typography** and **structural** edits now write back too:
+
+- **Typography (`text:` style):** `SetTextStyle` re-serializes the merged `DesignTextStyle` into the
+  node's `text.typography` block via `TypographyYamlWriter` (the faithful inverse of the reader —
+  bare px vs `{unit: percent}` maps, `$token` refs for bound size/weight), through the same
+  `writeBackEdits` path.
+- **Structural (create / delete / duplicate / reorder / reparent) + new screens:** a dedicated
+  section emitter (`NodeSectionWriter` renders a fresh heading section with an **explicit minted id**;
+  `SectionWriter` deletes / relocates / relevels heading footprints) drives new IR-carrying edits
+  `InsertChildSubtree` / `DeleteSection` / `MoveSection`; a reorder persists as an `order:` scalar
+  batch over the sibling run; a new screen appends its own `*.layout.md` via `ScreenSourceWriter`. The
+  reducer wrapper `withStructuralSource` recompiles the single owning source and **vetoes** the patch
+  (keeping the in-memory edit, every source byte-identical) whenever the recompiled node-id set drifts
+  from the expected set — or, for reparent, the moved node's parent isn't the new parent — a
+  non-corrupting id-preservation net.
+
+Some structural moves are deliberately **not expressible** as a single-source patch and stay
+in-memory (canvas reflects them; sources untouched): a **multi-page delete**, a **cross-page reparent**,
+a reparent whose post-move heading depth would exceed ATX level 6, any op touching a node with no
+addressable heading anchor (an `ir` splice or prose sibling), and **instance / media / vector-path**
+subtrees the emitter can't round-trip. One caveat inherited from all write-back tiers: **undo does not
+revert sources** — `undo()`/`redo()` swap only the in-memory document, so after an undo the canvas
+reverts but the source keeps the last write-back. The working document remains the single source of
+truth within a session; samples still load and compile unchanged.
 
 ## What works
 
@@ -147,7 +172,16 @@ without rewriting the path layer.
 - `DesignEditorReducerWriteBackTest` — SLM source write-back (existing, still green).
 - `DesignEditorReducerCommandsTest` — selection, move/nudge, visibility/lock, create
   object/screen, delete/duplicate/reorder/reparent, fills/strokes/effects, typography,
-  undo/redo, drag coalescing.
+  undo/redo, drag coalescing; the structural/typography cases also assert the owning
+  source was rewritten (others byte-identical, source-undo captured).
+- `Tier1WriteBackTest` / `Tier2WriteBackTest` — property (rename/visible/lock/opacity/
+  radius/layout) and style-list (fills/strokes/effects) source write-back.
+- `TypographyWriteBackReducerTest` — `text:` typography written into the owning source
+  (px/percent line-height, align tokens, field-by-field merge).
+- `StructuralWriteBackTest` — create/delete/duplicate/reorder/reparent source write-back
+  plus the in-memory fallbacks (multi-page delete, ir-splice reorder, cross-page / depth-
+  overflow reparent, instance duplicate, id-preservation veto).
+- `CreateScreenSourceTest` — a new screen appends its own `*.layout.md`, others byte-identical.
 - `VectorPathEditingTest` — SVG anchor parse + translate.
 - `CanvasGeometryTest` — rotated corner/handle geometry, rotation-aware resize cursor
   bucketing, move-drag center anchor lines, Alt-measurement gap math, and beautiful-anchor
@@ -158,10 +192,19 @@ Run: `./gradlew :shared:jvmTest` (engine: `:engine:ir:jvmTest`, `:engine:fronten
 
 ## Known gaps / follow-ups
 
-- **Write-back coverage.** Only `ResizeNode` patches `*.layout.md`. Structural and most
-  property edits are in-memory only; in-memory-created screens have no SLM source.
-  Closing this needs `SlmPatcher` insert/delete/move-node support (or an IR→SLM
-  emitter) — a substantial, separate task.
+- **Write-back coverage.** Geometry, node-contract, layout/appearance scalars, style lists
+  (fills/strokes/effects), **typography** (`text:` style) and **structural** edits
+  (create/delete/duplicate/reorder/reparent, plus new screens as their own `*.layout.md`) all
+  patch `*.layout.md` and persist locally. Structural write-back mints an explicit id,
+  synthesizes / removes / relevels heading sections and is guarded by a post-recompile
+  id-preservation veto (`withStructuralSource`). Remaining **in-memory-only fallbacks**
+  (non-corrupting, sources untouched): multi-page delete, cross-page reparent, reparent past
+  ATX depth 6, any op on a node without an addressable heading anchor (`ir` splice / prose
+  sibling), and instance/media/vector-path subtrees.
+- **Undo does not revert sources.** `undo()`/`redo()` swap only the in-memory document; the SLM
+  sources keep the last write-back, so after an undo the canvas reverts but the source retains the
+  create/delete/move. The working document stays the session source of truth. Reverting sources on
+  undo is a cross-cutting follow-up (pre-existing, shared by all write-back tiers).
 - **Mixed values.** The inspector on a multi-selection shows the primary node's values
   rather than a per-field `Mixed` placeholder.
 - **Flip.** Only mirrors the *arrangement* of a multi-selection (positions); a single
