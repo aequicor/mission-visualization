@@ -11,14 +11,45 @@ import io.aequicor.visualization.engine.ir.model.bindable
 
 /**
  * Lifts `Component:`-marked subtrees into `document.components` and their variant
- * axes into `document.componentSets`, then validates instance refs: local refs
- * resolve against lifted definitions (by id or declared name); refs containing
+ * declarations into `document.componentSets`, then validates instance refs: local
+ * refs resolve against lifted definitions (by id or declared name); refs containing
  * `/` are library refs validated at a later stage; anything else is an error.
+ *
+ * Component sets (Figma-faithful): a definition participates in a set when it
+ * declares `component.variants` axes, `component.variant` values (the combination
+ * this definition IS), or an explicit `component.set` id. Definitions group by the
+ * explicit set id first, else by shared `component.name`; the set id is the explicit
+ * one, else `"<firstDefinitionId>Set"`. The set's variants map uses the IR's
+ * canonical key format (`axis=value,...` over ALL axes, unspecified axes filled with
+ * the axis default — its first value). A group where no member declares `variant:`
+ * values registers its first member as the sole default-combination fallback and
+ * reports an info diagnostic. Instance refs by shared name rewrite to the SET id
+ * when the group is variant-bearing (any `variant:` values or >1 member), else to
+ * the component id.
  */
 class ComponentLifter(private val diagnostics: DiagnosticCollector) {
+    private class SetMember(
+        val componentId: String,
+        val declaredAxes: Map<String, List<String>>,
+        val variantValues: Map<String, String>,
+        val line: Int,
+    )
+
+    private class SetGroup(val setId: String, var name: String) {
+        val members = mutableListOf<SetMember>()
+
+        /** True once the set can distinguish variants (explicit values or siblings). */
+        val isVariantBearing: Boolean
+            get() = members.size > 1 || members.any { it.variantValues.isNotEmpty() }
+    }
+
     private val componentsById = LinkedHashMap<String, DesignComponent>()
     private val componentSetsById = LinkedHashMap<String, DesignComponentSet>()
     private val idByName = mutableMapOf<String, String>()
+    private val groupsByKey = LinkedHashMap<String, SetGroup>()
+    private val groupsBySetId = mutableMapOf<String, SetGroup>()
+    private val setIdByName = mutableMapOf<String, String>()
+    private var defaultOnlySetsReported = false
 
     val components: Map<String, DesignComponent> get() = componentsById
     val componentSets: Map<String, DesignComponentSet> get() = componentSetsById
@@ -36,20 +67,122 @@ class ComponentLifter(private val diagnostics: DiagnosticCollector) {
             root = defRoot,
         )
         if (name.isNotBlank()) idByName[name] = defRoot.id
-        val axes = patch?.variantsAxes
-        if (!axes.isNullOrEmpty()) {
-            componentSetsById["${defRoot.id}Set"] = DesignComponentSet(
-                name = name.ifBlank { defRoot.id },
-                axes = axes,
+        registerSetMember(defRoot.id, name, patch, line)
+    }
+
+    private fun registerSetMember(
+        componentId: String,
+        name: String,
+        patch: ComponentPatch?,
+        line: Int,
+    ) {
+        val axes = patch?.variantsAxes.orEmpty()
+        val variantValues = patch?.variant.orEmpty()
+        val explicitSetId = patch?.set
+        if (axes.isEmpty() && variantValues.isEmpty() && explicitSetId == null) return
+
+        val groupKey = when {
+            explicitSetId != null -> "set:$explicitSetId"
+            name.isNotBlank() -> "name:$name"
+            else -> "id:$componentId"
+        }
+        val group = groupsByKey.getOrPut(groupKey) {
+            SetGroup(setId = explicitSetId ?: "${componentId}Set", name = name)
+        }
+        val owner = groupsBySetId[group.setId]
+        if (owner == null) {
+            groupsBySetId[group.setId] = group
+        } else if (owner !== group) {
+            diagnostics.error(
+                "Component set id \"${group.setId}\" is already used by another set",
+                line,
+            )
+        }
+        if (group.name.isBlank()) group.name = name
+        val member = SetMember(componentId, axes, variantValues, line)
+        group.members += member
+        rebuildSet(group, newMember = member)
+        if (group.isVariantBearing) {
+            group.members
+                .mapNotNull { componentsById[it.componentId]?.name }
+                .filter { it.isNotBlank() }
+                .forEach { memberName -> setIdByName[memberName] = group.setId }
+        }
+    }
+
+    /** Recomputes a group's [DesignComponentSet]; only [newMember] reports collisions. */
+    private fun rebuildSet(group: SetGroup, newMember: SetMember?) {
+        // Axes: declared axes first (declaration order), observed `variant:` values
+        // appended; the first value of an axis is its default.
+        val axes = LinkedHashMap<String, MutableList<String>>()
+        group.members.forEach { member ->
+            member.declaredAxes.forEach { (axis, values) ->
+                val list = axes.getOrPut(axis) { mutableListOf() }
+                values.forEach { value -> if (value !in list) list += value }
+            }
+        }
+        group.members.forEach { member ->
+            member.variantValues.forEach { (axis, value) ->
+                val list = axes.getOrPut(axis) { mutableListOf() }
+                if (value !in list) list += value
+            }
+        }
+        val variants = LinkedHashMap<String, String>()
+        group.members.filter { it.variantValues.isNotEmpty() }.forEach { member ->
+            val key = variantKey(axes) { axis -> member.variantValues[axis] }
+            val existing = variants[key]
+            when {
+                existing == null -> variants[key] = member.componentId
+                member === newMember -> diagnostics.error(
+                    "Component set \"${group.setId}\" already defines variant \"$key\" " +
+                        "(component \"$existing\")",
+                    member.line,
+                )
+            }
+        }
+        if (variants.isEmpty()) {
+            group.members.firstOrNull()?.let { sole ->
+                variants[variantKey(axes) { null }] = sole.componentId
+            }
+        }
+        componentSetsById[group.setId] = DesignComponentSet(
+            name = group.name.ifBlank { group.setId },
+            axes = axes.mapValues { (_, values) -> values.toList() },
+            variants = variants,
+        )
+    }
+
+    /** The IR's canonical variant key: `axis=value` pairs joined by `,` in axes order. */
+    private fun variantKey(
+        axes: Map<String, List<String>>,
+        valueFor: (String) -> String?,
+    ): String = axes.entries.joinToString(",") { (axis, values) ->
+        "$axis=${valueFor(axis) ?: values.first()}"
+    }
+
+    /** Once per run: flags sets whose only variant is the auto-registered default. */
+    private fun reportDefaultOnlySets() {
+        if (defaultOnlySetsReported) return
+        defaultOnlySetsReported = true
+        groupsByKey.values.forEach { group ->
+            if (group.members.any { it.variantValues.isNotEmpty() }) return@forEach
+            val set = componentSetsById[group.setId] ?: return@forEach
+            diagnostics.info(
+                "Component set \"${group.setId}\" defines only the default variant " +
+                    "(\"${set.variants.keys.first()}\"); add sibling definitions with " +
+                    "`component.variant` values to cover other axis combinations",
+                group.members.first().line,
             )
         }
     }
 
     /**
      * Validates every instance in [root]; local refs matching a definition NAME are
-     * rewritten to the definition id. Returns the (possibly rewritten) tree.
+     * rewritten to the definition id (or its component-set id when the set is
+     * variant-bearing). Returns the (possibly rewritten) tree.
      */
     fun resolveInstances(root: DesignNode): DesignNode {
+        reportDefaultOnlySets()
         val kind = root.kind
         val resolvedNode = if (kind is DesignNodeKind.Instance) {
             resolveInstance(root, kind)
@@ -74,6 +207,10 @@ class ComponentLifter(private val diagnostics: DiagnosticCollector) {
                 node
             }
             ref in componentsById -> node
+            ref in componentSetsById -> node // the resolver selects the variant
+            setIdByName.containsKey(ref) -> node.copy(
+                kind = kind.copy(componentId = setIdByName.getValue(ref).bindable()),
+            )
             idByName.containsKey(ref) -> node.copy(
                 kind = kind.copy(componentId = idByName.getValue(ref).bindable()),
             )

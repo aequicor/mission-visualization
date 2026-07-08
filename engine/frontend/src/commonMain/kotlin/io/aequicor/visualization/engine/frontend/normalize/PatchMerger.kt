@@ -431,10 +431,13 @@ class PatchMerger(
     }
 
     private fun applyComponent(node: DesignNode, patch: ComponentPatch): DesignNode {
-        // Definition-side fields (name/variants/properties) are consumed by ComponentLifter.
-        if (patch.ref == null && patch.libraryRef == null && patch.variant == null &&
-            patch.props == null && patch.detach == null && patch.resetOverrides == null
-        ) {
+        // Definition-side fields (name/set/variants/properties) are consumed by
+        // ComponentLifter. `variant` is dual-use: on an already-instance node it is
+        // the instance selection; on anything else (a component definition) it marks
+        // the definition's own axis values and must not instantiate the node.
+        val instanceSide = patch.ref != null || patch.libraryRef != null ||
+            patch.props != null || patch.detach != null || patch.resetOverrides != null
+        if (!instanceSide && (patch.variant == null || node.kind !is DesignNodeKind.Instance)) {
             return node
         }
         val kind = node.kind as? DesignNodeKind.Instance

@@ -14,7 +14,7 @@ import io.aequicor.visualization.engine.ir.model.PropValue
 import io.aequicor.visualization.engine.ir.model.TextContent
 
 private val componentKeys = setOf(
-    "ref", "libraryRef", "name", "variant", "variants", "properties", "props",
+    "ref", "libraryRef", "name", "set", "variant", "variants", "properties", "props",
     "detach", "resetOverrides",
 )
 
@@ -36,6 +36,7 @@ internal fun readComponentBlock(value: YamlValue, reading: BlockReading): Compon
         ref = map.string("ref", reading),
         libraryRef = map.string("libraryRef", reading),
         name = map.string("name", reading),
+        set = map.string("set", reading),
         variant = map.mapValue("variant", reading)?.stringEntries(reading),
         variantsAxes = readVariantAxes(map, reading),
         properties = readPropertyDefinitions(map, reading),

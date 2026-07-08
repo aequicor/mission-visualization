@@ -193,6 +193,29 @@ class ComponentBlockReaderTest {
         )
     }
 
+    /** Definition-side `variant:` values plus an explicit `set:` id. */
+    @Test
+    fun readsDefinitionVariantValuesAndExplicitSetId() {
+        val (patch, collector) = readSingle(
+            """
+            component:
+              name: WireTile
+              set: wireTiles
+              variant:
+                kind: highlight
+            """,
+        )
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        assertEquals(
+            ComponentPatch(
+                name = "WireTile",
+                set = "wireTiles",
+                variant = mapOf("kind" to "highlight"),
+            ),
+            patch,
+        )
+    }
+
     /** Spec detach/resetOverrides example (~line 684-689). */
     @Test
     fun readsDetachAndResetOverrides() {

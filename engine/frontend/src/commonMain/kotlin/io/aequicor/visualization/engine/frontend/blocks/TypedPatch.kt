@@ -157,6 +157,13 @@ data class ComponentPatch(
     val ref: String? = null,
     val libraryRef: String? = null,
     val name: String? = null,
+    /** Definition side: explicit component-set id this definition contributes to. */
+    val set: String? = null,
+    /**
+     * On an instance: the requested axis-value selection. On a component DEFINITION:
+     * the axis values this definition provides to its component set (sibling
+     * definitions sharing `name` or `set` group into one `DesignComponentSet`).
+     */
     val variant: Map<String, String>? = null,
     /** Definition side: variant axes, e.g. status -> [nominal, warning, critical]. */
     val variantsAxes: Map<String, List<String>>? = null,
