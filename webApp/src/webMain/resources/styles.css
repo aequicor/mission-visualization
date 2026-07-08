@@ -5,3 +5,350 @@ html, body {
     padding: 0;
     overflow: hidden;
 }
+
+/* Compose mounts its canvas here; the boot overlay (#mv-loader) is a separate
+   sibling so mounting never disturbs it — main.kt fades the overlay out itself. */
+#compose-root {
+    position: fixed;
+    inset: 0;
+}
+
+/* ============================================================================
+   Mission Visualization — boot loader overlay  (approach: mask-highlight-morph)
+
+   Shown in the page shell while the wasm bundle + skiko download and Compose
+   mounts. Pure HTML + CSS, fully self-contained. Fades out when Compose paints
+   its first frame: main.kt calls window.__mvHideLoader(), which adds .mv-hide.
+
+   INTRO ONE-SHOT (plays once, forwards-fill) — ~2.5s to fully settled:
+     0.00s ┬ .mv-title       fade + scale-in (opacity / transform)          [step 1]
+     0.10s │ .mv-title__ink  colour settles  muted-ink → ink                [step 1]
+     0.60s │ .mv-title__sheen lazurite band SWEEPS L→R across letters       [step 2 HERO]
+     0.60s │ .mv-orb          lazurite light rides the band, then crosses    [continuity]
+           │                  the gap and ARRIVES at the heart's centre
+     1.78s │ .mv-burst        the gathered light BLOOMS at the heart's spot  [morph]
+     1.85s │ .mv-heart        heart pops OUT of the bloom (scale overshoot)  [step 3]
+     2.50s ┴ intro settled
+   LOOPS FOREVER (from ~2.5s / ~1.0s):
+     2.50s   .mv-heart__beat  subtle double-thump heartbeat (scale)         [step 3 loop]
+     2.50s   .mv-heart__shape soft lazurite glow pulse (filter)             [step 3 loop]
+     1.00s   .mv-loader-track fades in; .mv-dot ×3 pulse, staggered         [step 4 loop]
+
+   Hot (infinite) loops touch only transform / opacity / filter. The one-shot
+   intro additionally moves background-position (allowed) and settles `color`.
+   ========================================================================= */
+
+#mv-loader {
+  /* ---- palette (app light theme — matches EditorTheme tokens) ---- */
+  --ink:        #111827;
+  --muted-ink:  #5E6B7A;
+  --accent:     #1E88FF;
+  --on-accent:  #0E4F9D;
+  --stroke:     #D6E3EF;
+  /* lazurite: deep lapis → bright azure sheen */
+  --lz-deep:    #12336B;
+  --lz-mid:     #1E5AC8;
+  --lz-bright:  #1E88FF;
+  --lz-sheen:   #7FB4FF;
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+
+  /* soft blue-white chrome */
+  background:
+    radial-gradient(1100px 640px at 50% 14%, rgba(220,238,255,.85), rgba(220,238,255,0) 62%),
+    linear-gradient(160deg, #F3FAFF 0%, #EAF5FF 54%, #F9FDFF 100%);
+
+  /* trivially fade-out-able: JS adds .mv-hide */
+  opacity: 1;
+  transition: opacity .6s ease;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+#mv-loader.mv-hide {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mv-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  max-width: 94vw;
+}
+
+/* ------------------------------------------------------------------ caption */
+.mv-caption {
+  position: relative;          /* anchor for the absolutely-placed heart + bloom */
+  display: inline-flex;
+  align-items: center;
+}
+
+.mv-title {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+  /* min lowered so "Mission Visualization" + heart never clip on ≤360px phones */
+  font: 700 clamp(17px, 5.1vw, 42px)/1 var(--font);
+  letter-spacing: .4px;
+  /* step 1: fade + subtle scale-in */
+  animation: mv-title-in .70s cubic-bezier(.2,.72,.24,1) both;
+}
+
+/* base ink text — settles from muted to full ink */
+.mv-title__ink {
+  display: inline-block;
+  color: var(--ink);
+  animation: mv-ink-settle .90s ease .10s both;
+}
+
+/* lazurite copy, revealed only where the moving band is opaque */
+.mv-title__sheen {
+  position: absolute;
+  inset: 0;
+  display: block;
+  white-space: nowrap;
+  /* a bright lazurite band; transparent everywhere else so the ink shows through */
+  background-image: linear-gradient(100deg,
+      transparent 30%,
+      var(--lz-mid)   42%,
+      var(--lz-sheen) 50%,
+      var(--lz-bright) 58%,
+      transparent 70%);
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  background-position: 130% 0;            /* band waits off the left edge */
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+          color: transparent;
+  opacity: 0;
+  animation: mv-sheen 1.30s cubic-bezier(.4,0,.2,1) .60s both;
+}
+
+/* Continuity orb — the sheen's leading light. It rides the band across the word
+   and keeps going past the last glyph, decelerating so it ARRIVES at the heart's
+   centre (element right edge). Normal-blended lazurite (NOT screen) so it stays
+   visible over the near-white gap where the hand-off happens. */
+.mv-orb {
+  position: absolute;
+  top: -14%;
+  bottom: -14%;
+  left: 0;
+  right: -31px;                            /* right edge == heart centre */
+  pointer-events: none;
+  background-image: radial-gradient(closest-side,
+      rgba(151,193,255,.95),
+      rgba(45,124,240,.60) 44%,
+      rgba(30,90,200,0)    72%);
+  background-repeat: no-repeat;
+  background-size: 30% 150%;               /* the glow blob */
+  background-position: -12% 50%;
+  opacity: 0;
+  filter: blur(1.5px);
+  animation: mv-orb 1.24s cubic-bezier(.32,.12,.2,1) .60s both;
+}
+
+/* Bloom — a soft flare at the heart's exact spot that the heart pops out of, so
+   the arriving orb reads as CONDENSING into the heart (a cross-dissolve at one
+   point, not two separate events). Sits at the heart centre, independent of the
+   heart's own pop-scale. */
+.mv-burst {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  margin-left: 31px;                       /* heart centre = left:100% + 18 + 13 */
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(closest-side,
+      rgba(151,193,255,.95),
+      rgba(45,124,240,.42) 46%,
+      rgba(30,90,200,0)    72%);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.25);
+  animation: mv-burst .78s ease-out 1.78s both;
+}
+
+/* ------------------------------------------------------------------- heart  */
+/* placed absolutely just past the word so the word stays truly centred */
+.mv-heart {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  margin-left: 18px;
+  width: 26px;
+  height: 26px;
+  opacity: 0;
+  transform: translateY(-50%) scale(0);
+  /* step 3: pop in with a scale overshoot as the light condenses here */
+  animation: mv-heart-pop .62s cubic-bezier(.2,.75,.3,1) 1.85s both;
+}
+
+/* inner wrapper carries the infinite beat, so it composes with the pop above */
+.mv-heart__beat {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-origin: 50% 58%;
+  will-change: transform;
+  animation: mv-beat 1.60s ease-in-out 2.50s infinite;
+}
+
+/* the heart itself — classic rotated square + two circular lobes (pure CSS) */
+.mv-heart__shape {
+  --heart-fill: linear-gradient(135deg,
+      var(--lz-deep), var(--lz-mid) 42%, var(--lz-bright) 68%, var(--lz-sheen));
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -11px 0 0 -8px;                  /* nudge to optical centre */
+  background: var(--heart-fill);
+  transform: rotate(-45deg);
+  filter: drop-shadow(0 2px 7px rgba(30,90,200,.45));
+  /* soft lazurite glow pulse, synced to the beat */
+  animation: mv-glow 1.60s ease-in-out 2.50s infinite;
+}
+.mv-heart__shape::before,
+.mv-heart__shape::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: var(--heart-fill);
+  border-radius: 50%;
+}
+.mv-heart__shape::before { top: -8px; left: 0; }   /* upper lobe  */
+.mv-heart__shape::after  { top: 0;   left: 8px; }  /* right lobe  */
+
+/* ------------------------------------------------------------ loader (dots) */
+.mv-loader-track {
+  display: flex;
+  gap: 11px;
+  opacity: 0;
+  animation: mv-fade-in .60s ease 1.00s both;
+}
+.mv-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--lz-sheen), var(--lz-bright) 55%, var(--lz-mid));
+  box-shadow: 0 1px 4px rgba(30,90,200,.30);
+  will-change: transform, opacity;
+  animation: mv-dot 1.15s ease-in-out infinite;
+}
+.mv-dot:nth-child(2) { animation-delay: .16s; }
+.mv-dot:nth-child(3) { animation-delay: .32s; }
+
+/* ======================================================= keyframe timeline */
+
+/* step 1 — caption fades + scales in */
+@keyframes mv-title-in {
+  0%   { opacity: 0; transform: translateY(7px) scale(.965); }
+  60%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes mv-ink-settle {
+  0%   { color: var(--muted-ink); }
+  100% { color: var(--ink); }
+}
+
+/* step 2 — the lazurite band sweeps left → right (bright centre travels across) */
+@keyframes mv-sheen {
+  0%   { background-position: 130% 0; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { background-position: -30% 0; opacity: 0; }
+}
+
+/* continuity — the orb travels with the band and on to the heart's centre,
+   staying bright until it arrives, then handing off to the bloom */
+@keyframes mv-orb {
+  0%   { background-position: -12% 50%; opacity: 0; }
+  14%  { opacity: .95; }
+  88%  { opacity: 1; }
+  100% { background-position: 108% 50%; opacity: 0; }
+}
+
+/* morph — the gathered light blooms at the heart's spot, then clears as the heart grows */
+@keyframes mv-burst {
+  0%   { opacity: 0;   transform: translate(-50%, -50%) scale(.25); }
+  38%  { opacity: .95; transform: translate(-50%, -50%) scale(1);   }
+  100% { opacity: 0;   transform: translate(-50%, -50%) scale(1.65);}
+}
+
+/* step 3 — heart pops out of the bloom with a scale overshoot */
+@keyframes mv-heart-pop {
+  0%   { opacity: 0; transform: translateY(-50%) scale(0);    }
+  45%  { opacity: 1; transform: translateY(-50%) scale(1.28); }
+  68%  {             transform: translateY(-50%) scale(.90);  }
+  84%  {             transform: translateY(-50%) scale(1.06); }
+  100% { opacity: 1; transform: translateY(-50%) scale(1);    }
+}
+
+/* step 3 loop — subtle double-thump heartbeat */
+@keyframes mv-beat {
+  0%, 100% { transform: scale(1);    }
+  10%      { transform: scale(1.13); }
+  20%      { transform: scale(1);    }
+  30%      { transform: scale(1.08); }
+  42%      { transform: scale(1);    }
+}
+
+/* step 3 loop — glow breathes with the beat */
+@keyframes mv-glow {
+  0%, 100% { filter: drop-shadow(0 2px 7px  rgba(30,90,200,.45)); }
+  15%      { filter: drop-shadow(0 2px 13px rgba(60,140,255,.78)); }
+  42%      { filter: drop-shadow(0 2px 8px  rgba(30,90,200,.50)); }
+}
+
+/* step 4 — loader appears, dots pulse forever */
+@keyframes mv-fade-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0);   }
+}
+@keyframes mv-dot {
+  0%, 100% { opacity: .28; transform: translateY(0)   scale(.82); }
+  40%      { opacity: 1;   transform: translateY(-4px) scale(1);  }
+}
+
+/* very narrow phones: pull the heart in a touch so it can't clip off-screen */
+@media (max-width: 360px) {
+  .mv-heart { margin-left: 12px; }
+  .mv-burst { margin-left: 25px; }
+  .mv-orb   { right: -25px; }
+}
+
+/* ============================================ reduced motion: calm end-state */
+@media (prefers-reduced-motion: reduce) {
+  #mv-loader { transition: opacity .4s ease; }
+
+  .mv-title       { animation: none; opacity: 1; transform: none; }
+  .mv-title__ink  { animation: none; color: var(--ink); }
+  .mv-title__sheen,
+  .mv-orb,
+  .mv-burst       { display: none; }                 /* no sweep, no travelling light */
+
+  .mv-heart       { animation: none; opacity: 1; transform: translateY(-50%) scale(1); }
+  .mv-heart__beat { animation: none; transform: none; }          /* no pop, no beat */
+  .mv-heart__shape{ animation: none; }               /* keeps its rotate; static glow */
+
+  .mv-loader-track{ animation: none; opacity: 1; }
+  .mv-dot         { animation: mv-dot-calm 1.5s ease-in-out infinite; }  /* simple loop */
+}
+@keyframes mv-dot-calm {
+  0%, 100% { opacity: .40; }
+  50%      { opacity: 1;   }
+}

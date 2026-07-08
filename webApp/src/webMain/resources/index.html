@@ -7,14 +7,67 @@
     <link type="text/css" rel="stylesheet" href="styles.css">
 </head>
 <body>
-<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 50 50" role="presentation">
-    <circle cx="25" cy="25" r="20" stroke="#ccc" stroke-width="4" fill="none"/>
-    <circle cx="25" cy="25" r="20" stroke="#333" stroke-width="4" fill="none" stroke-linecap="round"
-            stroke-dasharray="90 125">
-        <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s"
-                          repeatCount="indefinite"/>
-    </circle>
-</svg>
+<!-- Compose Multiplatform mounts its canvas into this container (see main.kt). -->
+<div id="compose-root"></div>
+
+<!-- Boot overlay: shown while the wasm bundle downloads and Compose mounts.
+     Centred caption → lazurite sheen sweeps across it → the light condenses into a
+     heart parked on the right → a loader keeps pulsing below. Pure HTML + CSS. -->
+<div id="mv-loader" role="status" aria-label="Loading Mission Visualization">
+  <div class="mv-stage">
+
+    <!-- Caption: ink text + a lazurite sheen that sweeps across, with a heart to its right -->
+    <div class="mv-caption" aria-hidden="true">
+      <div class="mv-title">
+        <!-- Base ink layer (settled state, starts slightly muted) -->
+        <span class="mv-title__ink">Mission Visualization</span>
+        <!-- Lazurite copy, clipped to the letters; a bright band sweeps it L→R (HERO) -->
+        <span class="mv-title__sheen" aria-hidden="true">Mission Visualization</span>
+        <!-- Continuity: the sheen's leading light, travelling on to the heart's centre -->
+        <span class="mv-orb" aria-hidden="true"></span>
+      </div>
+
+      <!-- The gathered light blooms at the heart's spot… -->
+      <span class="mv-burst" aria-hidden="true"></span>
+      <!-- …and the heart pops out of it, then beats forever. -->
+      <div class="mv-heart" aria-hidden="true">
+        <span class="mv-heart__beat">
+          <span class="mv-heart__shape"></span>
+        </span>
+      </div>
+    </div>
+
+    <!-- Looping loader (three lazurite dots) -->
+    <div class="mv-loader-track" aria-hidden="true">
+      <span class="mv-dot"></span>
+      <span class="mv-dot"></span>
+      <span class="mv-dot"></span>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Boot-overlay lifecycle. main.kt calls window.__mvHideLoader() once Compose has
+  // painted its first frame. We keep a minimum on-screen time so that even a fast
+  // wasm load still shows the full sheen → heart intro before the overlay fades.
+  (function () {
+    var MIN_ON_SCREEN_MS = 2100;               // ≈ time for the heart to finish popping
+    var start = Date.now();
+    window.__mvHideLoader = function () {
+      var el = document.getElementById('mv-loader');
+      if (!el || el.dataset.hiding) return;
+      el.dataset.hiding = '1';
+      var wait = Math.max(0, MIN_ON_SCREEN_MS - (Date.now() - start));
+      setTimeout(function () {
+        el.classList.add('mv-hide');           // CSS opacity transition takes over
+        var remove = function () { if (el.parentNode) el.parentNode.removeChild(el); };
+        el.addEventListener('transitionend', remove, { once: true });
+        setTimeout(remove, 800);               // fallback if transitionend never fires
+      }, wait);
+    };
+  })();
+</script>
 <script type="application/javascript" src="webApp.js"></script>
 </body>
 </html>
