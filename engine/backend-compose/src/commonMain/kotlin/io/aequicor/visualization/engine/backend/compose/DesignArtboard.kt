@@ -36,6 +36,19 @@ data class CanvasViewport(val zoom: Float, val panX: Float, val panY: Float) {
     fun toDocY(screenY: Float): Double = ((screenY - panY) / zoom).toDouble()
 }
 
+internal fun LayoutBox.withRootDocumentOrigin(): LayoutBox {
+    val position = node.position ?: return this
+    if (position.x == 0.0 && position.y == 0.0) return this
+    return translateBy(position.x, position.y)
+}
+
+private fun LayoutBox.translateBy(dx: Double, dy: Double): LayoutBox =
+    copy(
+        x = x + dx,
+        y = y + dy,
+        children = children.map { it.translateBy(dx, dy) },
+    )
+
 /**
  * Renders the first top-level frame of a page through the resolve → layout → draw
  * pipeline. A pure renderer: it draws content and reports the laid-out tree, but performs
@@ -87,7 +100,7 @@ fun DesignArtboard(
         DesignLayoutEngine(ComposeDesignTextMeasurer(textMeasurer, density))
     }
     val layoutBox = remember(resolved, engine, deviceWidth, deviceHeight) {
-        resolved?.let { engine.layout(it, deviceWidth, deviceHeight) }
+        resolved?.let { engine.layout(it, deviceWidth, deviceHeight).withRootDocumentOrigin() }
     }
     val currentOnSelectNode = rememberUpdatedState(onSelectNode)
     val currentOnInteraction = rememberUpdatedState(onInteraction)
@@ -108,8 +121,10 @@ fun DesignArtboard(
             detectTapGestures { offset ->
                 val zoom = viewport?.zoom ?: zoomFor(layoutBox, Size(size.width.toFloat(), size.height.toFloat()))
                 if (zoom <= 0f) return@detectTapGestures
-                val docX = viewport?.toDocX(offset.x) ?: (offset.x / zoom).toDouble()
-                val docY = viewport?.toDocY(offset.y) ?: (offset.y / zoom).toDouble()
+                val panX = viewport?.panX ?: fallbackPanX(layoutBox, zoom)
+                val panY = viewport?.panY ?: fallbackPanY(layoutBox, zoom)
+                val docX = ((offset.x - panX) / zoom).toDouble()
+                val docY = ((offset.y - panY) / zoom).toDouble()
                 val hit = layoutBox.hitTest(docX, docY) ?: layoutBox
                 val interactionCallback = currentOnInteraction.value
                 if (interactionCallback != null) {
@@ -128,8 +143,8 @@ fun DesignArtboard(
     Canvas(modifier = tapModifier) {
         val zoom = viewport?.zoom ?: zoomFor(layoutBox, size)
         if (zoom <= 0f) return@Canvas
-        val panX = viewport?.panX ?: 0f
-        val panY = viewport?.panY ?: 0f
+        val panX = viewport?.panX ?: fallbackPanX(layoutBox, zoom)
+        val panY = viewport?.panY ?: fallbackPanY(layoutBox, zoom)
         translate(panX, panY) {
             scale(zoom, zoom, pivot = Offset.Zero) {
                 drawDesignBox(layoutBox, drawDesignContext)
@@ -165,6 +180,10 @@ private fun zoomFor(box: LayoutBox, size: Size): Float {
     if (box.width <= 0.0 || box.height <= 0.0) return 0f
     return minOf(size.width / box.width.toFloat(), size.height / box.height.toFloat())
 }
+
+private fun fallbackPanX(box: LayoutBox, zoom: Float): Float = (-box.x * zoom).toFloat()
+
+private fun fallbackPanY(box: LayoutBox, zoom: Float): Float = (-box.y * zoom).toFloat()
 
 private val SelectionBlue = Color(0xFF1E88FF)
 

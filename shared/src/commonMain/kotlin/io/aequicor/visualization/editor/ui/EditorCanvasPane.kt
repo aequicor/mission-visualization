@@ -245,13 +245,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var fittedPage by remember { mutableStateOf("") }
         if (layout != null && canvasWpx > 0f && fittedPage != pageId) {
             fittedPage = pageId
-            fitViewport(state, 0.0, 0.0, layout.width, layout.height, canvasWpx, canvasHpx, density)
+            fitViewport(state, layout.x, layout.y, layout.width, layout.height, canvasWpx, canvasHpx, density)
         }
         // Honor an explicit fit-screen / fit-selection request from the zoom controls.
         if (layout != null && canvasWpx > 0f && ws.pendingFit != PendingFit.None) {
             val rect = when (ws.pendingFit) {
-                PendingFit.Selection -> selectionBounds(layout, design.selectedNodeIds) ?: FitRect(0.0, 0.0, layout.width, layout.height)
-                else -> FitRect(0.0, 0.0, layout.width, layout.height)
+                PendingFit.Selection -> selectionBounds(layout, design.selectedNodeIds) ?: FitRect(layout.x, layout.y, layout.width, layout.height)
+                else -> FitRect(layout.x, layout.y, layout.width, layout.height)
             }
             state.updateWorkspace { it.copy(pendingFit = PendingFit.None) }
             fitViewport(state, rect.x, rect.y, rect.w, rect.h, canvasWpx, canvasHpx, density)
@@ -1756,7 +1756,8 @@ private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set
         val node = document.nodeById(id) ?: return@mapNotNull null
         if (node.locked || node.visible.literalOrNull() == false) return@mapNotNull null
         val box = layout.findBySourceId(id) ?: return@mapNotNull null
-        ResizeTarget(nodeId = id, baseline = box.toBoundsBox(), originPosition = node.position, rotation = box.node.rotation)
+        val originPosition = node.position ?: DesignPoint().takeIf { document.isCoordinatePositioned(id) }
+        ResizeTarget(nodeId = id, baseline = box.toBoundsBox(), originPosition = originPosition, rotation = box.node.rotation)
     }
 }
 

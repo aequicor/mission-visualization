@@ -2,6 +2,7 @@ package io.aequicor.visualization.engine.backend.compose
 
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
@@ -251,10 +252,37 @@ class RenderGeometryTest {
         assertNull(clickableInteractionAt(root, leaf))
     }
 
+    @Test
+    fun rootDocumentOriginTranslatesRootAndChildren() {
+        val child = LayoutBox(
+            node = node("child"),
+            x = 10.0,
+            y = 20.0,
+            width = 30.0,
+            height = 40.0,
+        )
+        val root = LayoutBox(
+            node = node("root", position = DesignPoint(72.0, 32.0)),
+            x = 0.0,
+            y = 0.0,
+            width = 100.0,
+            height = 100.0,
+            children = listOf(child),
+        )
+
+        val shifted = root.withRootDocumentOrigin()
+
+        assertEquals(72.0, shifted.x)
+        assertEquals(32.0, shifted.y)
+        assertEquals(82.0, shifted.children.single().x)
+        assertEquals(52.0, shifted.children.single().y)
+    }
+
     // --- Helpers -----------------------------------------------------------------------
 
     private fun node(
         id: String,
+        position: DesignPoint? = null,
         shape: DesignNodeKind.Shape? = null,
         mask: ResolvedMask? = null,
         interactions: List<ResolvedInteraction> = emptyList(),
@@ -264,6 +292,7 @@ class RenderGeometryTest {
             sourceId = id,
             type = "frame",
             name = id,
+            position = position,
             shape = shape,
             mask = mask,
             interactions = interactions,
