@@ -559,6 +559,7 @@ class PatchMerger(
                 pathRef = patch.pathRef ?: kind.pathRef,
                 viewBox = patch.viewBox ?: kind.viewBox,
                 paths = patch.paths ?: kind.paths,
+                network = patch.network ?: kind.network,
             ),
         )
     }

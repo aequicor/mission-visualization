@@ -1,7 +1,9 @@
 package io.aequicor.visualization.engine.ir.resolve
 
+import io.aequicor.visualization.engine.ir.geometry.PathGeometry
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -69,6 +71,13 @@ data class ResolvedNode(
     val cornerRadius: ResolvedCornerRadius = ResolvedCornerRadius(),
     val text: ResolvedText? = null,
     val shape: DesignNodeKind.Shape? = null,
+    /**
+     * Lowered, device-independent outline for shape nodes (vector/network/inline-`d` in
+     * view-box space, or null when geometry is built draw-time from the laid-out box).
+     */
+    val geometry: PathGeometry? = null,
+    /** Populated for boolean-operation nodes; drives path combination at render time. */
+    val booleanOp: BooleanOperationKind? = null,
     val scroll: DesignScroll = DesignScroll(),
     /** Semantic role from SLM; carried through, resolve-neutral. */
     val role: String = "",
@@ -197,6 +206,10 @@ data class ResolvedStrokes(
     val weightLeft: Double? = null,
     val align: StrokeAlign = StrokeAlign.Inside,
     val dashPattern: List<Double> = emptyList(),
+    /** Line-cap: "butt" | "round" | "square". */
+    val cap: String = "butt",
+    /** Line-join: "miter" | "round" | "bevel". */
+    val join: String = "miter",
 )
 
 sealed interface ResolvedEffect {

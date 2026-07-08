@@ -84,6 +84,8 @@ fun DesignArtboard(
     /** When false the artboard installs no tap handler; the caller owns all gestures. */
     interactive: Boolean = true,
     overlayOptions: DesignOverlayOptions = DesignOverlayOptions(),
+    /** Dereferences `pathRef`/`iconRef` shapes to drawable geometry; app-supplied. */
+    vectorAssets: VectorAssetProvider = NoVectorAssets,
     onInteraction: ((ResolvedInteraction, LayoutBox) -> Unit)? = null,
     onSelectNode: (String) -> Unit = {},
     onLayoutComputed: (LayoutBox?) -> Unit = {},
@@ -110,8 +112,8 @@ fun DesignArtboard(
     }
     if (layoutBox == null) return
 
-    val drawDesignContext = remember(textMeasurer, density) {
-        DesignDrawContext(textMeasurer, density)
+    val drawDesignContext = remember(textMeasurer, density, vectorAssets) {
+        DesignDrawContext(textMeasurer, density, vectorAssets)
     }
 
     val allSelected = if (selectedNodeId.isNotBlank()) selectedNodeIds + selectedNodeId else selectedNodeIds

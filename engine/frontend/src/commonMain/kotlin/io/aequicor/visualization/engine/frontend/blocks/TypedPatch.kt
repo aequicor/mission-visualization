@@ -16,6 +16,7 @@ import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.ExportSetting
+import io.aequicor.visualization.engine.ir.model.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.GridPlacement
 import io.aequicor.visualization.engine.ir.model.GridTrack
 import io.aequicor.visualization.engine.ir.model.GuideLine
@@ -229,12 +230,13 @@ data class BooleanOpPatch(
     val children: List<String>,
 )
 
-/** `vector:` block — icon/path refs, inline paths, boolean ops. */
+/** `vector:` block — icon/path refs, inline paths, structural network, boolean ops. */
 data class VectorPatch(
     val iconRef: String? = null,
     val pathRef: String? = null,
     val viewBox: DesignViewBox? = null,
     val paths: List<VectorPath>? = null,
+    val network: VectorNetwork? = null,
     val boolean: BooleanOpPatch? = null,
 ) : TypedPatch
 

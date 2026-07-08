@@ -53,6 +53,7 @@ fun validateDesignDocument(
         addAll(TextI18nChecks.check(ctx))
         addAll(ComponentChecks.check(ctx))
         addAll(MediaAssetChecks.check(ctx))
+        addAll(VectorNetworkChecks.check(ctx))
         addAll(InteractionChecks.check(ctx))
         addAll(ResponsiveChecks.check(ctx))
         addAll(DataChecks.check(ctx))

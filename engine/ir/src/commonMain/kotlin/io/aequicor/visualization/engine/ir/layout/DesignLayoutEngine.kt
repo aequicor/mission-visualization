@@ -1,5 +1,6 @@
 package io.aequicor.visualization.engine.ir.layout
 
+import io.aequicor.visualization.engine.ir.geometry.RectD
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.GridTrack
@@ -72,6 +73,12 @@ data class LayoutBox(
         for (child in children.asReversed()) {
             child.hitTest(lx, ly)?.let { return it }
         }
+        // Path-accurate self-test: a click in the bounding box but outside the actual
+        // outline (a star's notch, a vector's transparent area) misses, so a node behind
+        // still gets a chance. Nodes whose box IS their outline skip this (geometry == null).
+        val rect = RectD(x, y, right, bottom)
+        val geometry = node.outlineGeometry(rect)
+        if (geometry != null && !node.outlineContains(geometry, rect, lx, ly)) return null
         return this
     }
 

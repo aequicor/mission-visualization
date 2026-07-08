@@ -1,13 +1,17 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
+import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 
 /**
@@ -143,6 +147,39 @@ data class SetEffects(
 data class SetTextStyle(
     override val nodeId: String,
     val style: DesignTextStyle,
+) : SlmEdit
+
+/** Writes `vector.viewBox: [x, y, w, h]` (creating the `vector:` block when absent). */
+data class SetViewBox(
+    override val nodeId: String,
+    val viewBox: DesignViewBox,
+) : SlmEdit
+
+/**
+ * Rewrites the whole `vector.network` sub-block from the working node's structural geometry.
+ * Like [SetFills], the working document owns the authoritative vertices/segments/regions, so
+ * the block is replaced wholesale — every interactive point/handle edit commits through this.
+ */
+data class SetVectorNetwork(
+    override val nodeId: String,
+    val network: VectorNetwork,
+) : SlmEdit
+
+/** Writes `vector.boolean: { op, children }` for a boolean-operation node. */
+data class SetBooleanOp(
+    override val nodeId: String,
+    val op: BooleanOperationKind,
+    val children: List<String>,
+) : SlmEdit
+
+/**
+ * Writes the node's corner radius as `style.radius`: a single scalar when all four corners are
+ * equal, otherwise a `{ topLeft, topRight, bottomRight, bottomLeft }` map (the style reader
+ * already accepts both). Promotes per-corner radius from in-memory-only to Tier-1 write-back.
+ */
+data class SetCornerRadii(
+    override val nodeId: String,
+    val radius: DesignCornerRadius,
 ) : SlmEdit
 
 /**

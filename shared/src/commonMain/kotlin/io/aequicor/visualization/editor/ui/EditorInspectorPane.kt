@@ -72,15 +72,18 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
@@ -145,6 +148,7 @@ private fun InspectorDesign(state: MissionEditorStateHolder) {
     val box = state.artboardLayout?.findBySourceId(design.selectedNodeId)
     val isText = node.kind is DesignNodeKind.Text
     val isFrame = node.kind is DesignNodeKind.Frame
+    val isShapeLike = node.kind is DesignNodeKind.Shape || node.kind is DesignNodeKind.BooleanOperation
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         SelectionHeader(state, node)
         Section(state, InspectorSection.Position) { PositionSection(state, node, box) }
@@ -152,6 +156,10 @@ private fun InspectorDesign(state: MissionEditorStateHolder) {
         Section(state, InspectorSection.Appearance) { AppearanceSection(state, node, box) }
         Section(state, InspectorSection.Fill) { FillSection(state, node) }
         Section(state, InspectorSection.Stroke) { StrokeSection(state, node) }
+        // The Shape/Vector section owns its own collapsible chrome because InspectorSection
+        // (source of truth for persisted expand state) lives in editor.presentation, which is
+        // outside this file's ownership; it uses local visual expand state instead.
+        ShapeSection(state, node, visible = isShapeLike)
         Section(state, InspectorSection.Effects) { EffectsSection(state, node) }
         Section(state, InspectorSection.Typography, visible = isText) { TypographySection(state, node) }
     }
@@ -762,6 +770,200 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
     }
 }
 
+// --- Shape / vector ----------------------------------------------------------
+
+private val ShapeSectionLabel = CompactLabel("Shape", "Shape", "Shp")
+
+/**
+ * Geometry controls for parametric shapes, editable vectors and boolean groups. Owns its own
+ * collapsible chrome (see [StandaloneSection]) because [InspectorSection] — which persists
+ * expand state — is out of this file's edit scope. Every control is disabled while the node is
+ * locked and dispatches the fixed Vector intents; point/handle drags are the canvas' job.
+ */
+@Composable
+private fun ShapeSection(state: MissionEditorStateHolder, node: DesignNode, visible: Boolean) {
+    if (!visible) return
+    StandaloneSection(icon = EditorIcon.Pen, label = ShapeSectionLabel) {
+        val nodeId = node.id
+        val locked = state.designState.isNodeLocked(nodeId)
+        when (val kind = node.kind) {
+            is DesignNodeKind.Shape -> ShapeControls(state, nodeId, kind, locked)
+            is DesignNodeKind.BooleanOperation -> BooleanOpControls(state, nodeId, kind, locked)
+            else -> Unit
+        }
+    }
+}
+
+@Composable
+private fun ShapeControls(state: MissionEditorStateHolder, nodeId: String, shape: DesignNodeKind.Shape, locked: Boolean) {
+    LabeledField("Type") {
+        SelectField(
+            value = shape.shape.shapeTypeLabel(),
+            options = ShapeType.entries.map { it.shapeTypeLabel() },
+            onSelect = { label ->
+                if (!locked) {
+                    ShapeType.entries.firstOrNull { it.shapeTypeLabel() == label }
+                        ?.let { state.dispatch(DesignEditorIntent.SetShapeType(nodeId, it)) }
+                }
+            },
+        )
+    }
+    if (shape.shape == ShapeType.Polygon || shape.shape == ShapeType.Star) {
+        Spacer(Modifier.height(8.dp))
+        val sides = (shape.pointCount ?: 3).coerceAtLeast(3)
+        CompactLabeledNumberField("Sides", sides.toDouble().formatPx(), "sides-$nodeId", enabled = !locked) {
+            state.dispatch(DesignEditorIntent.SetPointCount(nodeId, it.roundToInt().coerceAtLeast(3)))
+        }
+    }
+    if (shape.shape == ShapeType.Star) {
+        Spacer(Modifier.height(8.dp))
+        StarInnerRadiusControl(state, nodeId, shape.innerRadius, locked)
+    }
+    if (shape.shape == ShapeType.Vector) {
+        Spacer(Modifier.height(8.dp))
+        VectorControls(state, nodeId, shape, locked)
+    }
+}
+
+@Composable
+private fun StarInnerRadiusControl(state: MissionEditorStateHolder, nodeId: String, innerRadius: Double?, locked: Boolean) {
+    val colors = LocalEditorColors.current
+    val ratio = (innerRadius ?: 0.5).coerceIn(0.0, 1.0)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Inner", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text("${(ratio * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+        // Whole drag coalesces into one undo entry, matching the opacity slider idiom.
+        UndoableSlider(
+            value = (ratio * 100).toFloat(),
+            valueRange = 0f..100f,
+            enabled = !locked,
+            onBegin = { state.dispatch(DesignEditorIntent.BeginInteraction) },
+            onChange = { v -> state.dispatch(DesignEditorIntent.SetStarInnerRadius(nodeId, v / 100.0)) },
+            onEnd = { state.dispatch(DesignEditorIntent.EndInteraction) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun VectorControls(state: MissionEditorStateHolder, nodeId: String, shape: DesignNodeKind.Shape, locked: Boolean) {
+    CompactLabeledTextField("Icon", shape.iconRef, "icon-$nodeId", enabled = !locked, placeholder = "ds/Icon/…") {
+        state.dispatch(DesignEditorIntent.SetIconRef(nodeId, it))
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledTextField("Path", shape.pathRef, "path-$nodeId", enabled = !locked, placeholder = "asset id") {
+        state.dispatch(DesignEditorIntent.SetPathRef(nodeId, it))
+    }
+    Spacer(Modifier.height(8.dp))
+    InspectorSubLabel("View box")
+    val vb = shape.viewBox ?: DesignViewBox()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CompactNumberField("X", vb.x.formatPx(), "vbx-$nodeId", Modifier.width(fieldWidth), enabled = !locked) {
+                    state.dispatch(DesignEditorIntent.SetVectorViewBox(nodeId, vb.copy(x = it)))
+                }
+                CompactNumberField("Y", vb.y.formatPx(), "vby-$nodeId", Modifier.width(fieldWidth), enabled = !locked) {
+                    state.dispatch(DesignEditorIntent.SetVectorViewBox(nodeId, vb.copy(y = it)))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CompactNumberField("W", vb.width.formatPx(), "vbw-$nodeId", Modifier.width(fieldWidth), enabled = !locked) {
+                    state.dispatch(DesignEditorIntent.SetVectorViewBox(nodeId, vb.copy(width = it)))
+                }
+                CompactNumberField("H", vb.height.formatPx(), "vbh-$nodeId", Modifier.width(fieldWidth), enabled = !locked) {
+                    state.dispatch(DesignEditorIntent.SetVectorViewBox(nodeId, vb.copy(height = it)))
+                }
+            }
+        }
+    }
+    if (shape.network?.isNotEmpty() != true) {
+        Spacer(Modifier.height(8.dp))
+        MutedNote("No editable geometry yet — convert to edit points on the canvas.")
+        Spacer(Modifier.height(6.dp))
+        TinyButton("Convert to editable", enabled = !locked) {
+            state.dispatch(DesignEditorIntent.ConvertToEditableVector(nodeId))
+        }
+    }
+}
+
+@Composable
+private fun BooleanOpControls(state: MissionEditorStateHolder, nodeId: String, kind: DesignNodeKind.BooleanOperation, locked: Boolean) {
+    LabeledField("Operation") {
+        SelectField(
+            value = kind.operation.booleanOpLabel(),
+            options = BooleanOperationKind.entries.map { it.booleanOpLabel() },
+            onSelect = { label ->
+                if (!locked) {
+                    BooleanOperationKind.entries.firstOrNull { it.booleanOpLabel() == label }
+                        ?.let { state.dispatch(DesignEditorIntent.SetBooleanOperation(nodeId, it)) }
+                }
+            },
+        )
+    }
+}
+
+/** Collapsible section shell mirroring [Section] but with local visual expand state. */
+@Composable
+private fun StandaloneSection(icon: EditorIcon, label: CompactLabel, content: @Composable () -> Unit) {
+    val colors = LocalEditorColors.current
+    var expanded by remember { mutableStateOf(true) }
+    val headerInteraction = remember { MutableInteractionSource() }
+    Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = headerInteraction,
+                    indication = null,
+                ) { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            EditorSvgIcon(
+                icon = icon,
+                contentDescription = label.full,
+                modifier = Modifier.size(18.dp),
+                tint = colors.mutedInk,
+            )
+            CompactText(
+                label = label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            EditorSvgIcon(
+                icon = if (expanded) EditorIcon.ChevronUp else EditorIcon.ChevronDown,
+                contentDescription = if (expanded) "Collapse section" else "Expand section",
+                modifier = Modifier.size(14.dp),
+                tint = colors.controlInk,
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(12.dp))
+            content()
+        }
+    }
+}
+
+private fun ShapeType.shapeTypeLabel() = when (this) {
+    ShapeType.Rectangle -> "Rectangle"
+    ShapeType.Ellipse -> "Ellipse"
+    ShapeType.Polygon -> "Polygon"
+    ShapeType.Star -> "Star"
+    ShapeType.Line -> "Line"
+    ShapeType.Arrow -> "Arrow"
+    ShapeType.Vector -> "Vector"
+}
+
+private fun BooleanOperationKind.booleanOpLabel() = when (this) {
+    BooleanOperationKind.Union -> "Union"
+    BooleanOperationKind.Subtract -> "Subtract"
+    BooleanOperationKind.Intersect -> "Intersect"
+    BooleanOperationKind.Exclude -> "Exclude"
+}
+
 // --- Effects -----------------------------------------------------------------
 
 @Composable
@@ -919,6 +1121,88 @@ private fun CompactLabeledSelectField(
             modifier = modifier.widthIn(max = maxFieldWidth).fillMaxWidth(),
             enabled = enabled,
         )
+    }
+}
+
+@Composable
+private fun CompactLabeledTextField(
+    label: String,
+    value: String,
+    resetKey: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    placeholder: String = "",
+    maxFieldWidth: Dp = InspectorCompactSelectMaxWidth,
+    onCommit: (String) -> Unit,
+) {
+    LabeledField(label) {
+        CompactTextField(
+            value = value,
+            resetKey = resetKey,
+            modifier = modifier.widthIn(max = maxFieldWidth).fillMaxWidth(),
+            enabled = enabled,
+            placeholder = placeholder,
+            onCommit = onCommit,
+        )
+    }
+}
+
+/** Single-line string field mirroring [CompactNumberField]; commits on Enter or focus loss. */
+@Composable
+private fun CompactTextField(
+    value: String,
+    resetKey: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    placeholder: String = "",
+    onCommit: (String) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    var draft by remember(resetKey, value) { mutableStateOf(value) }
+    var hadFocus by remember(resetKey) { mutableStateOf(false) }
+    var focused by remember(resetKey) { mutableStateOf(false) }
+    fun commitDraft() {
+        if (draft != value) onCommit(draft)
+    }
+    Surface(
+        modifier = modifier.height(26.dp),
+        shape = RoundedCornerShape(5.dp),
+        color = if (enabled) colors.controlSurface else colors.controlDisabledSurface,
+        border = BorderStroke(1.dp, if (focused) colors.accent else if (enabled) colors.controlStroke else colors.controlDisabledStroke),
+    ) {
+        Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (draft.isEmpty() && placeholder.isNotEmpty()) {
+                    Text(placeholder, style = MaterialTheme.typography.labelMedium, color = colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                }
+                BasicTextField(
+                    value = draft,
+                    onValueChange = { input -> draft = input },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { focus ->
+                            focused = focus.isFocused
+                            if (focus.isFocused) {
+                                hadFocus = true
+                            } else if (hadFocus) {
+                                hadFocus = false
+                                commitDraft()
+                            }
+                        }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && (event.key == Key.Enter || event.key == Key.NumPadEnter)) {
+                                commitDraft()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    enabled = enabled,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.labelMedium.copy(color = if (enabled) colors.ink else colors.mutedInk),
+                )
+            }
+        }
     }
 }
 

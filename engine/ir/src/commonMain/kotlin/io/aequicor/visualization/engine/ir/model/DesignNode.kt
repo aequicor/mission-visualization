@@ -110,6 +110,8 @@ sealed interface DesignNodeKind {
         /** Asset id of an SVG asset. */
         val pathRef: String = "",
         val viewBox: DesignViewBox? = null,
+        /** Editable structural geometry; when non-empty it is the shape's geometry source. */
+        val network: VectorNetwork? = null,
     ) : DesignNodeKind
 
     data class Instance(

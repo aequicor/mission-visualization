@@ -26,7 +26,13 @@ import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.TextStyleRange
 import io.aequicor.visualization.engine.ir.model.TextTruncate
+import io.aequicor.visualization.engine.ir.model.HandleMirror
+import io.aequicor.visualization.engine.ir.model.HandleOffset
+import io.aequicor.visualization.engine.ir.model.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.VectorPath
+import io.aequicor.visualization.engine.ir.model.VectorRegion
+import io.aequicor.visualization.engine.ir.model.VectorSegment
+import io.aequicor.visualization.engine.ir.model.VectorVertex
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -216,7 +222,52 @@ private fun DesignDocumentReader.shapeKind(
                 height = viewBox.plainDouble("height", "$pointer/viewBox", 0.0),
             )
         },
+        network = readVectorNetwork(obj["network"], "$pointer/network"),
     )
+
+private fun DesignDocumentReader.readVectorNetwork(element: JsonElement?, pointer: String): VectorNetwork? {
+    val obj = element as? JsonObject ?: return null
+    val vertices = obj["vertices"].asArray("$pointer/vertices").mapNotNull { vertex ->
+        val vertexObj = vertex as? JsonObject ?: return@mapNotNull null
+        VectorVertex(
+            x = vertexObj.plainDouble("x", "$pointer/vertices", 0.0),
+            y = vertexObj.plainDouble("y", "$pointer/vertices", 0.0),
+            inHandle = readHandleOffset(vertexObj["in"]),
+            outHandle = readHandleOffset(vertexObj["out"]),
+            mirror = readEnum(
+                vertexObj["mirror"], "$pointer/vertices/mirror", HandleMirror.None,
+                mapOf(
+                    "none" to HandleMirror.None,
+                    "angle" to HandleMirror.Angle,
+                    "angleAndLength" to HandleMirror.AngleAndLength,
+                ),
+            ),
+            corner = vertexObj.booleanOrDefault("corner", false),
+        )
+    }
+    val segments = obj["segments"].asArray("$pointer/segments").mapNotNull { segment ->
+        val segmentObj = segment as? JsonObject ?: return@mapNotNull null
+        VectorSegment(segmentObj.intOrDefault("from", 0), segmentObj.intOrDefault("to", 0))
+    }
+    val regions = obj["regions"].asArray("$pointer/regions").mapNotNull { region ->
+        val regionObj = region as? JsonObject ?: return@mapNotNull null
+        VectorRegion(
+            windingRule = regionObj.stringOrDefault("windingRule", "nonzero"),
+            loops = regionObj["loops"].asArray("$pointer/regions/loops").map { loop ->
+                loop.asArray("$pointer/regions/loops").mapNotNull { (it as? JsonPrimitive)?.intOrNull }
+            },
+        )
+    }
+    return VectorNetwork(vertices, segments, regions).takeIf { it.isNotEmpty() }
+}
+
+private fun readHandleOffset(element: JsonElement?): HandleOffset? {
+    val obj = element as? JsonObject ?: return null
+    return HandleOffset(
+        dx = (obj["dx"] as? JsonPrimitive)?.doubleOrNull ?: 0.0,
+        dy = (obj["dy"] as? JsonPrimitive)?.doubleOrNull ?: 0.0,
+    )
+}
 
 /** Media settings live in a "media" block; top-level fields are accepted as shorthand. */
 private fun DesignDocumentReader.readMedia(obj: JsonObject, pointer: String): DesignMedia {

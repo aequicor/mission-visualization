@@ -13,6 +13,7 @@ import io.aequicor.visualization.engine.frontend.edit.SetEffects
 import io.aequicor.visualization.engine.frontend.edit.SetFills
 import io.aequicor.visualization.engine.frontend.edit.SetLayoutProperty
 import io.aequicor.visualization.engine.frontend.edit.SetNodeConstraints
+import io.aequicor.visualization.engine.frontend.edit.SetBooleanOp
 import io.aequicor.visualization.engine.frontend.edit.SetStrokes
 import io.aequicor.visualization.engine.frontend.edit.SetSizing
 import io.aequicor.visualization.engine.frontend.edit.SetNodePosition
@@ -20,15 +21,19 @@ import io.aequicor.visualization.engine.frontend.edit.SetStyleProperty
 import io.aequicor.visualization.engine.frontend.edit.SetText as SetTextEdit
 import io.aequicor.visualization.engine.frontend.edit.SetTextStyle
 import io.aequicor.visualization.engine.frontend.edit.SetTypedBlockScalar
+import io.aequicor.visualization.engine.frontend.edit.SetVectorNetwork
+import io.aequicor.visualization.engine.frontend.edit.SetViewBox
 import io.aequicor.visualization.engine.frontend.edit.ScreenSourceWriter
 import io.aequicor.visualization.engine.frontend.edit.SizingSpec
 import io.aequicor.visualization.engine.frontend.edit.SlmEdit
 import io.aequicor.visualization.engine.frontend.edit.StyleProp
 import io.aequicor.visualization.engine.frontend.edit.YamlScalarValue
 import io.aequicor.visualization.engine.frontend.edit.applySlmEdits
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
+import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignGap
@@ -45,8 +50,10 @@ import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.UnitValue
+import io.aequicor.visualization.engine.ir.model.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.math.cos
@@ -236,6 +243,76 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
 
         // --- Vector ---
         is DesignEditorIntent.MoveVectorPoint -> state.editUnlockedNode(intent.nodeId) { it.moveVectorPoint(intent) }
+        is DesignEditorIntent.SetShapeType -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Shape, listOf("kind"), YamlScalarValue.Str(shapeToken(intent.shape)))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(shape = intent.shape))
+        }
+        is DesignEditorIntent.SetPointCount -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Shape, listOf("pointCount"), YamlScalarValue.Num(intent.count.toDouble()))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(pointCount = intent.count))
+        }
+        is DesignEditorIntent.SetStarInnerRadius -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Shape, listOf("innerRadius"), YamlScalarValue.Num(intent.ratio))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(innerRadius = intent.ratio))
+        }
+        is DesignEditorIntent.SetIconRef -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Vector, listOf("iconRef"), YamlScalarValue.Str(intent.ref))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(iconRef = intent.ref))
+        }
+        is DesignEditorIntent.SetPathRef -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Vector, listOf("pathRef"), YamlScalarValue.Str(intent.ref))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(pathRef = intent.ref))
+        }
+        is DesignEditorIntent.SetVectorViewBox -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetViewBox(intent.nodeId, intent.viewBox)),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(viewBox = intent.viewBox))
+        }
+        is DesignEditorIntent.SetBooleanOperation -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetBooleanOp(intent.nodeId, intent.op, children = state.document?.nodeById(intent.nodeId)?.children?.map { it.id }.orEmpty())),
+        ) patch@{ node ->
+            if (node.kind !is DesignNodeKind.BooleanOperation) return@patch node
+            node.copy(kind = DesignNodeKind.BooleanOperation(intent.op))
+        }
+        is DesignEditorIntent.ConvertToEditableVector -> state.convertToEditableVector(intent.nodeId)
+        is DesignEditorIntent.MoveVectorVertex -> state.editUnlockedNode(intent.nodeId) patch@{ node ->
+            val network = networkOf(node) ?: return@patch node
+            node.withNetwork(network.moveVertex(intent.vertexIndex, intent.dx, intent.dy))
+        }
+        is DesignEditorIntent.MoveVectorHandle -> state.editUnlockedNode(intent.nodeId) patch@{ node ->
+            val network = networkOf(node) ?: return@patch node
+            node.withNetwork(network.moveHandle(intent.vertexIndex, intent.side, intent.dx, intent.dy))
+        }
+        is DesignEditorIntent.SetVertexMirror ->
+            state.commitVectorNetwork(intent.nodeId) { it.setMirror(intent.vertexIndex, intent.mirror) }
+        is DesignEditorIntent.ToggleVertexCorner ->
+            state.commitVectorNetwork(intent.nodeId) { it.toggleCorner(intent.vertexIndex) }
+        is DesignEditorIntent.AddVectorVertex ->
+            state.commitVectorNetwork(intent.nodeId) { it.insertVertexOnSegment(intent.segmentIndex, intent.x, intent.y) }
+        is DesignEditorIntent.DeleteVectorVertex ->
+            state.commitVectorNetwork(intent.nodeId) { it.removeVertex(intent.vertexIndex) }
+        is DesignEditorIntent.CloseVectorNetwork ->
+            state.commitVectorNetwork(intent.nodeId) { it.closePath() }
+        is DesignEditorIntent.CommitVectorNetwork ->
+            state.commitVectorNetwork(intent.nodeId) { it }
 
         // --- Interaction checkpoints ---
         DesignEditorIntent.BeginInteraction -> state.beginInteraction()
@@ -1284,6 +1361,67 @@ private fun DesignNode.moveVectorPoint(intent: DesignEditorIntent.MoveVectorPoin
     val moved = translateSvgPoint(path.d, intent.pointIndex, intent.dx, intent.dy) ?: return this
     val newPaths = kind.paths.toMutableList().apply { this[intent.pathIndex] = path.copy(d = moved) }
     return copy(kind = kind.copy(paths = newPaths.toList()))
+}
+
+// --- Vector network helpers --------------------------------------------------
+
+/** The editable structural geometry of a shape node, or null for non-shape / path-only nodes. */
+private fun networkOf(node: DesignNode): VectorNetwork? = (node.kind as? DesignNodeKind.Shape)?.network
+
+/** Replaces a shape node's structural network in memory; a no-op on non-shape nodes. */
+private fun DesignNode.withNetwork(network: VectorNetwork): DesignNode {
+    val shape = kind as? DesignNodeKind.Shape ?: return this
+    return copy(kind = shape.copy(network = network))
+}
+
+/** Canonical SLM `shape.kind` token for [shape]; matches the SLM shape reader's spellings. */
+private fun shapeToken(shape: ShapeType): String = when (shape) {
+    ShapeType.Rectangle -> "rectangle"
+    ShapeType.Ellipse -> "ellipse"
+    ShapeType.Polygon -> "polygon"
+    ShapeType.Star -> "star"
+    ShapeType.Line -> "line"
+    ShapeType.Arrow -> "arrow"
+    ShapeType.Vector -> "vector"
+}
+
+/**
+ * Applies [transform] to the node's current in-memory structural network and commits the result
+ * to SLM in one surgical [SetVectorNetwork] rewrite (one undo entry), mirroring onto the working
+ * document. Identity [transform] is the drag-release commit path. A non-shape / network-less node
+ * is a no-op; a locked node is skipped by [writeBackEdits].
+ */
+private fun DesignEditorState.commitVectorNetwork(
+    nodeId: String,
+    transform: (VectorNetwork) -> VectorNetwork,
+): DesignEditorState {
+    val node = document?.nodeById(nodeId) ?: return this
+    val network = networkOf(node) ?: return this
+    val newNetwork = transform(network)
+    return writeBackEdits(nodeId, listOf(SetVectorNetwork(nodeId, newNetwork))) { it.withNetwork(newNetwork) }
+}
+
+/**
+ * Bakes a parametric shape ([parametricToNetwork]) into an editable [VectorNetwork], switching the
+ * node to `shape: vector` and seeding a box-sized viewBox, in one write-back (kind + network +
+ * viewBox). A non-shape node is a no-op; a locked node is skipped by [writeBackEdits].
+ */
+private fun DesignEditorState.convertToEditableVector(nodeId: String): DesignEditorState {
+    val node = document?.nodeById(nodeId) ?: return this
+    val shape = node.kind as? DesignNodeKind.Shape ?: return this
+    val net = parametricToNetwork(shape, node.size)
+    val viewBox = DesignViewBox(0.0, 0.0, node.size.width ?: 100.0, node.size.height ?: 100.0)
+    return writeBackEdits(
+        nodeId,
+        listOf(
+            SetTypedBlockScalar(nodeId, TypedBlockKind.Vector, listOf("kind"), YamlScalarValue.Str("vector")),
+            SetVectorNetwork(nodeId, net),
+            SetViewBox(nodeId, viewBox),
+        ),
+    ) patch@{ target ->
+        val targetShape = target.kind as? DesignNodeKind.Shape ?: return@patch target
+        target.copy(kind = targetShape.copy(shape = ShapeType.Vector, network = net, viewBox = viewBox))
+    }
 }
 
 // --- Paint / effect variance helpers ----------------------------------------

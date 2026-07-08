@@ -8,6 +8,8 @@ import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
 import io.aequicor.visualization.engine.ir.model.MaskType
 import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.engine.ir.geometry.PathCommand
+import io.aequicor.visualization.engine.ir.geometry.PathGeometry
 import io.aequicor.visualization.engine.ir.model.VectorPath
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
 import io.aequicor.visualization.engine.ir.resolve.ResolvedMask
@@ -199,6 +201,14 @@ class RenderGeometryTest {
                         ShapeType.Vector,
                         paths = listOf(VectorPath(d = "M0 0 L10 10 Z")),
                     ),
+                    // resolve lowers inline paths into geometry; maskShapeFor keys off that.
+                    geometry = PathGeometry(
+                        listOf(
+                            PathCommand.MoveTo(0.0, 0.0),
+                            PathCommand.LineTo(10.0, 10.0),
+                            PathCommand.Close,
+                        ),
+                    ),
                 ),
             ),
         )
@@ -286,6 +296,7 @@ class RenderGeometryTest {
         shape: DesignNodeKind.Shape? = null,
         mask: ResolvedMask? = null,
         interactions: List<ResolvedInteraction> = emptyList(),
+        geometry: PathGeometry? = null,
     ): ResolvedNode =
         ResolvedNode(
             id = id,
@@ -296,6 +307,7 @@ class RenderGeometryTest {
             shape = shape,
             mask = mask,
             interactions = interactions,
+            geometry = geometry,
         )
 
     private fun box(node: ResolvedNode, children: List<LayoutBox> = emptyList()): LayoutBox =
