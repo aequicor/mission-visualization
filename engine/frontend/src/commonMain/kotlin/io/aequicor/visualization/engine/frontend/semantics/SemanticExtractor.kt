@@ -866,8 +866,11 @@ private class SemanticExtractor(
             match.rule.effects.any { it is SemanticEffect.SynthesizeInstance }
         }
 
+        // Typed attribute blocks are patches, not structure: a leaf item keeps its
+        // shape (and generated id) when a patcher edit adds a typed block to it.
+        val hasStructuralChildren = item.children.any { it !is TypedAttributeBlock }
         val node = when {
-            synthRule != null && item.children.isEmpty() -> synthesizedInstance(
+            synthRule != null && !hasStructuralChildren -> synthesizedInstance(
                 effects = synthRule.rule.effects,
                 matchedPhrase = synthRule.phrase,
                 inline = inline,
@@ -878,11 +881,11 @@ private class SemanticExtractor(
                 if (fieldSlug != null) synthesized.slugHint = fieldSlug
             }
             // "Действие: [Открыть](/x)" — the lead labels a single action.
-            tail != null && tail.text.isBlank() && tail.links.size == 1 && item.children.isEmpty() ->
+            tail != null && tail.text.isBlank() && tail.links.size == 1 && !hasStructuralChildren ->
                 actionNode(tail.links.single(), item.span)
-            inline.text.isBlank() && inline.links.size == 1 && item.children.isEmpty() ->
+            inline.text.isBlank() && inline.links.size == 1 && !hasStructuralChildren ->
                 actionNode(inline.links.single(), item.span)
-            item.children.isEmpty() -> NodeBuilder(SemanticKind.Text, item.span).apply {
+            !hasStructuralChildren -> NodeBuilder(SemanticKind.Text, item.span).apply {
                 slugHint = fieldSlug.orEmpty()
                 text = SemanticText(
                     defaultText = inline.text,
