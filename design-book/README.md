@@ -65,11 +65,14 @@
 18. [Прокаченные позиционирование и preview](18-editor-advanced-positioning-preview.md) -
    Figma-like alignment, X/Y drag, constraints, rotation, dimensions, selected
    overlay and Alt measurements.
-19. [Semantic Layout Markdown с i18n](semantic-layout-markdown-i18n.md) -
+19. [Canvas and Scene: интерактивность, переходы и animation runtime](19-editor-canvas-scene-runtime.md) -
+   pipeline SML/SLM -> IR -> Canvas/Scene, разные renderers, scene timeline,
+   event runtime, transitions and animation control.
+20. [Semantic Layout Markdown с i18n](semantic-layout-markdown-i18n.md) -
    semantic extraction, language-neutral IR and i18n resources.
-20. [Аудит полноты SLM относительно Figma-фич](slm-feature-completeness-audit.md) -
+21. [Аудит полноты SLM относительно Figma-фич](slm-feature-completeness-audit.md) -
    проверка, может ли SLM описать любой Figma screen.
-21. [Источники](sources.md) - официальные ссылки Figma.
+22. [Источники](sources.md) - официальные ссылки Figma.
 
 ## Большая карта фич
 
@@ -83,6 +86,7 @@
 | Objects | Selection, hover, move, resize, multi-selection, layers, visibility, lock | base/daily |
 | Position | X/Y, W/H, nudge, scale, rotation, flip, z-order, guides | base/daily |
 | Advanced positioning preview | Inspector alignment, free X/Y drag, constraints, selected overlay, dashed center lines, Alt distance measurement | daily/advanced |
+| Canvas/Scene runtime | Static canvas editing, scene mode, timeline, transitions, snapshots, animation sampling and trace | advanced |
 | Design systems | Components, instances, variants, component properties, slots, libraries | daily/advanced |
 | Tokens | Variables, collections, modes, styles, text styles, color styles, effect styles | advanced |
 | Typography | Text layers, typography properties, text resize, truncation, max lines, links, lists | daily |
