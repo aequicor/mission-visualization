@@ -41,11 +41,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -808,12 +814,14 @@ private fun SizeControls(
     val nodeId = designState.selectedNodeId
     val width = selectedBox?.width ?: selectedNode?.size?.width ?: 0.0
     val height = selectedBox?.height ?: selectedNode?.size?.height ?: 0.0
+    // W/H write back into the SLM source (fixed sizing) and recompile, so they
+    // commit on Enter / focus loss instead of live per keystroke.
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        InspectorNumberField("W", width.formatPx(), "px", nodeId, Modifier.weight(1f)) { value ->
-            state.dispatch(DesignEditorIntent.UpdateSize(nodeId, width = value))
+        InspectorCommitNumberField("W", width.formatPx(), "px", nodeId, Modifier.weight(1f), enabled = selectedNode != null) { value ->
+            state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = value))
         }
-        InspectorNumberField("H", height.formatPx(), "px", nodeId, Modifier.weight(1f)) { value ->
-            state.dispatch(DesignEditorIntent.UpdateSize(nodeId, height = value))
+        InspectorCommitNumberField("H", height.formatPx(), "px", nodeId, Modifier.weight(1f), enabled = selectedNode != null) { value ->
+            state.dispatch(DesignEditorIntent.ResizeNode(nodeId, height = value))
         }
     }
     Spacer(Modifier.height(10.dp))
@@ -1045,6 +1053,61 @@ private fun InspectorNumberField(
                 }
             },
             modifier = Modifier.weight(1f),
+            singleLine = true,
+            enabled = enabled,
+            textStyle = MaterialTheme.typography.bodySmall,
+            trailingIcon = { Text(suffix, style = MaterialTheme.typography.bodySmall, color = Color.Black) },
+        )
+    }
+}
+
+/**
+ * Numeric inspector input that commits on Enter or focus loss instead of per
+ * keystroke: it drives the SLM source write-back ([DesignEditorIntent.ResizeNode]),
+ * which rewrites and recompiles the owning document, so intermediate values
+ * typed on the way to "320" must not land in the source. Same visual row as
+ * [InspectorNumberField]; the draft resets when the selection or the computed
+ * value changes.
+ */
+@Composable
+private fun InspectorCommitNumberField(
+    label: String,
+    value: String,
+    suffix: String,
+    nodeId: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onCommit: (Double) -> Unit,
+) {
+    var draft by remember(nodeId, value) { mutableStateOf(value) }
+    var hadFocus by remember(nodeId) { mutableStateOf(false) }
+    fun commitDraft() {
+        val parsed = draft.toDoubleOrNull() ?: return
+        if (parsed != value.toDoubleOrNull()) onCommit(parsed)
+    }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(label, modifier = Modifier.widthIn(min = 26.dp), style = MaterialTheme.typography.bodySmall, color = Color.Black)
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { input -> draft = input.filter { it.isDigit() || it == '.' || it == '-' } },
+            modifier = Modifier
+                .weight(1f)
+                .onFocusChanged { focusState ->
+                    if (focusState.isFocused) {
+                        hadFocus = true
+                    } else if (hadFocus) {
+                        hadFocus = false
+                        commitDraft()
+                    }
+                }
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && (event.key == Key.Enter || event.key == Key.NumPadEnter)) {
+                        commitDraft()
+                        true
+                    } else {
+                        false
+                    }
+                },
             singleLine = true,
             enabled = enabled,
             textStyle = MaterialTheme.typography.bodySmall,
