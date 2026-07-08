@@ -393,19 +393,31 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val down = awaitFirstDown()
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
+                            // The pointerInput coroutine can outlive document/layout recompositions
+                            // during resize. Read a fresh press-time snapshot so the next press hit-tests
+                            // the handles that are currently drawn, not the geometry from setup time.
+                            val pressDesign = state.designState
+                            val pressWorkspace = state.workspace
+                            val pressDocument = pressDesign.document ?: return@awaitEachGesture
+                            val pressLayout = state.artboardLayout
+                            val pressRootId = pressDocument.pageById(pressDesign.selectedPageId)
+                                ?.children
+                                ?.firstOrNull()
+                                ?.id
+                                .orEmpty()
                             val forcePan = currentEvent.buttons.isTertiaryPressed || spaceHeld
-                            val primaryBox = design.selectedNodeId.takeIf { it.isNotBlank() }?.let { layout?.findBySourceId(it) }
+                            val primaryBox = pressDesign.selectedNodeId.takeIf { it.isNotBlank() }?.let { pressLayout?.findBySourceId(it) }
                             // A locked selection exposes no resize handles (design-book §7).
-                            val selectionLocked = state.designState.selectedNodeIds.any { id -> document.nodeById(id)?.locked == true }
-                            val isSingleSelection = state.designState.selectedNodeIds.size == 1
-                            val inVectorEdit = isSingleSelection && design.selectedNodeId == ws.vectorEditNodeId
-                            val selectedResizeBox = if (state.designState.selectedNodeIds.size > 1) {
-                                selectionHandleBounds(layout, state.designState.selectedNodeIds)
+                            val selectionLocked = pressDesign.selectedNodeIds.any { id -> pressDocument.nodeById(id)?.locked == true }
+                            val isSingleSelection = pressDesign.selectedNodeIds.size == 1
+                            val inVectorEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.vectorEditNodeId
+                            val selectedResizeBox = if (pressDesign.selectedNodeIds.size > 1) {
+                                selectionHandleBounds(pressLayout, pressDesign.selectedNodeIds)
                             } else {
                                 primaryBox?.toBoundsBox()
                             }
                             val selectionRotation = if (isSingleSelection) primaryBox?.node?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && ws.tool == EditorTool.Select && !selectionLocked && !inVectorEdit
+                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit
                             val handle = selectedResizeBox?.takeIf { handlesActive }
                                 ?.let { box -> rotatedHandleAt(box, selectionRotation, viewport, start) }
                             val rotateHit = handle == null && isSingleSelection &&
@@ -414,8 +426,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     val point = rotateAffordancePoint(box, selectionRotation, offsetDoc)
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
-                            val hitId = hitNode(layout, document, viewport, start)
-                            val mode = resolveCanvasOperation(ws.tool, forcePan, handle, rotateHit, hitId)
+                            val hitId = hitNode(pressLayout, pressDocument, viewport, start)
+                            val mode = resolveCanvasOperation(pressWorkspace.tool, forcePan, handle, rotateHit, hitId)
 
                             // A press whose top-most hit is the current selection — or a descendant
                             // showing through inside a selected container — drags the selection instead
@@ -423,12 +435,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // "drag moves object"; a nested object is reached by double-click). An
                             // unrelated object stacked on top is not part of the selection, so it still
                             // wins the press (§10 "topmost selectable layer gets priority").
-                            val pressOnSelection = document.pressHitBelongsToSelection(design.selectedNodeIds, hitId)
+                            val pressOnSelection = pressDocument.pressHitBelongsToSelection(pressDesign.selectedNodeIds, hitId)
 
                             // Pre-press selection so a drag moves the pressed node — but never when the
                             // press already lands on the current selection (reselecting there would grab
                             // the nested element) nor on a shift-add.
-                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in design.selectedNodeIds && !shiftHeld) {
+                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !shiftHeld) {
                                 state.dispatch(DesignEditorIntent.SelectNode(hitId))
                             }
                             val moveStartPositions = if (mode == CanvasOperation.Move) {
@@ -444,9 +456,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val reorderBaseline = (mode == CanvasOperation.Move).let {
                                 if (!it) return@let null
                                 val singleId = state.designState.selectedNodeIds.singleOrNull() ?: return@let null
-                                if (document.isCoordinatePositioned(singleId)) return@let null
-                                val parentId = document.parentNodeOf(singleId)?.id ?: return@let null
-                                val parentBox = layout?.findBySourceId(parentId) ?: return@let null
+                                if (pressDocument.isCoordinatePositioned(singleId)) return@let null
+                                val parentId = pressDocument.parentNodeOf(singleId)?.id ?: return@let null
+                                val parentBox = pressLayout?.findBySourceId(parentId) ?: return@let null
                                 val horizontal = when (parentBox.node.layout.mode) {
                                     LayoutMode.Horizontal -> true
                                     LayoutMode.Vertical -> false
@@ -470,9 +482,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // is rotated (snapping assumes an axis-aligned container coordinate space).
                             val snapBaseline = if (mode == CanvasOperation.Move && reorderBaseline == null) {
                                 val ids = state.designState.selectedNodeIds
-                                val boxes = ids.mapNotNull { id -> layout?.findBySourceId(id) }
-                                val parentBox = document.parentNodeOf(state.designState.selectedNodeId)?.id
-                                    ?.let { layout?.findBySourceId(it) }
+                                val boxes = ids.mapNotNull { id -> pressLayout?.findBySourceId(id) }
+                                val parentBox = pressDocument.parentNodeOf(state.designState.selectedNodeId)?.id
+                                    ?.let { pressLayout?.findBySourceId(it) }
                                 if (boxes.isEmpty() || parentBox == null || parentBox.node.rotation != 0.0) {
                                     null
                                 } else {
@@ -485,13 +497,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         .map { it.toBoundsBox() }
                                     val containers = buildList {
                                         add(parentBox.toBoundsBox())
-                                        var ancestorId = document.parentNodeOf(parentBox.node.sourceId)?.id
+                                        var ancestorId = pressDocument.parentNodeOf(parentBox.node.sourceId)?.id
                                         while (ancestorId != null) {
-                                            val ancestorBox = layout?.findBySourceId(ancestorId)
+                                            val ancestorBox = pressLayout?.findBySourceId(ancestorId)
                                             if (ancestorBox != null && ancestorBox.node.rotation == 0.0) {
                                                 add(ancestorBox.toBoundsBox())
                                             }
-                                            ancestorId = document.parentNodeOf(ancestorId)?.id
+                                            ancestorId = pressDocument.parentNodeOf(ancestorId)?.id
                                         }
                                     }
                                     SnapBaseline(axisAlignedBounds(corners), containers, siblings)
@@ -507,12 +519,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             var last = start
                             val resizeBaseline = (mode as? CanvasOperation.Resize)?.let { selectedResizeBox }
                             val resizeTargets = (mode as? CanvasOperation.Resize)?.let {
-                                resizeTargets(document, layout, state.designState.selectedNodeIds)
+                                resizeTargets(pressDocument, pressLayout, state.designState.selectedNodeIds)
                             }.orEmpty()
-                            val rotateBaseline = if (mode == CanvasOperation.Rotate && selectedResizeBox != null && design.selectedNodeId.isNotBlank()) {
+                            val rotateBaseline = if (mode == CanvasOperation.Rotate && selectedResizeBox != null && pressDesign.selectedNodeId.isNotBlank()) {
                                 val center = GeoPoint(selectedResizeBox.centerX, selectedResizeBox.centerY)
                                 RotateBaseline(
-                                    nodeId = design.selectedNodeId,
+                                    nodeId = pressDesign.selectedNodeId,
                                     center = center,
                                     startAngle = angleFromCenterDegrees(center, GeoPoint(viewport.toDocX(start.x), viewport.toDocY(start.y))),
                                     startRotation = selectionRotation,
@@ -642,15 +654,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         if (moved) {
                                             val rect = marquee
                                             if (rect != null) {
-                                                val ids = nodesIn(layout, document, viewport, rect)
-                                                val next = if (shiftHeld) design.selectedNodeIds + ids else ids
+                                                val ids = nodesIn(pressLayout, pressDocument, viewport, rect)
+                                                val next = if (shiftHeld) pressDesign.selectedNodeIds + ids else ids
                                                 state.dispatch(DesignEditorIntent.SelectNodes(next))
                                             }
                                         } else if (hitId.isBlank()) {
                                             // Clicking inside the root frame's body selects the root
                                             // (Figma: clicking a frame's empty area selects the frame);
                                             // clicking the canvas outside all frames clears the selection.
-                                            val rootBox = layout
+                                            val rootBox = pressLayout
                                             if (rootBox != null && rootBox.hitTest(viewport.toDocX(start.x), viewport.toDocY(start.y)) != null) {
                                                 state.dispatch(DesignEditorIntent.SelectNode(rootBox.node.sourceId))
                                             } else {
@@ -660,7 +672,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     }
                                     is CanvasOperation.Create -> {
                                         val end = constrainCreatePoint(start, last, mode.kind, shiftHeld)
-                                        commitCreate(state, mode, start, end, zoomPx, viewport, rootNode.id, moved)
+                                        commitCreate(state, mode, start, end, zoomPx, viewport, pressRootId, moved)
                                         state.updateWorkspace { it.copy(tool = EditorTool.Select) }
                                     }
                                     CanvasOperation.Move -> {
