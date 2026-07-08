@@ -217,7 +217,7 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
     // --- images ---
 
     private val standaloneImageRegex =
-        Regex("""^!\[([^\]]*)]\(([^)]*)\)\s*(?:<!--(.*?)-->)?\s*$""")
+        Regex("""^!\[([^\]]*)\]\(([^)]*)\)\s*(?:<!--(.*?)-->)?\s*$""")
 
     private fun standaloneImageMatch(text: String): MatchResult? =
         standaloneImageRegex.matchEntire(text)
