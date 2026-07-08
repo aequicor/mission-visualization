@@ -1,6 +1,6 @@
 # Мини-книжка: базовые и крутые Figma-фичи
 
-Дата сверки: 2026-07-07. Источники собраны в [sources.md](sources.md).
+Дата сверки: 2026-07-08. Источники собраны в [sources.md](sources.md).
 
 Эта книжка - Figma-first каталог возможностей. Цель: собрать в одном месте
 базовые, ежедневные и продвинутые фичи Figma, чтобы понимать, что умеет
@@ -39,23 +39,50 @@
    pages, sections, comments, version history, Dev Mode, annotations.
 6. [Visual assets, AI и новые продукты](06-visual-assets-handoff.md) -
    vectors, images, Figma Draw, Motion, Make, Sites, Buzz, Slides, AI.
-7. [Semantic Layout Markdown с i18n](semantic-layout-markdown-i18n.md) -
+7. [Application uses: рабочее пространство редактора](07-editor-application-use.md) -
+   панели, canvas, resize стыков, minimize/hide UI, focus mode and zoom.
+8. [Layout: поведение layout-редактирования](08-editor-layout.md) -
+   auto layout, direction, gap, padding, alignment, resizing and constraints.
+9. [Frames: экраны, контейнеры и вложенность](09-editor-frames.md) -
+   screen frames, nested frames, clip content, resize and frame properties.
+10. [Objects: выбор, перемещение и слои](10-editor-objects.md) -
+   hover, selection, move, resize, multi-selection, layers and object creation.
+11. [Vector: shape, path and point editing](11-editor-vector.md) -
+   shape tools, pen, vector edit mode, points, paths, lasso, cut and paint.
+12. [Position: coordinates, dimensions, rotation and order](12-editor-position.md) -
+   X/Y, W/H, nudge, scale, rotation, flip, z-order and guides.
+13. [Appearance: opacity, effects, blend, radius and styles](13-editor-appearance.md) -
+   layer opacity, blend modes, effects, radius, smoothing and style references.
+14. [Fill: colors, gradients, images and patterns](14-editor-fill.md) -
+   fill rows, color picker, gradients, image fill, patterns and variables.
+15. [Stroke: borders, outlines, caps and dashed styles](15-editor-stroke.md) -
+   stroke fill, weight, position, individual sides, endpoints, joins and dashes.
+16. [Typography: text layers and type controls](16-editor-typography.md) -
+   text creation/editing, typography controls, resizing, truncation and styles.
+17. [Semantic Layout Markdown с i18n](semantic-layout-markdown-i18n.md) -
    semantic extraction, language-neutral IR and i18n resources.
-8. [Аудит полноты SLM относительно Figma-фич](slm-feature-completeness-audit.md) -
+18. [Аудит полноты SLM относительно Figma-фич](slm-feature-completeness-audit.md) -
    проверка, может ли SLM описать любой Figma screen.
-9. [Источники](sources.md) - официальные ссылки Figma.
+19. [Источники](sources.md) - официальные ссылки Figma.
 
 ## Большая карта фич
 
 | Группа | Фичи | Статус |
 | --- | --- | --- |
 | Canvas basics | Files, pages, canvas, frames, sections, layers, groups | base |
-| Layout | Auto layout, vertical/horizontal flow, wrap, grid, padding, gap, alignment, resizing | daily |
+| Application uses | Panels, resizable sidebars, minimized/hidden UI, focus mode, zoom and canvas navigation | base/daily |
+| Layout | Auto layout, vertical/horizontal/grid flow, padding, gap, alignment, resizing, constraints | daily |
 | Responsive behavior | Hug contents, fill container, fixed size, min/max, constraints, layout guides | daily/advanced |
+| Frames | Top-level screens, nested frames, clip content, frame properties, export targets | base/daily |
+| Objects | Selection, hover, move, resize, multi-selection, layers, visibility, lock | base/daily |
+| Position | X/Y, W/H, nudge, scale, rotation, flip, z-order, guides | base/daily |
 | Design systems | Components, instances, variants, component properties, slots, libraries | daily/advanced |
 | Tokens | Variables, collections, modes, styles, text styles, color styles, effect styles | advanced |
-| Text | Text layers, typography properties, truncation, max lines, links, lists | daily |
-| Visual design | Shapes, vector networks, boolean operations, strokes, fills, gradients, effects, masks | daily/advanced |
+| Typography | Text layers, typography properties, text resize, truncation, max lines, links, lists | daily |
+| Appearance | Opacity, blend modes, shadows, blur, effects, radius, smoothing, styles | daily/advanced |
+| Fill | Solid colors, gradients, patterns, images, videos, multiple fills, variables | daily/advanced |
+| Stroke | Stroke fills, weight, position, individual sides, caps, joins, dashed styles | daily/advanced |
+| Vector | Shapes, vector networks, pen, point/path editing, boolean operations, masks | daily/advanced |
 | Prototyping | Interactions, prototype connections, overlays, smart animate, scroll/overflow, variables | daily/advanced |
 | Collaboration | Multiplayer editing, comments, mentions, version history, branches, sharing | daily |
 | Handoff | Dev Mode, inspect, measurements, annotations, export settings, code/connectors | advanced |

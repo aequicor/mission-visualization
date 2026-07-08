@@ -2,7 +2,7 @@
 
 [← Оглавление](README.md)
 
-Дата сверки: 2026-07-07.
+Дата сверки: 2026-07-08.
 
 Используются официальные Figma Help/Learn страницы и Figma Blog. Для beta/new
 features доступность может зависеть от plan, seat, admin settings, rollout and
@@ -24,14 +24,21 @@ region; перед продуктовым использованием нужн�
 - [Parent, child, and sibling relationships](https://help.figma.com/hc/en-us/articles/360039959014-Parent-child-and-sibling-relationships)
 - [Rename Layers](https://help.figma.com/hc/en-us/articles/360039958934-Rename-Layers)
 - [Explore the navigation bar and left sidebar](https://help.figma.com/hc/en-us/articles/360039831974-Explore-the-navigation-bar-and-left-sidebar)
+- [Design, prototype, and explore layer properties in the right sidebar](https://help.figma.com/hc/en-us/articles/360039832014-Design-prototype-and-explore-layer-properties-in-the-right-sidebar)
+- [Hide or minimize the UI](https://help.figma.com/hc/en-us/articles/41414918021271-Hide-or-minimize-the-UI)
+- [Adjust your zoom and view options](https://help.figma.com/hc/en-us/articles/360041065034-Adjust-your-zoom-and-view-options)
 
 ## Layout
 
+- [Frames in Figma Design](https://help.figma.com/hc/en-us/articles/360041539473-Frames-in-Figma-Design)
 - [Guide to auto layout](https://help.figma.com/hc/en-us/articles/360040451373-Guide-to-auto-layout)
+- [Use the horizontal and vertical flows in auto layout](https://help.figma.com/hc/en-us/articles/31289464393751-Use-the-horizontal-and-vertical-flows-in-auto-layout)
 - [Use the grid auto layout flow](https://help.figma.com/hc/en-us/articles/31289469907863-Use-the-grid-auto-layout-flow)
 - [Apply constraints to define how layers resize](https://help.figma.com/hc/en-us/articles/360039957734-Apply-constraints-to-define-how-layers-resize)
 - [Create layout guides](https://help.figma.com/hc/en-us/articles/360040450513-Create-layout-guides)
 - [Prototype scroll and overflow behavior](https://help.figma.com/hc/en-us/articles/360039818734-Prototype-scroll-and-overflow-behavior)
+- [Adjust alignment, rotation, position, and dimensions](https://help.figma.com/hc/en-us/articles/360039956914-Adjust-alignment-rotation-position-and-dimensions)
+- [Scale layers while maintaining proportions](https://help.figma.com/hc/en-us/articles/360040451453-Scale-layers-while-maintaining-proportions)
 
 ## Components, variants and design systems
 
@@ -45,8 +52,10 @@ region; перед продуктовым использованием нужн�
 
 ## Text and content
 
+- [Guide to text in Figma Design](https://help.figma.com/hc/en-us/articles/360039956434-Guide-to-text-in-Figma-Design)
 - [Explore text properties](https://help.figma.com/hc/en-us/articles/360039956634-Explore-text-properties)
 - [Create and apply text styles](https://help.figma.com/hc/en-us/articles/360039957034-Create-and-apply-text-styles)
+- [Convert text to vector paths](https://help.figma.com/hc/en-us/articles/360047239073-Convert-text-to-vector-paths)
 - [Add links to text](https://help.figma.com/hc/en-us/articles/360045942953-Add-links-to-text)
 - [Use variables in prototypes](https://help.figma.com/hc/en-us/articles/14506587589399-Use-variables-in-prototypes)
 
@@ -78,11 +87,20 @@ region; перед продуктовым использованием нужн�
 
 ## Visual assets
 
+- [Shape tools](https://help.figma.com/hc/en-us/articles/360040450133-Shape-tools)
 - [Vector networks](https://help.figma.com/hc/en-us/articles/360040450213-Vector-networks)
 - [Edit vector layers](https://help.figma.com/hc/en-us/articles/360039957634-Edit-vector-layers)
 - [Explore Figma Draw](https://help.figma.com/hc/en-us/articles/31440394517143-Explore-Figma-Draw)
 - [Draw with illustration tools](https://help.figma.com/hc/en-us/articles/31440438150935-Draw-with-illustration-tools)
+- [Guide to fills](https://help.figma.com/hc/en-us/articles/360041003694-Guide-to-fills)
+- [Update fills using the color picker](https://help.figma.com/hc/en-us/articles/360041003774-Update-fills-using-the-color-picker)
+- [Use gradients as a fill or stroke](https://help.figma.com/hc/en-us/articles/34208860210199-Use-gradients-as-a-fill-or-stroke)
+- [Use patterns as a fill or stroke](https://help.figma.com/hc/en-us/articles/31616030150167-Use-patterns-as-a-fill-or-stroke)
+- [Adjust the properties of an image](https://help.figma.com/hc/en-us/articles/360041098433-Adjust-the-properties-of-an-image)
 - [Apply and adjust stroke properties](https://help.figma.com/hc/en-us/articles/360049283914-Apply-and-adjust-stroke-properties)
+- [Apply effects to layers](https://help.figma.com/hc/en-us/articles/360041488473-Apply-effects-to-layers)
+- [Apply blend modes to layers, fills, and effects](https://help.figma.com/hc/en-us/articles/360040667874-Apply-blend-modes-to-layers-fills-and-effects)
+- [Adjust corner radius and smoothing](https://help.figma.com/hc/en-us/articles/360050986854-Adjust-corner-radius-and-smoothing)
 - [Boolean operations](https://help.figma.com/hc/en-us/articles/360039957534-Boolean-operations)
 - [Convert static images to vector layers](https://help.figma.com/hc/en-us/articles/38031452710807-Convert-static-images-to-vector-layers)
 - [Make or edit an image with AI](https://help.figma.com/hc/en-us/articles/24004542669463-Make-or-edit-an-image-with-AI)
