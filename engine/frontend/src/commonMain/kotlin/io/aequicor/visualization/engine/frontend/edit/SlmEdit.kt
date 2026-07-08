@@ -1,7 +1,9 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 
 /**
  * One programmatic edit against a compiled `.layout.md` document, addressed by node
@@ -42,6 +44,17 @@ data class SetNodePosition(
     override val nodeId: String,
     val x: Double,
     val y: Double,
+) : SlmEdit
+
+/**
+ * Updates one or both Figma-style constraints under the node contract. Keeping the
+ * two axes in one edit prevents horizontal/vertical constraint changes from creating
+ * separate source patches and separate undo checkpoints.
+ */
+data class SetNodeConstraints(
+    override val nodeId: String,
+    val horizontal: HorizontalConstraint? = null,
+    val vertical: VerticalConstraint? = null,
 ) : SlmEdit
 
 /**

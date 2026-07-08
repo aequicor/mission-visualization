@@ -78,6 +78,7 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
                     tabs = SourceTab.entries,
                     selected = state.workspace.sourceTab,
                     title = { it.title },
+                    icon = ::sourceTabIcon,
                     onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
                 )
                 when (state.workspace.sourceTab) {
@@ -302,7 +303,12 @@ private fun LayerRowView(
                 )
             }
         }
-        Text(layerGlyph(node.type), color = if (selected) colors.accent else colors.mutedInk, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
+        EditorSvgIcon(
+            icon = layerIcon(node.type),
+            contentDescription = node.type,
+            modifier = Modifier.size(16.dp),
+            tint = if (selected) colors.accent else colors.mutedInk,
+        )
         Text(
             node.name.ifBlank { node.id },
             modifier = Modifier.weight(1f),
@@ -313,22 +319,30 @@ private fun LayerRowView(
         )
         // Row actions appear on hover/selection to avoid clutter.
         if (selected || hovered) {
-            LayerAction("^", enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Forward)) }
-            LayerAction("v", enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Backward)) }
-            LayerAction(if (node.locked) "L*" else "L", enabled = true) { state.dispatch(DesignEditorIntent.SetLocked(node.id, !node.locked)) }
+            LayerAction(EditorIcon.ArrowUp, contentDescription = "Bring forward", enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Forward)) }
+            LayerAction(EditorIcon.ArrowDown, contentDescription = "Send backward", enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Backward)) }
+            LayerIconAction(
+                icon = EditorIcon.Lock,
+                contentDescription = if (node.locked) "Unlock layer" else "Lock layer",
+                active = node.locked,
+            ) { state.dispatch(DesignEditorIntent.SetLocked(node.id, !node.locked)) }
         }
-        LayerAction(if (visible) "O" else "-", enabled = true) { state.dispatch(DesignEditorIntent.SetVisible(node.id, !visible)) }
+        LayerIconAction(
+            icon = EditorIcon.Visibility,
+            contentDescription = if (visible) "Hide layer" else "Show layer",
+            muted = !visible,
+        ) { state.dispatch(DesignEditorIntent.SetVisible(node.id, !visible)) }
     }
 }
 
 @Composable
-private fun LayerAction(glyph: String, enabled: Boolean, onClick: () -> Unit) {
+private fun LayerAction(icon: EditorIcon, contentDescription: String, enabled: Boolean, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     Box(
         Modifier.size(18.dp).clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(glyph, color = colors.controlInk, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
+        EditorSvgIcon(icon, contentDescription = contentDescription, modifier = Modifier.size(14.dp), tint = colors.controlInk)
     }
 }
 
@@ -345,12 +359,45 @@ private fun flattenLayers(page: DesignPage, collapsed: Set<String>): List<LayerR
     return rows
 }
 
-private fun layerGlyph(type: String): String = when (type) {
-    "frame", "group", "section", "screen" -> "[]"
-    "text" -> "T"
-    "instance" -> "<>"
-    "shape" -> "◇"
-    else -> "--"
+@Composable
+private fun LayerIconAction(
+    icon: EditorIcon,
+    contentDescription: String,
+    enabled: Boolean = true,
+    active: Boolean = false,
+    muted: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    Box(
+        Modifier.size(18.dp).clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        EditorSvgIcon(
+            icon = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(15.dp),
+            tint = when {
+                !enabled || muted -> colors.mutedInk
+                active -> colors.accent
+                else -> colors.controlInk
+            },
+        )
+    }
+}
+
+private fun sourceTabIcon(tab: SourceTab): EditorIcon = when (tab) {
+    SourceTab.Markdown -> EditorIcon.Markdown
+    SourceTab.Resources -> EditorIcon.Assets
+    SourceTab.Layers -> EditorIcon.Layers
+}
+
+private fun layerIcon(type: String): EditorIcon = when (type) {
+    "frame", "group", "section", "screen" -> EditorIcon.Frame
+    "text" -> EditorIcon.Text
+    "instance" -> EditorIcon.Component
+    "shape" -> EditorIcon.Rectangle
+    else -> EditorIcon.Layers
 }
 
 // --- Screens panel -----------------------------------------------------------
@@ -375,7 +422,7 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
             ) {
                 Text("Screens", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Box {
-                    SmallSquareButton("+", onClick = { presetMenu = true })
+                    SmallIconButton(EditorIcon.Plus, contentDescription = "Create screen", onClick = { presetMenu = true })
                     DropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
                         ScreenPreset.entries.forEach { preset ->
                             DropdownMenuItem(

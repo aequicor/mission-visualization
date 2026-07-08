@@ -20,9 +20,7 @@ data class EditorWorkspaceState(
     val sourceTab: SourceTab = SourceTab.Layers,
     val inspectorTab: InspectorTab = InspectorTab.Design,
     val expandedSections: Set<InspectorSection> = InspectorSection.entries.toSet(),
-    val zoom: Float = 1f,
-    val panXDp: Float = 0f,
-    val panYDp: Float = 0f,
+    val viewport: EditorViewport = EditorViewport(),
     /** True when W/H edits and canvas corner-resize keep the object's aspect ratio. */
     val lockAspectRatio: Boolean = false,
     /** Node currently hovered on the canvas or in Layers (outline feedback), or "". */
@@ -39,6 +37,12 @@ data class EditorWorkspaceState(
     val recentColors: List<DesignColor> = emptyList(),
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
+
+    val zoom: Float get() = viewport.zoom
+
+    val panXDp: Float get() = viewport.panOffsetXDp
+
+    val panYDp: Float get() = viewport.panOffsetYDp
 
     /** Whether the tool creates an object on canvas press. */
     val isCreationTool: Boolean get() = tool.creates != null
@@ -57,16 +61,17 @@ enum class PendingFit { None, Screen, Selection }
  * Canvas tools. `Select`/`Hand` manipulate; the rest create an object of [creates]
  * on press/drag. `Hand` pans; `Select` also marquee-selects and drag-moves.
  */
-enum class EditorTool(val glyph: String, val label: String, val creates: NewObjectKind?) {
-    Select("P", "Move", null),
-    Hand("H", "Hand", null),
-    Frame("#", "Frame", NewObjectKind.Frame),
-    Rectangle("[]", "Rectangle", NewObjectKind.Rectangle),
-    Ellipse("()", "Ellipse", NewObjectKind.Ellipse),
-    Line("/", "Line", NewObjectKind.Line),
-    Arrow("->", "Arrow", NewObjectKind.Arrow),
-    Text("T", "Text", NewObjectKind.Text),
-    Comment("C", "Comment", null),
+enum class EditorTool(val label: String, val creates: NewObjectKind?) {
+    Select("Move", null),
+    Hand("Hand", null),
+    Frame("Frame", NewObjectKind.Frame),
+    Component("Component", null),
+    Rectangle("Rectangle", NewObjectKind.Rectangle),
+    Pen("Pen", NewObjectKind.Line),
+    Text("Text", NewObjectKind.Text),
+    Comment("Comment", null),
+    Link("Link", null),
+    Code("Code", null),
 }
 
 enum class SourceTab(val title: String) {

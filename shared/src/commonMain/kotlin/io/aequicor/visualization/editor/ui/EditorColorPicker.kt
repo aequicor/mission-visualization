@@ -160,6 +160,15 @@ internal fun ColorPickerField(
                     onCommit = { commitHex(it) },
                     modifier = Modifier.padding(start = 6.dp).weight(1f),
                 )
+                EditorSvgIcon(
+                    icon = EditorIcon.ColorSelector,
+                    contentDescription = if (open) "Close color selector" else "Open color selector",
+                    modifier = Modifier
+                        .padding(start = 6.dp)
+                        .size(17.dp)
+                        .clickable(enabled = enabled) { if (open) closePanel(restore = false) else openPanel() },
+                    tint = if (enabled) colors.controlInk else colors.mutedInk,
+                )
                 Text("$percent%", style = MaterialTheme.typography.bodySmall, color = colors.mutedInk)
             }
         }

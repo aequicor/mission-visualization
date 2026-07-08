@@ -64,6 +64,13 @@ class ResizeMathTest {
         assertEquals(200.0, box[1] + box[3], "bottom edge stays pinned at 200")
     }
 
+    @Test fun topLeftPastOppositeCornerPinsRightAndBottomEdges() {
+        val box = resize(ResizeHandle.TopLeft, 260.0, 140.0)
+        assertEquals(listOf(299.0, 199.0, 1.0, 1.0), box)
+        assertEquals(300.0, box[0] + box[2], "right edge stays pinned at 300")
+        assertEquals(200.0, box[1] + box[3], "bottom edge stays pinned at 200")
+    }
+
     @Test fun rightHandleNeverMovesOrigin() {
         val box = resize(ResizeHandle.Right, -500.0, 0.0)
         assertEquals(100.0, box[0], "x unchanged")

@@ -45,6 +45,12 @@ sealed interface DesignEditorIntent {
 
     data class UpdatePosition(val nodeId: String, val x: Double? = null, val y: Double? = null) : DesignEditorIntent
 
+    /**
+     * Position write-back: rewrites the owning SLM source with absolute x/y and updates
+     * the working document. Used on drag release and inspector commits.
+     */
+    data class PositionNode(val nodeId: String, val x: Double, val y: Double) : DesignEditorIntent
+
     /** Typing an exact number pins the edited dimension to `fixed`, like Figma. */
     data class UpdateSize(val nodeId: String, val width: Double? = null, val height: Double? = null) : DesignEditorIntent
 

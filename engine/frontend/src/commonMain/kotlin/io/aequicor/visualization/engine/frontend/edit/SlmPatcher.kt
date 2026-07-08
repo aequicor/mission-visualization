@@ -10,7 +10,9 @@ import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 
 /**
  * Applies one surgical [SlmEdit] to the SLM source text (design section J). SLM
@@ -199,6 +201,8 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
         ),
     )
 
+    is SetNodeConstraints -> constraintsPayload(edit)
+
     is SetLayoutProperty -> PayloadOutcome.Ok(
         TypedBlockKind.Layout,
         nestedPayload(edit.property.yamlPath, YamlPayload.Scalar(edit.value)),
@@ -241,6 +245,36 @@ private fun sizingPayload(edit: SetSizing, target: EditTarget): PayloadOutcome {
         TypedBlockKind.Layout,
         YamlPayload.Mapping(listOf("sizing" to YamlPayload.Mapping(axes))),
     )
+}
+
+private fun constraintsPayload(edit: SetNodeConstraints): PayloadOutcome {
+    val axes = buildList {
+        edit.horizontal?.let { add("horizontal" to scalar(YamlScalarValue.Str(it.slmToken()))) }
+        edit.vertical?.let { add("vertical" to scalar(YamlScalarValue.Str(it.slmToken()))) }
+    }
+    if (axes.isEmpty()) {
+        return PayloadOutcome.Invalid("SetNodeConstraints requires at least one axis")
+    }
+    return PayloadOutcome.Ok(
+        TypedBlockKind.Node,
+        YamlPayload.Mapping(listOf("constraints" to YamlPayload.Mapping(axes))),
+    )
+}
+
+private fun HorizontalConstraint.slmToken(): String = when (this) {
+    HorizontalConstraint.Left -> "left"
+    HorizontalConstraint.Right -> "right"
+    HorizontalConstraint.Center -> "center"
+    HorizontalConstraint.LeftRight -> "left-right"
+    HorizontalConstraint.Scale -> "scale"
+}
+
+private fun VerticalConstraint.slmToken(): String = when (this) {
+    VerticalConstraint.Top -> "top"
+    VerticalConstraint.Bottom -> "bottom"
+    VerticalConstraint.Center -> "center"
+    VerticalConstraint.TopBottom -> "top-bottom"
+    VerticalConstraint.Scale -> "scale"
 }
 
 /**

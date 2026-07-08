@@ -142,7 +142,7 @@ fun DesignArtboard(
                 if (id != layoutBox.node.sourceId || allSelected.size == 1) {
                     layoutBox.findBySourceId(id)?.let { box ->
                         // Point-edit mode replaces object handles with path anchors, so suppress them.
-                        val handles = (id == selectedNodeId || allSelected.size == 1) && id != vectorEditNodeId
+                        val handles = allSelected.size == 1 && id != vectorEditNodeId
                         drawSelectionOverlay(box, zoom, panX, panY, handles = handles)
                     }
                 }

@@ -48,8 +48,10 @@ import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
+import io.aequicor.visualization.editor.ui.EditorIcon
 import io.aequicor.visualization.editor.ui.EditorInspectorPane
 import io.aequicor.visualization.editor.ui.EditorSourcePane
+import io.aequicor.visualization.editor.ui.EditorSvgIcon
 import io.aequicor.visualization.editor.ui.horizontalResizeCursor
 import io.aequicor.visualization.editor.ui.theme.EditorTheme
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
@@ -177,7 +179,7 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
     Row(modifier = Modifier.fillMaxSize().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         // Left: Source + Screens (or collapsed rail).
         if (ws.sourceCollapsed) {
-            CollapsedRail(label = "Source", onExpand = { state.updateWorkspace { it.copy(sourceCollapsed = false) } })
+            CollapsedRail(label = "Source", icon = EditorIcon.Source, onExpand = { state.updateWorkspace { it.copy(sourceCollapsed = false) } })
         } else {
             EditorSourcePane(state, Modifier.width(ws.sourceWidthDp.dp).fillMaxHeight())
             VerticalSplitter(
@@ -195,7 +197,7 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
 
         // Right: Inspector (or collapsed rail).
         if (ws.inspectorCollapsed) {
-            CollapsedRail(label = "Inspector", onExpand = { state.updateWorkspace { it.copy(inspectorCollapsed = false) } })
+            CollapsedRail(label = "Inspector", icon = EditorIcon.Inspector, onExpand = { state.updateWorkspace { it.copy(inspectorCollapsed = false) } })
         } else {
             VerticalSplitter(
                 onDeltaDp = { d ->
@@ -297,7 +299,7 @@ private fun VerticalSplitter(onDeltaDp: (Float) -> Unit, onReset: () -> Unit) {
 
 /** Thin rail shown in place of a collapsed panel; click re-expands it. */
 @Composable
-private fun CollapsedRail(label: String, onExpand: () -> Unit) {
+private fun CollapsedRail(label: String, icon: EditorIcon, onExpand: () -> Unit) {
     val colors = LocalEditorColors.current
     Surface(
         modifier = Modifier.fillMaxHeight().width(36.dp).clickable(onClick = onExpand),
@@ -310,7 +312,7 @@ private fun CollapsedRail(label: String, onExpand: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(Modifier.size(20.dp).background(colors.accent, RoundedCornerShape(5.dp)))
+            EditorSvgIcon(icon = icon, contentDescription = label, modifier = Modifier.size(20.dp), tint = colors.accent)
             // Vertical label, one glyph per line, so the rail stays narrow.
             label.take(9).forEach { ch ->
                 Text(ch.toString(), style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
@@ -327,11 +329,7 @@ internal fun MenuButton() {
         modifier = Modifier.size(44.dp).background(colors.accent, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            repeat(3) {
-                Box(Modifier.width(20.dp).height(2.dp).background(Color.White, RoundedCornerShape(1.dp)))
-            }
-        }
+        EditorSvgIcon(icon = EditorIcon.AppMenu, contentDescription = "App menu", modifier = Modifier.size(24.dp), tint = Color.White)
     }
 }
 

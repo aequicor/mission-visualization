@@ -3,7 +3,9 @@ package io.aequicor.visualization.editor.presentation
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.compileSlm
+import io.aequicor.visualization.engine.frontend.edit.SetNodeConstraints
 import io.aequicor.visualization.engine.frontend.edit.SetSizing
+import io.aequicor.visualization.engine.frontend.edit.SetNodePosition
 import io.aequicor.visualization.engine.frontend.edit.SizingSpec
 import io.aequicor.visualization.engine.frontend.edit.applySlmEdit
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -76,6 +78,7 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             val current = node.position ?: DesignPoint()
             node.copy(position = DesignPoint(intent.x ?: current.x, intent.y ?: current.y))
         }
+        is DesignEditorIntent.PositionNode -> state.positionNodeWriteBack(intent)
         is DesignEditorIntent.UpdateSize -> state.editUnlockedNode(intent.nodeId) { node ->
             val sizing = node.sizing ?: DesignSizing()
             node.copy(
@@ -95,12 +98,7 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
                 vertical = intent.vertical ?: sizing.vertical,
             ))
         }
-        is DesignEditorIntent.UpdateConstraints -> state.editUnlockedNode(intent.nodeId) { node ->
-            node.copy(constraints = node.constraints.copy(
-                horizontal = intent.horizontal ?: node.constraints.horizontal,
-                vertical = intent.vertical ?: node.constraints.vertical,
-            ))
-        }
+        is DesignEditorIntent.UpdateConstraints -> state.updateConstraintsWriteBack(intent)
         is DesignEditorIntent.SetRotation -> state.editUnlockedNode(intent.nodeId) { it.copy(rotation = intent.degrees) }
         is DesignEditorIntent.FlipHorizontal -> state.flip(intent.nodeIds, horizontal = true)
         is DesignEditorIntent.FlipVertical -> state.flip(intent.nodeIds, horizontal = false)
@@ -479,6 +477,109 @@ private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.Res
             // Fork in-memory history like every other edit: checkpoint the pre-edit
             // document for Undo and clear redo, so a later Redo can't resurrect a
             // stale document that disagrees with the freshly patched sources.
+            undoStack = if (interacting) undoStack else (undoStack + document).takeLast(MaxDocumentHistory),
+            redoStack = if (interacting) redoStack else emptyList(),
+        )
+    }
+    return copy(diagnostics = diagnostics + preferredFailure)
+}
+
+/**
+ * Applies [DesignEditorIntent.PositionNode] both to SLM source (when the node is
+ * authored there) and to the working document. In-memory-created nodes fall back to a
+ * reducer-only position update because they have no source block to patch yet.
+ */
+private fun DesignEditorState.positionNodeWriteBack(intent: DesignEditorIntent.PositionNode): DesignEditorState {
+    if (intent.nodeId.isBlank()) return this
+    if (isNodeLocked(intent.nodeId)) return this
+    val document = document ?: return this
+    if (sources.isEmpty() || sources.size != compiledResults.size) {
+        return editUnlockedNode(intent.nodeId) { it.copy(position = DesignPoint(intent.x, intent.y)) }
+    }
+    val edit = SetNodePosition(nodeId = intent.nodeId, x = intent.x, y = intent.y)
+    var preferredFailure: List<DesignDiagnostic> = emptyList()
+    candidateSourceIndices(intent.nodeId).forEachIndexed { attempt, index ->
+        val source = sources[index]
+        val result = applySlmEdit(source.content, edit, compiledResults[index])
+        val newSource = result.newSource
+        if (newSource == null) {
+            if (attempt == 0) preferredFailure = result.diagnostics
+            return@forEachIndexed
+        }
+        val recompiled = compileSlm(newSource, SlmCompileOptions(fileName = source.fileName))
+        if (!recompiled.isSuccess) {
+            if (attempt == 0) preferredFailure = recompiled.diagnostics
+            return@forEachIndexed
+        }
+        val newSources = sources.toMutableList().apply { this[index] = source.copy(content = newSource) }.toList()
+        val newCompiled = compiledResults.toMutableList().apply { this[index] = recompiled }.toList()
+        val patchedDocument = document.updateNode(intent.nodeId) { node ->
+            node.copy(position = DesignPoint(intent.x, intent.y))
+        }
+        return copy(
+            document = patchedDocument,
+            diagnostics = result.diagnostics,
+            sources = newSources,
+            compiledResults = newCompiled,
+            previousSources = (previousSources + listOf(sources)).takeLast(MaxSourceHistory),
+            undoStack = if (interacting) undoStack else (undoStack + document).takeLast(MaxDocumentHistory),
+            redoStack = if (interacting) redoStack else emptyList(),
+        )
+    }
+    return copy(diagnostics = diagnostics + preferredFailure)
+}
+
+/**
+ * Applies constraint changes through the same source -> compile -> working-document
+ * path as position and sizing edits, so the inspector, canvas and SLM source do not
+ * diverge after a recompile.
+ */
+private fun DesignEditorState.updateConstraintsWriteBack(intent: DesignEditorIntent.UpdateConstraints): DesignEditorState {
+    if (intent.horizontal == null && intent.vertical == null) return this
+    if (intent.nodeId.isBlank()) return this
+    if (isNodeLocked(intent.nodeId)) return this
+    val document = document ?: return this
+    if (sources.isEmpty() || sources.size != compiledResults.size) {
+        return editUnlockedNode(intent.nodeId) { node ->
+            node.copy(constraints = node.constraints.copy(
+                horizontal = intent.horizontal ?: node.constraints.horizontal,
+                vertical = intent.vertical ?: node.constraints.vertical,
+            ))
+        }
+    }
+    val edit = SetNodeConstraints(
+        nodeId = intent.nodeId,
+        horizontal = intent.horizontal,
+        vertical = intent.vertical,
+    )
+    var preferredFailure: List<DesignDiagnostic> = emptyList()
+    candidateSourceIndices(intent.nodeId).forEachIndexed { attempt, index ->
+        val source = sources[index]
+        val result = applySlmEdit(source.content, edit, compiledResults[index])
+        val newSource = result.newSource
+        if (newSource == null) {
+            if (attempt == 0) preferredFailure = result.diagnostics
+            return@forEachIndexed
+        }
+        val recompiled = compileSlm(newSource, SlmCompileOptions(fileName = source.fileName))
+        if (!recompiled.isSuccess) {
+            if (attempt == 0) preferredFailure = recompiled.diagnostics
+            return@forEachIndexed
+        }
+        val newSources = sources.toMutableList().apply { this[index] = source.copy(content = newSource) }.toList()
+        val newCompiled = compiledResults.toMutableList().apply { this[index] = recompiled }.toList()
+        val patchedDocument = document.updateNode(intent.nodeId) { node ->
+            node.copy(constraints = node.constraints.copy(
+                horizontal = intent.horizontal ?: node.constraints.horizontal,
+                vertical = intent.vertical ?: node.constraints.vertical,
+            ))
+        }
+        return copy(
+            document = patchedDocument,
+            diagnostics = result.diagnostics,
+            sources = newSources,
+            compiledResults = newCompiled,
+            previousSources = (previousSources + listOf(sources)).takeLast(MaxSourceHistory),
             undoStack = if (interacting) undoStack else (undoStack + document).takeLast(MaxDocumentHistory),
             redoStack = if (interacting) redoStack else emptyList(),
         )

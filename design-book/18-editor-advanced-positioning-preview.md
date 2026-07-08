@@ -113,8 +113,24 @@ Canvas drag:
 - selected component follows pointer in document coordinates;
 - `X/Y` fields update live;
 - preview shows current position/distance feedback;
+- central anchor lines are shown while the component is moving;
 - mouse release commits one undoable move operation;
 - `Escape` during drag cancels and returns object to original position.
+
+Central anchor lines during movement:
+
+- this is a critical feature, not an optional polish item;
+- while dragging, preview draws the active center axis of the moving component;
+- horizontal movement/alignment feedback shows a horizontal line through
+  component center Y, extending to parent frame edges;
+- vertical movement/alignment feedback shows a vertical line through component
+  center X, extending to parent frame edges;
+- the line uses the active measurement/accent color and stays readable over the
+  frame;
+- small anchor markers can be drawn at parent edges and at the component center
+  crossing;
+- the lines update every pointer move before commit;
+- the lines are preview-only overlay state and never mutate document geometry.
 
 Modifiers:
 
@@ -189,6 +205,19 @@ Rotation:
 - `Shift` snaps rotation to fixed increments, for example 15 degrees;
 - multi-selection rotates around shared selection center.
 
+Rotation scope:
+
+- rotation applies to the whole component, not only to its filled rectangle;
+- the component frame/bounds, fill, stroke, children and any content attached to
+  the component rotate together around the same transform origin;
+- selection outline, handles and rotate affordance must follow the rotated
+  component geometry;
+- hit testing must use the rotated bounds/handles, not the old unrotated frame;
+- this is a critical feature: rotating only the fill while the component frame
+  remains in the old position is an invalid state;
+- inspector `X/Y/W/H` remain based on the documented bounds rule, but preview
+  must make the rotated visual frame explicit.
+
 Mirroring:
 
 - `Flip horizontal` mirrors selection around vertical axis of its bounds center;
@@ -213,6 +242,11 @@ Canvas resize:
 
 - side handles resize one axis;
 - corner handles resize both axes;
+- cursor changes when pointer hovers a resize handle;
+- side handles use horizontal or vertical resize cursors according to the active
+  edge;
+- corner handles use diagonal resize cursors according to the active corner;
+- cursor orientation should respect component rotation where supported;
 - `Shift` preserves aspect ratio during corner resize;
 - dimension badge shows `W x H` while resizing;
 - resize respects constraints only when parent is resized; direct component
@@ -243,12 +277,16 @@ Center-line rules:
 - lines render in overlay layer;
 - lines never mutate document;
 - lines follow selected component while dragging or resizing;
+- during active drag, center anchor lines are emphasized because they are the
+  main alignment feedback for moving the component;
 - labels and badges avoid handles and should not block pointer actions.
 
 Visual priority:
 
 - selected outline wins over hover outline;
 - handles win over body drag in hit testing;
+- hovering a resize handle changes cursor before pointer down, so the user can
+  predict whether drag will resize or move;
 - rotation affordance wins over move when pointer is outside corner;
 - overlay must remain readable under zoom/pan.
 
@@ -339,11 +377,17 @@ previewState:
 - alignment buttons support left/center/right and top/center/bottom;
 - `X/Y` fields and ЛКМ drag stay synchronized;
 - drag creates one undoable move operation;
+- central anchor lines are visible during component movement and update live;
 - constraints support all horizontal and vertical Figma-like modes;
 - parent resize applies constraints live;
 - rotation field and rotate handle stay synchronized;
+- rotation transforms the component frame, fill, stroke, children and attached
+  content together;
+- rotated selection outline, handles and hit testing follow the rotated
+  geometry;
 - flip horizontal/vertical works without negative dimensions;
 - `W/H` fields and resize handles stay synchronized;
+- resize handles change cursor on hover before drag starts;
 - selected preview shows blue bounds, handles, size badge and dashed center
   lines;
 - `Alt` measurement mode shows red selected/hover outlines, center lines and px

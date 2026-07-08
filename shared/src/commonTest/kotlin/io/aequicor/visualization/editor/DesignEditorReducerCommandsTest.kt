@@ -15,6 +15,7 @@ import io.aequicor.visualization.editor.presentation.TypographyPatch
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
+import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.ShapeType
@@ -70,10 +71,16 @@ class DesignEditorReducerCommandsTest {
         var state = freshState()
         val root = state.rootFrameId()
         val before = assertNotNull(state.document?.nodeById(root)?.position)
+        val sizeBefore = state.document?.nodeById(root)?.size
+        val fillsBefore = state.document?.nodeById(root)?.fills
+        val strokesBefore = state.document?.nodeById(root)?.strokes
         state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(root), dx = 10.0, dy = -5.0))
         val after = assertNotNull(state.document?.nodeById(root)?.position)
         assertEquals(before.x + 10.0, after.x)
         assertEquals(before.y - 5.0, after.y)
+        assertEquals(sizeBefore, state.document?.nodeById(root)?.size)
+        assertEquals(fillsBefore, state.document?.nodeById(root)?.fills)
+        assertEquals(strokesBefore, state.document?.nodeById(root)?.strokes)
     }
 
     @Test
@@ -188,6 +195,22 @@ class DesignEditorReducerCommandsTest {
         assertEquals(4.0, state.document?.nodeById(root)?.strokes?.weight?.literalOrNull())
         state = reduceDesignEditor(state, DesignEditorIntent.StrokeCommand(root, StrokeOp.Remove))
         assertNull(state.document?.nodeById(root)?.strokes)
+    }
+
+    @Test
+    fun fillAndStrokeCommandsStayInTheirOwnPaintStacks() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        state = reduceDesignEditor(state, DesignEditorIntent.FillCommand(root, FillOp.Add))
+        state = reduceDesignEditor(state, DesignEditorIntent.StrokeCommand(root, StrokeOp.Add))
+
+        val strokeBeforeFillEdit = state.document?.nodeById(root)?.strokes
+        state = reduceDesignEditor(state, DesignEditorIntent.FillCommand(root, FillOp.SetColor(0, DesignColor.fromHex("#112233") ?: DesignColor.Black)))
+        assertEquals(strokeBeforeFillEdit, state.document?.nodeById(root)?.strokes)
+
+        val fillsBeforeStrokeEdit = state.document?.nodeById(root)?.fills
+        state = reduceDesignEditor(state, DesignEditorIntent.StrokeCommand(root, StrokeOp.SetColor(DesignColor.fromHex("#445566") ?: DesignColor.Black)))
+        assertEquals(fillsBeforeStrokeEdit, state.document?.nodeById(root)?.fills)
     }
 
     @Test

@@ -7,7 +7,9 @@ import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -85,6 +87,52 @@ class DesignEditorReducerWriteBackTest {
         )
         assertTrue(second.diagnostics.none { it.severity == DesignSeverity.Error })
         assertEquals(2, second.previousSources.size, "each applied edit pushes one undo entry")
+    }
+
+    @Test
+    fun positionWritesCoordinatesIntoOwningSourceOnly() {
+        val state = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode(nodeId))
+        val before = state.sources
+
+        val next = reduceDesignEditor(state, DesignEditorIntent.PositionNode(nodeId, x = 123.0, y = 456.0))
+
+        val node = assertNotNull(next.document?.nodeById(nodeId), "$nodeId present after write-back")
+        assertEquals(123.0, node.position?.x)
+        assertEquals(456.0, node.position?.y)
+        assertNotEquals(state.sourceContent(owningFile), next.sourceContent(owningFile), "owning source rewritten")
+        before.filterNot { it.fileName == owningFile }.forEach { source ->
+            assertEquals(source.content, next.sourceContent(source.fileName), "${source.fileName} must stay byte-identical")
+        }
+        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error })
+        assertEquals(listOf(before), next.previousSources, "source undo captured the pre-edit sources")
+    }
+
+    @Test
+    fun constraintsWriteIntoOwningSourceOnly() {
+        val state = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode(nodeId))
+        val before = state.sources
+
+        val next = reduceDesignEditor(
+            state,
+            DesignEditorIntent.UpdateConstraints(
+                nodeId = nodeId,
+                horizontal = HorizontalConstraint.Right,
+                vertical = VerticalConstraint.Bottom,
+            ),
+        )
+
+        val node = assertNotNull(next.document?.nodeById(nodeId), "$nodeId present after write-back")
+        assertEquals(HorizontalConstraint.Right, node.constraints.horizontal)
+        assertEquals(VerticalConstraint.Bottom, node.constraints.vertical)
+        assertNotEquals(state.sourceContent(owningFile), next.sourceContent(owningFile), "owning source rewritten")
+        assertTrue("constraints:" in next.sourceContent(owningFile), "constraints block written")
+        assertTrue("horizontal: right" in next.sourceContent(owningFile), "horizontal constraint written")
+        assertTrue("vertical: bottom" in next.sourceContent(owningFile), "vertical constraint written")
+        before.filterNot { it.fileName == owningFile }.forEach { source ->
+            assertEquals(source.content, next.sourceContent(source.fileName), "${source.fileName} must stay byte-identical")
+        }
+        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error })
+        assertEquals(listOf(before), next.previousSources, "source undo captured the pre-edit sources")
     }
 
     @Test

@@ -66,6 +66,7 @@ internal fun <T> TabStrip(
     tabs: List<T>,
     selected: T,
     title: (T) -> String,
+    icon: (T) -> EditorIcon? = { null },
     onSelect: (T) -> Unit,
 ) {
     val colors = LocalEditorColors.current
@@ -82,12 +83,25 @@ internal fun <T> TabStrip(
                 modifier = Modifier.weight(1f).fillMaxHeight().clickable { onSelect(tab) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    title(tab),
-                    color = if (isSelected) colors.accent else Color.Black,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    icon(tab)?.let { tabIcon ->
+                        EditorSvgIcon(
+                            icon = tabIcon,
+                            contentDescription = title(tab),
+                            modifier = Modifier.size(16.dp),
+                            tint = if (isSelected) colors.accent else colors.controlInk,
+                        )
+                    }
+                    Text(
+                        title(tab),
+                        color = if (isSelected) colors.accent else Color.Black,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
                 if (isSelected) {
                     Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth(0.7f).height(3.dp).background(colors.accent))
                 }
@@ -300,7 +314,7 @@ internal fun SelectLike(value: String, modifier: Modifier = Modifier) {
     ) {
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-            Text("v", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+            EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
         }
     }
 }
@@ -323,7 +337,7 @@ internal fun SelectField(
         ) {
             Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                Text("v", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
             }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -380,6 +394,33 @@ internal fun <T> SegmentedControl(
 // --- Buttons -----------------------------------------------------------------
 
 @Composable
+internal fun SmallIconButton(
+    icon: EditorIcon,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    enabled: Boolean = true,
+) {
+    val colors = LocalEditorColors.current
+    Surface(
+        modifier = modifier.size(34.dp).clickable(enabled = enabled, onClick = onClick),
+        shape = RoundedCornerShape(7.dp),
+        color = if (active) colors.selectionFill else Color.White,
+        border = BorderStroke(1.dp, if (active) colors.selectionStroke else colors.panelStroke),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            EditorSvgIcon(
+                icon = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(18.dp),
+                tint = if (!enabled) colors.mutedInk else if (active) colors.accent else colors.ink,
+            )
+        }
+    }
+}
+
+@Composable
 internal fun SmallSquareButton(
     label: String,
     onClick: () -> Unit,
@@ -406,7 +447,7 @@ internal fun SmallSquareButton(
 }
 
 @Composable
-internal fun HeaderIconButton(label: String, onClick: () -> Unit, active: Boolean = false) {
+internal fun HeaderIconButton(icon: EditorIcon, contentDescription: String, onClick: () -> Unit, active: Boolean = false) {
     val colors = LocalEditorColors.current
     Surface(
         modifier = Modifier.size(42.dp).clickable(onClick = onClick),
@@ -416,7 +457,12 @@ internal fun HeaderIconButton(label: String, onClick: () -> Unit, active: Boolea
         shadowElevation = 2.dp,
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = if (active) colors.accent else colors.ink, maxLines = 1)
+            EditorSvgIcon(
+                icon = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(20.dp),
+                tint = if (active) colors.accent else colors.ink,
+            )
         }
     }
 }
