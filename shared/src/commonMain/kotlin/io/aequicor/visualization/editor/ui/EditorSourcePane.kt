@@ -22,8 +22,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,7 +32,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -44,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.ScreenPreset
 import io.aequicor.visualization.editor.presentation.SourceTab
@@ -65,7 +73,12 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
     Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             io.aequicor.visualization.MenuButton()
-            Text("Source", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            CompactText(
+                label = CompactLabel("Source", "Src", "Src"),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
         }
         Surface(
             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -77,13 +90,13 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
                 TabStrip(
                     tabs = SourceTab.entries,
                     selected = state.workspace.sourceTab,
-                    title = { it.title },
+                    title = { it.label },
                     icon = ::sourceTabIcon,
                     onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
                 )
                 when (state.workspace.sourceTab) {
                     SourceTab.Markdown -> SourceMarkdown(state)
-                    SourceTab.Resources -> EmptyTab("Resources")
+                    SourceTab.Resources -> EmptyTab(SourceTab.Resources.label)
                     SourceTab.Layers -> LayersTree(state)
                 }
             }
@@ -93,10 +106,10 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
 }
 
 @Composable
-private fun EmptyTab(title: String) {
+private fun EmptyTab(title: CompactLabel) {
     val colors = LocalEditorColors.current
     Box(Modifier.fillMaxSize().background(colors.paneSurface), contentAlignment = Alignment.Center) {
-        Text(title, color = colors.mutedInk, style = MaterialTheme.typography.bodyMedium)
+        CompactText(title, color = colors.mutedInk, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -143,6 +156,7 @@ private fun SourceMarkdown(state: MissionEditorStateHolder) {
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Clip,
                 )
             }
@@ -177,6 +191,7 @@ private fun LayersTree(state: MissionEditorStateHolder) {
     val design = state.designState
     val ws = state.workspace
     val page = design.document?.pageById(design.selectedPageId)
+    val focusRequester = remember { FocusRequester() }
     val rows = remember(page, ws.collapsedLayers) {
         page?.let { flattenLayers(it, ws.collapsedLayers) } ?: emptyList()
     }
@@ -188,6 +203,17 @@ private fun LayersTree(state: MissionEditorStateHolder) {
     var dragOver by remember { mutableStateOf(-1) }
     Column(
         modifier = Modifier.fillMaxSize().background(colors.paneSurface)
+            .focusRequester(focusRequester)
+            .focusTarget()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if ((event.key == Key.Delete || event.key == Key.Backspace) && state.designState.selectedNodeIds.isNotEmpty()) {
+                    state.dispatch(DesignEditorIntent.DeleteNodes(state.designState.selectedNodeIds))
+                    true
+                } else {
+                    false
+                }
+            }
             .verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
     ) {
         rows.forEachIndexed { index, row ->
@@ -195,6 +221,7 @@ private fun LayersTree(state: MissionEditorStateHolder) {
                 state = state,
                 row = row,
                 isDropTarget = dragId.isNotEmpty() && dragOver == index && row.node.id != dragId,
+                onRequestFocus = { runCatching { focusRequester.requestFocus() } },
                 onDragStart = { dragId = row.node.id; dragFrom = index; dragAccumY = 0f; dragOver = index },
                 onDrag = { dy ->
                     if (dragFrom >= 0) {
@@ -243,6 +270,7 @@ private fun LayerRowView(
     state: MissionEditorStateHolder,
     row: LayerRow,
     isDropTarget: Boolean,
+    onRequestFocus: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDrop: () -> Unit,
@@ -278,28 +306,41 @@ private fun LayerRowView(
             }
             .pointerInput(node.id) {
                 detectDragGestures(
-                    onDragStart = { onDragStart() },
+                    onDragStart = { onRequestFocus(); onDragStart() },
                     onDragEnd = { onDrop() },
                     onDragCancel = { onDragCancel() },
                 ) { change, dragAmount -> change.consume(); onDrag(dragAmount.y) }
             }
-            .clickable { state.dispatch(DesignEditorIntent.SelectNode(node.id)) }
+            .clickable {
+                onRequestFocus()
+                state.dispatch(DesignEditorIntent.SelectNode(node.id))
+            }
             .padding(start = (8 + row.depth * 16).dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         // Expand / collapse chevron.
-        Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .size(16.dp)
+                .then(
+                    if (hasChildren) {
+                        Modifier.clip(CircleShape).clickable {
+                            state.updateWorkspace {
+                                it.copy(collapsedLayers = if (collapsed) it.collapsedLayers - node.id else it.collapsedLayers + node.id)
+                            }
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
             if (hasChildren) {
                 Text(
                     if (collapsed) ">" else "v",
                     color = colors.mutedInk,
                     style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.clickable {
-                        state.updateWorkspace {
-                            it.copy(collapsedLayers = if (collapsed) it.collapsedLayers - node.id else it.collapsedLayers + node.id)
-                        }
-                    },
                 )
             }
         }
@@ -315,6 +356,7 @@ private fun LayerRowView(
             color = if (selected) colors.accent else if (visible) colors.ink else colors.mutedInk,
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis,
         )
         // Row actions appear on hover/selection to avoid clutter.
@@ -328,7 +370,7 @@ private fun LayerRowView(
             ) { state.dispatch(DesignEditorIntent.SetLocked(node.id, !node.locked)) }
         }
         LayerIconAction(
-            icon = EditorIcon.Visibility,
+            icon = if (visible) EditorIcon.Visibility else EditorIcon.VisibilityOff,
             contentDescription = if (visible) "Hide layer" else "Show layer",
             muted = !visible,
         ) { state.dispatch(DesignEditorIntent.SetVisible(node.id, !visible)) }
@@ -339,7 +381,10 @@ private fun LayerRowView(
 private fun LayerAction(icon: EditorIcon, contentDescription: String, enabled: Boolean, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     Box(
-        Modifier.size(18.dp).clickable(enabled = enabled, onClick = onClick),
+        Modifier
+            .size(18.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         EditorSvgIcon(icon, contentDescription = contentDescription, modifier = Modifier.size(14.dp), tint = colors.controlInk)
@@ -370,13 +415,16 @@ private fun LayerIconAction(
 ) {
     val colors = LocalEditorColors.current
     Box(
-        Modifier.size(18.dp).clickable(enabled = enabled, onClick = onClick),
+        Modifier
+            .size(20.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         EditorSvgIcon(
             icon = icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(15.dp),
+            modifier = Modifier.size(17.dp),
             tint = when {
                 !enabled || muted -> colors.mutedInk
                 active -> colors.accent
@@ -420,13 +468,18 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Screens", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                CompactText(
+                    label = CompactLabel("Screens", "Scr", "Scr"),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
                 Box {
                     SmallIconButton(EditorIcon.Plus, contentDescription = "Create screen", onClick = { presetMenu = true })
-                    DropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
+                    EditorDropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
                         ScreenPreset.entries.forEach { preset ->
-                            DropdownMenuItem(
-                                text = { Text("${preset.displayName}  ${preset.width.toInt()}x${preset.height.toInt()}", style = MaterialTheme.typography.bodySmall) },
+                            EditorDropdownMenuItem(
+                                text = "${preset.displayName}  ${preset.width.toInt()}x${preset.height.toInt()}",
                                 onClick = {
                                     presetMenu = false
                                     val count = (document?.pages?.size ?: 0) + 1
@@ -466,8 +519,8 @@ private fun ScreenRow(title: String, subtitle: String, status: Color, selected: 
     ) {
         Box(Modifier.size(44.dp, 34.dp).background(Color.White, RoundedCornerShape(4.dp)).border(1.dp, if (selected) colors.thumbnailSelectedStroke else colors.panelStroke, RoundedCornerShape(4.dp)))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.ink, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.subtleInk, maxLines = 1)
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.ink, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.subtleInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
         Box(Modifier.size(12.dp).background(status, CircleShape))
     }

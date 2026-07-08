@@ -27,6 +27,18 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "mission-visualization"
             packageVersion = "1.0.0"
+
+            windows {
+                iconFile.set(project.file("src/main/resources/icons/mission-logo.ico"))
+            }
+
+            macOS {
+                iconFile.set(project.file("src/main/resources/icons/mission-logo.icns"))
+            }
+
+            linux {
+                iconFile.set(project.file("src/main/resources/icons/mission-logo.png"))
+            }
         }
     }
 }

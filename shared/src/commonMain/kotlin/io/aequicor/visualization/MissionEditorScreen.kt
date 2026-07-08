@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -176,6 +177,7 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
 @Composable
 private fun WorkbenchLayout(state: MissionEditorStateHolder) {
     val ws = state.workspace
+    val inspectorWidthDp = ws.inspectorWidthDp.coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxInspectorDp)
     Row(modifier = Modifier.fillMaxSize().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         // Left: Source + Screens (or collapsed rail).
         if (ws.sourceCollapsed) {
@@ -208,7 +210,7 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
                 },
                 onReset = { state.updateWorkspace { it.copy(inspectorWidthDp = WorkspaceLimits.DefaultInspectorDp) } },
             )
-            EditorInspectorPane(state, Modifier.width(ws.inspectorWidthDp.dp).fillMaxHeight())
+            EditorInspectorPane(state, Modifier.width(inspectorWidthDp.dp).fillMaxHeight())
         }
     }
 }
@@ -253,7 +255,16 @@ private fun StackedLayout(state: MissionEditorStateHolder) {
         }
         EditorCanvasPane(state, Modifier.fillMaxWidth().height(640.dp))
         if (!state.workspace.inspectorCollapsed) {
-            EditorInspectorPane(state, Modifier.fillMaxWidth().height(640.dp))
+            Box(Modifier.fillMaxWidth()) {
+                EditorInspectorPane(
+                    state,
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .widthIn(max = WorkspaceLimits.MaxInspectorDp.dp)
+                        .fillMaxWidth()
+                        .height(640.dp),
+                )
+            }
         }
     }
 }

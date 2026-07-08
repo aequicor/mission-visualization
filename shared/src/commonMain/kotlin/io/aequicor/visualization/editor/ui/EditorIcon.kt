@@ -1,115 +1,75 @@
 package io.aequicor.visualization.editor.ui
 
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.shared.generated.resources.Res
-import io.aequicor.visualization.shared.generated.resources.align_horizontal_center
-import io.aequicor.visualization.shared.generated.resources.align_horizontal_left
-import io.aequicor.visualization.shared.generated.resources.align_horizontal_right
-import io.aequicor.visualization.shared.generated.resources.align_vertical_bottom
-import io.aequicor.visualization.shared.generated.resources.align_vertical_center
-import io.aequicor.visualization.shared.generated.resources.align_vertical_top
-import io.aequicor.visualization.shared.generated.resources.app_menu
-import io.aequicor.visualization.shared.generated.resources.aspect_ratio
-import io.aequicor.visualization.shared.generated.resources.assets
-import io.aequicor.visualization.shared.generated.resources.arrow_down
-import io.aequicor.visualization.shared.generated.resources.arrow_up
-import io.aequicor.visualization.shared.generated.resources.chevron_down
-import io.aequicor.visualization.shared.generated.resources.chevron_up
-import io.aequicor.visualization.shared.generated.resources.close
-import io.aequicor.visualization.shared.generated.resources.code
-import io.aequicor.visualization.shared.generated.resources.color_selector
-import io.aequicor.visualization.shared.generated.resources.comments
-import io.aequicor.visualization.shared.generated.resources.component
-import io.aequicor.visualization.shared.generated.resources.constraint_horizontal
-import io.aequicor.visualization.shared.generated.resources.constraint_vertical
-import io.aequicor.visualization.shared.generated.resources.design
-import io.aequicor.visualization.shared.generated.resources.duplicate
-import io.aequicor.visualization.shared.generated.resources.export
-import io.aequicor.visualization.shared.generated.resources.fill
-import io.aequicor.visualization.shared.generated.resources.flip_horizontal
-import io.aequicor.visualization.shared.generated.resources.flip_vertical
-import io.aequicor.visualization.shared.generated.resources.frame
-import io.aequicor.visualization.shared.generated.resources.gradient
-import io.aequicor.visualization.shared.generated.resources.hand_pan
-import io.aequicor.visualization.shared.generated.resources.inspector
-import io.aequicor.visualization.shared.generated.resources.layers
-import io.aequicor.visualization.shared.generated.resources.layout
-import io.aequicor.visualization.shared.generated.resources.link
-import io.aequicor.visualization.shared.generated.resources.lock
-import io.aequicor.visualization.shared.generated.resources.markdown
-import io.aequicor.visualization.shared.generated.resources.marquee
-import io.aequicor.visualization.shared.generated.resources.pen
-import io.aequicor.visualization.shared.generated.resources.plus
-import io.aequicor.visualization.shared.generated.resources.position
-import io.aequicor.visualization.shared.generated.resources.rectangle
-import io.aequicor.visualization.shared.generated.resources.rotate
-import io.aequicor.visualization.shared.generated.resources.screens
-import io.aequicor.visualization.shared.generated.resources.select
-import io.aequicor.visualization.shared.generated.resources.source
-import io.aequicor.visualization.shared.generated.resources.stroke
-import io.aequicor.visualization.shared.generated.resources.text
-import io.aequicor.visualization.shared.generated.resources.trash
-import io.aequicor.visualization.shared.generated.resources.typography
-import io.aequicor.visualization.shared.generated.resources.visibility
-import io.aequicor.visualization.shared.generated.resources.zoom_fit
-import org.jetbrains.compose.resources.DrawableResource
-import org.jetbrains.compose.resources.painterResource
 
-internal enum class EditorIcon(val resource: DrawableResource) {
-    AppMenu(Res.drawable.app_menu),
-    Source(Res.drawable.source),
-    Screens(Res.drawable.screens),
-    Inspector(Res.drawable.inspector),
-    Markdown(Res.drawable.markdown),
-    Assets(Res.drawable.assets),
-    Layers(Res.drawable.layers),
-    Select(Res.drawable.select),
-    HandPan(Res.drawable.hand_pan),
-    Marquee(Res.drawable.marquee),
-    Frame(Res.drawable.frame),
-    Component(Res.drawable.component),
-    Rectangle(Res.drawable.rectangle),
-    Pen(Res.drawable.pen),
-    Text(Res.drawable.text),
-    Link(Res.drawable.link),
-    Code(Res.drawable.code),
-    Design(Res.drawable.design),
-    Comments(Res.drawable.comments),
-    Position(Res.drawable.position),
-    Layout(Res.drawable.layout),
-    Fill(Res.drawable.fill),
-    Stroke(Res.drawable.stroke),
-    Typography(Res.drawable.typography),
-    Visibility(Res.drawable.visibility),
-    Lock(Res.drawable.lock),
-    ColorSelector(Res.drawable.color_selector),
-    Gradient(Res.drawable.gradient),
-    ZoomFit(Res.drawable.zoom_fit),
-    Export(Res.drawable.export),
-    AlignHorizontalLeft(Res.drawable.align_horizontal_left),
-    AlignHorizontalCenter(Res.drawable.align_horizontal_center),
-    AlignHorizontalRight(Res.drawable.align_horizontal_right),
-    AlignVerticalTop(Res.drawable.align_vertical_top),
-    AlignVerticalCenter(Res.drawable.align_vertical_center),
-    AlignVerticalBottom(Res.drawable.align_vertical_bottom),
-    Rotate(Res.drawable.rotate),
-    FlipHorizontal(Res.drawable.flip_horizontal),
-    FlipVertical(Res.drawable.flip_vertical),
-    AspectRatio(Res.drawable.aspect_ratio),
-    ConstraintHorizontal(Res.drawable.constraint_horizontal),
-    ConstraintVertical(Res.drawable.constraint_vertical),
-    ChevronDown(Res.drawable.chevron_down),
-    ChevronUp(Res.drawable.chevron_up),
-    Duplicate(Res.drawable.duplicate),
-    Trash(Res.drawable.trash),
-    Plus(Res.drawable.plus),
-    Close(Res.drawable.close),
-    ArrowUp(Res.drawable.arrow_up),
-    ArrowDown(Res.drawable.arrow_down),
+// SVG resources are Material Symbols Outlined files from Google Fonts.
+internal enum class EditorIcon(resourceName: String) {
+    AppMenu("app_menu"),
+    Source("source"),
+    Screens("screens"),
+    Inspector("inspector"),
+    Markdown("markdown"),
+    Assets("assets"),
+    Layers("layers"),
+    Select("select"),
+    HandPan("hand_pan"),
+    Marquee("marquee"),
+    Frame("frame"),
+    Component("component"),
+    Rectangle("rectangle"),
+    Pen("pen"),
+    Text("text"),
+    Link("link"),
+    Code("code"),
+    Design("design"),
+    Comments("comments"),
+    Position("position"),
+    Layout("layout"),
+    Fill("fill"),
+    Stroke("stroke"),
+    Typography("typography"),
+    Visibility("visibility"),
+    VisibilityOff("visibility_off"),
+    Lock("lock"),
+    ColorSelector("color_selector"),
+    Gradient("gradient"),
+    ZoomFit("zoom_fit"),
+    Export("export"),
+    AlignHorizontalLeft("align_horizontal_left"),
+    AlignHorizontalCenter("align_horizontal_center"),
+    AlignHorizontalRight("align_horizontal_right"),
+    AlignVerticalTop("align_vertical_top"),
+    AlignVerticalCenter("align_vertical_center"),
+    AlignVerticalBottom("align_vertical_bottom"),
+    Rotate("rotate"),
+    FlipHorizontal("flip_horizontal"),
+    FlipVertical("flip_vertical"),
+    AspectRatio("aspect_ratio"),
+    ConstraintHorizontal("constraint_horizontal"),
+    ConstraintVertical("constraint_vertical"),
+    ChevronDown("chevron_down"),
+    ChevronUp("chevron_up"),
+    Duplicate("duplicate"),
+    Trash("trash"),
+    Plus("plus"),
+    Close("close"),
+    ArrowUp("arrow_up"),
+    ArrowDown("arrow_down"),
+    ;
+
+    val resourcePath: String = "files/editor-icons/$resourceName.svg"
 }
 
 @Composable
@@ -119,10 +79,136 @@ internal fun EditorSvgIcon(
     modifier: Modifier = Modifier,
     tint: Color = LocalContentColor.current,
 ) {
+    val vector = rememberSvgIcon(icon).value
+    if (vector == null) {
+        Spacer(modifier)
+        return
+    }
+
     Icon(
-        painter = painterResource(icon.resource),
+        imageVector = vector,
         contentDescription = contentDescription,
         modifier = modifier,
         tint = tint,
     )
 }
+
+@Composable
+private fun rememberSvgIcon(icon: EditorIcon): State<ImageVector?> =
+    produceState<ImageVector?>(initialValue = svgIconCache[icon], key1 = icon) {
+        value = svgIconCache[icon] ?: loadSvgIcon(icon).also { svgIconCache[icon] = it }
+    }
+
+private val svgIconCache = mutableMapOf<EditorIcon, ImageVector>()
+
+private suspend fun loadSvgIcon(icon: EditorIcon): ImageVector =
+    parseSvgIcon(icon.name, Res.readBytes(icon.resourcePath).decodeToString())
+
+private data class SvgPathElement(
+    val pathData: String,
+    val translateX: Float,
+    val translateY: Float,
+)
+
+private fun parseSvgIcon(name: String, svg: String): ImageVector {
+    val svgTag = SvgTagRegex.find(svg)?.value.orEmpty()
+    val svgAttributes = parseAttributes(svgTag)
+    val viewBox = parseViewBox(svgAttributes)
+    val width = parseFloatPrefix(svgAttributes["width"]) ?: 24f
+    val height = parseFloatPrefix(svgAttributes["height"]) ?: 24f
+    val paths = PathTagRegex.findAll(svg).mapNotNull { match ->
+        val attributes = parseAttributes(match.value)
+        val d = attributes["d"] ?: return@mapNotNull null
+        val translation = parseTranslate(attributes["transform"])
+        SvgPathElement(
+            pathData = d,
+            translateX = translation.first,
+            translateY = translation.second,
+        )
+    }.toList()
+
+    val builder = ImageVector.Builder(
+        name = name,
+        defaultWidth = width.dp,
+        defaultHeight = height.dp,
+        viewportWidth = viewBox[2],
+        viewportHeight = viewBox[3],
+    )
+
+    builder.addGroup(
+        translationX = -viewBox[0],
+        translationY = -viewBox[1],
+    )
+    paths.forEachIndexed { index, element ->
+        if (element.translateX != 0f || element.translateY != 0f) {
+            builder.addGroup(
+                translationX = element.translateX,
+                translationY = element.translateY,
+            )
+            builder.addPath(
+                pathData = parsePathNodes(element.pathData),
+                name = "$name-$index",
+                fill = SolidColor(Color.Black),
+            )
+            builder.clearGroup()
+        } else {
+            builder.addPath(
+                pathData = parsePathNodes(element.pathData),
+                name = "$name-$index",
+                fill = SolidColor(Color.Black),
+            )
+        }
+    }
+    builder.clearGroup()
+
+    return builder.build()
+}
+
+private fun parsePathNodes(pathData: String) =
+    PathParser().parsePathString(pathData).toNodes().toList()
+
+private fun parseViewBox(attributes: Map<String, String>): FloatArray {
+    val viewBox = attributes["viewBox"]
+        ?.trim()
+        ?.split(SvgNumberSplitRegex)
+        ?.mapNotNull { it.toFloatOrNull() }
+
+    if (viewBox != null && viewBox.size == 4) {
+        return floatArrayOf(viewBox[0], viewBox[1], viewBox[2], viewBox[3])
+    }
+
+    val width = parseFloatPrefix(attributes["width"]) ?: 24f
+    val height = parseFloatPrefix(attributes["height"]) ?: 24f
+    return floatArrayOf(0f, 0f, width, height)
+}
+
+private fun parseTranslate(transform: String?): Pair<Float, Float> {
+    if (transform == null) return 0f to 0f
+    val match = TranslateRegex.find(transform) ?: return 0f to 0f
+    val x = match.groupValues[1].toFloatOrNull() ?: 0f
+    val y = match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }?.toFloatOrNull() ?: 0f
+    return x to y
+}
+
+private fun parseAttributes(tag: String): Map<String, String> =
+    AttributeRegex.findAll(tag).associate { match ->
+        match.groupValues[1] to unescapeXml(match.groupValues[2])
+    }
+
+private fun unescapeXml(value: String): String =
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+
+private fun parseFloatPrefix(value: String?): Float? =
+    value?.let { FloatPrefixRegex.find(it)?.value?.toFloatOrNull() }
+
+private val SvgTagRegex = Regex("""<svg\b[^>]*>""")
+private val PathTagRegex = Regex("""<path\b[^>]*>""")
+private val AttributeRegex = Regex("""([A-Za-z_:][A-Za-z0-9_:.-]*)\s*=\s*"([^"]*)"""")
+private val SvgNumberSplitRegex = Regex("""[\s,]+""")
+private val FloatPrefixRegex = Regex("""[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?""")
+private val TranslateRegex = Regex("""translate\(\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(?:(?:,|\s)\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?))?\s*\)""")

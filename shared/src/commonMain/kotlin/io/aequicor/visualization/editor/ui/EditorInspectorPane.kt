@@ -5,8 +5,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,13 +19,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -47,8 +49,11 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.EditorLayoutMode
 import io.aequicor.visualization.editor.presentation.EffectOp
@@ -88,8 +93,8 @@ import kotlin.math.roundToInt
 fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Modifier) {
     val colors = LocalEditorColors.current
     Column(modifier) {
-        Text(
-            "Inspector",
+        CompactText(
+            label = CompactLabel("Inspector", "Inspect", "Insp"),
             modifier = Modifier.padding(start = 8.dp, bottom = 12.dp),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
@@ -104,7 +109,7 @@ fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Mo
                 TabStrip(
                     tabs = InspectorTab.entries,
                     selected = state.workspace.inspectorTab,
-                    title = { it.title },
+                    title = { it.label },
                     icon = ::inspectorTabIcon,
                     onSelect = { tab -> state.updateWorkspace { it.copy(inspectorTab = tab) } },
                 )
@@ -164,6 +169,8 @@ private fun SelectionHeader(state: MissionEditorStateHolder, node: DesignNode) {
             fontWeight = FontWeight.SemiBold,
             color = colors.ink,
             maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
         )
         if (!design.hasMultiSelection && node.locked) {
             Text("Locked", style = MaterialTheme.typography.labelSmall, color = colors.statusWarning, fontWeight = FontWeight.SemiBold)
@@ -183,9 +190,15 @@ private fun Section(
     if (!visible) return
     val colors = LocalEditorColors.current
     val expanded = section in state.workspace.expandedSections
+    val headerInteraction = remember { MutableInteractionSource() }
     Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
         Row(
-            Modifier.fillMaxWidth().clickable { state.toggleSection(section) },
+            Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = headerInteraction,
+                    indication = null,
+                ) { state.toggleSection(section) },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -195,7 +208,12 @@ private fun Section(
                 modifier = Modifier.size(18.dp),
                 tint = colors.mutedInk,
             )
-            Text(section.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            CompactText(
+                label = section.label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
             EditorSvgIcon(
                 icon = if (expanded) EditorIcon.ChevronUp else EditorIcon.ChevronDown,
                 contentDescription = if (expanded) "Collapse section" else "Expand section",
@@ -232,12 +250,15 @@ private fun PositionSection(state: MissionEditorStateHolder, node: DesignNode, b
     Spacer(Modifier.height(8.dp))
 
     InspectorSubLabel("Position")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CompactNumberField("X", x.formatPx(), "x-$nodeId", Modifier.weight(1f), enabled = positioned && !locked) {
-            state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = it, y = y))
-        }
-        CompactNumberField("Y", y.formatPx(), "y-$nodeId", Modifier.weight(1f), enabled = positioned && !locked) {
-            state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = x, y = it))
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CompactNumberField("X", x.formatPx(), "x-$nodeId", Modifier.width(fieldWidth), enabled = positioned && !locked) {
+                state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = it, y = y))
+            }
+            CompactNumberField("Y", y.formatPx(), "y-$nodeId", Modifier.width(fieldWidth), enabled = positioned && !locked) {
+                state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = x, y = it))
+            }
         }
     }
 
@@ -292,12 +313,15 @@ private fun MultiPositionSection(state: MissionEditorStateHolder) {
     val x = sharedDouble { it.position?.x }
     val y = sharedDouble { it.position?.y }
     InspectorSubLabel("Position")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CompactNumberField("X", x?.formatPx() ?: "", "mx-$key", Modifier.weight(1f), enabled = canPosition, placeholder = "Mixed") { v ->
-            bulkPosition(state, x = v)
-        }
-        CompactNumberField("Y", y?.formatPx() ?: "", "my-$key", Modifier.weight(1f), enabled = canPosition, placeholder = "Mixed") { v ->
-            bulkPosition(state, y = v)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CompactNumberField("X", x?.formatPx() ?: "", "mx-$key", Modifier.width(fieldWidth), enabled = canPosition, placeholder = "Mixed") { v ->
+                bulkPosition(state, x = v)
+            }
+            CompactNumberField("Y", y?.formatPx() ?: "", "my-$key", Modifier.width(fieldWidth), enabled = canPosition, placeholder = "Mixed") { v ->
+                bulkPosition(state, y = v)
+            }
         }
     }
 
@@ -357,15 +381,20 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
     if (node.layout.mode != LayoutMode.None) {
         Spacer(Modifier.height(10.dp))
         val gap = (node.layout.gap as? io.aequicor.visualization.engine.ir.model.DesignGap.Fixed)?.value?.literalOrNull() ?: 0.0
-        InspectorNumberField("Gap", gap.formatPx(), "", nodeId) { state.dispatch(DesignEditorIntent.SetLayoutGap(nodeId, it)) }
-        Spacer(Modifier.height(8.dp))
-        val pad = node.layout.padding
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            InspectorNumberField("T", (pad.top.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Top, it)) }
-            InspectorNumberField("R", (pad.right.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Right, it)) }
-            InspectorNumberField("B", (pad.bottom.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Bottom, it)) }
-            InspectorNumberField("L", (pad.left.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Left, it)) }
+        CompactLabeledNumberField("Gap", gap.formatPx(), "gap-$nodeId") {
+            state.dispatch(DesignEditorIntent.SetLayoutGap(nodeId, it))
         }
+        Spacer(Modifier.height(8.dp))
+        InspectorSubLabel("Padding")
+        val pad = node.layout.padding
+        PaddingControls(
+            top = (pad.top.literalOrNull() ?: 0.0).formatPx(),
+            right = (pad.right.literalOrNull() ?: 0.0).formatPx(),
+            bottom = (pad.bottom.literalOrNull() ?: 0.0).formatPx(),
+            left = (pad.left.literalOrNull() ?: 0.0).formatPx(),
+            resetKey = nodeId,
+            onChange = { side, value -> state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, side, value)) },
+        )
         Spacer(Modifier.height(10.dp))
         LabeledField("Align") {
             SegmentedControl(
@@ -404,21 +433,24 @@ private fun DimensionsBlock(state: MissionEditorStateHolder, node: DesignNode, b
     val height = box?.height ?: node.size.height ?: 0.0
 
     InspectorSubLabel("Dimensions")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        CompactNumberField("W", width.formatPx(), "w-$nodeId", Modifier.weight(1f), enabled = !locked) { value ->
-            val nextHeight = if (ws.lockAspectRatio && width > 0.0) value * height / width else null
-            state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = value, height = nextHeight))
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth, reserved = 50.dp, minWidth = 58.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            CompactNumberField("W", width.formatPx(), "w-$nodeId", Modifier.width(fieldWidth), enabled = !locked) { value ->
+                val nextHeight = if (ws.lockAspectRatio && width > 0.0) value * height / width else null
+                state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = value, height = nextHeight))
+            }
+            CompactNumberField("H", height.formatPx(), "h-$nodeId", Modifier.width(fieldWidth), enabled = !locked) { value ->
+                val nextWidth = if (ws.lockAspectRatio && height > 0.0) value * width / height else null
+                state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = nextWidth, height = value))
+            }
+            SmallIconButton(
+                icon = EditorIcon.AspectRatio,
+                contentDescription = "Lock aspect ratio",
+                active = ws.lockAspectRatio,
+                onClick = { state.updateWorkspace { it.copy(lockAspectRatio = !it.lockAspectRatio) } },
+            )
         }
-        CompactNumberField("H", height.formatPx(), "h-$nodeId", Modifier.weight(1f), enabled = !locked) { value ->
-            val nextWidth = if (ws.lockAspectRatio && height > 0.0) value * width / height else null
-            state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = nextWidth, height = value))
-        }
-        SmallIconButton(
-            icon = EditorIcon.AspectRatio,
-            contentDescription = "Lock aspect ratio",
-            active = ws.lockAspectRatio,
-            onClick = { state.updateWorkspace { it.copy(lockAspectRatio = !it.lockAspectRatio) } },
-        )
     }
 }
 
@@ -438,19 +470,22 @@ private fun MultiDimensionsBlock(state: MissionEditorStateHolder) {
     }
 
     InspectorSubLabel("Dimensions")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        CompactNumberField("W", shared { it.size.width }?.formatPx() ?: "", "mw-$key", Modifier.weight(1f), enabled = canResize, placeholder = "Mixed") { value ->
-            bulkResize(state, width = value, keepRatio = ws.lockAspectRatio)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth, reserved = 50.dp, minWidth = 58.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            CompactNumberField("W", shared { it.size.width }?.formatPx() ?: "", "mw-$key", Modifier.width(fieldWidth), enabled = canResize, placeholder = "Mixed") { value ->
+                bulkResize(state, width = value, keepRatio = ws.lockAspectRatio)
+            }
+            CompactNumberField("H", shared { it.size.height }?.formatPx() ?: "", "mh-$key", Modifier.width(fieldWidth), enabled = canResize, placeholder = "Mixed") { value ->
+                bulkResize(state, height = value, keepRatio = ws.lockAspectRatio)
+            }
+            SmallIconButton(
+                icon = EditorIcon.AspectRatio,
+                contentDescription = "Lock aspect ratio",
+                active = ws.lockAspectRatio,
+                onClick = { state.updateWorkspace { it.copy(lockAspectRatio = !it.lockAspectRatio) } },
+            )
         }
-        CompactNumberField("H", shared { it.size.height }?.formatPx() ?: "", "mh-$key", Modifier.weight(1f), enabled = canResize, placeholder = "Mixed") { value ->
-            bulkResize(state, height = value, keepRatio = ws.lockAspectRatio)
-        }
-        SmallIconButton(
-            icon = EditorIcon.AspectRatio,
-            contentDescription = "Lock aspect ratio",
-            active = ws.lockAspectRatio,
-            onClick = { state.updateWorkspace { it.copy(lockAspectRatio = !it.lockAspectRatio) } },
-        )
     }
 }
 
@@ -498,16 +533,19 @@ private fun AppearanceSection(state: MissionEditorStateHolder, node: DesignNode,
         )
     }
     Spacer(Modifier.height(8.dp))
-    LabeledField("Blend") {
-        SelectField(
-            value = node.blendMode.ifBlank { "normal" },
-            options = BlendModes,
-            onSelect = { state.dispatch(DesignEditorIntent.SetBlendMode(nodeId, it)) },
-        )
+    CompactLabeledSelectField(
+        label = "Blend",
+        value = node.blendMode.ifBlank { "normal" },
+        options = BlendModes,
+        maxFieldWidth = 220.dp,
+    ) {
+        state.dispatch(DesignEditorIntent.SetBlendMode(nodeId, it))
     }
     Spacer(Modifier.height(8.dp))
     val radius = node.cornerRadius?.topLeft?.literalOrNull() ?: 0.0
-    InspectorNumberField("Radius", radius.formatPx(), "", nodeId) { state.dispatch(DesignEditorIntent.UpdateCornerRadius(nodeId, it)) }
+    CompactLabeledNumberField("Radius", radius.formatPx(), "radius-$nodeId") {
+        state.dispatch(DesignEditorIntent.UpdateCornerRadius(nodeId, it))
+    }
 }
 
 // --- Fill --------------------------------------------------------------------
@@ -576,8 +614,8 @@ private fun GradientPreview(gradient: DesignPaint.Gradient) {
     Surface(
         modifier = Modifier.fillMaxWidth().height(36.dp),
         shape = RoundedCornerShape(6.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, colors.softStroke),
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Box(Modifier.padding(6.dp)) {
             Box(Modifier.fillMaxWidth().height(24.dp).background(brush, RoundedCornerShape(4.dp)))
@@ -592,8 +630,8 @@ private fun FillTypeChip(text: String) {
     Surface(
         modifier = Modifier.fillMaxWidth().height(36.dp),
         shape = RoundedCornerShape(6.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, colors.softStroke),
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(text, style = MaterialTheme.typography.bodySmall, color = colors.ink)
@@ -742,14 +780,28 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
     val weight = style?.fontWeight?.literalOrNull() ?: 400.0
     val lineHeight = style?.lineHeight?.value ?: 120.0
     val letter = style?.letterSpacing?.value ?: 0.0
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        InspectorNumberField("Size", size.formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontSize = it))) }
-        InspectorNumberField("Wt", weight.formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontWeight = it))) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth, minWidth = 88.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CompactNumberField("Size", size.formatPx(), "type-size-$nodeId", Modifier.width(fieldWidth)) {
+                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontSize = it)))
+            }
+            CompactNumberField("Wt", weight.formatPx(), "type-weight-$nodeId", Modifier.width(fieldWidth)) {
+                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontWeight = it)))
+            }
+        }
     }
     Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        InspectorNumberField("Line", lineHeight.formatPx(), "%", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(lineHeightPercent = it))) }
-        InspectorNumberField("Ltr", letter.formatPx(), "px", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(letterSpacing = it))) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth, minWidth = 88.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CompactNumberField("Line", lineHeight.formatPx(), "type-line-$nodeId", Modifier.width(fieldWidth), suffix = "%") {
+                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(lineHeightPercent = it)))
+            }
+            CompactNumberField("Ltr", letter.formatPx(), "type-letter-$nodeId", Modifier.width(fieldWidth), suffix = "px") {
+                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(letterSpacing = it)))
+            }
+        }
     }
     Spacer(Modifier.height(8.dp))
     SegmentedControl(
@@ -784,6 +836,125 @@ private fun InspectorSubLabel(text: String) {
     )
 }
 
+private val InspectorCompactFieldMaxWidth = 132.dp
+private val InspectorCompactSelectMaxWidth = 220.dp
+private val InspectorPaddingTwoColumnWidth = 280.dp
+
+private fun inspectorPairFieldWidth(maxWidth: Dp, reserved: Dp = 0.dp, minWidth: Dp = 72.dp): Dp {
+    val candidate = (maxWidth - reserved - 8.dp) / 2f
+    return when {
+        candidate < minWidth -> minWidth
+        candidate > InspectorCompactFieldMaxWidth -> InspectorCompactFieldMaxWidth
+        else -> candidate
+    }
+}
+
+@Composable
+private fun CompactLabeledNumberField(
+    label: String,
+    value: String,
+    resetKey: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    suffix: String = "",
+    placeholder: String = "",
+    maxFieldWidth: Dp = InspectorCompactFieldMaxWidth,
+    onCommit: (Double) -> Unit,
+) {
+    LabeledField(label) {
+        CompactNumberField(
+            label = "",
+            value = value,
+            resetKey = resetKey,
+            modifier = modifier.widthIn(max = maxFieldWidth).fillMaxWidth(),
+            enabled = enabled,
+            suffix = suffix,
+            placeholder = placeholder,
+            onCommit = onCommit,
+        )
+    }
+}
+
+@Composable
+private fun CompactLabeledSelectField(
+    label: String,
+    value: String,
+    options: List<String>,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    maxFieldWidth: Dp = InspectorCompactSelectMaxWidth,
+    onSelect: (String) -> Unit,
+) {
+    LabeledField(label) {
+        CompactSelectField(
+            value = value,
+            options = options,
+            onSelect = onSelect,
+            modifier = modifier.widthIn(max = maxFieldWidth).fillMaxWidth(),
+            enabled = enabled,
+        )
+    }
+}
+
+private data class PaddingControlSpec(
+    val label: String,
+    val side: PaddingSide,
+    val value: String,
+)
+
+@Composable
+private fun PaddingControls(
+    top: String,
+    right: String,
+    bottom: String,
+    left: String,
+    resetKey: String,
+    onChange: (PaddingSide, Double) -> Unit,
+) {
+    val fields = listOf(
+        PaddingControlSpec("T", PaddingSide.Top, top),
+        PaddingControlSpec("R", PaddingSide.Right, right),
+        PaddingControlSpec("B", PaddingSide.Bottom, bottom),
+        PaddingControlSpec("L", PaddingSide.Left, left),
+    )
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < InspectorPaddingTwoColumnWidth) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                fields.chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        row.forEach { field ->
+                            PaddingNumberField(field, resetKey, Modifier.weight(1f), onChange)
+                        }
+                    }
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                fields.forEach { field ->
+                    PaddingNumberField(field, resetKey, Modifier.weight(1f), onChange)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaddingNumberField(
+    field: PaddingControlSpec,
+    resetKey: String,
+    modifier: Modifier,
+    onChange: (PaddingSide, Double) -> Unit,
+) {
+    CompactNumberField(
+        label = field.label,
+        value = field.value,
+        resetKey = "padding-$resetKey-${field.label}",
+        modifier = modifier,
+    ) { value ->
+        onChange(field.side, value)
+    }
+}
+
 @Composable
 private fun CompactNumberField(
     label: String,
@@ -799,6 +970,7 @@ private fun CompactNumberField(
     val colors = LocalEditorColors.current
     var draft by remember(resetKey, value) { mutableStateOf(value) }
     var hadFocus by remember(resetKey) { mutableStateOf(false) }
+    var focused by remember(resetKey) { mutableStateOf(false) }
     fun commitDraft() {
         val parsed = draft.toDoubleOrNull() ?: return
         if (parsed != value.toDoubleOrNull()) onCommit(parsed)
@@ -806,7 +978,8 @@ private fun CompactNumberField(
     Surface(
         modifier = modifier.height(26.dp),
         shape = RoundedCornerShape(5.dp),
-        color = colors.raisedSurface,
+        color = if (enabled) colors.controlSurface else colors.controlDisabledSurface,
+        border = BorderStroke(1.dp, if (focused) colors.accent else if (enabled) colors.controlStroke else colors.controlDisabledStroke),
     ) {
         Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             leadingIcon?.let {
@@ -814,7 +987,20 @@ private fun CompactNumberField(
                 Spacer(Modifier.width(5.dp))
             }
             if (label.isNotEmpty()) {
-                Text(label, modifier = Modifier.width(16.dp), style = MaterialTheme.typography.labelMedium, color = if (enabled) colors.ink else colors.mutedInk)
+                val labelWidth = when {
+                    label.length <= 1 -> 16.dp
+                    label.length <= 3 -> 24.dp
+                    else -> 34.dp
+                }
+                Text(
+                    label,
+                    modifier = Modifier.width(labelWidth),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (enabled) colors.ink else colors.mutedInk,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 if (draft.isEmpty() && placeholder.isNotEmpty()) {
@@ -826,6 +1012,7 @@ private fun CompactNumberField(
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { focus ->
+                            focused = focus.isFocused
                             if (focus.isFocused) {
                                 hadFocus = true
                             } else if (hadFocus) {
@@ -864,25 +1051,27 @@ private fun CompactSelectField(
 ) {
     val colors = LocalEditorColors.current
     var expanded by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(5.dp)
     Box(modifier) {
         Surface(
-            modifier = Modifier.fillMaxWidth().height(26.dp).clickable(enabled = enabled) { expanded = true },
-            shape = RoundedCornerShape(5.dp),
-            color = colors.raisedSurface,
+            modifier = Modifier.fillMaxWidth().height(26.dp).clip(shape).clickable(enabled = enabled) { expanded = true },
+            shape = shape,
+            color = if (enabled) colors.controlSurface else colors.controlDisabledSurface,
+            border = BorderStroke(1.dp, if (expanded) colors.accent else if (enabled) colors.controlStroke else colors.controlDisabledStroke),
         ) {
             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 leadingIcon?.let {
                     EditorSvgIcon(it, contentDescription = null, modifier = Modifier.size(13.dp), tint = if (enabled) colors.ink else colors.mutedInk)
                     Spacer(Modifier.width(6.dp))
                 }
-                Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (enabled) colors.ink else colors.mutedInk, maxLines = 1)
+                Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (enabled) colors.ink else colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(11.dp), tint = colors.controlInk)
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option, style = MaterialTheme.typography.bodySmall) },
+                EditorDropdownMenuItem(
+                    text = option,
                     onClick = {
                         expanded = false
                         onSelect(option)
@@ -904,10 +1093,12 @@ private data class IconStripItem(
 @Composable
 private fun IconButtonStrip(items: List<IconStripItem>, modifier: Modifier = Modifier) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(5.dp)
     Surface(
-        modifier = modifier.height(26.dp),
-        shape = RoundedCornerShape(5.dp),
-        color = colors.raisedSurface,
+        modifier = modifier.height(26.dp).clip(shape),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Row(Modifier.fillMaxSize()) {
             items.forEachIndexed { index, item ->
@@ -930,7 +1121,7 @@ private fun IconButtonStrip(items: List<IconStripItem>, modifier: Modifier = Mod
                         },
                     )
                     if (index > 0) {
-                        Box(Modifier.align(Alignment.CenterStart).width(1.dp).fillMaxHeight().background(colors.softStroke))
+                        Box(Modifier.align(Alignment.CenterStart).width(1.dp).fillMaxHeight().background(colors.controlStroke))
                     }
                 }
             }
@@ -1001,7 +1192,8 @@ private fun ConstraintWidget(
     Surface(
         modifier = modifier.height(58.dp),
         shape = RoundedCornerShape(5.dp),
-        color = colors.raisedSurface,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Canvas(Modifier.fillMaxSize().padding(7.dp)) {
             val stroke = Stroke(1.dp.toPx())
@@ -1022,7 +1214,7 @@ private fun ConstraintWidget(
                 cornerRadius = CornerRadius(5.dp.toPx(), 5.dp.toPx()),
             )
             drawRoundRect(
-                color = colors.softStroke,
+                color = colors.controlStroke,
                 topLeft = Offset(left, top),
                 size = Size(objectWidth, objectHeight),
                 cornerRadius = CornerRadius(5.dp.toPx(), 5.dp.toPx()),
@@ -1094,7 +1286,7 @@ private fun RotationControls(
 private fun SectionHeaderAdd(label: String, onAdd: () -> Unit) {
     val colors = LocalEditorColors.current
     Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = colors.mutedInk)
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         TinyIconButton(EditorIcon.Plus, contentDescription = "Add $label", onClick = onAdd)
     }
 }
@@ -1109,16 +1301,16 @@ private fun MutedNote(text: String) {
 private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = checked, onCheckedChange = onChange)
-        Text(label, style = MaterialTheme.typography.bodySmall)
+        Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun LayerToggle(visible: Boolean, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
-    Box(Modifier.size(20.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(20.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         EditorSvgIcon(
-            icon = EditorIcon.Visibility,
+            icon = if (visible) EditorIcon.Visibility else EditorIcon.VisibilityOff,
             contentDescription = if (visible) "Hide" else "Show",
             modifier = Modifier.size(16.dp),
             tint = if (visible) colors.controlInk else colors.mutedInk,
@@ -1145,7 +1337,7 @@ private fun inspectorSectionIcon(section: InspectorSection): EditorIcon = when (
 @Composable
 private fun RemoveButton(onClick: () -> Unit) {
     val colors = LocalEditorColors.current
-    Box(Modifier.size(22.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(22.dp).clip(RoundedCornerShape(11.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         EditorSvgIcon(EditorIcon.Close, contentDescription = "Remove", modifier = Modifier.size(14.dp), tint = colors.statusDanger)
     }
 }
@@ -1153,11 +1345,12 @@ private fun RemoveButton(onClick: () -> Unit) {
 @Composable
 private fun TinyIconButton(icon: EditorIcon, contentDescription: String, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(5.dp)
     Surface(
-        modifier = Modifier.size(24.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(5.dp),
-        color = colors.raisedSurface,
-        border = BorderStroke(1.dp, colors.softStroke),
+        modifier = Modifier.size(24.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Box(contentAlignment = Alignment.Center) {
             EditorSvgIcon(icon, contentDescription = contentDescription, modifier = Modifier.size(14.dp), tint = colors.ink)
@@ -1168,11 +1361,12 @@ private fun TinyIconButton(icon: EditorIcon, contentDescription: String, onClick
 @Composable
 private fun TinyButton(label: String, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(5.dp)
     Surface(
-        modifier = Modifier.height(24.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(5.dp),
-        color = colors.raisedSurface,
-        border = BorderStroke(1.dp, colors.softStroke),
+        modifier = Modifier.height(24.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = colors.ink)

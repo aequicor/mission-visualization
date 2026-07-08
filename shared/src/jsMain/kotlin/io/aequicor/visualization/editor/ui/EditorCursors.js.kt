@@ -1,9 +1,15 @@
 package io.aequicor.visualization.editor.ui
 
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.fromKeyword
 
-actual fun horizontalResizeCursor(): PointerIcon = PointerIcon.Crosshair
+@OptIn(ExperimentalComposeUiApi::class)
+actual fun horizontalResizeCursor(): PointerIcon = PointerIcon.fromKeyword("ew-resize")
 
-actual fun verticalResizeCursor(): PointerIcon = PointerIcon.Crosshair
+@OptIn(ExperimentalComposeUiApi::class)
+actual fun verticalResizeCursor(): PointerIcon = PointerIcon.fromKeyword("ns-resize")
 
-actual fun diagonalResizeCursor(topLeftToBottomRight: Boolean): PointerIcon = PointerIcon.Crosshair
+@OptIn(ExperimentalComposeUiApi::class)
+actual fun diagonalResizeCursor(topLeftToBottomRight: Boolean): PointerIcon =
+    PointerIcon.fromKeyword(if (topLeftToBottomRight) "nwse-resize" else "nesw-resize")

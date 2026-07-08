@@ -33,9 +33,14 @@ data class EditorColors(
     val gutterSurface: Color = Color(0xFFF3F7FB),
     val statusBarSurface: Color = Color(0xFFF7FAFE),
     val activeLineSurface: Color = Color(0xFFF8FAFC),
+    // Interactive controls on white panes need a distinct surface and a stronger outline.
+    val controlSurface: Color = Color(0xFFF6FAFE),
+    val controlDisabledSurface: Color = Color(0xFFF1F5F9),
     // Strokes.
     val panelStroke: Color = Color(0xFFD6E3EF),
     val softStroke: Color = Color(0xFFE3EAF2),
+    val controlStroke: Color = Color(0xFFB9CBE0),
+    val controlDisabledStroke: Color = Color(0xFFD7E2EC),
     val divider: Color = Color(0xFFCFE0EF),
     // Ink (text and glyphs, from high to low emphasis).
     val ink: Color = Color(0xFF111827),

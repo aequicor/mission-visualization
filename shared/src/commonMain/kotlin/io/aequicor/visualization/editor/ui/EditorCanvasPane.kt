@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
@@ -59,10 +60,12 @@ import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.time.TimeSource
 import io.aequicor.visualization.MissionEditorStateHolder
@@ -125,6 +128,8 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HeaderIconButton(
@@ -212,10 +217,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var marquee by remember { mutableStateOf<Rect?>(null) }
         var createRect by remember { mutableStateOf<Rect?>(null) }
         var badge by remember { mutableStateOf<String?>(null) }
+        var hoveredResizeHandle by remember { mutableStateOf<ResizeHandle?>(null) }
 
-        // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Space for pan).
+        // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Ctrl/Space for pan).
         val focusRequester = remember { FocusRequester() }
         var shiftHeld by remember { mutableStateOf(false) }
+        var ctrlHeld by remember { mutableStateOf(false) }
         var spaceHeld by remember { mutableStateOf(false) }
         var lastTapMark by remember { mutableStateOf<TimeSource.Monotonic.ValueTimeMark?>(null) }
         var lastTapId by remember { mutableStateOf("") }
@@ -243,6 +250,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     .focusTarget()
                     .onPreviewKeyEvent { event ->
                         shiftHeld = event.isShiftPressed
+                        ctrlHeld = event.isCtrlPressed || event.isMetaPressed
                         if (event.key == Key.Spacebar && state.designState.editingTextNodeId.isBlank()) {
                             spaceHeld = event.type == KeyEventType.KeyDown
                             return@onPreviewKeyEvent true
@@ -251,10 +259,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         handleCanvasKey(state, event.key, event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
                     }
                     // Hover + scroll (pan / ctrl-zoom).
-                    .pointerInput(pageId, viewport, ws.tool) {
+                    .pointerInput(pageId, viewport, ws.tool, ws.vectorEditNodeId, spaceHeld) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent()
+                                ctrlHeld = event.keyboardModifiers.isCtrlPressed || event.keyboardModifiers.isMetaPressed
                                 when (event.type) {
                                     PointerEventType.Scroll -> {
                                         val change = event.changes.firstOrNull() ?: continue
@@ -270,15 +279,39 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         }
                                         change.consume()
                                     }
+                                    PointerEventType.Enter,
                                     PointerEventType.Move -> {
                                         val change = event.changes.firstOrNull() ?: continue
                                         if (!change.pressed) {
+                                            val forcePan = event.keyboardModifiers.isCtrlPressed ||
+                                                event.keyboardModifiers.isMetaPressed ||
+                                                spaceHeld
+                                            val resizeHandle = resizeHandleAt(
+                                                layout = layout,
+                                                document = document,
+                                                selectedNodeId = state.designState.selectedNodeId,
+                                                selectedNodeIds = state.designState.selectedNodeIds,
+                                                viewport = viewport,
+                                                pos = change.position,
+                                                tool = state.workspace.tool,
+                                                forcePan = forcePan,
+                                                vectorEditNodeId = state.workspace.vectorEditNodeId,
+                                            )
+                                            if (resizeHandle != hoveredResizeHandle) {
+                                                hoveredResizeHandle = resizeHandle
+                                            }
                                             val hit = hitNode(layout, document, viewport, change.position)
                                             // Compare against the live value: `ws` is frozen at pointerInput
                                             // setup, so an empty hit must clear whatever is hovered now.
                                             if (hit != state.workspace.hoveredNodeId) {
                                                 state.updateWorkspace { it.copy(hoveredNodeId = hit) }
                                             }
+                                        }
+                                    }
+                                    PointerEventType.Exit -> {
+                                        hoveredResizeHandle = null
+                                        if (state.workspace.hoveredNodeId.isNotBlank()) {
+                                            state.updateWorkspace { it.copy(hoveredNodeId = "") }
                                         }
                                     }
                                     else -> Unit
@@ -293,20 +326,23 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val down = awaitFirstDown()
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
-                            val forcePan = currentEvent.buttons.isTertiaryPressed || spaceHeld
-                            val primaryBox = design.selectedNodeId.takeIf { it.isNotBlank() }?.let { layout?.findBySourceId(it) }
-                            // A locked selection exposes no resize handles (design-book §7).
-                            val selectionLocked = state.designState.selectedNodeIds.any { id -> document.nodeById(id)?.locked == true }
-                            val selectedResizeBox = if (state.designState.selectedNodeIds.size > 1) {
-                                selectionHandleBounds(layout, state.designState.selectedNodeIds)
-                            } else {
-                                primaryBox?.toBoundsBox()
-                            }
-                            val handle = if (!forcePan && ws.tool == EditorTool.Select && selectedResizeBox != null && !selectionLocked) {
-                                handleAt(selectedResizeBox, viewport, start)
-                            } else {
-                                null
-                            }
+                            val forcePan = currentEvent.buttons.isTertiaryPressed ||
+                                currentEvent.keyboardModifiers.isCtrlPressed ||
+                                currentEvent.keyboardModifiers.isMetaPressed ||
+                                spaceHeld
+                            val selectedResizeBox = selectedResizeBox(layout, design.selectedNodeId, state.designState.selectedNodeIds)
+                            val handle = resizeHandleAt(
+                                layout = layout,
+                                document = document,
+                                selectedNodeId = design.selectedNodeId,
+                                selectedNodeIds = state.designState.selectedNodeIds,
+                                viewport = viewport,
+                                pos = start,
+                                tool = ws.tool,
+                                forcePan = forcePan,
+                                vectorEditNodeId = state.workspace.vectorEditNodeId,
+                            )
+                            hoveredResizeHandle = handle
                             val hitId = hitNode(layout, document, viewport, start)
                             val mode = resolveCanvasOperation(ws.tool, forcePan, handle, hitId)
 
@@ -466,12 +502,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 if (documentBegan) state.dispatch(DesignEditorIntent.EndInteraction)
                             }
                             state.endDrag()
+                            hoveredResizeHandle = null
                             marquee = null
                             createRect = null
                             badge = null
                         }
                     }
-                    .pointerHoverIcon(cursorFor(if (spaceHeld) EditorTool.Hand else ws.tool)),
+                    .pointerHoverIcon(cursorFor(ws.tool, ctrlHeld || spaceHeld, hoveredResizeHandle)),
             ) {
                 DesignArtboard(
                     document = document,
@@ -704,7 +741,7 @@ private fun resolveCanvasOperation(
     handle: ResizeHandle?,
     hitId: String,
 ): CanvasOperation = when {
-    forcePan || tool == EditorTool.Hand -> CanvasOperation.Pan
+    forcePan -> CanvasOperation.Pan
     tool.creates != null -> CanvasOperation.Create(tool.creates)
     handle != null -> CanvasOperation.Resize(handle)
     hitId.isNotBlank() -> CanvasOperation.Move
@@ -730,14 +767,53 @@ private data class ResizeTarget(
 private fun LayoutBox.toBoundsBox(): BoundsBox =
     BoundsBox(x = x, y = y, width = width, height = height)
 
-private const val HandleHitRadiusPx = 11f
+private const val HandleHitRadiusPx = 14f
+private const val ResizeEdgeHoverThicknessPx = 12f
+
+private fun selectedResizeBox(layout: LayoutBox?, selectedNodeId: String, selectedNodeIds: Set<String>): BoundsBox? {
+    val primaryId = selectedNodeId.ifBlank { selectedNodeIds.singleOrNull().orEmpty() }
+    return if (selectedNodeIds.size > 1) {
+        selectionHandleBounds(layout, selectedNodeIds)
+    } else {
+        primaryId.takeIf { it.isNotBlank() }?.let { layout?.findBySourceId(it)?.toBoundsBox() }
+    }
+}
+
+private fun resizeHandleAt(
+    layout: LayoutBox?,
+    document: DesignDocument,
+    selectedNodeId: String,
+    selectedNodeIds: Set<String>,
+    viewport: CanvasViewport,
+    pos: Offset,
+    tool: EditorTool,
+    forcePan: Boolean,
+    vectorEditNodeId: String,
+): ResizeHandle? {
+    if (forcePan || tool != EditorTool.Select || vectorEditNodeId.isNotBlank()) return null
+    if (selectedNodeIds.isEmpty()) return null
+    // A locked selection exposes no resize handles (design-book §7).
+    if (selectedNodeIds.any { id -> document.nodeById(id)?.locked == true }) return null
+    return selectedResizeBox(layout, selectedNodeId, selectedNodeIds)
+        ?.let { box -> handleAt(box, viewport, pos) }
+}
 
 private fun handleAt(box: BoundsBox, viewport: CanvasViewport, pos: Offset): ResizeHandle? {
     val tl = viewport.toScreen(box.x, box.y)
     val br = viewport.toScreen(box.right, box.bottom)
+    return resizeHandleCenters(box, viewport)
+        .minByOrNull { (_, p) -> (p - pos).getDistanceSquared() }
+        ?.takeIf { (_, p) -> (p - pos).getDistance() <= HandleHitRadiusPx }
+        ?.first
+        ?: edgeHandleAt(Rect(tl, br), pos)
+}
+
+private fun resizeHandleCenters(box: BoundsBox, viewport: CanvasViewport): List<Pair<ResizeHandle, Offset>> {
+    val tl = viewport.toScreen(box.x, box.y)
+    val br = viewport.toScreen(box.right, box.bottom)
     val cx = (tl.x + br.x) / 2f
     val cy = (tl.y + br.y) / 2f
-    val points = mapOf(
+    return listOf(
         ResizeHandle.TopLeft to Offset(tl.x, tl.y),
         ResizeHandle.Top to Offset(cx, tl.y),
         ResizeHandle.TopRight to Offset(br.x, tl.y),
@@ -747,8 +823,24 @@ private fun handleAt(box: BoundsBox, viewport: CanvasViewport, pos: Offset): Res
         ResizeHandle.Bottom to Offset(cx, br.y),
         ResizeHandle.BottomRight to Offset(br.x, br.y),
     )
-    return points.minByOrNull { (_, p) -> (p - pos).getDistanceSquared() }
-        ?.takeIf { (_, p) -> (p - pos).getDistance() <= HandleHitRadiusPx }?.key
+}
+
+private fun edgeHandleAt(rect: Rect, pos: Offset): ResizeHandle? {
+    val edge = ResizeEdgeHoverThicknessPx / 2f
+    val candidates = buildList {
+        if (pos.y >= rect.top - edge && pos.y <= rect.bottom + edge) {
+            add(ResizeHandle.Left to abs(pos.x - rect.left))
+            add(ResizeHandle.Right to abs(pos.x - rect.right))
+        }
+        if (pos.x >= rect.left - edge && pos.x <= rect.right + edge) {
+            add(ResizeHandle.Top to abs(pos.y - rect.top))
+            add(ResizeHandle.Bottom to abs(pos.y - rect.bottom))
+        }
+    }
+    return candidates
+        .filter { (_, distance) -> distance <= edge }
+        .minByOrNull { (_, distance) -> distance }
+        ?.first
 }
 
 private fun DrawScope.drawSelectionBounds(box: BoundsBox, viewport: CanvasViewport, color: Color, handles: Boolean) {
@@ -1100,11 +1192,23 @@ private fun zoomAt(state: MissionEditorStateHolder, focus: Offset, wheel: Float,
     }
 }
 
-private fun cursorFor(tool: EditorTool) = when (tool) {
-    EditorTool.Hand -> androidx.compose.ui.input.pointer.PointerIcon.Hand
-    EditorTool.Text -> androidx.compose.ui.input.pointer.PointerIcon.Text
-    EditorTool.Select -> androidx.compose.ui.input.pointer.PointerIcon.Default
-    else -> androidx.compose.ui.input.pointer.PointerIcon.Crosshair
+private fun cursorFor(tool: EditorTool, forcePan: Boolean, resizeHandle: ResizeHandle?): PointerIcon = when {
+    forcePan -> PointerIcon.Hand
+    resizeHandle != null -> cursorForResizeHandle(resizeHandle)
+    tool == EditorTool.Text -> PointerIcon.Text
+    tool == EditorTool.Select -> PointerIcon.Default
+    else -> PointerIcon.Crosshair
+}
+
+private fun cursorForResizeHandle(handle: ResizeHandle): PointerIcon = when (handle) {
+    ResizeHandle.Left,
+    ResizeHandle.Right -> horizontalResizeCursor()
+    ResizeHandle.Top,
+    ResizeHandle.Bottom -> verticalResizeCursor()
+    ResizeHandle.TopLeft,
+    ResizeHandle.BottomRight -> diagonalResizeCursor(topLeftToBottomRight = true)
+    ResizeHandle.TopRight,
+    ResizeHandle.BottomLeft -> diagonalResizeCursor(topLeftToBottomRight = false)
 }
 
 // --- Bottom controls ---------------------------------------------------------
@@ -1112,9 +1216,10 @@ private fun cursorFor(tool: EditorTool) = when (tool) {
 @Composable
 private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(8.dp)
     Surface(
-        modifier = Modifier.height(48.dp),
-        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.height(48.dp).clip(shape),
+        shape = shape,
         color = Color.White,
         border = BorderStroke(1.dp, colors.panelStroke),
         shadowElevation = 2.dp,
@@ -1124,7 +1229,7 @@ private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) 
                 val active = mode == selected
                 Box(
                     modifier = Modifier.width(64.dp).fillMaxHeight()
-                        .background(if (active) colors.selectionFill else Color.White)
+                        .background(if (active) colors.selectionFill else colors.controlSurface)
                         .clickable { onSelect(mode) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1133,6 +1238,9 @@ private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) 
                         color = if (active) colors.accent else Color.Black,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                         style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -1157,9 +1265,12 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
         ) {
             EditorTool.entries.forEach { tool ->
                 val active = tool == selected
+                val shape = RoundedCornerShape(8.dp)
                 Box(
                     modifier = Modifier.size(36.dp)
-                        .background(if (active) colors.accent else Color.White, RoundedCornerShape(8.dp))
+                        .background(if (active) colors.accent else colors.controlSurface, shape)
+                        .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                        .clip(shape)
                         .clickable { onSelect(tool) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1177,9 +1288,7 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
 
 private fun toolIcon(tool: EditorTool): EditorIcon = when (tool) {
     EditorTool.Select -> EditorIcon.Select
-    EditorTool.Hand -> EditorIcon.HandPan
     EditorTool.Frame -> EditorIcon.Frame
-    EditorTool.Component -> EditorIcon.Component
     EditorTool.Rectangle -> EditorIcon.Rectangle
     EditorTool.Pen -> EditorIcon.Pen
     EditorTool.Text -> EditorIcon.Text
@@ -1205,7 +1314,7 @@ private fun ZoomControls(state: MissionEditorStateHolder) {
                     it.copy(viewport = it.viewport.copy(zoom = (it.zoom * 0.9f).coerceIn(WorkspaceLimits.MinZoom, WorkspaceLimits.MaxZoom)))
                 }
             }
-            Text("${(ws.zoom * 100).roundToInt()}%", modifier = Modifier.widthIn(min = 44.dp), style = MaterialTheme.typography.labelMedium, color = colors.ink)
+            Text("${(ws.zoom * 100).roundToInt()}%", modifier = Modifier.widthIn(min = 44.dp), style = MaterialTheme.typography.labelMedium, color = colors.ink, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             ZoomButton("+") {
                 state.updateWorkspace {
                     it.copy(viewport = it.viewport.copy(zoom = (it.zoom * 1.1f).coerceIn(WorkspaceLimits.MinZoom, WorkspaceLimits.MaxZoom)))
@@ -1222,8 +1331,14 @@ private fun ZoomControls(state: MissionEditorStateHolder) {
 @Composable
 private fun ZoomIconButton(icon: EditorIcon, contentDescription: String, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
     Box(
-        Modifier.size(30.dp).background(colors.raisedSurface, RoundedCornerShape(6.dp)).clickable(onClick = onClick),
+        Modifier
+            .size(30.dp)
+            .background(colors.controlSurface, shape)
+            .border(1.dp, colors.controlStroke, shape)
+            .clip(shape)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         EditorSvgIcon(icon = icon, contentDescription = contentDescription, modifier = Modifier.size(16.dp), tint = colors.ink)
@@ -1233,11 +1348,17 @@ private fun ZoomIconButton(icon: EditorIcon, contentDescription: String, onClick
 @Composable
 private fun ZoomButton(label: String, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
     Box(
-        Modifier.size(30.dp).background(colors.raisedSurface, RoundedCornerShape(6.dp)).clickable(onClick = onClick),
+        Modifier
+            .size(30.dp)
+            .background(colors.controlSurface, shape)
+            .border(1.dp, colors.controlStroke, shape)
+            .clip(shape)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = colors.ink)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = colors.ink, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 

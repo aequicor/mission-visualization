@@ -11,7 +11,7 @@ import io.aequicor.visualization.engine.ir.model.DesignColor
  */
 data class EditorWorkspaceState(
     val sourceWidthDp: Float = 440f,
-    val inspectorWidthDp: Float = 420f,
+    val inspectorWidthDp: Float = 360f,
     val sourceCollapsed: Boolean = false,
     val inspectorCollapsed: Boolean = false,
     val focusMode: FocusMode = FocusMode.Normal,
@@ -58,14 +58,12 @@ enum class FocusMode { Normal, MainOnly }
 enum class PendingFit { None, Screen, Selection }
 
 /**
- * Canvas tools. `Select`/`Hand` manipulate; the rest create an object of [creates]
- * on press/drag. `Hand` pans; `Select` also marquee-selects and drag-moves.
+ * Canvas tools. `Select` manipulates existing objects; the rest create an object of
+ * [creates] on press/drag. Canvas panning is a transient Ctrl-drag gesture.
  */
 enum class EditorTool(val label: String, val creates: NewObjectKind?) {
     Select("Move", null),
-    Hand("Hand", null),
     Frame("Frame", NewObjectKind.Frame),
-    Component("Component", null),
     Rectangle("Rectangle", NewObjectKind.Rectangle),
     Pen("Pen", NewObjectKind.Line),
     Text("Text", NewObjectKind.Text),
@@ -74,15 +72,21 @@ enum class EditorTool(val label: String, val creates: NewObjectKind?) {
     Code("Code", null),
 }
 
-enum class SourceTab(val title: String) {
-    Markdown("Markdown"),
-    Resources("Resources"),
-    Layers("Layers"),
+enum class SourceTab(val label: CompactLabel) {
+    Markdown(CompactLabel("Semantic Layout Markdown", "Markdown", "SLM")),
+    Resources(CompactLabel("Resources", "Res", "Res")),
+    Layers(CompactLabel("Layers", "Layers", "Lyr")),
+    ;
+
+    val title: String get() = label.full
 }
 
-enum class InspectorTab(val title: String) {
-    Design("Design"),
-    Comments("Comments"),
+enum class InspectorTab(val label: CompactLabel) {
+    Design(CompactLabel("Design", "Design", "Dsgn")),
+    Comments(CompactLabel("Comments", "Com", "Com")),
+    ;
+
+    val title: String get() = label.full
 }
 
 enum class DeviceMode(val title: String, val width: Double?, val height: Double?) {
@@ -91,24 +95,27 @@ enum class DeviceMode(val title: String, val width: Double?, val height: Double?
     Tab("TAB", 768.0, 1024.0),
 }
 
-enum class InspectorSection(val title: String) {
-    Position("Position"),
-    Layout("Layout"),
-    Appearance("Appearance"),
-    Fill("Fill"),
-    Stroke("Stroke"),
-    Effects("Effects"),
-    Typography("Typography"),
-    Constraints("Constraints"),
+enum class InspectorSection(val label: CompactLabel) {
+    Position(CompactLabel("Position", "Pos", "Pos")),
+    Layout(CompactLabel("Layout", "Layout", "Lay")),
+    Appearance(CompactLabel("Appearance", "Appear", "App")),
+    Fill(CompactLabel("Fill")),
+    Stroke(CompactLabel("Stroke", "Stroke", "Str")),
+    Effects(CompactLabel("Effects", "FX", "FX")),
+    Typography(CompactLabel("Typography", "Type", "Typ")),
+    Constraints(CompactLabel("Constraints", "Const", "Cnst")),
+    ;
+
+    val title: String get() = label.full
 }
 
 /** Minimum and maximum panel widths (dp) used by the splitter drag clamps. */
 object WorkspaceLimits {
     const val MinPanelDp: Float = 220f
     const val MaxSourceDp: Float = 640f
-    const val MaxInspectorDp: Float = 560f
+    const val MaxInspectorDp: Float = 380f
     const val DefaultSourceDp: Float = 440f
-    const val DefaultInspectorDp: Float = 420f
+    const val DefaultInspectorDp: Float = 360f
     const val MinZoom: Float = 0.05f
     const val MaxZoom: Float = 16f
 }
