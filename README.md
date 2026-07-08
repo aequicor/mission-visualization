@@ -1,96 +1,53 @@
 # Mission Visualization
 
-Mission Visualization is a Kotlin Multiplatform + Compose Multiplatform library
-and demo application for visualizing agent-authored UI documents. Agents write a
-strict standalone `.mv.yaml` document, the library parses and validates it into a
-typed IR, and the app renders a Compose preview with Canvas overlays for
-selection, comments, and scenario flow.
+Mission Visualization is a Kotlin Multiplatform + Compose Multiplatform library and
+demo: an agent authors **Semantic Layout Markdown** (`*.layout.md`, RU/EN + i18n),
+the frontend compiles it to a language-independent typed IR (`slm-ir/1.0`), a pure
+layout engine lays the document out, and a Compose backend renders an interactive
+preview. Editor edits patch the SLM source surgically (`SlmPatcher`) or the in-memory
+document. Root package: `io.aequicor.visualization`.
 
-## Current Shape
+> The earlier `.mv.yaml` / `ui_engine` engine and the `:example` module were removed;
+> this README describes the current SLM pipeline. See `CLAUDE.md` and
+> `engine/README.md` for the authoritative architecture and layering rules.
 
-- `shared` contains the reusable KMP parser, IR model, validator, reducer, and
-  Compose renderer.
-- `desktopApp` and `webApp` are the primary MVP demos.
-- `example` is a consumer module plus ready-to-paste `.mv.yaml` examples.
-- `androidApp` and `iosApp` remain thin launch wrappers around the shared UI.
-- Future integrations should call the same `UiCommand` and `loadUiDocument`
-  APIs that the UI uses today.
+## Modules
 
-## Engine Packages
+- `:engine:ir` — document core (pure Kotlin, KMP): the typed `slm-ir/1.0` IR —
+  model / serialization / resolve / layout / validate.
+- `:engine:frontend` — the SLM compiler (pure Kotlin): `*.layout.md` → IR, plus
+  `SlmPatcher` for surgical write-back.
+- `:engine:backend-compose` — the Compose renderer (`DesignArtboard`); the only engine
+  module that depends on Compose.
+- `:shared` — app shell: `App`, the Mission Editor, and `editor.{presentation,domain,data,ui}`.
+  Targets: Android, JVM (desktop), JS, wasmJs, iOS.
+- `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — thin wrappers around the shared UI.
 
-The UI engine is split by pipeline stage:
+## Mission Editor
 
-- `ui_engine.mv_yaml_source`: bundled `.mv.yaml` sample source.
-- `ui_engine.parser`: standalone YAML parser and syntax diagnostics.
-- `ui_engine.ui_document_ir`: `UiDocument` IR, diagnostics, and helpers.
-- `ui_engine.validator`: semantic validation and document loading pipeline.
-- `ui_engine.runtime_state`: commands, state transitions, selection, comments,
-  input state, and prompt generation.
-- `ui_engine.compose_render_engine`: Compose render engine, renderer registry,
-  shared render contracts, and preview wiring.
-- `ui_engine.compose_ui`: application shell around source editor, preview, and
-  inspector panes.
-- `ui_engine.canvas_overlays`: overlay drawing for selection, comments, and
-  scenario links.
-- `ui_engine.components.<component>`: one isolated renderer provider per UI
-  component type.
+The demo is a working visual editor (Figma-like) over one shared document model:
+resizable/collapsible panels and a focus mode; a zoom/pan/fit canvas with
+hover/select/marquee, drag-move, handle-resize and shape/text tools; a Layers tree;
+and a context inspector for position, layout, appearance, fill, stroke, effects and
+typography. Document state and workspace/view state are kept separate; every document
+action is a `DesignEditorIntent` reduced by the pure `reduceDesignEditor`.
 
-## UI Document Contract
+See **[EDITOR.md](EDITOR.md)** for the implemented scope, wiring, and known gaps.
 
-Each document is standalone YAML:
+## Authoring & pipeline
 
-```yaml
-version: 1
-title: Example UI
-screens:
-  - id: dashboard
-    title: Dashboard
-    layout:
-      type: column
-      padding: lg
-      gap: md
-    children:
-      - id: primary-action
-        type: button
-        style:
-          variant: primary
-        props:
-          text: Review scenario
-        action:
-          type: navigate
-          target: review
-  - id: review
-    title: Review
-    children:
-      - id: review-card
-        type: card
-        props:
-          title: Generated prompt
-          body: Review the generated design patch.
-scenarios:
-  - id: review-flow
-    title: Review flow
-    steps:
-      - screenId: dashboard
-        nodeId: primary-action
-        action: Select the primary action.
-```
-
-The YAML subset supports maps, lists, strings, numbers, booleans, and null. It
-intentionally does not support anchors, aliases, tags, or multiline scalars.
-The schema artifact lives at `shared/src/commonMain/resources/schema/ui-document.schema.json`.
+- SLM authoring spec: `design-book/semantic-layout-markdown-i18n.md`.
+- Pipeline overview and layering rules: `engine/README.md`.
+- UX requirements the editor targets: `design-book/07..16-editor-*.md`.
 
 ## Running
 
 - Desktop: `./gradlew :desktopApp:run`
-- Web Wasm: `./gradlew :webApp:wasmJsBrowserDevelopmentRun`
-- Example Desktop: `./gradlew :example:run`
-- Example Web Wasm: `./gradlew :example:wasmJsBrowserDevelopmentRun`
-- Android: `./gradlew :androidApp:assembleDebug`
+- Web (Wasm): `./gradlew :webApp:wasmJsBrowserDevelopmentRun`
+- Android debug: `./gradlew :androidApp:assembleDebug`
 
 ## Tests
 
-- Shared JVM tests: `./gradlew :shared:jvmTest`
+- Editor / shared (JVM): `./gradlew :shared:jvmTest`
+- Engine: `./gradlew :engine:ir:jvmTest` · `./gradlew :engine:frontend:jvmTest`
 - Desktop compile check: `./gradlew :desktopApp:compileKotlin`
-- Web distribution check:
-  `./gradlew :webApp:wasmJsBrowserDevelopmentExecutableDistribution`

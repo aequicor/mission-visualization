@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -23,22 +24,31 @@ import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
 
 /**
- * Renders the first top-level frame of a page through the resolve -> layout -> draw
- * pipeline, with Figma-like click-to-select and a selection overlay.
+ * Document→screen transform for the canvas: `screen = doc * zoom + pan`. When passed
+ * to [DesignArtboard] the artboard renders under this exact transform, so the editor
+ * (which owns zoom/pan) can hit-test and place handles with the same math.
+ */
+data class CanvasViewport(val zoom: Float, val panX: Float, val panY: Float) {
+    fun toScreen(x: Double, y: Double): Offset = Offset((x * zoom + panX).toFloat(), (y * zoom + panY).toFloat())
+
+    fun toDocX(screenX: Float): Double = ((screenX - panX) / zoom).toDouble()
+
+    fun toDocY(screenY: Float): Double = ((screenY - panY) / zoom).toDouble()
+}
+
+/**
+ * Renders the first top-level frame of a page through the resolve → layout → draw
+ * pipeline. A pure renderer: it draws content, hover and selection overlays and reports
+ * the laid-out tree, but performs no drag/resize itself — the editor overlays those
+ * gestures using [onLayoutComputed] geometry and the shared [viewport] transform.
  *
- * The canvas draws in document pixels under a uniform zoom that fits the frame into
- * the composable bounds; [onLayoutComputed] reports the laid-out tree (document
- * coordinates) so the inspector can show computed geometry.
+ * When [viewport] is null the artboard falls back to fitting the frame into the
+ * composable bounds (top-left aligned), the original behavior.
  *
- * [overlayOptions] toggles editor overlays (guides, layout grids, annotation pins)
- * drawn over the content; all off by default.
- *
- * Tap precedence: when [onInteraction] is provided and the tapped node — or the
- * nearest ancestor — carries an `onClick`/`onPress` interaction, the interaction
- * preview wins: [onInteraction] is invoked with that interaction and its box, and
- * [onSelectNode] is NOT called for that tap. Taps on nodes without a click-like
- * interaction, or when [onInteraction] is null, keep the selection behavior
- * unchanged. No prototype state machine runs — the callback only reports.
+ * [selectedNodeIds] draws a blue selection box (with handles on the last id) per node;
+ * [hoveredNodeId] draws a thin hover outline. Tap precedence is unchanged: a tapped
+ * node (or ancestor) carrying an `onClick`/`onPress` interaction routes to
+ * [onInteraction] and suppresses [onSelectNode] for that tap.
  */
 @Composable
 fun DesignArtboard(
@@ -48,7 +58,12 @@ fun DesignArtboard(
     deviceWidth: Double? = null,
     deviceHeight: Double? = null,
     selectedNodeId: String = "",
+    selectedNodeIds: Set<String> = emptySet(),
+    hoveredNodeId: String = "",
+    viewport: CanvasViewport? = null,
     showSelection: Boolean = true,
+    /** When false the artboard installs no tap handler; the caller owns all gestures. */
+    interactive: Boolean = true,
     overlayOptions: DesignOverlayOptions = DesignOverlayOptions(),
     onInteraction: ((ResolvedInteraction, LayoutBox) -> Unit)? = null,
     onSelectNode: (String) -> Unit = {},
@@ -80,16 +95,16 @@ fun DesignArtboard(
         DesignDrawContext(textMeasurer, density)
     }
 
-    Canvas(
-        modifier = modifier.pointerInput(layoutBox) {
+    val allSelected = if (selectedNodeId.isNotBlank()) selectedNodeIds + selectedNodeId else selectedNodeIds
+
+    val tapModifier = if (interactive) {
+        modifier.pointerInput(layoutBox, viewport) {
             detectTapGestures { offset ->
-                val zoom = zoomFor(layoutBox, Size(size.width.toFloat(), size.height.toFloat()))
+                val zoom = viewport?.zoom ?: zoomFor(layoutBox, Size(size.width.toFloat(), size.height.toFloat()))
                 if (zoom <= 0f) return@detectTapGestures
-                val hit = layoutBox.hitTest(
-                    (offset.x / zoom).toDouble(),
-                    (offset.y / zoom).toDouble(),
-                ) ?: layoutBox
-                // Interaction preview wins over selection when a callback is provided.
+                val docX = viewport?.toDocX(offset.x) ?: (offset.x / zoom).toDouble()
+                val docY = viewport?.toDocY(offset.y) ?: (offset.y / zoom).toDouble()
+                val hit = layoutBox.hitTest(docX, docY) ?: layoutBox
                 val interactionCallback = currentOnInteraction.value
                 if (interactionCallback != null) {
                     val clickable = clickableInteractionAt(layoutBox, hit)
@@ -100,19 +115,33 @@ fun DesignArtboard(
                 }
                 currentOnSelectNode.value(selectableNodeId(hit))
             }
-        },
-    ) {
-        val zoom = zoomFor(layoutBox, size)
+        }
+    } else {
+        modifier
+    }
+    Canvas(modifier = tapModifier) {
+        val zoom = viewport?.zoom ?: zoomFor(layoutBox, size)
         if (zoom <= 0f) return@Canvas
-        scale(zoom, zoom, pivot = Offset.Zero) {
-            drawDesignBox(layoutBox, drawDesignContext)
-            if (overlayOptions.anyEnabled) {
-                drawDesignOverlays(layoutBox, overlayOptions, drawDesignContext, hairline = 1f / zoom)
+        val panX = viewport?.panX ?: 0f
+        val panY = viewport?.panY ?: 0f
+        translate(panX, panY) {
+            scale(zoom, zoom, pivot = Offset.Zero) {
+                drawDesignBox(layoutBox, drawDesignContext)
+                if (overlayOptions.anyEnabled) {
+                    drawDesignOverlays(layoutBox, overlayOptions, drawDesignContext, hairline = 1f / zoom)
+                }
             }
         }
-        if (showSelection && selectedNodeId.isNotBlank() && selectedNodeId != layoutBox.node.sourceId) {
-            layoutBox.findBySourceId(selectedNodeId)?.let { selection ->
-                drawSelectionOverlay(selection, zoom)
+        if (hoveredNodeId.isNotBlank() && hoveredNodeId !in allSelected) {
+            layoutBox.findBySourceId(hoveredNodeId)?.let { drawHoverOutline(it, zoom, panX, panY) }
+        }
+        if (showSelection) {
+            allSelected.forEach { id ->
+                if (id != layoutBox.node.sourceId || allSelected.size == 1) {
+                    layoutBox.findBySourceId(id)?.let { box ->
+                        drawSelectionOverlay(box, zoom, panX, panY, handles = id == selectedNodeId || allSelected.size == 1)
+                    }
+                }
             }
         }
     }
@@ -120,38 +149,44 @@ fun DesignArtboard(
 
 /**
  * Maps a hit box to the node the editor can select: instance internals collapse to
- * their outermost enclosing instance. Ids stay opaque — the mapping is carried on
- * the resolved node instead of being parsed out of the id string.
+ * their outermost enclosing instance.
  */
-fun selectableNodeId(box: LayoutBox): String =
-    box.node.selectableId
+fun selectableNodeId(box: LayoutBox): String = box.node.selectableId
 
 private fun zoomFor(box: LayoutBox, size: Size): Float {
     if (box.width <= 0.0 || box.height <= 0.0) return 0f
-    return minOf(
-        size.width / box.width.toFloat(),
-        size.height / box.height.toFloat(),
-    )
+    return minOf(size.width / box.width.toFloat(), size.height / box.height.toFloat())
 }
 
 private val SelectionBlue = Color(0xFF1E88FF)
 
+private fun screenRect(box: LayoutBox, zoom: Float, panX: Float, panY: Float): Rect = Rect(
+    (box.x * zoom + panX).toFloat(),
+    (box.y * zoom + panY).toFloat(),
+    (box.right * zoom + panX).toFloat(),
+    (box.bottom * zoom + panY).toFloat(),
+)
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawHoverOutline(
+    box: LayoutBox,
+    zoom: Float,
+    panX: Float,
+    panY: Float,
+) {
+    val rect = screenRect(box, zoom, panX, panY)
+    drawRect(color = SelectionBlue.copy(alpha = 0.85f), topLeft = rect.topLeft, size = rect.size, style = Stroke(width = 1.5f))
+}
+
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSelectionOverlay(
     selection: LayoutBox,
     zoom: Float,
+    panX: Float,
+    panY: Float,
+    handles: Boolean,
 ) {
-    val rect = Rect(
-        (selection.x * zoom).toFloat(),
-        (selection.y * zoom).toFloat(),
-        (selection.right * zoom).toFloat(),
-        (selection.bottom * zoom).toFloat(),
-    )
-    drawRect(
-        color = SelectionBlue,
-        topLeft = rect.topLeft,
-        size = rect.size,
-        style = Stroke(width = 1.5f),
-    )
+    val rect = screenRect(selection, zoom, panX, panY)
+    drawRect(color = SelectionBlue, topLeft = rect.topLeft, size = rect.size, style = Stroke(width = 1.5f))
+    if (!handles) return
     val handle = 8f
     val positions = listOf(
         rect.topLeft,

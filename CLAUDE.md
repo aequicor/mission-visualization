@@ -13,11 +13,16 @@ Compose-превью с оверлеями (выделение, инспекто
 - `:engine:frontend` — SLM-компилятор (чистый Kotlin): `*.layout.md` → IR; `SlmPatcher` для write-back.
 - `:engine:backend-compose` — Compose-рендерер (`DesignArtboard`); единственный engine-модуль с Compose.
 - `:shared` — app shell: `App`, `MissionEditorScreen`, `editor.{presentation,domain,data,ui}`.
-  Таргеты: Android, JVM, JS, wasmJs, iOS.
+  Таргеты: Android, JVM, JS, wasmJs, iOS. Редактор: `editor.presentation` — иммутабельный
+  `DesignEditorState` (документ) + `EditorWorkspaceState` (вид, **отдельно** от документа),
+  sealed `DesignEditorIntent` и чистый `reduceDesignEditor`; `editor.ui` — панели
+  (`EditorSourcePane`/`EditorCanvasPane`/`EditorInspectorPane`). Только `ResizeNode` пишет
+  обратно в SLM-исходник (`SlmPatcher`); прочие правки — in-memory (патчер не умеет
+  вставлять/удалять/двигать узлы). Реализованный scope и gaps редактора — в `EDITOR.md`.
 - `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — тонкие обёртки над shared UI.
 
 Документация конвейера — `engine/README.md`; спецификация SLM —
-`design-book/semantic-layout-markdown-i18n.md`.
+`design-book/semantic-layout-markdown-i18n.md`; редактор — `EDITOR.md`.
 
 ## Команды
 - Desktop: `./gradlew :desktopApp:run`
