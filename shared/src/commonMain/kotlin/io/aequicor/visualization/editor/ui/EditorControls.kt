@@ -37,6 +37,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -125,12 +126,13 @@ internal fun InspectorNumberField(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     placeholder: String = "",
+    labelMinWidth: Dp = 22.dp,
     onCommit: (Double) -> Unit,
 ) {
     var draft by remember(resetKey, value) { mutableStateOf(value) }
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (label.isNotEmpty()) {
-            Text(label, modifier = Modifier.widthIn(min = 22.dp), style = MaterialTheme.typography.bodySmall, color = Color.Black)
+            Text(label, modifier = Modifier.widthIn(min = labelMinWidth), style = MaterialTheme.typography.bodySmall, color = Color.Black, maxLines = 1, softWrap = false)
         }
         OutlinedTextField(
             value = draft,
@@ -251,7 +253,7 @@ internal fun UndoableSlider(
 @Composable
 internal fun LabeledField(label: String, content: @Composable () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, modifier = Modifier.width(52.dp), style = MaterialTheme.typography.bodySmall)
+        Text(label, modifier = Modifier.width(72.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false)
         Box(Modifier.weight(1f)) { content() }
     }
 }

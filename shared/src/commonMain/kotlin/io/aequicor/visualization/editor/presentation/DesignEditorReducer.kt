@@ -100,6 +100,12 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         }
         is DesignEditorIntent.UpdateConstraints -> state.updateConstraintsWriteBack(intent)
         is DesignEditorIntent.SetRotation -> state.editUnlockedNode(intent.nodeId) { it.copy(rotation = intent.degrees) }
+        is DesignEditorIntent.SetAbsolutePosition -> state.editUnlockedNode(intent.nodeId) { node ->
+            node.copy(
+                layoutChild = node.layoutChild.copy(absolute = true),
+                position = DesignPoint(intent.x, intent.y),
+            )
+        }
         is DesignEditorIntent.FlipHorizontal -> state.flip(intent.nodeIds, horizontal = true)
         is DesignEditorIntent.FlipVertical -> state.flip(intent.nodeIds, horizontal = false)
 
@@ -114,6 +120,7 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.ReparentNode -> state.editDocument { it.reparent(intent.nodeId, intent.newParentId, intent.index) }
         is DesignEditorIntent.CreateObject -> state.createObject(intent)
         is DesignEditorIntent.CreateScreen -> state.createScreen(intent)
+        is DesignEditorIntent.DetachInstance -> state.detachInstanceReduce(intent.nodeId)
 
         // --- Layout container ---
         is DesignEditorIntent.SetLayoutMode -> state.editUnlockedNode(intent.nodeId) { node ->
@@ -339,13 +346,35 @@ private fun DesignEditorState.createObject(intent: DesignEditorIntent.CreateObje
     val parentValid = intent.parentId in document.pages.map { it.id } || document.nodeById(intent.parentId) != null
     val parentId = if (parentValid) intent.parentId else document.pageById(selectedPageId)?.children?.firstOrNull()?.id
         ?: document.pageById(selectedPageId)?.id ?: return this
-    val next = document.insertNode(parentId, node)
+    // When the parent runs an Auto layout (row/column/grid), a newly created object should
+    // flow inside it (Figma: dropping into an Auto layout frame inserts it into the stack)
+    // rather than float at absolute coordinates. Free / top-level parents keep the factory's
+    // absolute placement.
+    val placed = when (document.nodeById(parentId)?.layout?.mode) {
+        LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
+            node.copy(layoutChild = node.layoutChild.copy(absolute = false))
+        else -> node
+    }
+    val next = document.insertNode(parentId, placed)
     if (next == document) return this
     return pushHistory(document).copy(
         document = next,
-        selectedNodeId = node.id,
-        selectedNodeIds = setOf(node.id),
-        editingTextNodeId = if (intent.enterTextEditing) node.id else "",
+        selectedNodeId = placed.id,
+        selectedNodeIds = setOf(placed.id),
+        editingTextNodeId = if (intent.enterTextEditing) placed.id else "",
+    )
+}
+
+private fun DesignEditorState.detachInstanceReduce(nodeId: String): DesignEditorState {
+    val document = document ?: return this
+    if (isNodeLocked(nodeId)) return this
+    val next = detachInstance(document, nodeId) ?: return this
+    if (next == document) return this
+    return pushHistory(document).copy(
+        document = next,
+        selectedNodeId = nodeId,
+        selectedNodeIds = setOf(nodeId),
+        editingTextNodeId = "",
     )
 }
 

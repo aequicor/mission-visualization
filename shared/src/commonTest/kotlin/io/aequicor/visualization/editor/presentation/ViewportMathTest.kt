@@ -45,6 +45,38 @@ class ViewportMathTest {
         assertClose(beforeY, next.toDocumentY(focusY, density))
     }
 
+    @Test
+    fun scrollZoomFactorRespectsDirectionAndNeutral() {
+        assertEquals(1f, zoomFactorForScroll(0f))
+        assertTrue(zoomFactorForScroll(1f) > 1f, "scrolling in must magnify")
+        assertTrue(zoomFactorForScroll(-1f) < 1f, "scrolling out must shrink")
+    }
+
+    @Test
+    fun scrollZoomFactorScalesWithMagnitude() {
+        // The core smoothness property the old sign-only step lacked: a gentler scroll
+        // produces a factor closer to 1 than a firmer one in the same direction.
+        val small = zoomFactorForScroll(0.2f)
+        val large = zoomFactorForScroll(2f)
+        assertTrue(large > small, "a larger scroll must zoom more per event")
+        assertTrue(small - 1f < large - 1f)
+        // A tiny trackpad delta barely moves the zoom — no more full-notch jumps.
+        assertTrue(abs(zoomFactorForScroll(0.05f) - 1f) < 0.01f)
+    }
+
+    @Test
+    fun scrollZoomFactorIsSymmetricAndReversible() {
+        // exp(a·k)·exp(-a·k) == 1, so an in/out pair round-trips to the same zoom.
+        assertClose(1.0, (zoomFactorForScroll(1.3f) * zoomFactorForScroll(-1.3f)).toDouble())
+    }
+
+    @Test
+    fun scrollZoomFactorClampsOutlierDeltas() {
+        val max = WorkspaceLimits.MaxZoomScrollStep
+        assertEquals(zoomFactorForScroll(max), zoomFactorForScroll(max * 10f))
+        assertEquals(zoomFactorForScroll(-max), zoomFactorForScroll(-max * 10f))
+    }
+
     private fun assertClose(expected: Double, actual: Double, epsilon: Double = 0.0001) {
         assertTrue(abs(expected - actual) <= epsilon, "expected <$expected>, actual <$actual>")
     }

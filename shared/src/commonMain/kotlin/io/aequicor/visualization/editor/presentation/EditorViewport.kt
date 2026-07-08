@@ -1,5 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
+import kotlin.math.exp
+
 /**
  * Workspace-owned document viewport. Values are stored in Compose-independent units:
  * [zoom] is logical scale, pan offsets are dp so they survive density changes.
@@ -62,6 +64,20 @@ data class EditorViewport(
     }
 }
 
+/**
+ * Smooth, magnitude-aware zoom factor for a wheel/trackpad scroll amount. Unlike a fixed
+ * per-notch step, the factor grows exponentially with the (clamped) scroll magnitude, so a
+ * gentle trackpad glide yields many tiny multiplicative steps (buttery) while a firm
+ * mouse-wheel notch still lands a consistent step. `signedScroll > 0` zooms in. The
+ * exponential mapping keeps zooming perceptually uniform across the whole range (1→2 feels
+ * like 2→4); the clamp tames outlier pixel-mode deltas some platforms emit.
+ */
+fun zoomFactorForScroll(
+    signedScroll: Float,
+    sensitivity: Float = WorkspaceLimits.ZoomWheelSensitivity,
+    maxStep: Float = WorkspaceLimits.MaxZoomScrollStep,
+): Float = exp(signedScroll.coerceIn(-maxStep, maxStep) * sensitivity)
+
 /** Convenience wrapper used where pointer coordinates must be converted as a pair. */
 data class PointerDocumentTransform(
     val viewport: EditorViewport,
@@ -82,4 +98,5 @@ sealed interface CanvasOperation {
     data object Move : CanvasOperation
     data class Resize(val handle: ResizeHandle) : CanvasOperation
     data class Create(val kind: NewObjectKind) : CanvasOperation
+    data object Rotate : CanvasOperation
 }

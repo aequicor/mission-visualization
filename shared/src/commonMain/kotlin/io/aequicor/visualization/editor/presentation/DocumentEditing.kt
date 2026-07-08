@@ -47,6 +47,30 @@ internal fun DesignDocument.isSelfOrAncestor(nodeId: String, candidateAncestorId
 }
 
 /**
+ * True when a canvas press whose top-most hit is [hitId] should drag the current selection
+ * rather than re-select the object under the cursor. Two cases stick:
+ *  - the press lands on a selected node itself; or
+ *  - the press lands on a descendant of a deliberately-selected *nested* container — pressing
+ *    inside it drags the container (design-book §10 "drag moves object"; a nested object is
+ *    reached by double-click).
+ *
+ * A top-level frame (a page's screen root) is deliberately excluded from the descendant case:
+ * it is the resting/default selection and an ancestor of everything, so honoring its descendants
+ * would make a plain press-drag on any child silently grab the (layout-pinned, immovable) screen
+ * root instead of the child. Its children therefore stay directly selectable/draggable, matching
+ * Figma's top-level frames. An unrelated object stacked on top of the selection is neither
+ * selected nor a descendant, so it is not claimed here and still wins the press (design-book §10
+ * "topmost selectable layer gets priority").
+ */
+internal fun DesignDocument.pressHitBelongsToSelection(selectedIds: Set<String>, hitId: String): Boolean {
+    if (hitId.isBlank()) return false
+    return selectedIds.any { selectedId ->
+        if (selectedId == hitId) return@any true
+        isSelfOrAncestor(selectedId, hitId) && topLevelOwnerPage(selectedId) == null
+    }
+}
+
+/**
  * Inserts [node] as a child of [parentId] at [index] (clamped; -1 appends). When
  * [parentId] matches a page id or a page's root-frame is intended, resolves to the
  * appropriate container. Returns the document unchanged if the parent is missing.

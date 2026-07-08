@@ -71,7 +71,7 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
             modifier = Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(8.dp),
             color = Color.White,
-            border = BorderStroke(1.dp, colors.panelStroke),
+            shadowElevation = 0.dp,
         ) {
             Column(Modifier.fillMaxSize()) {
                 TabStrip(
@@ -413,7 +413,7 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, colors.panelStroke),
+        shadowElevation = 0.dp,
     ) {
         Column(Modifier.fillMaxSize()) {
             Row(

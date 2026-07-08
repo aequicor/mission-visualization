@@ -58,11 +58,65 @@ nested frames inside whatever frame is under the cursor; resize via inspector W/
 selection synchronized across Canvas ↔ Layers ↔ Inspector; drag-move and handle-resize
 on canvas (one undo entry per drag via `BeginInteraction`/`EndInteraction`
 coalescing); lock/visibility/delete/duplicate; Layers tree with expand/collapse,
-front-first paint order, per-row reorder and visibility/lock.
+front-first paint order, per-row reorder and visibility/lock. A press whose top-most hit
+is the current selection — or a descendant showing through inside a selected container —
+drags the selection instead of re-selecting the nested/behind object under the cursor
+(`pressHitBelongsToSelection`; design-book §10 "drag moves object"). An unrelated object
+stacked on top is not part of the selection, so it still wins the press (§10 "topmost
+selectable layer gets priority"); a nested object is reached by double-click.
 
 **Position (ch. 12)** — inspector X/Y/W/H editing (parent-relative), arrow-key nudge and
 Shift+arrow big-nudge, aspect-ratio lock, rotation field, flip, z-order via
-reorder/Layers, undo/redo.
+reorder/Layers and canvas keyboard shortcuts (`]`/`[` bring to front / send to back,
+Cmd/Ctrl+`]`/`[` bring forward / send backward — restacking the **primary** selection, like
+the Layers per-row reorder; restacking a whole multi-selection as a block is a follow-up),
+undo/redo.
+
+**Advanced positioning preview (ch. 18)** — central anchor lines (dashed at rest, emphasized
+solid while dragging) through the selected component's center, extended to its parent frame
+edges; an on-canvas rotate affordance above the selection that drags the object's rotation
+live (Shift snaps to 15°); selection outline, handles and hit-testing all follow the rotated
+geometry, not the old axis-aligned box (rotating only the fill while the frame stayed put was
+the previous, invalid behavior); resize-handle cursors change on hover before drag starts and
+account for the component's rotation (bucketed into the four cursor orientations Compose
+actually has); resizing a rotated component inverse-rotates the drag delta so a corner grows
+along the edge the user is dragging; a persistent `W x H` size badge under the selection;
+holding `Alt` shows a read-only red measurement overlay (selected/hover outlines, center line,
+directional gap or center-distance badges) against the hovered sibling or, by default, the
+parent frame — releasing `Alt` clears it without touching selection, geometry or document
+state. All of this is overlay-only state in `EditorCanvasPane`/`CanvasGeometry.kt`
+(`:shared`), never serialized into the document.
+
+**Beautiful-anchor snapping (ch. 18 + "beautiful positions")** — while free-moving a
+coordinate-positioned selection, `computeAnchors` (`CanvasGeometry.kt`) magnetically snaps each
+axis independently to the nearest "beautiful" line within a 6-screen-px radius (constant on
+screen: the radius is `/ zoom`ed into document units). Candidates: **edge/center alignment** to
+containers and sibling peers (Figma's blue guides, via the retained `snapAxis` core), the
+container's **golden-ratio** lines (0.382 / 0.618, amber guide + "φ" badge), its simple
+**proportion** lines (thirds 1/3·2/3 and quarters 1/4·3/4 — halves == center, so not repeated;
+dashed amber guide + fraction badge), and the **equal-distance family** — all drawn as green
+measurement bars with px gap badges, over siblings that overlap the box on the perpendicular
+axis (so a real row/column gap exists): *equal spacing* (centre between two flanking siblings),
+*equal margin* (centre between a sibling and the container wall on the other side), and *match
+gap* (the gap to a neighbour duplicates an existing gap between two other siblings — the matched
+reference gap gets its own bar too). Containers are the immediate parent frame *plus its
+unrotated ancestors up to the root*, so a nested node can still anchor to an outer/root
+container. One winner per axis; ties break by priority (alignment > equal spacing > match gap >
+equal margin > golden > proportion). `computeSnap` is retained as the alignment-only subset
+(delegates to `computeAnchors`, keeps its regression suite). All overlay-only, never serialized.
+
+**Auto layout boundary (ch. 18)** — `MoveNodes`/canvas drag only ever repositions coordinate-
+positioned nodes (`isCoordinatePositioned`); an Auto layout flow child can't be dragged to an
+arbitrary position (the layout engine ignores its `position`), so a Move drag on one instead
+previews a reorder within its flow parent: a live insertion-line indicator
+(`flowInsertionIndex`/`flowInsertionLine` in `CanvasGeometry.kt`) tracks the pointer along the
+parent's main axis, and release dispatches `ReparentNode` at the resolved index (one undo
+entry). Detaching a flow child into free positioning is a separate, explicit action — the
+inspector's Position section shows an "Absolute position inside frame" button for any
+non-coordinate-positioned selection, dispatching `SetAbsolutePosition` (sets
+`layoutChild.absolute = true` and captures the child's current resolved position so it doesn't
+jump). Both behaviors match design-book §18's "Auto layout boundary" note; grid-mode auto
+layout parents are out of scope for the reorder preview (1D flow only).
 
 **Appearance / Fill / Stroke (ch. 13–15)** — layer opacity + blend mode + corner radius;
 effects stack (drop/inner shadow, layer/background blur) with per-effect visibility
@@ -71,6 +125,10 @@ reorder, solid + linear/radial gradient (stops: add/remove/recolor/reverse), per
 opacity separate from layer opacity, image-fill placeholder; stroke add/remove/toggle,
 color/opacity/weight, inside/center/outside position, dashed, and caps/endpoints for
 lines and arrows. Resize preserves stroke weight (weight is independent of size).
+Fill/stroke/gradient-stop swatches resolve variable-bound colors (`{"§var": "..."}`, the
+common case in the bundled samples) to the token's actual default-mode value — following
+alias chains — instead of a flat black/blue placeholder, so the inspector swatch matches
+what the canvas renders via `DesignResolver`.
 
 **Typography (ch. 16)** — Text tool: click creates auto-width text, drag creates a
 fixed-width box; double-click enters an inline editing overlay (Esc exits); inspector
@@ -91,6 +149,10 @@ without rewriting the path layer.
   object/screen, delete/duplicate/reorder/reparent, fills/strokes/effects, typography,
   undo/redo, drag coalescing.
 - `VectorPathEditingTest` — SVG anchor parse + translate.
+- `CanvasGeometryTest` — rotated corner/handle geometry, rotation-aware resize cursor
+  bucketing, move-drag center anchor lines, Alt-measurement gap math, and beautiful-anchor
+  snapping (golden ratio, thirds/quarters, equal spacing / equal margin / match gap, priority
+  tie-breaks) (design-book ch. 18).
 
 Run: `./gradlew :shared:jvmTest` (engine: `:engine:ir:jvmTest`, `:engine:frontend:jvmTest`).
 
@@ -110,7 +172,6 @@ Run: `./gradlew :shared:jvmTest` (engine: `:engine:ir:jvmTest`, `:engine:fronten
   (the renderer draws image fills as placeholders by design).
 - **Vector advanced.** Pen, lasso, bend (bezier handles), cut, boolean ops and region
   paint are not implemented; only anchor move over simple absolute paths.
-- **Canvas rotation handle.** Rotation is inspector-only; no on-canvas rotate affordance.
 - **Export image.** Not implemented (was the last planned slice; not an acceptance item).
 - **Scale tool.** Resize is implemented; a separate proportional Scale tool is a
   follow-up (design-book notes them as distinct modes).

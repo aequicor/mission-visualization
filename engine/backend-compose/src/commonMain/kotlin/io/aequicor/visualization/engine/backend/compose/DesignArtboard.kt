@@ -38,17 +38,21 @@ data class CanvasViewport(val zoom: Float, val panX: Float, val panY: Float) {
 
 /**
  * Renders the first top-level frame of a page through the resolve → layout → draw
- * pipeline. A pure renderer: it draws content, hover and selection overlays and reports
- * the laid-out tree, but performs no drag/resize itself — the editor overlays those
- * gestures using [onLayoutComputed] geometry and the shared [viewport] transform.
+ * pipeline. A pure renderer: it draws content and reports the laid-out tree, but performs
+ * no drag/resize itself — the editor overlays those gestures using [onLayoutComputed]
+ * geometry and the shared [viewport] transform.
  *
  * When [viewport] is null the artboard falls back to fitting the frame into the
  * composable bounds (top-left aligned), the original behavior.
  *
- * [selectedNodeIds] draws a blue selection box (with handles on the last id) per node;
- * [hoveredNodeId] draws a thin hover outline. Tap precedence is unchanged: a tapped
- * node (or ancestor) carrying an `onClick`/`onPress` interaction routes to
- * [onInteraction] and suppresses [onSelectNode] for that tap.
+ * With [showSelection] true (the default), [selectedNodeIds] draws a plain axis-aligned
+ * blue selection box (with handles on the last id) per node and [hoveredNodeId] draws a
+ * thin hover outline — a simple built-in overlay for a non-editor caller. The interactive
+ * Mission Editor (`EditorCanvasPane`) passes `showSelection = false` and draws its own
+ * rotation-aware selection/hover/handles/rotate-affordance overlay instead (design-book
+ * §18), since a plain axis-aligned box doesn't follow a rotated node's visual geometry.
+ * Tap precedence is unchanged: a tapped node (or ancestor) carrying an `onClick`/`onPress`
+ * interaction routes to [onInteraction] and suppresses [onSelectNode] for that tap.
  */
 @Composable
 fun DesignArtboard(

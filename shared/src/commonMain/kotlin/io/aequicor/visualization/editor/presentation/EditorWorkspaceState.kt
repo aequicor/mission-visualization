@@ -33,6 +33,12 @@ data class EditorWorkspaceState(
     val vectorSelectedPoint: VectorPointRef? = null,
     /** A pending fit-to request the canvas applies on its next layout pass. */
     val pendingFit: PendingFit = PendingFit.None,
+    /**
+     * One-shot zoom target the canvas eases to, anchored on its center; null when idle.
+     * Used by the +/-/1:1 controls so button zoom glides (and never drifts) instead of
+     * snapping. Continuous wheel/trackpad zoom writes [viewport] directly and clears this.
+     */
+    val pendingZoomTo: Float? = null,
     /** Recently committed colors (most-recent first), surfaced by the color picker. */
     val recentColors: List<DesignColor> = emptyList(),
 ) {
@@ -111,4 +117,13 @@ object WorkspaceLimits {
     const val DefaultInspectorDp: Float = 420f
     const val MinZoom: Float = 0.05f
     const val MaxZoom: Float = 16f
+
+    /** Exponential response of wheel/trackpad zoom: `factor = exp(clamp(scroll) * sensitivity)`. */
+    const val ZoomWheelSensitivity: Float = 0.1f
+
+    /** Upper bound on a single scroll event's magnitude, taming outlier pixel-mode deltas. */
+    const val MaxZoomScrollStep: Float = 12f
+
+    /** Multiplicative step per click of the +/- zoom buttons (animated around the canvas center). */
+    const val ZoomButtonStep: Float = 1.2f
 }

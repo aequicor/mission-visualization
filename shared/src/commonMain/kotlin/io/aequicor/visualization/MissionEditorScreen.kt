@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -149,18 +150,37 @@ fun MissionEditorApp() {
 @Composable
 private fun MissionEditorScreen(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val isMainOnly = state.workspace.isMainOnly
+    val shellShape = RoundedCornerShape(if (isMainOnly) 0.dp else 18.dp)
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.linearGradient(listOf(colors.chromeGradientStart, colors.chrome, colors.chromeGradientEnd)))
-            .padding(if (state.workspace.isMainOnly) 0.dp else 12.dp),
+            .padding(if (isMainOnly) 0.dp else 28.dp),
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
-            shape = RoundedCornerShape(if (state.workspace.isMainOnly) 0.dp else 18.dp),
-            color = Color.White.copy(alpha = 0.72f),
-            border = BorderStroke(1.dp, colors.shellStroke),
-            shadowElevation = 8.dp,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    // A soft shadow cast onto the chrome behind the shell — clip = false so the
+                    // blur isn't cut off at the shape's own edge, and enough outer padding above
+                    // so it fades out before reaching the window edge instead of hard-clipping
+                    // into what reads as a rectangle outline.
+                    if (isMainOnly) {
+                        Modifier
+                    } else {
+                        Modifier.shadow(
+                            elevation = 28.dp,
+                            shape = shellShape,
+                            clip = false,
+                            ambientColor = colors.ink.copy(alpha = 0.14f),
+                            spotColor = colors.ink.copy(alpha = 0.22f),
+                        )
+                    },
+                ),
+            shape = shellShape,
+            color = Color.White,
+            shadowElevation = 0.dp,
         ) {
             when {
                 state.workspace.isMainOnly -> MainOnlyLayout(state)
@@ -292,7 +312,7 @@ private fun VerticalSplitter(onDeltaDp: (Float) -> Unit, onReset: () -> Unit) {
             Modifier
                 .width(if (active) 2.dp else 1.dp)
                 .fillMaxHeight()
-                .background(if (active) colors.accent else colors.divider),
+                .background(Color.Transparent),
         )
     }
 }

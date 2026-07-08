@@ -78,6 +78,14 @@ sealed interface DesignEditorIntent {
 
     data class SetRotation(val nodeId: String, val degrees: Double) : DesignEditorIntent
 
+    /**
+     * Pulls an Auto layout child out of the flow ([DesignLayoutChild.absolute]): an
+     * explicit user action (design-book §18 "Auto layout boundary"), never automatic —
+     * [x]/[y] are the child's current parent-relative position at the moment it detaches,
+     * so it doesn't visually jump.
+     */
+    data class SetAbsolutePosition(val nodeId: String, val x: Double, val y: Double) : DesignEditorIntent
+
     data class FlipHorizontal(val nodeIds: Set<String>) : DesignEditorIntent
 
     data class FlipVertical(val nodeIds: Set<String>) : DesignEditorIntent
@@ -99,6 +107,9 @@ sealed interface DesignEditorIntent {
 
     /** Drag/drop in Layers: place [nodeId] under [newParentId] at [index] (-1 appends). */
     data class ReparentNode(val nodeId: String, val newParentId: String, val index: Int = -1) : DesignEditorIntent
+
+    /** Bakes a component instance into an editable Frame subtree (Figma "Detach instance"). */
+    data class DetachInstance(val nodeId: String) : DesignEditorIntent
 
     /** Creates a new object under [parentId] at parent-relative (x,y) with (w,h). */
     data class CreateObject(

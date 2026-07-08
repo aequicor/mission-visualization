@@ -60,12 +60,15 @@ import io.aequicor.visualization.editor.presentation.InspectorTab
 import io.aequicor.visualization.editor.presentation.PaddingSide
 import io.aequicor.visualization.editor.presentation.isCoordinatePositioned
 import io.aequicor.visualization.editor.presentation.isNodeLocked
+import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.StrokeOp
 import io.aequicor.visualization.editor.presentation.TypographyPatch
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
@@ -77,6 +80,7 @@ import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
+import io.aequicor.visualization.engine.ir.model.VariableValue
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.math.PI
@@ -98,7 +102,7 @@ fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Mo
             modifier = Modifier.fillMaxSize(),
             shape = RoundedCornerShape(8.dp),
             color = Color.White,
-            border = BorderStroke(1.dp, colors.panelStroke),
+            shadowElevation = 0.dp,
         ) {
             Column(Modifier.fillMaxSize()) {
                 TabStrip(
@@ -241,6 +245,15 @@ private fun PositionSection(state: MissionEditorStateHolder, node: DesignNode, b
         }
     }
 
+    if (!positioned) {
+        Spacer(Modifier.height(8.dp))
+        MutedNote("Auto layout child — position follows the flow. Drag on canvas to reorder.")
+        Spacer(Modifier.height(6.dp))
+        TinyButton("Absolute position inside frame", enabled = !locked) {
+            state.dispatch(DesignEditorIntent.SetAbsolutePosition(nodeId, x = x, y = y))
+        }
+    }
+
     if (positioned) {
         Spacer(Modifier.height(8.dp))
         InspectorSubLabel("Constraints")
@@ -336,7 +349,19 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
 
     Spacer(Modifier.height(10.dp))
     SizingControls(state, node)
-    if (!isFrame) return
+    if (!isFrame) {
+        // A component instance can't expose Auto layout (the resolver ignores an instance's own
+        // layout). Detaching bakes it into an editable Frame, after which these controls apply.
+        if (node.kind is DesignNodeKind.Instance) {
+            Spacer(Modifier.height(12.dp))
+            MutedNote("Component instance — detach to edit its layout.")
+            Spacer(Modifier.height(6.dp))
+            TinyButton("Detach instance", enabled = !state.designState.isNodeLocked(node.id)) {
+                state.dispatch(DesignEditorIntent.DetachInstance(node.id))
+            }
+        }
+        return
+    }
 
     Spacer(Modifier.height(12.dp))
     val nodeId = node.id
@@ -360,11 +385,15 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
         InspectorNumberField("Gap", gap.formatPx(), "", nodeId) { state.dispatch(DesignEditorIntent.SetLayoutGap(nodeId, it)) }
         Spacer(Modifier.height(8.dp))
         val pad = node.layout.padding
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            InspectorNumberField("T", (pad.top.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Top, it)) }
-            InspectorNumberField("R", (pad.right.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Right, it)) }
-            InspectorNumberField("B", (pad.bottom.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Bottom, it)) }
-            InspectorNumberField("L", (pad.left.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Left, it)) }
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InspectorNumberField("Top", (pad.top.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f), labelMinWidth = 46.dp) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Top, it)) }
+                InspectorNumberField("Right", (pad.right.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f), labelMinWidth = 46.dp) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Right, it)) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InspectorNumberField("Bottom", (pad.bottom.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f), labelMinWidth = 46.dp) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Bottom, it)) }
+                InspectorNumberField("Left", (pad.left.literalOrNull() ?: 0.0).formatPx(), "", nodeId, Modifier.weight(1f), labelMinWidth = 46.dp) { state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.Left, it)) }
+            }
         }
         Spacer(Modifier.height(10.dp))
         LabeledField("Align") {
@@ -538,7 +567,7 @@ private fun FillRow(state: MissionEditorStateHolder, nodeId: String, index: Int,
         Box(Modifier.weight(1f)) {
             when (paint) {
                 is DesignPaint.Solid -> {
-                    val color = paint.color.literalOrNull() ?: DesignColor.Black
+                    val color = paint.color.resolveDisplayColor(state.designState.document) ?: DesignColor.Black
                     InspectorColorField(
                         state = state,
                         color = color,
@@ -549,7 +578,7 @@ private fun FillRow(state: MissionEditorStateHolder, nodeId: String, index: Int,
                         onOpacity = { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetOpacity(index, it))) },
                     )
                 }
-                is DesignPaint.Gradient -> GradientPreview(paint)
+                is DesignPaint.Gradient -> GradientPreview(state, paint)
                 else -> FillTypeChip(kind.displayName)
             }
         }
@@ -565,9 +594,10 @@ private fun FillRow(state: MissionEditorStateHolder, nodeId: String, index: Int,
 
 /** Read-only horizontal preview of a gradient fill (the stops are edited in the sub-rows). */
 @Composable
-private fun GradientPreview(gradient: DesignPaint.Gradient) {
+private fun GradientPreview(state: MissionEditorStateHolder, gradient: DesignPaint.Gradient) {
     val colors = LocalEditorColors.current
-    val stops = gradient.stops.sortedBy { it.position }.mapNotNull { it.color.literalOrNull()?.toComposeColor() }
+    val document = state.designState.document
+    val stops = gradient.stops.sortedBy { it.position }.mapNotNull { it.color.resolveDisplayColor(document)?.toComposeColor() }
     val brush = when {
         stops.size >= 2 -> Brush.horizontalGradient(stops)
         stops.size == 1 -> Brush.horizontalGradient(listOf(stops.first(), stops.first()))
@@ -610,7 +640,7 @@ private fun GradientStops(state: MissionEditorStateHolder, nodeId: String, index
         }
         Spacer(Modifier.height(6.dp))
         gradient.stops.forEachIndexed { stopIndex, stop ->
-            val stopColor = stop.color.literalOrNull() ?: DesignColor.Black
+            val stopColor = stop.color.resolveDisplayColor(state.designState.document) ?: DesignColor.Black
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.weight(1f)) {
                     InspectorArgbColorField(
@@ -656,7 +686,7 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
         return
     }
     val paint = strokes.paints.firstOrNull()
-    val color = paint?.displayColor() ?: DesignColor.fromHex("#1E88FF") ?: DesignColor.Black
+    val color = paint?.displayColor(state.designState.document) ?: DesignColor.fromHex("#1E88FF") ?: DesignColor.Black
     val visible = paint?.visible?.literalOrNull() ?: true
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         LayerToggle(visible) { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetVisible(!visible))) }
@@ -1166,16 +1196,16 @@ private fun TinyIconButton(icon: EditorIcon, contentDescription: String, onClick
 }
 
 @Composable
-private fun TinyButton(label: String, onClick: () -> Unit) {
+private fun TinyButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     Surface(
-        modifier = Modifier.height(24.dp).clickable(onClick = onClick),
+        modifier = Modifier.height(24.dp).clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(5.dp),
         color = colors.raisedSurface,
         border = BorderStroke(1.dp, colors.softStroke),
     ) {
         Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = colors.ink)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = if (enabled) colors.ink else colors.mutedInk)
         }
     }
 }
@@ -1410,7 +1440,7 @@ private fun setRotationForSelection(state: MissionEditorStateHolder, degrees: Do
     state.dispatch(DesignEditorIntent.BeginInteraction)
     selectedIds(state).forEach { id ->
         val node = document.nodeById(id) ?: return@forEach
-        if (!node.locked) state.dispatch(DesignEditorIntent.SetRotation(id, normalizeDegrees(degrees)))
+        if (!node.locked) state.dispatch(DesignEditorIntent.SetRotation(id, normalizeAngleDegrees(degrees)))
     }
     state.dispatch(DesignEditorIntent.EndInteraction)
 }
@@ -1420,20 +1450,42 @@ private fun rotateSelectionBy(state: MissionEditorStateHolder, delta: Double) {
     state.dispatch(DesignEditorIntent.BeginInteraction)
     selectedIds(state).forEach { id ->
         val node = document.nodeById(id) ?: return@forEach
-        if (!node.locked) state.dispatch(DesignEditorIntent.SetRotation(id, normalizeDegrees(node.rotation + delta)))
+        if (!node.locked) state.dispatch(DesignEditorIntent.SetRotation(id, normalizeAngleDegrees(node.rotation + delta)))
     }
     state.dispatch(DesignEditorIntent.EndInteraction)
 }
 
-private fun normalizeDegrees(value: Double): Double {
-    val normalized = value % 360.0
-    return if (normalized < 0.0) normalized + 360.0 else normalized
+private fun DesignPaint.displayColor(document: DesignDocument?): DesignColor? = when (this) {
+    is DesignPaint.Solid -> color.resolveDisplayColor(document)
+    is DesignPaint.Gradient -> stops.firstOrNull()?.color?.resolveDisplayColor(document)
+    else -> null
 }
 
-private fun DesignPaint.displayColor(): DesignColor? = when (this) {
-    is DesignPaint.Solid -> color.literalOrNull()
-    is DesignPaint.Gradient -> stops.firstOrNull()?.color?.literalOrNull()
-    else -> null
+/**
+ * The best available preview color for a possibly variable-bound color: the literal value
+ * when authored directly, else the design token's default-mode value (aliases followed).
+ * Prop/data bindings have no static value to preview and fall back to null. Without this,
+ * every token-bound fill/stroke (the common case — most fills in the bundled samples are
+ * `{"§var": "..."}` references) showed as a flat black/blue swatch that didn't match what
+ * the canvas actually rendered (the canvas resolves the same variable via `DesignResolver`).
+ */
+private fun Bindable<DesignColor>.resolveDisplayColor(document: DesignDocument?): DesignColor? {
+    literalOrNull()?.let { return it }
+    val varId = (this as? Bindable.VarRef)?.id ?: return null
+    return document?.let { resolveVariableColor(it, varId) }
+}
+
+/** Resolves a color variable's default-mode value, following alias chains (cycle-safe). */
+private fun resolveVariableColor(document: DesignDocument, varId: String, seen: Set<String> = emptySet()): DesignColor? {
+    if (varId in seen) return null
+    val (collectionId, variable) = document.variables.findVariable(varId) ?: return null
+    val collection = document.variables.collections[collectionId] ?: return null
+    val mode = collection.defaultMode.ifBlank { collection.modes.firstOrNull() } ?: return null
+    return when (val value = variable.values[mode]) {
+        is VariableValue.ColorValue -> value.value
+        is VariableValue.Alias -> resolveVariableColor(document, value.varId, seen + varId)
+        else -> null
+    }
 }
 
 private fun DesignPaint.fillKind(): FillKind = when (this) {
