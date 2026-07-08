@@ -70,7 +70,7 @@ truth within a session; samples still load and compile unchanged.
 hover (real AWT cursors on desktop via `expect/actual`), no text selection during
 drag, double-click to reset width; collapse/expand of both side panels with a rail to
 restore; Main-only focus mode (Esc or the exit button); canvas zoom (buttons +
-scroll-to-cursor), pan (Hand tool), fit-screen and fit-selection, 1:1; responsive
+scroll-to-cursor), pan (Ctrl-drag), fit-screen and fit-selection, 1:1; responsive
 stacked layout on narrow viewports. Workspace state is separate from the document.
 
 **Frames (ch. 09)** — each screen is a top-level frame + its own page; new screens via

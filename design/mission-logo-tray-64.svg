@@ -1,0 +1,23 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="missionGradient" x1="9" y1="45" x2="55" y2="17" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#21D4E8"/>
+      <stop offset="0.56" stop-color="#2378F2"/>
+      <stop offset="1" stop-color="#4932E8"/>
+    </linearGradient>
+    <linearGradient id="targetGradient" x1="43" y1="13" x2="56" y2="26" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF7B4A"/>
+      <stop offset="1" stop-color="#FF3F6E"/>
+    </linearGradient>
+  </defs>
+  <ellipse
+    cx="32"
+    cy="32"
+    rx="22"
+    ry="15"
+    transform="rotate(-24 32 32)"
+    stroke="url(#missionGradient)"
+    stroke-width="9.5"
+  />
+  <circle cx="49.5" cy="19.5" r="6.2" fill="url(#targetGradient)"/>
+</svg>

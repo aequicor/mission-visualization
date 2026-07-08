@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +21,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -37,8 +40,11 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import kotlin.math.abs
@@ -66,7 +72,7 @@ internal fun DesignColor.toComposeColor(): Color =
 internal fun <T> TabStrip(
     tabs: List<T>,
     selected: T,
-    title: (T) -> String,
+    title: (T) -> CompactLabel,
     icon: (T) -> EditorIcon? = { null },
     onSelect: (T) -> Unit,
 ) {
@@ -80,24 +86,31 @@ internal fun <T> TabStrip(
     ) {
         tabs.forEach { tab ->
             val isSelected = tab == selected
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier.weight(1f).fillMaxHeight().clickable { onSelect(tab) },
                 contentAlignment = Alignment.Center,
             ) {
+                val tabLabel = title(tab)
+                val tabIcon = icon(tab)
+                val horizontalPadding = 6.dp
+                val iconAndGap = if (tabIcon == null) 0.dp else 22.dp
+                val textMaxWidth = (maxWidth - horizontalPadding - horizontalPadding - iconAndGap).coerceAtLeast(0.dp)
                 Row(
+                    modifier = Modifier.padding(horizontal = horizontalPadding),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    icon(tab)?.let { tabIcon ->
+                    tabIcon?.let {
                         EditorSvgIcon(
-                            icon = tabIcon,
-                            contentDescription = title(tab),
+                            icon = it,
+                            contentDescription = tabLabel.full,
                             modifier = Modifier.size(16.dp),
                             tint = if (isSelected) colors.accent else colors.controlInk,
                         )
                     }
-                    Text(
-                        title(tab),
+                    CompactText(
+                        label = tabLabel,
+                        modifier = Modifier.widthIn(max = textMaxWidth),
                         color = if (isSelected) colors.accent else Color.Black,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
@@ -129,6 +142,7 @@ internal fun InspectorNumberField(
     labelMinWidth: Dp = 22.dp,
     onCommit: (Double) -> Unit,
 ) {
+    val colors = LocalEditorColors.current
     var draft by remember(resetKey, value) { mutableStateOf(value) }
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (label.isNotEmpty()) {
@@ -148,11 +162,12 @@ internal fun InspectorNumberField(
             enabled = enabled,
             textStyle = MaterialTheme.typography.bodySmall,
             placeholder = if (placeholder.isEmpty()) null else {
-                { Text(placeholder, style = MaterialTheme.typography.bodySmall, color = LocalEditorColors.current.mutedInk) }
+                { Text(placeholder, style = MaterialTheme.typography.bodySmall, color = colors.mutedInk) }
             },
             trailingIcon = if (suffix.isEmpty()) null else {
                 { Text(suffix, style = MaterialTheme.typography.bodySmall, color = Color.Black) }
             },
+            colors = editorOutlinedTextFieldColors(),
         )
     }
 }
@@ -172,6 +187,7 @@ internal fun InspectorCommitNumberField(
     enabled: Boolean = true,
     onCommit: (Double) -> Unit,
 ) {
+    val colors = LocalEditorColors.current
     var draft by remember(resetKey, value) { mutableStateOf(value) }
     var hadFocus by remember(resetKey) { mutableStateOf(false) }
     fun commitDraft() {
@@ -208,6 +224,7 @@ internal fun InspectorCommitNumberField(
             trailingIcon = if (suffix.isEmpty()) null else {
                 { Text(suffix, style = MaterialTheme.typography.bodySmall, color = Color.Black) }
             },
+            colors = editorOutlinedTextFieldColors(),
         )
     }
 }
@@ -252,8 +269,18 @@ internal fun UndoableSlider(
 
 @Composable
 internal fun LabeledField(label: String, content: @Composable () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, modifier = Modifier.width(72.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false)
+    LabeledField(compactLabelFor(label), content)
+}
+
+@Composable
+internal fun LabeledField(label: CompactLabel, content: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        CompactText(
+            label = label,
+            modifier = Modifier.width(64.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = LocalEditorColors.current.ink,
+        )
         Box(Modifier.weight(1f)) { content() }
     }
 }
@@ -272,19 +299,20 @@ internal fun SwatchField(
 ) {
     val colors = LocalEditorColors.current
     var draft by remember(resetKey, value) { mutableStateOf(value) }
+    val swatchShape = RoundedCornerShape(4.dp)
     Surface(
         modifier = modifier.fillMaxWidth().height(36.dp),
         shape = RoundedCornerShape(6.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, colors.softStroke),
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
                     .size(20.dp)
-                    .background(color, RoundedCornerShape(4.dp))
-                    .border(1.dp, colors.softStroke, RoundedCornerShape(4.dp))
-                    .then(if (onSwatchClick != null) Modifier.clickable { onSwatchClick() } else Modifier),
+                    .background(color, swatchShape)
+                    .border(1.dp, colors.controlStroke, swatchShape)
+                    .then(if (onSwatchClick != null) Modifier.clip(swatchShape).clickable { onSwatchClick() } else Modifier),
             )
             BasicTextField(
                 value = draft,
@@ -311,11 +339,11 @@ internal fun SelectLike(value: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.height(36.dp),
         shape = RoundedCornerShape(6.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, colors.softStroke),
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
         }
     }
@@ -330,22 +358,23 @@ internal fun SelectField(
 ) {
     val colors = LocalEditorColors.current
     var expanded by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(6.dp)
     Box(modifier) {
         Surface(
-            modifier = Modifier.fillMaxWidth().height(36.dp).clickable { expanded = true },
-            shape = RoundedCornerShape(6.dp),
-            color = Color.White,
-            border = BorderStroke(1.dp, colors.softStroke),
+            modifier = Modifier.fillMaxWidth().height(36.dp).clip(shape).clickable { expanded = true },
+            shape = shape,
+            color = colors.controlSurface,
+            border = BorderStroke(1.dp, colors.controlStroke),
         ) {
             Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option, style = MaterialTheme.typography.bodySmall) },
+                EditorDropdownMenuItem(
+                    text = option,
                     onClick = { expanded = false; onSelect(option) },
                 )
             }
@@ -363,11 +392,12 @@ internal fun <T> SegmentedControl(
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
     Surface(
-        modifier = modifier.height(34.dp),
-        shape = RoundedCornerShape(6.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, colors.softStroke),
+        modifier = modifier.height(34.dp).clip(shape),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Row(Modifier.fillMaxHeight()) {
             options.forEach { option ->
@@ -376,21 +406,79 @@ internal fun <T> SegmentedControl(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(if (active) colors.selectionFill else Color.White)
+                        .background(if (active) colors.selectionFill else colors.controlSurface)
                         .clickable { onSelect(option) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        label(option),
+                    CompactText(
+                        label = compactLabelFor(label(option)),
+                        modifier = Modifier.padding(horizontal = 3.dp).fillMaxWidth(),
                         style = MaterialTheme.typography.labelMedium,
                         color = if (active) colors.accent else colors.ink,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+internal fun EditorDropdownMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        shape = RoundedCornerShape(6.dp),
+        containerColor = colors.raisedSurface,
+        tonalElevation = 0.dp,
+        shadowElevation = 6.dp,
+        border = BorderStroke(1.dp, colors.controlStroke),
+    ) {
+        content()
+    }
+}
+
+@Composable
+internal fun EditorDropdownMenuItem(text: String, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
+    DropdownMenuItem(
+        text = {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.ink,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        onClick = onClick,
+    )
+}
+
+private fun compactLabelFor(text: String): CompactLabel = when (text) {
+    "Distribute" -> CompactLabel("Distribute", "Distrib", "Dist")
+    "Alignment" -> CompactLabel("Alignment", "Align", "Algn")
+    "Constraints" -> CompactLabel("Constraints", "Const", "Cnst")
+    "Between" -> CompactLabel("Between", "Btwn", "Btw")
+    "Center" -> CompactLabel("Center", "Ctr", "C")
+    "Start" -> CompactLabel("Start", "Start", "S")
+    "End" -> CompactLabel("End", "End", "E")
+    "Stretch" -> CompactLabel("Stretch", "Fill", "Fill")
+    "Fixed" -> CompactLabel("Fixed", "Fix", "Fx")
+    "Vertical" -> CompactLabel("Vertical", "Vert", "V")
+    "Horizontal" -> CompactLabel("Horizontal", "Horz", "H")
+    "Auto W" -> CompactLabel("Auto W", "W", "W")
+    "Auto H" -> CompactLabel("Auto H", "H", "H")
+    "Left & Right" -> CompactLabel("Left & Right", "L + R", "L/R")
+    "Top & Bottom" -> CompactLabel("Top & Bottom", "T + B", "T/B")
+    else -> CompactLabel(text)
 }
 
 // --- Buttons -----------------------------------------------------------------
@@ -405,11 +493,21 @@ internal fun SmallIconButton(
     enabled: Boolean = true,
 ) {
     val colors = LocalEditorColors.current
+    val borderColor = when {
+        active -> colors.accent
+        enabled -> colors.controlStroke
+        else -> colors.controlDisabledStroke
+    }
+    val shape = RoundedCornerShape(7.dp)
     Surface(
-        modifier = modifier.size(34.dp).clickable(enabled = enabled, onClick = onClick),
-        shape = RoundedCornerShape(7.dp),
-        color = if (active) colors.selectionFill else Color.White,
-        border = BorderStroke(1.dp, if (active) colors.selectionStroke else colors.panelStroke),
+        modifier = modifier.size(34.dp).clip(shape).clickable(enabled = enabled, onClick = onClick),
+        shape = shape,
+        color = when {
+            active -> colors.selectionFill
+            enabled -> colors.controlSurface
+            else -> colors.controlDisabledSurface
+        },
+        border = BorderStroke(1.dp, borderColor),
     ) {
         Box(contentAlignment = Alignment.Center) {
             EditorSvgIcon(
@@ -431,11 +529,21 @@ internal fun SmallSquareButton(
     enabled: Boolean = true,
 ) {
     val colors = LocalEditorColors.current
+    val borderColor = when {
+        active -> colors.accent
+        enabled -> colors.controlStroke
+        else -> colors.controlDisabledStroke
+    }
+    val shape = RoundedCornerShape(7.dp)
     Surface(
-        modifier = modifier.size(34.dp).clickable(enabled = enabled, onClick = onClick),
-        shape = RoundedCornerShape(7.dp),
-        color = if (active) colors.selectionFill else Color.White,
-        border = BorderStroke(1.dp, if (active) colors.selectionStroke else colors.panelStroke),
+        modifier = modifier.size(34.dp).clip(shape).clickable(enabled = enabled, onClick = onClick),
+        shape = shape,
+        color = when {
+            active -> colors.selectionFill
+            enabled -> colors.controlSurface
+            else -> colors.controlDisabledSurface
+        },
+        border = BorderStroke(1.dp, borderColor),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
@@ -443,6 +551,8 @@ internal fun SmallSquareButton(
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (!enabled) colors.mutedInk else if (active) colors.accent else colors.ink,
                 maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -451,11 +561,12 @@ internal fun SmallSquareButton(
 @Composable
 internal fun HeaderIconButton(icon: EditorIcon, contentDescription: String, onClick: () -> Unit, active: Boolean = false) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(8.dp)
     Surface(
-        modifier = Modifier.size(42.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        color = if (active) colors.selectionFill else colors.raisedSurface,
-        border = BorderStroke(1.dp, if (active) colors.selectionStroke else colors.panelStroke),
+        modifier = Modifier.size(42.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = if (active) colors.selectionFill else colors.controlSurface,
+        border = BorderStroke(1.dp, if (active) colors.accent else colors.controlStroke),
         shadowElevation = 2.dp,
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -467,4 +578,26 @@ internal fun HeaderIconButton(icon: EditorIcon, contentDescription: String, onCl
             )
         }
     }
+}
+
+@Composable
+private fun editorOutlinedTextFieldColors() = with(LocalEditorColors.current) {
+    OutlinedTextFieldDefaults.colors(
+        focusedTextColor = ink,
+        unfocusedTextColor = ink,
+        disabledTextColor = mutedInk,
+        focusedContainerColor = controlSurface,
+        unfocusedContainerColor = controlSurface,
+        disabledContainerColor = controlDisabledSurface,
+        cursorColor = accent,
+        focusedBorderColor = accent,
+        unfocusedBorderColor = controlStroke,
+        disabledBorderColor = controlDisabledStroke,
+        focusedPlaceholderColor = mutedInk,
+        unfocusedPlaceholderColor = mutedInk,
+        disabledPlaceholderColor = mutedInk,
+        focusedTrailingIconColor = controlInk,
+        unfocusedTrailingIconColor = controlInk,
+        disabledTrailingIconColor = mutedInk,
+    )
 }

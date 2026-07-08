@@ -45,6 +45,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -75,6 +76,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.time.TimeSource
@@ -174,6 +176,8 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HeaderIconButton(
@@ -729,7 +733,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             spacingBars = emptyList()
                         }
                     }
-                    .pointerHoverIcon(hoverCursor ?: cursorFor(if (spaceHeld) EditorTool.Hand else ws.tool)),
+                    .pointerHoverIcon(hoverCursor ?: if (spaceHeld) PointerIcon.Hand else cursorFor(ws.tool)),
             ) {
                 DesignArtboard(
                     document = document,
@@ -1034,7 +1038,7 @@ private fun resolveCanvasOperation(
     rotateHit: Boolean,
     hitId: String,
 ): CanvasOperation = when {
-    forcePan || tool == EditorTool.Hand -> CanvasOperation.Pan
+    forcePan -> CanvasOperation.Pan
     tool.creates != null -> CanvasOperation.Create(tool.creates)
     handle != null -> CanvasOperation.Resize(handle)
     rotateHit -> CanvasOperation.Rotate
@@ -1853,7 +1857,6 @@ private fun requestZoom(state: MissionEditorStateHolder, step: (Float) -> Float)
 }
 
 private fun cursorFor(tool: EditorTool) = when (tool) {
-    EditorTool.Hand -> androidx.compose.ui.input.pointer.PointerIcon.Hand
     EditorTool.Text -> androidx.compose.ui.input.pointer.PointerIcon.Text
     EditorTool.Select -> androidx.compose.ui.input.pointer.PointerIcon.Default
     else -> androidx.compose.ui.input.pointer.PointerIcon.Crosshair
@@ -1864,9 +1867,10 @@ private fun cursorFor(tool: EditorTool) = when (tool) {
 @Composable
 private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(8.dp)
     Surface(
-        modifier = Modifier.height(48.dp),
-        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.height(48.dp).clip(shape),
+        shape = shape,
         color = Color.White,
         border = BorderStroke(1.dp, colors.panelStroke),
         shadowElevation = 2.dp,
@@ -1876,7 +1880,7 @@ private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) 
                 val active = mode == selected
                 Box(
                     modifier = Modifier.width(64.dp).fillMaxHeight()
-                        .background(if (active) colors.selectionFill else Color.White)
+                        .background(if (active) colors.selectionFill else colors.controlSurface)
                         .clickable { onSelect(mode) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1885,6 +1889,9 @@ private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) 
                         color = if (active) colors.accent else Color.Black,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                         style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -1909,9 +1916,12 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
         ) {
             EditorTool.entries.forEach { tool ->
                 val active = tool == selected
+                val shape = RoundedCornerShape(8.dp)
                 Box(
                     modifier = Modifier.size(36.dp)
-                        .background(if (active) colors.accent else Color.White, RoundedCornerShape(8.dp))
+                        .background(if (active) colors.accent else colors.controlSurface, shape)
+                        .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                        .clip(shape)
                         .clickable { onSelect(tool) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1929,9 +1939,7 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
 
 private fun toolIcon(tool: EditorTool): EditorIcon = when (tool) {
     EditorTool.Select -> EditorIcon.Select
-    EditorTool.Hand -> EditorIcon.HandPan
     EditorTool.Frame -> EditorIcon.Frame
-    EditorTool.Component -> EditorIcon.Component
     EditorTool.Rectangle -> EditorIcon.Rectangle
     EditorTool.Pen -> EditorIcon.Pen
     EditorTool.Text -> EditorIcon.Text
@@ -1953,7 +1961,7 @@ private fun ZoomControls(state: MissionEditorStateHolder) {
     ) {
         Row(Modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             ZoomButton("-") { requestZoom(state) { base -> base / WorkspaceLimits.ZoomButtonStep } }
-            Text("${(ws.zoom * 100).roundToInt()}%", modifier = Modifier.widthIn(min = 44.dp), style = MaterialTheme.typography.labelMedium, color = colors.ink)
+            Text("${(ws.zoom * 100).roundToInt()}%", modifier = Modifier.widthIn(min = 44.dp), style = MaterialTheme.typography.labelMedium, color = colors.ink, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             ZoomButton("+") { requestZoom(state) { base -> base * WorkspaceLimits.ZoomButtonStep } }
             Spacer(Modifier.width(2.dp))
             ZoomButton("1:1") { state.updateWorkspace { it.copy(pendingFit = PendingFit.None, pendingZoomTo = 1f) } }
@@ -1966,8 +1974,14 @@ private fun ZoomControls(state: MissionEditorStateHolder) {
 @Composable
 private fun ZoomIconButton(icon: EditorIcon, contentDescription: String, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
     Box(
-        Modifier.size(30.dp).background(colors.raisedSurface, RoundedCornerShape(6.dp)).clickable(onClick = onClick),
+        Modifier
+            .size(30.dp)
+            .background(colors.controlSurface, shape)
+            .border(1.dp, colors.controlStroke, shape)
+            .clip(shape)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         EditorSvgIcon(icon = icon, contentDescription = contentDescription, modifier = Modifier.size(16.dp), tint = colors.ink)
@@ -1977,11 +1991,17 @@ private fun ZoomIconButton(icon: EditorIcon, contentDescription: String, onClick
 @Composable
 private fun ZoomButton(label: String, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
     Box(
-        Modifier.size(30.dp).background(colors.raisedSurface, RoundedCornerShape(6.dp)).clickable(onClick = onClick),
+        Modifier
+            .size(30.dp)
+            .background(colors.controlSurface, shape)
+            .border(1.dp, colors.controlStroke, shape)
+            .clip(shape)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = colors.ink)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = colors.ink, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 

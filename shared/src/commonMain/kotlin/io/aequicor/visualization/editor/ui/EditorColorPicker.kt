@@ -145,8 +145,8 @@ internal fun ColorPickerField(
         Surface(
             modifier = Modifier.fillMaxWidth().height(36.dp),
             shape = RoundedCornerShape(6.dp),
-            color = Color.White,
-            border = BorderStroke(1.dp, colors.softStroke),
+            color = colors.controlSurface,
+            border = BorderStroke(1.dp, colors.controlStroke),
         ) {
             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 CheckerSwatch(
@@ -166,6 +166,7 @@ internal fun ColorPickerField(
                     modifier = Modifier
                         .padding(start = 6.dp)
                         .size(17.dp)
+                        .clip(RoundedCornerShape(9.dp))
                         .clickable(enabled = enabled) { if (open) closePanel(restore = false) else openPanel() },
                     tint = if (enabled) colors.controlInk else colors.mutedInk,
                 )
@@ -215,8 +216,8 @@ internal fun ColorPickerField(
                         Surface(
                             modifier = Modifier.fillMaxWidth().height(30.dp),
                             shape = RoundedCornerShape(6.dp),
-                            color = Color.White,
-                            border = BorderStroke(1.dp, colors.softStroke),
+                            color = colors.controlSurface,
+                            border = BorderStroke(1.dp, colors.controlStroke),
                         ) {
                             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("HEX", style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
@@ -371,8 +372,8 @@ private fun ChannelField(label: String, value: Int, onCommit: (Int) -> Unit, mod
     Surface(
         modifier = modifier.height(30.dp),
         shape = RoundedCornerShape(6.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, colors.softStroke),
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Row(Modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
@@ -439,7 +440,7 @@ private fun CheckerSwatch(color: Color, modifier: Modifier, onClick: (() -> Unit
     Box(
         modifier
             .clip(shape)
-            .border(1.dp, colors.softStroke, shape)
+            .border(1.dp, colors.controlStroke, shape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
     ) {
         Canvas(Modifier.fillMaxSize()) {
