@@ -5,18 +5,15 @@
 ## Kotlin
 - Официальные [Kotlin coding conventions](https://kotlinlang.org/docs/coding-conventions.html).
 - **Именование:** типы — `PascalCase`; функции/свойства — `camelCase`; константы — `UPPER_SNAKE`.
-  Пакеты — строчными без подчёркиваний (см. отклонение ниже).
+  Пакеты — строчными без подчёркиваний.
 - **Иммутабельность:** предпочитать `val`; данные — immutable `data class`; состояние и intent'ы —
-  `sealed`-иерархии (уже так: `UiCommand`, `UiValue`, `UiLoadResult`).
+  `sealed`-иерархии (уже так: `DesignEditorIntent`, `ResolvedPaint`, `ResolvedEffect`).
 - **Явность:** явная видимость для публичного API; expression body для коротких функций; trailing commas
   в многострочных списках параметров.
-- **Отклонение проекта:** пакеты `ui_engine`, `mv_yaml_source` и т.п. используют snake_case, что нарушает
-  конвенцию. Новые пакеты — без подчёркиваний; переименование существующих — отдельным крупным рефактором
-  (не по ходу задач).
 
 ## Моделирование состояния (MVI — уже принято в проекте)
 - Один immutable `State`, `sealed` набор intent'ов, чистый reducer `(State, Intent) -> State`
-  (`reduceUiVisualization`). Паттерн сохраняем; побочные эффекты — вне reducer.
+  (`reduceDesignEditor`). Паттерн сохраняем; побочные эффекты — вне reducer.
 
 ## Coroutines
 - [Coroutines guide](https://kotlinlang.org/docs/coroutines-guide.html) ·
@@ -37,10 +34,11 @@
   применяется к корню компонента.
 - **Небольшие компоненты + slot-API:** контент передавать лямбдами (`content: @Composable () -> Unit`),
   а не булевыми флагами.
-- **Токены, а не «магия»:** цвета — из `UiRenderTokens` (`LapisBlue`, `DeepLapis`, `toneSurface`/`toneStroke`),
-  отступы — через `spacingDp`. Сырые hex / `.dp` в компонентах не хардкодить.
-- **Изоляция рендереров:** провайдеры в `components.*` зависят от общих контрактов
-  (`compose_render_engine`), не друг от друга (см. layering rules в `ui_engine/README.md`).
+- **Токены, а не «магия»:** цвета — из темы `EditorTheme` (`LocalEditorColors.current`: `accent`,
+  `ink`, `panelStroke`, ...; канон — `editor/ui/theme/EditorTheme.kt`). Сырые hex в компонентах
+  не хардкодить; новые роли добавлять в `EditorColors`.
+- **Изоляция рендерера:** Compose-рендер живёт в `:engine:backend-compose` за контрактами
+  `:engine:ir`; ядро (`:engine:ir`, `:engine:frontend`) без Compose (см. layering в `engine/README.md`).
 - Референс: [Designing Effective Compose](https://getstream.io/blog/designing-effective-compose/).
 
 ## Форматирование и линт

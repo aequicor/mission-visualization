@@ -1,34 +1,38 @@
 # Mission Visualization — руководство для Claude
 
-Kotlin Multiplatform + Compose Multiplatform библиотека и демо: агент пишет строгий standalone
-JSON-документ дизайна (Figma-подобный формат: дерево узлов, auto-layout/grid, constraints,
-fixed/hug/fill, переменные с модами, компоненты/варианты/overrides), движок парсит его в
-типизированный IR, резолвит, раскладывает чистым layout-движком и рендерит Compose-превью
-с оверлеями (выделение, инспектор). Корневой пакет — `io.aequicor.visualization`.
+Kotlin Multiplatform + Compose Multiplatform библиотека и демо: агент пишет Semantic Layout
+Markdown (`*.layout.md`, авторинг на RU/EN + i18n), `engine/frontend` компилирует его в
+языконезависимый типизированный IR `slm-ir/1.0` (`engine/ir`: model/serialization/resolve/layout/
+validate), чистый layout-движок раскладывает документ, `engine/backend-compose` рендерит
+Compose-превью с оверлеями (выделение, инспектор). Write-back: правки редактора хирургически
+патчат SLM-исходник (`SlmPatcher`). Корневой пакет — `io.aequicor.visualization`.
 
 ## Модули
-- `:shared` — переиспользуемое ядро KMP. Основной конвейер — `designdoc` (JSON → IR → resolve →
-  layout → Compose canvas; см. `designdoc/README.md`). Легаси-конвейер `ui_engine` (`.mv.yaml`)
-  сохранён для `:example`.
+- `:engine:ir` — ядро документа (чистый Kotlin, KMP): типизированный IR `slm-ir/1.0` —
+  model / serialization / resolve / layout / validate.
+- `:engine:frontend` — SLM-компилятор (чистый Kotlin): `*.layout.md` → IR; `SlmPatcher` для write-back.
+- `:engine:backend-compose` — Compose-рендерер (`DesignArtboard`); единственный engine-модуль с Compose.
+- `:shared` — app shell: `App`, `MissionEditorScreen`, `editor.{presentation,domain,data,ui}`.
   Таргеты: Android, JVM, JS, wasmJs, iOS.
-- `:desktopApp`, `:webApp` — основные демо (`MissionEditorApp`), компилируют общий `appPresentation`.
-- `:androidApp`, `iosApp` — тонкие обёртки над shared UI.
-- `:example` — модуль-потребитель + готовые `.mv.yaml`.
-- `appPresentation/`, `design/` — общие srcDir/ассеты (не Gradle-модули).
+- `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — тонкие обёртки над shared UI.
+
+Документация конвейера — `engine/README.md`; спецификация SLM —
+`design-book/semantic-layout-markdown-i18n.md`.
 
 ## Команды
 - Desktop: `./gradlew :desktopApp:run`
 - Web (Wasm): `./gradlew :webApp:wasmJsBrowserDevelopmentRun`
-- Example desktop: `./gradlew :example:run`
 - Android debug: `./gradlew :androidApp:assembleDebug`
 - Тесты (JVM): `./gradlew :shared:jvmTest`
+- Тесты движка: `./gradlew :engine:ir:jvmTest` / `./gradlew :engine:frontend:jvmTest`
 - Compile-check desktop: `./gradlew :desktopApp:compileKotlin`
 
 ## Архитектура (целевая Clean Architecture)
 Зависимости направлены внутрь к `domain`: `ui → presentation → domain ← data`. `domain` и `data` —
-чистый Kotlin без Compose; Compose только в `presentation`/`ui`. Конвейер `designdoc` уже разложен
-по слоям (domain/model·parser·resolve·layout·repository·usecase, data, presentation с чистым
-`reduceDesignEditor`, ui с canvas-рендерером); дальше — DI/Koin, `StateFlow` и Decompose-навигация.
+чистый Kotlin без Compose; Compose только в `presentation`/`ui`. Слоение закреплено границами
+Gradle-модулей: `frontend → ir ← backend-compose`, приложение (`:shared`) сверху; в `:shared`
+редактор разложен по `editor.{domain,data,presentation}` (repository + use case, чистый
+`reduceDesignEditor`); дальше — DI/Koin, `StateFlow` и Decompose-навигация.
 
 Полные правила (слои, repositories, use cases, DI/Koin, модули api/impl, Decompose, Ktor, миграция):
 
@@ -41,27 +45,27 @@ dispatcher'ов, `StateFlow`, `runTest`), Compose (stateless + hoisting, `Modifi
 
 @.claude/rules/code-style.md
 
-## Визуальный язык (лазуритовый)
-Стиль проекта — «лазуритовый»: глубокий синий ляпис-лазури с тёплыми акцентами-«вкраплениями».
-**Канон — токены `UiRenderTokens.kt`** (`shared/src/commonMain/kotlin/io/aequicor/visualization/ui_engine/compose_render_engine/`),
-их и используем, а не сырые hex:
-
-| Токен | Hex | Роль |
-|---|---|---|
-| `LapisBlue` | `#1F5FA8` | primary, основной синий |
-| `DeepLapis` | `#143A66` | глубокие/нажатые поверхности, тёмный акцент |
-| `SignalTeal` | `#2BB8A8` | успех / сигнальный акцент |
-| `CoralNote` | `#E97155` | danger / маркеры комментариев (тёплый «пирит») |
-| warning | `#C77800` | предупреждения — янтарь, тёплое вкрапление |
-| `Ink` | `#172033` | текст, высокий контраст |
-| `Cloud` / `Mist` | `#F6FAFF` / `#EAF1F8` | светлые поверхности |
+## Визуальный язык
+Канон палитры живёт в коде — `EditorColors` в
+`shared/src/commonMain/kotlin/io/aequicor/visualization/editor/ui/theme/EditorTheme.kt`
+(источник истины по значениям; hex-таблицу здесь не дублируем). Роли, сгруппированные по назначению:
+- **accent** — `accent`, `accentContainer`, `onAccentContainer`;
+- **chrome** — `chrome`, `chromeGradientStart`/`chromeGradientEnd`, `shellStroke`;
+- **поверхности** — `surfaceVariant`, `paneSurface`, `raisedSurface`, `gutterSurface`,
+  `statusBarSurface`, `activeLineSurface`;
+- **обводки** — `panelStroke`, `softStroke`, `divider`;
+- **текст** — `ink`, `mutedInk`, `codeInk`, `statusBarInk`, `subtleInk`, `gutterInk`, `controlInk`;
+- **выделение** — `selectionFill`, `selectionStroke`, `thumbnailSelectedStroke`;
+- **канва превью** — `canvasDot`, `badgeSurface`, `badgeStroke`, `anchorDot`,
+  `thumbnailBlock`, `thumbnailBar`;
+- **статусы** — `statusPositive`, `statusWarning`, `statusDanger`.
 
 Правила:
-- Цвета берём из токенов; `toneSurface`/`toneStroke` держим согласованными с палитрой.
-- Тему превью (`UiVisualizationTheme` в `compose_ui/UiVisualization.kt`) — в той же гамме.
-- Высокий контраст: `Ink` на `Cloud`/`Mist`. Тёплые акценты (`CoralNote`, янтарь) — точечно, как
-  вкрапления пирита в лазурите, не как фон.
-- Расширение палитры/темы — отдельной задачей; значения новых токенов добавлять в эту таблицу.
+- Цвета — только через токены темы (`LocalEditorColors.current`), не сырые hex.
+- Высокий контраст: `ink` на светлых поверхностях (`paneSurface`, `raisedSurface`).
+- Тёплые акценты (`statusWarning`, `statusDanger`) — точечно, не как фон.
+- Расширение палитры — новыми ролями в `EditorColors` (отдельной задачей), не hex в компонентах.
+- Лазуритовая палитра (`UiRenderTokens`) удалённого `ui_engine` умерла вместе с ним.
 
 ## Плагин ECC
 Проект подключает [ECC](https://github.com/affaan-m/everything-claude-code) (`ecc@ecc`) в
@@ -71,9 +75,12 @@ dispatcher'ов, `StateFlow`, `runTest`), Compose (stateless + hoisting, `Modifi
 избыточном контексте `/plugin disable ecc@ecc`.
 
 ## Как здесь работать
-- Соблюдать правило зависимостей и layering (`ui_engine/README.md`): ядро без Compose.
-- Новый код — сразу по целевым правилам (repositories/use cases, токены, stateless-composable).
-- Менять поведение — прогонять `./gradlew :shared:jvmTest`; UI-изменения — проверять в desktop/web демо.
+- Соблюдать правило зависимостей и layering (`engine/README.md`): ядро (`:engine:ir`,
+  `:engine:frontend`) без Compose.
+- Авторинг SLM-документов — по спецификации `design-book/semantic-layout-markdown-i18n.md`.
+- Новый код — сразу по целевым правилам (repositories/use cases, токены темы, stateless-composable).
+- Менять поведение — прогонять `./gradlew :shared:jvmTest` (движок — `:engine:ir:jvmTest`,
+  `:engine:frontend:jvmTest`); UI-изменения — проверять в desktop/web демо.
 - Держать этот файл и `.claude/rules/*` в актуальном состоянии при смене конвенций.
 
 ## Код-конвенции (на основе best-practices)

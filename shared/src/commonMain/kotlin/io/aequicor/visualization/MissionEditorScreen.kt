@@ -32,7 +32,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -74,20 +73,11 @@ import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
+import io.aequicor.visualization.editor.ui.theme.EditorTheme
+import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import kotlin.math.abs
 import kotlin.math.roundToInt
-
-private val AccentBlue = Color(0xFF1E88FF)
-private val AppChrome = Color(0xFFEAF5FF)
-private val PanelStroke = Color(0xFFD6E3EF)
-private val SoftStroke = Color(0xFFE3EAF2)
-private val Ink = Color(0xFF111827)
-private val MutedInk = Color(0xFF5E6B7A)
-private val CodeInk = Color(0xFF263449)
-private val Green = Color(0xFF17C46B)
-private val Amber = Color(0xFFFFB800)
-private val Red = Color(0xFFFF1D1D)
 
 enum class SourceTab(val title: String) {
     Markdown("Markdown"),
@@ -181,7 +171,7 @@ class MissionEditorStateHolder(
 
 @Composable
 fun MissionEditorApp() {
-    MissionEditorTheme {
+    EditorTheme {
         val state = remember {
             MissionEditorStateHolder(
                 loadDesignDocument = LoadDesignDocumentUseCase(DefaultDesignDocumentRepository()),
@@ -192,38 +182,19 @@ fun MissionEditorApp() {
 }
 
 @Composable
-private fun MissionEditorTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = AccentBlue,
-            onPrimary = Color.White,
-            primaryContainer = Color(0xFFDCEEFF),
-            onPrimaryContainer = Color(0xFF0E4F9D),
-            surface = Color.White,
-            onSurface = Ink,
-            surfaceVariant = Color(0xFFF4F8FC),
-            onSurfaceVariant = MutedInk,
-            background = AppChrome,
-            onBackground = Ink,
-            outline = PanelStroke,
-        ),
-        content = content,
-    )
-}
-
-@Composable
 private fun MissionEditorScreen(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.linearGradient(listOf(Color(0xFFF3FAFF), Color(0xFFEAF5FF), Color(0xFFF9FDFF))))
+            .background(Brush.linearGradient(listOf(colors.chromeGradientStart, colors.chrome, colors.chromeGradientEnd)))
             .padding(12.dp),
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             shape = RoundedCornerShape(18.dp),
             color = Color.White.copy(alpha = 0.72f),
-            border = BorderStroke(1.dp, Color(0xFFCEE1F2)),
+            border = BorderStroke(1.dp, colors.shellStroke),
             shadowElevation = 8.dp,
         ) {
             if (maxWidth < 1100.dp) {
@@ -263,6 +234,7 @@ private fun SourcePane(
     state: MissionEditorStateHolder,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(22.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             MenuButton()
@@ -273,7 +245,7 @@ private fun SourcePane(
             modifier = Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(8.dp),
             color = Color.White,
-            border = BorderStroke(1.dp, PanelStroke),
+            border = BorderStroke(1.dp, colors.panelStroke),
         ) {
             Column(Modifier.fillMaxSize()) {
                 TabStrip(
@@ -296,6 +268,7 @@ private fun SourcePane(
 
 @Composable
 private fun SourceEditor() {
+    val colors = LocalEditorColors.current
     val lines = remember {
         listOf(
             "# Mission Overview",
@@ -318,14 +291,14 @@ private fun SourceEditor() {
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .background(Color(0xFFFBFDFF))
+                .background(colors.paneSurface)
                 .verticalScroll(rememberScrollState()),
         ) {
             Column(
                 modifier = Modifier
                     .width(46.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFFF3F7FB))
+                    .background(colors.gutterSurface)
                     .padding(top = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -333,7 +306,7 @@ private fun SourceEditor() {
                     Text(
                         (index + 1).toString(),
                         modifier = Modifier.height(26.dp),
-                        color = Color(0xFF64748B),
+                        color = colors.gutterInk,
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                     )
@@ -345,13 +318,13 @@ private fun SourceEditor() {
                     .padding(top = 14.dp, start = 12.dp, end = 12.dp),
             ) {
                 lines.forEachIndexed { index, line ->
-                    val lineColor = if (line.startsWith("![")) AccentBlue else CodeInk
+                    val lineColor = if (line.startsWith("![")) colors.accent else colors.codeInk
                     Text(
                         line,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(26.dp)
-                            .background(if (index == 0) Color(0xFFF8FAFC) else Color.Transparent),
+                            .background(if (index == 0) colors.activeLineSurface else Color.Transparent),
                         color = lineColor,
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
@@ -365,33 +338,35 @@ private fun SourceEditor() {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(42.dp)
-                .background(Color(0xFFF7FAFE))
-                .border(BorderStroke(1.dp, SoftStroke)),
+                .background(colors.statusBarSurface)
+                .border(BorderStroke(1.dp, colors.softStroke)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("file", modifier = Modifier.padding(start = 16.dp), color = MutedInk, style = MaterialTheme.typography.bodySmall)
-            Text("mission-overview.md", modifier = Modifier.padding(start = 8.dp).weight(1f), color = Color(0xFF334155), style = MaterialTheme.typography.bodySmall)
-            Text("Ln 1, Col 1", modifier = Modifier.padding(end = 22.dp), color = Color(0xFF334155), style = MaterialTheme.typography.bodySmall)
-            Text("124 words", modifier = Modifier.padding(end = 16.dp), color = Color(0xFF334155), style = MaterialTheme.typography.bodySmall)
+            Text("file", modifier = Modifier.padding(start = 16.dp), color = colors.mutedInk, style = MaterialTheme.typography.bodySmall)
+            Text("mission-overview.md", modifier = Modifier.padding(start = 8.dp).weight(1f), color = colors.statusBarInk, style = MaterialTheme.typography.bodySmall)
+            Text("Ln 1, Col 1", modifier = Modifier.padding(end = 22.dp), color = colors.statusBarInk, style = MaterialTheme.typography.bodySmall)
+            Text("124 words", modifier = Modifier.padding(end = 16.dp), color = colors.statusBarInk, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
 private fun EmptySourceTab(title: String) {
-    Box(Modifier.fillMaxSize().background(Color(0xFFFBFDFF)), contentAlignment = Alignment.Center) {
-        Text(title, color = MutedInk, style = MaterialTheme.typography.bodyMedium)
+    val colors = LocalEditorColors.current
+    Box(Modifier.fillMaxSize().background(colors.paneSurface), contentAlignment = Alignment.Center) {
+        Text(title, color = colors.mutedInk, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
 private fun LayersTree(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
     val page = state.designState.document?.pageById(state.designState.selectedPageId)
     val rows = remember(page) { page?.let { flattenLayerRows(it) } ?: emptyList() }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFFBFDFF))
+            .background(colors.paneSurface)
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
@@ -401,7 +376,7 @@ private fun LayersTree(state: MissionEditorStateHolder) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(32.dp)
-                    .background(if (selected) Color(0xFFEAF4FF) else Color.Transparent)
+                    .background(if (selected) colors.selectionFill else Color.Transparent)
                     .clickable { state.dispatch(DesignEditorIntent.SelectNode(row.node.id)) }
                     .padding(start = (14 + row.depth * 18).dp, end = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -409,13 +384,13 @@ private fun LayersTree(state: MissionEditorStateHolder) {
             ) {
                 Text(
                     layerGlyph(row.node.type),
-                    color = if (selected) AccentBlue else MutedInk,
+                    color = if (selected) colors.accent else colors.mutedInk,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
                 )
                 Text(
                     row.node.name.ifBlank { row.node.id },
-                    color = if (selected) AccentBlue else Ink,
+                    color = if (selected) colors.accent else colors.ink,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -453,13 +428,14 @@ private fun ScreensPanel(
     state: MissionEditorStateHolder,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     val document = state.designState.document
-    val statusColors = listOf(Green, Amber, Red)
+    val statusColors = listOf(colors.statusPositive, colors.statusWarning, colors.statusDanger)
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, PanelStroke),
+        border = BorderStroke(1.dp, colors.panelStroke),
     ) {
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -497,12 +473,13 @@ private fun ScreenListRow(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val colors = LocalEditorColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(82.dp)
-            .background(if (selected) Color(0xFFEAF4FF) else Color.White)
-            .border(BorderStroke(if (selected) 1.dp else 0.dp, if (selected) Color(0xFFE2F0FF) else Color.Transparent))
+            .background(if (selected) colors.selectionFill else Color.White)
+            .border(BorderStroke(if (selected) 1.dp else 0.dp, if (selected) colors.selectionStroke else Color.Transparent))
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -510,8 +487,8 @@ private fun ScreenListRow(
     ) {
         MiniThumbnail(selected)
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text(path, style = MaterialTheme.typography.bodySmall, color = Color(0xFF41617E), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.ink, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(path, style = MaterialTheme.typography.bodySmall, color = colors.subtleInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Box(Modifier.size(12.dp).background(status, CircleShape))
         Text(":", style = MaterialTheme.typography.titleMedium, color = Color.Black)
@@ -525,6 +502,7 @@ private fun PreviewPane(
     state: MissionEditorStateHolder,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     val pageName = state.designState.document
         ?.pageById(state.designState.selectedPageId)
         ?.name
@@ -552,8 +530,8 @@ private fun PreviewPane(
         Surface(
             modifier = Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(8.dp),
-            color = Color(0xFFFBFDFF),
-            border = BorderStroke(1.dp, PanelStroke),
+            color = colors.paneSurface,
+            border = BorderStroke(1.dp, colors.panelStroke),
         ) {
             ArtboardPreview(state)
         }
@@ -578,6 +556,7 @@ private fun PreviewPane(
 
 @Composable
 private fun ArtboardPreview(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
     BoxWithConstraints(Modifier.fillMaxSize().padding(20.dp), contentAlignment = Alignment.Center) {
         val document = state.designState.document
         val device = state.viewState.deviceMode
@@ -603,7 +582,7 @@ private fun ArtboardPreview(state: MissionEditorStateHolder) {
             while (x < size.width) {
                 var y = 0f
                 while (y < size.height) {
-                    drawCircle(Color(0xFFE4ECF5), radius = 0.65.dp.toPx(), center = Offset(x, y))
+                    drawCircle(colors.canvasDot, radius = 0.65.dp.toPx(), center = Offset(x, y))
                     y += step
                 }
                 x += step
@@ -625,14 +604,14 @@ private fun ArtboardPreview(state: MissionEditorStateHolder) {
             GuideLine(Modifier.align(Alignment.CenterEnd).padding(end = 18.dp), horizontal = false)
             DimensionBadge(docWidth.formatPx(), Modifier.align(Alignment.TopCenter))
             DimensionBadge(docHeight.formatPx(), Modifier.align(Alignment.CenterStart).graphicsLayer { rotationZ = -90f })
-            Text(marginLabel, modifier = Modifier.align(Alignment.TopStart).padding(start = 42.dp, top = 4.dp), color = AccentBlue, style = MaterialTheme.typography.labelSmall)
-            Text(marginLabel, modifier = Modifier.align(Alignment.TopEnd).padding(end = 42.dp, top = 4.dp), color = AccentBlue, style = MaterialTheme.typography.labelSmall)
+            Text(marginLabel, modifier = Modifier.align(Alignment.TopStart).padding(start = 42.dp, top = 4.dp), color = colors.accent, style = MaterialTheme.typography.labelSmall)
+            Text(marginLabel, modifier = Modifier.align(Alignment.TopEnd).padding(end = 42.dp, top = 4.dp), color = colors.accent, style = MaterialTheme.typography.labelSmall)
 
             Box(
                 modifier = Modifier
                     .size(artboardWidth, artboardHeight)
                     .background(Color.White.copy(alpha = 0.98f))
-                    .border(2.dp, AccentBlue),
+                    .border(2.dp, colors.accent),
             ) {
                 if (document != null && rootNode != null) {
                     DesignArtboard(
@@ -647,7 +626,7 @@ private fun ArtboardPreview(state: MissionEditorStateHolder) {
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No preview", color = MutedInk)
+                        Text("No preview", color = colors.mutedInk)
                     }
                 }
                 if (rootSelected || rootNode == null) {
@@ -672,6 +651,7 @@ private fun InspectorPane(
     state: MissionEditorStateHolder,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     Column(modifier) {
         Text(
             "Inspector",
@@ -684,7 +664,7 @@ private fun InspectorPane(
             modifier = Modifier.fillMaxSize(),
             shape = RoundedCornerShape(8.dp),
             color = Color.White,
-            border = BorderStroke(1.dp, PanelStroke),
+            border = BorderStroke(1.dp, colors.panelStroke),
         ) {
             Column(Modifier.fillMaxSize()) {
                 TabStrip(
@@ -733,11 +713,12 @@ private fun InspectorSectionBlock(
     section: InspectorSection,
     content: @Composable () -> Unit,
 ) {
+    val colors = LocalEditorColors.current
     val expanded = section in state.viewState.expandedSections
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .border(BorderStroke(0.5.dp, SoftStroke))
+            .border(BorderStroke(0.5.dp, colors.softStroke))
             .padding(horizontal = 22.dp, vertical = 12.dp),
     ) {
         Row(
@@ -745,7 +726,7 @@ private fun InspectorSectionBlock(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(section.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(if (expanded) "^" else "v", color = Color(0xFF31516E), fontWeight = FontWeight.Bold)
+            Text(if (expanded) "^" else "v", color = colors.controlInk, fontWeight = FontWeight.Bold)
         }
         if (expanded) {
             Spacer(Modifier.height(14.dp))
@@ -860,11 +841,12 @@ private fun AppearanceControls(
     designState: DesignEditorState,
     selectedBox: LayoutBox?,
 ) {
+    val colors = LocalEditorColors.current
     val nodeId = designState.selectedNodeId
     val resolved = selectedBox?.node
     val opacityPercent = ((resolved?.opacity ?: 1.0) * 100).toFloat()
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("eye", style = MaterialTheme.typography.bodySmall, color = Color(0xFF31516E))
+        Text("eye", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
         Text("${opacityPercent.roundToInt()}%", style = MaterialTheme.typography.bodySmall)
         Slider(
             value = opacityPercent,
@@ -896,7 +878,7 @@ private fun AppearanceControls(
     LabeledField("Stroke") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             SwatchField(
-                color = strokeSolid?.color?.toComposeColorOrWhite() ?: AccentBlue,
+                color = strokeSolid?.color?.toComposeColorOrWhite() ?: colors.accent,
                 value = strokeHex,
                 rightValue = (resolved?.strokes?.weight ?: 1.0).formatPx(),
                 nodeId = nodeId,
@@ -969,6 +951,7 @@ private fun ConstraintControls(
 
 @Composable
 private fun InspectorComments() {
+    val colors = LocalEditorColors.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -976,7 +959,7 @@ private fun InspectorComments() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("No comments yet.", color = MutedInk, style = MaterialTheme.typography.bodySmall)
+        Text("No comments yet.", color = colors.mutedInk, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -989,12 +972,13 @@ private fun <T> TabStrip(
     title: (T) -> String,
     onSelect: (T) -> Unit,
 ) {
+    val colors = LocalEditorColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(46.dp)
-            .background(Color(0xFFFDFEFF))
-            .border(BorderStroke(1.dp, SoftStroke)),
+            .background(colors.raisedSurface)
+            .border(BorderStroke(1.dp, colors.softStroke)),
     ) {
         tabs.forEach { tab ->
             val isSelected = tab == selected
@@ -1007,7 +991,7 @@ private fun <T> TabStrip(
             ) {
                 Text(
                     title(tab),
-                    color = if (isSelected) AccentBlue else Color.Black,
+                    color = if (isSelected) colors.accent else Color.Black,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 )
@@ -1017,7 +1001,7 @@ private fun <T> TabStrip(
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth(0.7f)
                             .height(3.dp)
-                            .background(AccentBlue),
+                            .background(colors.accent),
                     )
                 }
             }
@@ -1136,15 +1120,16 @@ private fun SwatchField(
     onCommitHex: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     var draft by remember(nodeId, value) { mutableStateOf(value) }
     Surface(
         modifier = modifier.fillMaxWidth().height(38.dp),
         shape = RoundedCornerShape(6.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, SoftStroke),
+        border = BorderStroke(1.dp, colors.softStroke),
     ) {
         Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(22.dp).background(color, RoundedCornerShape(4.dp)).border(1.dp, SoftStroke, RoundedCornerShape(4.dp)))
+            Box(Modifier.size(22.dp).background(color, RoundedCornerShape(4.dp)).border(1.dp, colors.softStroke, RoundedCornerShape(4.dp)))
             androidx.compose.foundation.text.BasicTextField(
                 value = draft,
                 onValueChange = { input ->
@@ -1155,7 +1140,7 @@ private fun SwatchField(
                 },
                 modifier = Modifier.padding(start = 6.dp).weight(1f),
                 singleLine = true,
-                textStyle = MaterialTheme.typography.bodySmall.copy(color = Ink),
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.ink),
             )
             Text(rightValue, style = MaterialTheme.typography.bodySmall)
         }
@@ -1164,15 +1149,16 @@ private fun SwatchField(
 
 @Composable
 private fun SelectLike(value: String, modifier: Modifier = Modifier) {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = modifier.height(38.dp),
         shape = RoundedCornerShape(6.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, SoftStroke),
+        border = BorderStroke(1.dp, colors.softStroke),
     ) {
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-            Text("v", style = MaterialTheme.typography.bodySmall, color = Color(0xFF31516E))
+            Text("v", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
         }
     }
 }
@@ -1184,17 +1170,18 @@ private fun SelectField(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
         Surface(
             modifier = Modifier.fillMaxWidth().height(38.dp).clickable { expanded = true },
             shape = RoundedCornerShape(6.dp),
             color = Color.White,
-            border = BorderStroke(1.dp, SoftStroke),
+            border = BorderStroke(1.dp, colors.softStroke),
         ) {
             Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                Text("v", style = MaterialTheme.typography.bodySmall, color = Color(0xFF31516E))
+                Text("v", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
             }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -1217,11 +1204,12 @@ private fun DeviceControl(
     onSelect: (DeviceMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = modifier.height(52.dp),
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, PanelStroke),
+        border = BorderStroke(1.dp, colors.panelStroke),
         shadowElevation = 2.dp,
     ) {
         Row {
@@ -1231,17 +1219,17 @@ private fun DeviceControl(
                     modifier = Modifier
                         .width(92.dp)
                         .fillMaxHeight()
-                        .background(if (active) Color(0xFFEAF4FF) else Color.White)
+                        .background(if (active) colors.selectionFill else Color.White)
                         .clickable { onSelect(mode) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         mode.title,
-                        color = if (active) AccentBlue else Color.Black,
+                        color = if (active) colors.accent else Color.Black,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    if (active) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(AccentBlue))
+                    if (active) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(colors.accent))
                 }
             }
         }
@@ -1254,11 +1242,12 @@ private fun FloatingToolbar(
     onSelect: (ToolMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = modifier.height(54.dp).widthIn(max = 560.dp),
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, PanelStroke),
+        border = BorderStroke(1.dp, colors.panelStroke),
         shadowElevation = 6.dp,
     ) {
         Row(
@@ -1271,13 +1260,13 @@ private fun FloatingToolbar(
                 Box(
                     modifier = Modifier
                         .size(if (tool == ToolMode.Code) 50.dp else 36.dp)
-                        .background(if (active) AccentBlue else Color.White, RoundedCornerShape(8.dp))
+                        .background(if (active) colors.accent else Color.White, RoundedCornerShape(8.dp))
                         .clickable { onSelect(tool) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         tool.label,
-                        color = if (active) Color.White else Ink,
+                        color = if (active) Color.White else colors.ink,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                         textAlign = TextAlign.Center,
@@ -1290,10 +1279,11 @@ private fun FloatingToolbar(
 
 @Composable
 private fun MenuButton() {
+    val colors = LocalEditorColors.current
     Box(
         modifier = Modifier
             .size(48.dp)
-            .background(AccentBlue, RoundedCornerShape(8.dp)),
+            .background(colors.accent, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1306,59 +1296,63 @@ private fun MenuButton() {
 
 @Composable
 private fun SmallSquareButton(label: String, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = Modifier.size(38.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(7.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, PanelStroke),
+        border = BorderStroke(1.dp, colors.panelStroke),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, style = MaterialTheme.typography.titleMedium, color = Ink)
+            Text(label, style = MaterialTheme.typography.titleMedium, color = colors.ink)
         }
     }
 }
 
 @Composable
 private fun HeaderIconButton(label: String, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = Modifier.size(48.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
-        color = Color(0xFFFDFEFF),
-        border = BorderStroke(1.dp, PanelStroke),
+        color = colors.raisedSurface,
+        border = BorderStroke(1.dp, colors.panelStroke),
         shadowElevation = 2.dp,
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = Ink, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = colors.ink, maxLines = 1)
         }
     }
 }
 
 @Composable
 private fun MiniThumbnail(selected: Boolean) {
+    val colors = LocalEditorColors.current
     Canvas(
         modifier = Modifier
             .width(66.dp)
             .height(52.dp)
             .background(Color.White, RoundedCornerShape(4.dp))
-            .border(1.dp, if (selected) Color(0xFFB9D9FF) else PanelStroke, RoundedCornerShape(4.dp))
+            .border(1.dp, if (selected) colors.thumbnailSelectedStroke else colors.panelStroke, RoundedCornerShape(4.dp))
             .padding(5.dp),
     ) {
-        val blue = AccentBlue.copy(alpha = 0.85f)
-        drawRect(Color(0xFFEAF2FA), topLeft = Offset(5f, 5f), size = androidx.compose.ui.geometry.Size(18f, 13f))
+        val blue = colors.accent.copy(alpha = 0.85f)
+        drawRect(colors.thumbnailBlock, topLeft = Offset(5f, 5f), size = androidx.compose.ui.geometry.Size(18f, 13f))
         drawRect(blue, topLeft = Offset(5f, 21f), size = androidx.compose.ui.geometry.Size(18f, 16f))
-        drawRect(Color(0xFFD9E5F1), topLeft = Offset(28f, 6f), size = androidx.compose.ui.geometry.Size(24f, 4f))
-        drawRect(Color(0xFFD9E5F1), topLeft = Offset(28f, 16f), size = androidx.compose.ui.geometry.Size(24f, 4f))
-        drawRect(Color(0xFFD9E5F1), topLeft = Offset(28f, 28f), size = androidx.compose.ui.geometry.Size(20f, 4f))
+        drawRect(colors.thumbnailBar, topLeft = Offset(28f, 6f), size = androidx.compose.ui.geometry.Size(24f, 4f))
+        drawRect(colors.thumbnailBar, topLeft = Offset(28f, 16f), size = androidx.compose.ui.geometry.Size(24f, 4f))
+        drawRect(colors.thumbnailBar, topLeft = Offset(28f, 28f), size = androidx.compose.ui.geometry.Size(20f, 4f))
     }
 }
 
 @Composable
 private fun AnchorGrid() {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = Modifier.size(82.dp),
         shape = RoundedCornerShape(7.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, PanelStroke),
+        border = BorderStroke(1.dp, colors.panelStroke),
     ) {
         Canvas(Modifier.fillMaxSize().padding(12.dp)) {
             val xs = listOf(size.width * 0.1f, size.width * 0.5f, size.width * 0.9f)
@@ -1366,7 +1360,7 @@ private fun AnchorGrid() {
             xs.forEach { x ->
                 ys.forEach { y ->
                     drawCircle(
-                        color = if (x == xs[1] && y == ys[1]) AccentBlue else Color(0xFFC8D3DF),
+                        color = if (x == xs[1] && y == ys[1]) colors.accent else colors.anchorDot,
                         radius = if (x == xs[1] && y == ys[1]) 4.5.dp.toPx() else 3.5.dp.toPx(),
                         center = Offset(x, y),
                         style = Stroke(width = if (x == xs[1] && y == ys[1]) 2.dp.toPx() else 1.2.dp.toPx()),
@@ -1379,20 +1373,22 @@ private fun AnchorGrid() {
 
 @Composable
 private fun ConstraintGlyph() {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = Modifier.size(82.dp),
         shape = RoundedCornerShape(7.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, PanelStroke),
+        border = BorderStroke(1.dp, colors.panelStroke),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text("^\n< o >\nv", color = AccentBlue, textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMedium)
+            Text("^\n< o >\nv", color = colors.accent, textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
 
 @Composable
 private fun SelectionHandle(alignment: Alignment) {
+    val colors = LocalEditorColors.current
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = alignment,
@@ -1401,7 +1397,7 @@ private fun SelectionHandle(alignment: Alignment) {
             Modifier
                 .size(10.dp)
                 .background(Color.White)
-                .border(2.dp, AccentBlue),
+                .border(2.dp, colors.accent),
         )
     }
 }
@@ -1411,31 +1407,33 @@ private fun DimensionBadge(
     text: String,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalEditorColors.current
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
-        color = Color(0xFFF8FBFF),
-        border = BorderStroke(1.dp, Color(0xFFBFD8F5)),
+        color = colors.badgeSurface,
+        border = BorderStroke(1.dp, colors.badgeStroke),
     ) {
-        Text(text, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), color = AccentBlue, style = MaterialTheme.typography.bodySmall)
+        Text(text, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), color = colors.accent, style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
 private fun GuideLine(modifier: Modifier = Modifier, horizontal: Boolean) {
+    val colors = LocalEditorColors.current
     Canvas(modifier.then(if (horizontal) Modifier.fillMaxWidth().height(1.dp) else Modifier.width(1.dp).fillMaxHeight())) {
         val dash = 6.dp.toPx()
         val gap = 5.dp.toPx()
         if (horizontal) {
             var x = 0f
             while (x < size.width) {
-                drawLine(AccentBlue.copy(alpha = 0.45f), Offset(x, 0f), Offset((x + dash).coerceAtMost(size.width), 0f), strokeWidth = 1.dp.toPx())
+                drawLine(colors.accent.copy(alpha = 0.45f), Offset(x, 0f), Offset((x + dash).coerceAtMost(size.width), 0f), strokeWidth = 1.dp.toPx())
                 x += dash + gap
             }
         } else {
             var y = 0f
             while (y < size.height) {
-                drawLine(AccentBlue.copy(alpha = 0.45f), Offset(0f, y), Offset(0f, (y + dash).coerceAtMost(size.height)), strokeWidth = 1.dp.toPx())
+                drawLine(colors.accent.copy(alpha = 0.45f), Offset(0f, y), Offset(0f, (y + dash).coerceAtMost(size.height)), strokeWidth = 1.dp.toPx())
                 y += dash + gap
             }
         }
@@ -1444,7 +1442,8 @@ private fun GuideLine(modifier: Modifier = Modifier, horizontal: Boolean) {
 
 @Composable
 private fun VerticalDivider() {
-    Box(Modifier.fillMaxHeight().width(1.dp).background(Color(0xFFCFE0EF)))
+    val colors = LocalEditorColors.current
+    Box(Modifier.fillMaxHeight().width(1.dp).background(colors.divider))
 }
 
 // --- Value helpers -------------------------------------------------------------
