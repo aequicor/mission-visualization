@@ -1,0 +1,15 @@
+# Static-host response headers for the production web build.
+# Honored by Netlify and Cloudflare Pages out of the box; ignored elsewhere —
+# on nginx/Apache/S3+CloudFront configure the equivalents (see webApp/README.md).
+
+# Default: stable-named files (index.html, webApp.js, styles.css) must
+# revalidate so a redeploy is picked up immediately.
+/*
+  Cache-Control: public, max-age=0, must-revalidate
+
+# The wasm binaries are content-hashed (<hash>.wasm) — a given URL never
+# changes — so cache them hard and forever. Correct Content-Type also keeps
+# WebAssembly streaming compilation on the fast path.
+/*.wasm
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable
