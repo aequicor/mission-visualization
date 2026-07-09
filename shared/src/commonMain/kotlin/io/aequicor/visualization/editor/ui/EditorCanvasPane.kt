@@ -66,9 +66,12 @@ import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -452,7 +455,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     .pointerInput(pageId, ws.tool, design.selectedNodeId, design.selectedNodeIds, spaceHeld) {
                         val slop = viewConfiguration.touchSlop
                         awaitEachGesture {
-                            val down = awaitFirstDown()
+                            val gestureStart = awaitCanvasGestureStart()
+                            val down = gestureStart.change
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
                             // The pointerInput coroutine can outlive document/layout recompositions
@@ -467,7 +471,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 ?.firstOrNull()
                                 ?.id
                                 .orEmpty()
-                            val forcePan = currentEvent.buttons.isTertiaryPressed || spaceHeld
+                            val panFromTertiaryButton = gestureStart.tertiaryButton || currentEvent.buttons.isTertiaryPressed
+                            val forcePan = panFromTertiaryButton || spaceHeld
+                            if (forcePan) down.consume()
                             val primaryBox = pressDesign.selectedNodeId.takeIf { it.isNotBlank() }?.let { pressLayout?.findBySourceId(it) }
                             // A locked selection exposes no resize handles (design-book §7).
                             val selectionLocked = pressDesign.selectedNodeIds.any { id -> pressDocument.nodeById(id)?.locked == true }
@@ -605,6 +611,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             while (true) {
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull() ?: break
+                                if (mode == CanvasOperation.Pan && panFromTertiaryButton && !event.buttons.isTertiaryPressed) break
                                 // Escape (routed through the key handler) aborts a live drag; check
                                 // before the up-test so an Escape-then-release still cancels.
                                 if (state.consumeCancelDrag()) { canceled = true; break }
@@ -1518,6 +1525,31 @@ private const val WheelZoomFollowRate = 18f
  * zoom-in at the minimum.
  */
 private const val WheelZoomConvergeFraction = 1e-3f
+
+private data class CanvasGestureStart(
+    val change: PointerInputChange,
+    val tertiaryButton: Boolean,
+)
+
+/**
+ * Compose Desktop keeps [awaitFirstDown] primary-button-only for mouse input. The canvas also
+ * uses the middle button for panning, so wait for that explicitly while preserving the normal
+ * primary mouse/touch path used by selection, marquee, resize and object creation.
+ */
+private suspend fun AwaitPointerEventScope.awaitCanvasGestureStart(): CanvasGestureStart {
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull() ?: continue
+        if (!change.isConsumed && event.buttons.isTertiaryPressed) {
+            return CanvasGestureStart(change, tertiaryButton = true)
+        }
+        val allMouse = event.changes.all { it.type == PointerType.Mouse }
+        val regularDown = event.changes.all { it.changedToDown() }
+        if (regularDown && (!allMouse || event.buttons.isPrimaryPressed)) {
+            return CanvasGestureStart(change, tertiaryButton = false)
+        }
+    }
+}
 
 /** Nearest resize handle to [pos], accounting for the component's own [rotationDegrees]. */
 private fun rotatedHandleAt(box: BoundsBox, rotationDegrees: Double, viewport: CanvasViewport, pos: Offset): ResizeHandle? {

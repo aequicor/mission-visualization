@@ -134,6 +134,46 @@ class DesignEditorReducerWriteBackTest {
     }
 
     @Test
+    fun directSourceEditRecompilesTheEditedSource() {
+        val state = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode("frame_overview"))
+        val index = state.sources.indexOfFirst { it.fileName == owningFile }
+        assertTrue(index >= 0, "missing source $owningFile")
+        val edited = state.sources[index].content.replaceFirst(
+            "name: Mission Overview",
+            "name: Mission Overview Edited",
+        )
+
+        val next = reduceDesignEditor(state, DesignEditorIntent.EditSource(index, edited))
+
+        assertEquals(edited, next.sources[index].content)
+        assertEquals(
+            "Mission Overview Edited",
+            next.document?.nodeById("frame_overview")?.name,
+            "live document recompiled from the edited SLM source",
+        )
+        assertEquals("frame_overview", next.selectedNodeId, "selection survives the source recompile")
+        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error })
+    }
+
+    @Test
+    fun fatalSourceEditKeepsTheLastValidPreviewEditable() {
+        val state = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode("frame_overview"))
+        val index = state.sources.indexOfFirst { it.fileName == owningFile }
+        assertTrue(index >= 0, "missing source $owningFile")
+
+        val next = reduceDesignEditor(state, DesignEditorIntent.EditSource(index, ""))
+
+        assertEquals("", next.sources[index].content, "typed source is retained")
+        assertEquals(state.document, next.document, "canvas keeps the last valid preview")
+        assertEquals(state.compiledResults, next.compiledResults, "stale compile index remains available while the source is repaired")
+        assertEquals("frame_overview", next.selectedNodeId, "selection remains on the last valid preview")
+        assertTrue(
+            next.diagnostics.any { it.severity == DesignSeverity.Error && "Empty SLM document" in it.message },
+            "fatal source diagnostic is surfaced",
+        )
+    }
+
+    @Test
     fun resizeUnknownNodeLeavesSourcesUntouchedAndSurfacesDiagnostic() {
         val state = freshState()
 
