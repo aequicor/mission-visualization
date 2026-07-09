@@ -31,12 +31,12 @@ internal object CnlWriter {
             is SetFills -> fillPlan(element, edit.fills, lineIndex, line)
             is SetStyleProperty -> when (edit.property) {
                 StyleProp.FirstFillToken -> scalarText(edit.value)?.let { fillLiteralPlan(element, it, lineIndex, line) } ?: failed(line)
-                StyleProp.Radius -> scalarPropPlan(element, CnlPropertyKind.Radius, "радиус", edit.value, lineIndex, line)
-                StyleProp.Opacity -> scalarPropPlan(element, CnlPropertyKind.Opacity, "прозрачность", edit.value, lineIndex, line)
+                StyleProp.Radius -> scalarPropPlan(element, CnlPropertyKind.Radius, "radius", edit.value, lineIndex, line)
+                StyleProp.Opacity -> scalarPropPlan(element, CnlPropertyKind.Opacity, "opacity", edit.value, lineIndex, line)
             }
             is SetCornerRadii -> radiusPlan(element, edit.radius, lineIndex, line)
             is SetLayoutProperty -> when (edit.property) {
-                LayoutProp.Gap -> scalarPropPlan(element, CnlPropertyKind.Gap, "отступ", edit.value, lineIndex, line)
+                LayoutProp.Gap -> scalarPropPlan(element, CnlPropertyKind.Gap, "gap", edit.value, lineIndex, line)
                 else -> failed(line)
             }
             is SetSizing -> sizingPlan(element, edit, lineIndex, line)
@@ -58,7 +58,7 @@ internal object CnlWriter {
         return if (fill != null) {
             replace(fill.values.first().span, color, lineIndex)
         } else {
-            append(line, "цвет $color", lineIndex)
+            append(line, "color $color", lineIndex)
         }
     }
 
@@ -66,7 +66,7 @@ internal object CnlWriter {
         val uniform = radius.topLeft.literalOrNull()
             ?.takeIf { radius.topRight.literalOrNull() == it && radius.bottomRight.literalOrNull() == it && radius.bottomLeft.literalOrNull() == it }
             ?: return failed(line)
-        return scalarReplace(element, CnlPropertyKind.Radius, "радиус", formatNumber(uniform), lineIndex, line)
+        return scalarReplace(element, CnlPropertyKind.Radius, "radius", formatNumber(uniform), lineIndex, line)
     }
 
     private fun scalarPropPlan(
@@ -120,7 +120,7 @@ internal object CnlWriter {
                 ),
             )
         } else {
-            append(line, "позиция ${formatNumber(edit.x)} ${formatNumber(edit.y)}", lineIndex)
+            append(line, "position ${formatNumber(edit.x)} ${formatNumber(edit.y)}", lineIndex)
         }
     }
 

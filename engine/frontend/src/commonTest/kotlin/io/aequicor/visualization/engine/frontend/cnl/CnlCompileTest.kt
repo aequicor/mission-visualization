@@ -23,9 +23,9 @@ class CnlCompileTest {
         """
         ---
         screen: demo
-        sourceLocale: ru-RU
+        sourceLocale: en-US
         targetLocales:
-          - ru-RU
+          - en-US
         frame:
           preset: desktop-1440
           width: 1440
@@ -34,7 +34,7 @@ class CnlCompileTest {
 
         # Demo
 
-        Прямоугольник 120 на 15 цвет #00B843 радиус 15 паддинги 10 отступ 16
+        Rectangle 120 by 15 color #00B843 radius 15 padding 10 gap 16
         """,
     ) + "\n"
 
@@ -66,16 +66,16 @@ class CnlCompileTest {
             """
             ---
             screen: demo
-            sourceLocale: ru-RU
+            sourceLocale: en-US
             targetLocales:
-              - ru-RU
+              - en-US
             ---
 
             # Demo
 
-            ## Панель миссий колонка отступ 16 паддинги 24
+            ## Mission Panel column gap 16 padding 24
 
-            Прямоугольник 120 на 15 цвет #00B843
+            Rectangle 120 by 15 color #00B843
             """,
         ) + "\n"
         val result = compileSlm(screen)
@@ -85,7 +85,7 @@ class CnlCompileTest {
         )
         val root = assertNotNull(result.document).pages.single().children.single()
         val panel = root.children.first()
-        assertEquals("Панель миссий", panel.name)
+        assertEquals("Mission Panel", panel.name)
         assertEquals(LayoutMode.Vertical, panel.layout.mode)
         assertEquals(DesignGap.Fixed(16.0.bindable()), panel.layout.gap)
         assertEquals(24.0.bindable(), panel.layout.paddingLogical?.blockStart)

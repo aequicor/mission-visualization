@@ -19,28 +19,28 @@ class CnlSkillExamplesTest {
     }
 
     @Test
-    fun missionCardRu() = assertClean(
+    fun missionCard() = assertClean(
         """
         ---
         screen: missionCard
-        sourceLocale: ru-RU
-        targetLocales: [ru-RU, en-US]
+        sourceLocale: en-US
+        targetLocales: [en-US]
         frame: { preset: desktop-1440, width: 1440, height: 1024 }
         ---
 
         # Mission Card
 
-        ## Карточка миссии колонка отступ 12 паддинги 16 цвет #FFFFFF радиус 12
+        ## Mission card column gap 12 padding 16 color #FFFFFF radius 12
 
-        Текст «Активные миссии» размер 20 жирный цвет #0F172A
-        Текст «12 в работе» размер 14 цвет #64748B
-        Прямоугольник 320 на 4 цвет #2563EB радиус 2
-        Кнопка «Открыть» цвет #2563EB
+        Text «Active missions» size 20 bold color #0F172A
+        Text «12 in progress» size 14 color #64748B
+        Rectangle 320 by 4 color #2563EB radius 2
+        Button «Open» color #2563EB
         """,
     )
 
     @Test
-    fun statusChipsEn() = assertClean(
+    fun statusChips() = assertClean(
         """
         ---
         screen: statusChips

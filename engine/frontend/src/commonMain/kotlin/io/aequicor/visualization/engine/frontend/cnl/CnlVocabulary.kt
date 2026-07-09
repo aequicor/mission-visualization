@@ -1,10 +1,10 @@
 package io.aequicor.visualization.engine.frontend.cnl
 
 /**
- * Bilingual (RU + EN) CNL keyword tables — the single source of truth for the grammar's
- * words. Everything here is language-neutral once compiled: nouns map to node types,
- * keywords to [CnlPropertyKind], enum words to IR spellings. Extend the maps to grow the
- * vocabulary; the parser and the DeepSeek skill both read from these.
+ * CNL keyword tables — the single source of truth for the grammar's words. English is the
+ * sole authored language: nouns map to node types, keywords to [CnlPropertyKind], enum words
+ * to IR spellings. Extend the maps to grow the vocabulary; the parser reads them to understand
+ * text and [CnlGrammar]/[CnlEmitter] read the canonical spellings to regenerate it.
  */
 internal object CnlVocabulary {
     private fun shape(kind: String) = CnlNoun(nodeType = "shape", shapeKind = kind)
@@ -12,91 +12,166 @@ internal object CnlVocabulary {
 
     /** Element nouns (lowercased) → node identity. */
     val nouns: Map<String, CnlNoun> = mapOf(
-        "прямоугольник" to shape("rectangle"), "rect" to shape("rectangle"), "rectangle" to shape("rectangle"),
-        "эллипс" to shape("ellipse"), "круг" to shape("ellipse"), "ellipse" to shape("ellipse"), "circle" to shape("ellipse"),
-        "линия" to shape("line"), "line" to shape("line"),
-        "звезда" to shape("star"), "star" to shape("star"),
-        "многоугольник" to shape("polygon"), "polygon" to shape("polygon"),
-        "стрелка" to shape("arrow"), "arrow" to shape("arrow"),
-        "текст" to node("text"), "надпись" to node("text"), "text" to node("text"), "label" to node("text"),
-        "кнопка" to CnlNoun("text", role = "button"), "button" to CnlNoun("text", role = "button"),
-        "контейнер" to node("frame"), "фрейм" to node("frame"), "frame" to node("frame"), "container" to node("frame"),
-        "группа" to node("group"), "group" to node("group"),
-        "изображение" to node("media"), "картинка" to node("media"), "image" to node("media"),
-        "иконка" to node("vector"), "icon" to node("vector"),
+        "rect" to shape("rectangle"), "rectangle" to shape("rectangle"),
+        "ellipse" to shape("ellipse"), "circle" to shape("ellipse"),
+        "line" to shape("line"),
+        "star" to shape("star"),
+        "polygon" to shape("polygon"),
+        "arrow" to shape("arrow"),
+        "text" to node("text"), "label" to node("text"),
+        "button" to CnlNoun("text", role = "button"),
+        "frame" to node("frame"), "container" to node("frame"),
+        "group" to node("group"),
+        "image" to node("media"),
+        "icon" to node("vector"), "vector" to node("vector"),
+        "instance" to node("instance"),
     )
 
     /**
-     * Property keyword phrases (lowercased) → kind. Multi-word phrases (e.g. `угол радиус`,
-     * `родительский контейнер`) are matched greedily longest-first by the parser.
+     * Property keyword phrases (lowercased) → kind. Multi-word phrases (e.g. `corner radius`)
+     * are matched greedily longest-first by the parser.
      */
     val propertyKeywords: Map<String, CnlPropertyKind> = mapOf(
-        "цвет" to CnlPropertyKind.Fill, "заливка" to CnlPropertyKind.Fill,
         "color" to CnlPropertyKind.Fill, "fill" to CnlPropertyKind.Fill,
-        "обводка" to CnlPropertyKind.Stroke, "граница" to CnlPropertyKind.Stroke,
+        // Mid-sentence paint keywords (never at token[0], where they'd be nouns): each takes a `( … )` group.
+        "gradient" to CnlPropertyKind.Fill, "image" to CnlPropertyKind.Fill, "video" to CnlPropertyKind.Fill,
         "stroke" to CnlPropertyKind.Stroke, "border" to CnlPropertyKind.Stroke,
-        "радиус" to CnlPropertyKind.Radius, "скругление" to CnlPropertyKind.Radius,
-        "угол радиус" to CnlPropertyKind.Radius, "радиус угла" to CnlPropertyKind.Radius,
-        "corner radius" to CnlPropertyKind.Radius, "radius" to CnlPropertyKind.Radius,
-        "поворот" to CnlPropertyKind.Rotation, "rotate" to CnlPropertyKind.Rotation,
-        "rotation" to CnlPropertyKind.Rotation,
-        "паддинг" to CnlPropertyKind.Padding, "паддинги" to CnlPropertyKind.Padding,
-        "внутренние отступы" to CnlPropertyKind.Padding, "padding" to CnlPropertyKind.Padding,
-        "отступ" to CnlPropertyKind.Gap, "промежуток" to CnlPropertyKind.Gap,
-        "интервал" to CnlPropertyKind.Gap, "gap" to CnlPropertyKind.Gap,
-        "ширина" to CnlPropertyKind.Width, "width" to CnlPropertyKind.Width,
-        "высота" to CnlPropertyKind.Height, "height" to CnlPropertyKind.Height,
-        "размер" to CnlPropertyKind.Size, "size" to CnlPropertyKind.Size,
-        "позиция" to CnlPropertyKind.Position, "координаты" to CnlPropertyKind.Position,
-        "at" to CnlPropertyKind.Position, "position" to CnlPropertyKind.Position,
-        "прозрачность" to CnlPropertyKind.Opacity, "непрозрачность" to CnlPropertyKind.Opacity,
+        "effect" to CnlPropertyKind.Effect,
+        "radius" to CnlPropertyKind.Radius, "corner radius" to CnlPropertyKind.Radius,
+        "smoothing" to CnlPropertyKind.Smoothing,
+        "blend" to CnlPropertyKind.Blend,
+        "styles" to CnlPropertyKind.StyleRefs,
+        "rotate" to CnlPropertyKind.Rotation, "rotation" to CnlPropertyKind.Rotation,
+        "padding" to CnlPropertyKind.Padding,
+        "gap" to CnlPropertyKind.Gap,
+        "width" to CnlPropertyKind.Width,
+        "height" to CnlPropertyKind.Height,
+        "size" to CnlPropertyKind.Size,
+        "position" to CnlPropertyKind.Position,
         "opacity" to CnlPropertyKind.Opacity,
-        "родительский контейнер" to CnlPropertyKind.AlignParent,
-        "выравнивание" to CnlPropertyKind.AlignParent, "align" to CnlPropertyKind.AlignParent,
+        "align" to CnlPropertyKind.AlignParent,
+        "id" to CnlPropertyKind.Id,
+        // Typography-deep (Text nodes).
+        "font" to CnlPropertyKind.FontFamily,
+        "line-height" to CnlPropertyKind.LineHeight,
+        "tracking" to CnlPropertyKind.Tracking,
+        "paragraph-spacing" to CnlPropertyKind.ParagraphSpacing,
+        "text-align" to CnlPropertyKind.TextAlign,
+        "text-valign" to CnlPropertyKind.TextValign,
+        "case" to CnlPropertyKind.TextCase,
+        "decoration" to CnlPropertyKind.TextDecoration,
+        "features" to CnlPropertyKind.Features,
+        "axes" to CnlPropertyKind.Axes,
+        "autosize" to CnlPropertyKind.AutoSize,
+        "truncate" to CnlPropertyKind.Truncate,
+        "maxlines" to CnlPropertyKind.MaxLines,
+        "key" to CnlPropertyKind.TextKey,
+        "text-style" to CnlPropertyKind.TextStyleRef,
+        "list" to CnlPropertyKind.ListSettings,
+        "link" to CnlPropertyKind.Link,
+        // Layout-deep.
+        "wrap" to CnlPropertyKind.Wrap,
+        "clip" to CnlPropertyKind.Clip,
+        "absolute" to CnlPropertyKind.Absolute,
+        "distribute" to CnlPropertyKind.Distribute,
+        "justify" to CnlPropertyKind.Distribute,
+        "anchor" to CnlPropertyKind.Anchor,
+        "constraints" to CnlPropertyKind.Constraints,
+        "overflow" to CnlPropertyKind.Overflow,
+        "scroll" to CnlPropertyKind.Scroll,
+        "columns" to CnlPropertyKind.Columns,
+        "rows" to CnlPropertyKind.Rows,
+        "place" to CnlPropertyKind.Place,
+        "guides" to CnlPropertyKind.Guides,
+        "grids" to CnlPropertyKind.Grids,
+        // Components (instance side). Group sub-words (axis names, swap/text/key/data, min/max/allow)
+        // resolve locally inside the consumers, never here (group-scoping keystone).
+        "of" to CnlPropertyKind.ComponentRef,
+        "library" to CnlPropertyKind.LibraryRef,
+        "variant" to CnlPropertyKind.Variant,
+        "props" to CnlPropertyKind.Props,
+        "detach" to CnlPropertyKind.Detach,
+        "reset" to CnlPropertyKind.ResetOverrides,
+        "slot" to CnlPropertyKind.SlotOverride,
+        "nested" to CnlPropertyKind.NestedOverride,
+        // Media / shape params / vector / mask (P6). Group-internal words (asset, focus, video, crop, vertex,
+        // segment, region, in, out, mirror, corner, loops, evenodd, alpha, subtract, clips, from…) resolve
+        // LOCALLY inside consumers — do NOT add them here. "icon" is ALSO a noun; that is fine (nouns are only
+        // matched at token[0], keywords only mid-sentence).
+        "media" to CnlPropertyKind.Media,
+        "points" to CnlPropertyKind.ShapePoints,
+        "inner" to CnlPropertyKind.ShapeInner,
+        "viewbox" to CnlPropertyKind.ViewBox,
+        "icon" to CnlPropertyKind.IconRef,
+        "svg" to CnlPropertyKind.PathRef,
+        "path" to CnlPropertyKind.VectorPaths,
+        "network" to CnlPropertyKind.VectorNetwork,
+        "boolean" to CnlPropertyKind.BooleanOp,
+        "mask" to CnlPropertyKind.Mask,
+        // --- interactions & motion (P7) ---
+        // Triggers: each leads a SEPARATE interaction; the outer parseFrom loop re-enters consumeInteraction
+        // per trigger. Action verbs and record sub-keywords (navigate/openOverlay/animate/overlay/to/variant/
+        // animated/duration/loop/frames/easing/spring/mass/stiffness/damping/closeOnOutside/offset/background)
+        // are deliberately NOT here — they resolve group-locally inside consumeInteraction/consumeAction.
+        "onclick" to CnlPropertyKind.Interactions,
+        "onhover" to CnlPropertyKind.Interactions,
+        "onpress" to CnlPropertyKind.Interactions,
+        "ondrag" to CnlPropertyKind.Interactions,
+        "onkey" to CnlPropertyKind.Interactions,
+        "afterdelay" to CnlPropertyKind.Interactions,
+        "whilehovering" to CnlPropertyKind.Interactions,
+        "whilepressed" to CnlPropertyKind.Interactions,
+        "onvariablechange" to CnlPropertyKind.Interactions,
+        "motion" to CnlPropertyKind.Motion,
+        // P10 clause-initiating keywords (group sub-keywords like breakpoint/at/from/png stay LOCAL to the consumers).
+        "when" to CnlPropertyKind.Responsive,
+        "export" to CnlPropertyKind.Export,
+        "note" to CnlPropertyKind.Annotation,
+        "measure" to CnlPropertyKind.Measurement,
+        "code" to CnlPropertyKind.CodeHint,
     )
 
-    /** Longest keyword phrase (in words), so the parser tries 3-, 2-, 1-word matches. */
+    /** Longest keyword phrase (in words), so the parser tries 2-, 1-word matches. */
     val maxKeywordWords: Int = propertyKeywords.keys.maxOf { it.split(' ').size }
 
     /** Standalone direction words → `layout.mode` (no value token follows). */
     val directions: Map<String, String> = mapOf(
-        "колонка" to "column", "вертикально" to "column", "column" to "column",
-        "строка" to "row", "ряд" to "row", "горизонтально" to "row", "row" to "row",
-        "сетка" to "grid", "grid" to "grid",
-        "свободно" to "none", "free" to "none",
+        "column" to "column",
+        "row" to "row",
+        "grid" to "grid",
+        "free" to "none",
     )
 
     /** Standalone font-weight words → numeric weight. */
     val fontWeights: Map<String, Int> = mapOf(
-        "жирный" to 700, "полужирный" to 600, "тонкий" to 300,
         "bold" to 700, "semibold" to 600, "thin" to 300,
     )
 
-    /** Standalone font-style (italic) words. */
-    val italicWords: Set<String> = setOf("курсив", "italic")
-
-    /** `родительский контейнер <dir>` / `align <dir>` → node constraint spelling. */
+    /** `align <dir>` → node constraint spelling. */
     val alignDirections: Map<String, Pair<String, String>> = mapOf(
         // word -> (axis, constraint value)
-        "вверх" to ("vertical" to "top"), "top" to ("vertical" to "top"), "верх" to ("vertical" to "top"),
-        "вниз" to ("vertical" to "bottom"), "bottom" to ("vertical" to "bottom"), "низ" to ("vertical" to "bottom"),
-        "влево" to ("horizontal" to "left"), "left" to ("horizontal" to "left"), "лево" to ("horizontal" to "left"),
-        "вправо" to ("horizontal" to "right"), "right" to ("horizontal" to "right"), "право" to ("horizontal" to "right"),
-        "центр" to ("both" to "center"), "center" to ("both" to "center"),
+        "top" to ("vertical" to "top"),
+        "bottom" to ("vertical" to "bottom"),
+        "left" to ("horizontal" to "left"),
+        "right" to ("horizontal" to "right"),
+        "center" to ("both" to "center"),
     )
 
-    /** Stroke alignment words after `обводка <color> [weight] <align>`. */
+    /** Stroke alignment words after `stroke <color> [weight] <align>`. */
     val strokeAligns: Map<String, String> = mapOf(
-        "inside" to "inside", "внутри" to "inside",
-        "outside" to "outside", "снаружи" to "outside",
-        "center" to "center", "поцентру" to "center",
+        "inside" to "inside",
+        "outside" to "outside",
+        "center" to "center",
     )
 
-    /** Size connectors in `<w> на <h>`. */
-    val sizeConnectors: Set<String> = setOf("на", "x", "×", "*", "by")
+    /** Size connectors in `<w> by <h>`. */
+    val sizeConnectors: Set<String> = setOf("by", "x", "×", "*")
 
-    /** Degree markers in `<n> градусов`. */
-    val degreeWords: Set<String> = setOf(
-        "градус", "градуса", "градусов", "градусы", "°", "deg", "deg.", "degrees",
+    /** Boolean words accepted inside `( … )` groups; canonical emit uses `no` (and omits `yes`). */
+    val booleans: Map<String, Boolean> = mapOf(
+        "yes" to true, "no" to false, "on" to true, "off" to false, "true" to true, "false" to false,
     )
+
+    /** Degree markers in `<n> degrees`. */
+    val degreeWords: Set<String> = setOf("°", "deg", "deg.", "degrees")
 }

@@ -32,7 +32,7 @@ class CnlParserTest {
     private fun parse(line: String): Parsed {
         val diagnostics = DiagnosticCollector("test.layout.md")
         val element = CnlParser.parseElement(line, lineNumber = 1, baseColumn = 1, diagnostics)
-            ?: error("«$line» was not recognized as a CNL element")
+            ?: error("\"$line\" was not recognized as a CNL element")
         val patches = CnlParser.desugar(element, line = 1, diagnostics).mapNotNull {
             TypedBlockReader.read(it, diagnostics)
         }
@@ -41,7 +41,7 @@ class CnlParserTest {
 
     @Test
     fun rectangleSentenceCompilesToPatches() {
-        val parsed = parse("Прямоугольник 120 на 15 цвет #00B843 радиус 15 паддинги 10 отступ 16")
+        val parsed = parse("Rectangle 120 by 15 color #00B843 radius 15 padding 10 gap 16")
         assertTrue(
             parsed.diagnostics.diagnostics.isEmpty(),
             parsed.diagnostics.diagnostics.joinToString { it.message },
@@ -61,8 +61,8 @@ class CnlParserTest {
     }
 
     @Test
-    fun englishSentenceIsEquivalent() {
-        val parsed = parse("rectangle 120 by 15 color #00B843 radius 15 gap 16")
+    fun sizeConnectorVariantsAreEquivalent() {
+        val parsed = parse("rectangle 120 x 15 color #00B843 gap 16")
         assertEquals("shape", parsed.patch<NodePatch>()?.type)
         assertEquals(ShapeType.Rectangle, parsed.patch<ShapePatch>()?.kind)
         assertEquals(120.0, parsed.patch<LayoutPatch>()?.sizingWidth?.value)
@@ -75,22 +75,28 @@ class CnlParserTest {
 
     @Test
     fun rotationInDegrees() {
-        val parsed = parse("Прямоугольник 10 на 10 поворот 30 градусов")
+        val parsed = parse("Rectangle 10 by 10 rotation 30 degrees")
         assertEquals(30.0, parsed.patch<NodePatch>()?.rotation)
     }
 
     @Test
     fun textElementCarriesLiteralAndTypography() {
-        val parsed = parse("Текст «Активные миссии» размер 24 жирный")
-        assertEquals("Активные миссии", parsed.element.textLiteral?.raw)
+        val parsed = parse("Text «Active missions» size 24 bold")
+        assertEquals("Active missions", parsed.element.textLiteral?.raw)
         assertEquals("text", parsed.patch<NodePatch>()?.type)
         assertNotNull(parsed.patch<TextPatch>()?.typography)
         assertEquals(24.0.bindable(), parsed.patch<TextPatch>()?.typography?.fontSize)
     }
 
     @Test
+    fun explicitIdIsCarriedToNodePatch() {
+        val parsed = parse("Rectangle id hero_card 10 by 10 color #1E293B")
+        assertEquals("hero_card", parsed.patch<NodePatch>()?.id)
+    }
+
+    @Test
     fun unquotedHexColorIsAccepted() {
-        val parsed = parse("Прямоугольник 10 на 10 цвет #1E293B")
+        val parsed = parse("Rectangle 10 by 10 color #1E293B")
         assertEquals(
             listOf(DesignPaint.Solid(DesignColor(0xFF1E293B).bindable())),
             parsed.patch<StylePatch>()?.fills,
@@ -99,15 +105,15 @@ class CnlParserTest {
 
     @Test
     fun unknownWordReportsSelfExplainingRule() {
-        val parsed = parse("Прямоугольник 10 на 20 блабла")
+        val parsed = parse("Rectangle 10 by 20 blabla")
         val message = parsed.diagnostics.diagnostics.singleOrNull { "unknown-keyword" in it.message }
         assertNotNull(message, "expected an unknown-keyword diagnostic")
-        assertTrue("Как исправить" in message.message, message.message)
+        assertTrue("How to fix" in message.message, message.message)
     }
 
     @Test
     fun badColorReportsRule() {
-        val parsed = parse("Прямоугольник 10 на 10 цвет синий")
+        val parsed = parse("Rectangle 10 by 10 color blue")
         assertTrue(parsed.diagnostics.diagnostics.any { "bad-color" in it.message })
     }
 
@@ -115,7 +121,7 @@ class CnlParserTest {
     fun nounLedProseIsNotHijacked() {
         val diagnostics = DiagnosticCollector("test.layout.md")
         // No number, no quoted text, no keyword → this stays prose, not a CNL element.
-        assertNull(CnlParser.parseElement("Текст обновлён вчера", 1, 1, diagnostics))
+        assertNull(CnlParser.parseElement("Text updated yesterday", 1, 1, diagnostics))
         assertTrue(diagnostics.diagnostics.isEmpty())
     }
 }
