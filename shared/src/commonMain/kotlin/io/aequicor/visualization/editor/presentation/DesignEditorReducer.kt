@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
+import io.aequicor.visualization.editor.domain.mergeMissionDocuments
 import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.compileSlm
@@ -166,6 +167,9 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.CreateObject -> state.createObject(intent)
         is DesignEditorIntent.CreateScreen -> state.createScreenWriteBack(intent)
         is DesignEditorIntent.DetachInstance -> state.detachInstanceReduce(intent.nodeId)
+
+        // --- Source ---
+        is DesignEditorIntent.EditSource -> state.editSource(intent)
 
         // --- Layout container ---
         is DesignEditorIntent.SetLayoutMode -> state.writeBackEdits(
@@ -791,6 +795,76 @@ private fun DesignEditorState.pruneSelection(): DesignEditorState {
     return copy(
         selectedNodeIds = kept,
         selectedNodeId = if (selectedNodeId in kept) selectedNodeId else kept.firstOrNull().orEmpty(),
+    )
+}
+
+// --- Direct SLM source editing ---------------------------------------------
+
+private fun DesignEditorState.editSource(intent: DesignEditorIntent.EditSource): DesignEditorState {
+    val index = intent.sourceIndex
+    if (index !in sources.indices) return this
+    val source = sources[index]
+    if (source.content == intent.content) return this
+
+    val nextSources = sources.toMutableList().apply {
+        this[index] = source.copy(content = intent.content)
+    }.toList()
+    val recompiled = compileSlm(intent.content, SlmCompileOptions(fileName = source.fileName))
+
+    if (!recompiled.isSuccess || compiledResults.size != sources.size) {
+        val diagnostics = sourceEditDiagnostics(index, recompiled.diagnostics)
+        return copy(sources = nextSources, diagnostics = diagnostics)
+    }
+
+    val nextCompiled = compiledResults.toMutableList().apply {
+        this[index] = recompiled
+    }.toList()
+    val merged = mergeMissionDocuments(nextSources, nextCompiled)
+    val next = copy(
+        document = merged.document,
+        diagnostics = merged.diagnostics,
+        sources = merged.sources,
+        compiledResults = merged.compiled,
+        redoStack = emptyList(),
+    )
+    return next.reselectAfterSourceEdit(index)
+}
+
+private fun DesignEditorState.sourceEditDiagnostics(
+    editedIndex: Int,
+    editedDiagnostics: List<DesignDiagnostic>,
+): List<DesignDiagnostic> =
+    compiledResults.flatMapIndexed { index, result ->
+        if (index == editedIndex) editedDiagnostics else result.diagnostics
+    }.ifEmpty { editedDiagnostics }
+
+private fun DesignEditorState.reselectAfterSourceEdit(editedIndex: Int): DesignEditorState {
+    val doc = document ?: return copy(selectedPageId = "", selectedNodeId = "", selectedNodeIds = emptySet(), editingTextNodeId = "")
+    val previousPage = doc.pages.firstOrNull { it.id == selectedPageId }
+    val editedPageId = compiledResults.getOrNull(editedIndex)?.document?.let { editedDocument ->
+        editedDocument.pages.firstOrNull()?.let { page -> editedDocument.screen?.id?.ifBlank { page.id } ?: page.id }
+    }
+    val page = previousPage
+        ?: doc.pages.firstOrNull { it.id == editedPageId }
+        ?: doc.pages.firstOrNull()
+        ?: return copy(selectedPageId = "", selectedNodeId = "", selectedNodeIds = emptySet(), editingTextNodeId = "")
+
+    val keptSelection = selectedNodeIds
+        .filter { id -> doc.nodeById(id) != null && doc.pageOfNode(id)?.id == page.id }
+        .toSet()
+    val fallbackNodeId = page.children.firstOrNull()?.id.orEmpty()
+    val primary = when {
+        selectedNodeId in keptSelection -> selectedNodeId
+        keptSelection.isNotEmpty() -> keptSelection.first()
+        else -> fallbackNodeId
+    }
+    val nextSelection = if (primary.isBlank()) emptySet() else keptSelection.ifEmpty { setOf(primary) }
+
+    return copy(
+        selectedPageId = page.id,
+        selectedNodeId = primary,
+        selectedNodeIds = nextSelection,
+        editingTextNodeId = if (editingTextNodeId in nextSelection) editingTextNodeId else "",
     )
 }
 
