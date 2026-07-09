@@ -35,7 +35,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -152,12 +154,14 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.round
 import kotlin.math.sin
+import kotlinx.coroutines.channels.Channel
 
 /**
  * Center canvas: viewport (zoom/pan/fit), the rendered artboard, and all direct
@@ -241,9 +245,71 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             state.updateWorkspace { if (it.pendingZoomTo == target) it.copy(pendingZoomTo = null) else it }
         }
 
+        // Smoothly ease ctrl/meta-wheel zoom toward a target, keeping the cursor anchored,
+        // instead of snapping the zoom on each discrete wheel notch. Two subtle bugs sank the
+        // earlier attempts; both are designed out here rather than patched:
+        //
+        //  1. Lost wake-up at the zoom clamp. Gating the ease loop on a `wheelZoomActive`
+        //     boolean that the loop itself flips false on convergence races the scroll handler:
+        //     a notch that reads a stale `active == true` skips re-arming, then the loop commits
+        //     `active = false` — leaving a live target with nothing chasing it. At the min-zoom
+        //     clamp this fired almost every notch (each converges in one frame), so zoom got
+        //     stuck at 5% and refused to zoom back in. Fixed by waking the loop through a
+        //     CONFLATED channel: a pulse queued during convergence is still pending when the
+        //     loop loops back to receive(), so a wake-up can never be dropped.
+        //  2. Reversal trap at the clamp. Accumulating the target off the *pending* target
+        //     (`wheelZoomTarget ?: current`) pins it to the clamp; a reversal then crawls up
+        //     from 5% while the visible zoom is elsewhere. Fixed by anchoring every notch to the
+        //     live *visible* zoom (see the scroll handler), so a reversal re-aims from what the
+        //     user actually sees.
+        //
+        // Convergence tolerance is relative (WheelZoomConvergeFraction) so it behaves the same
+        // at 0.05 as at 16; the ease uses frame-rate-independent exponential decay.
+        var wheelZoomTarget by remember { mutableStateOf<Float?>(null) }
+        var wheelZoomFocus by remember { mutableStateOf(Offset.Zero) }
+        val wheelZoomPulse = remember { Channel<Unit>(Channel.CONFLATED) }
+        LaunchedEffect(density) {
+            while (true) {
+                wheelZoomPulse.receive()
+                var lastFrameNanos = -1L
+                while (true) {
+                    val target = wheelZoomTarget ?: break
+                    val frameNanos = withFrameNanos { it }
+                    val dtSeconds = if (lastFrameNanos < 0) 0f else (frameNanos - lastFrameNanos) / 1_000_000_000f
+                    lastFrameNanos = frameNanos
+                    val current = state.workspace.viewport.zoom
+                    val diff = target - current
+                    if (abs(diff) <= max(target, current) * WheelZoomConvergeFraction) {
+                        if (current > 0f && current != target) {
+                            state.updateWorkspace {
+                                it.copy(viewport = it.viewport.zoomAround(wheelZoomFocus.x, wheelZoomFocus.y, target / current, density))
+                            }
+                        }
+                        wheelZoomTarget = null
+                        break
+                    }
+                    val ease = 1f - exp(-WheelZoomFollowRate * dtSeconds)
+                    val next = current + diff * ease
+                    if (current > 0f && next > 0f) {
+                        state.updateWorkspace {
+                            it.copy(viewport = it.viewport.zoomAround(wheelZoomFocus.x, wheelZoomFocus.y, next / current, density))
+                        }
+                    }
+                }
+            }
+        }
+
         val viewportModel = ws.viewport
-        val zoomPx = viewportModel.zoomPx(density)
-        val viewport = CanvasViewport(zoomPx, viewportModel.panXPx(density), viewportModel.panYPx(density))
+        // Backed by rememberUpdatedState (not a plain val) so the two big pointerInput
+        // gesture blocks below can drop `viewport` from their restart keys: those blocks
+        // read `zoomPx`/`viewport` directly at each point of use (never snapshot them into a
+        // gesture-local val), so a live-updating delegate keeps every read fresh without ever
+        // needing to cancel and relaunch the coroutine. Keeping viewport as a restart key was
+        // fine while it only changed once per discrete input event, but the eased wheel-zoom
+        // follow loop now mutates it every animation frame — as a key that would restart (and
+        // thus drop pending events from) the whole gesture handler for the entire zoom.
+        val zoomPx by rememberUpdatedState(viewportModel.zoomPx(density))
+        val viewport by rememberUpdatedState(CanvasViewport(zoomPx, viewportModel.panXPx(density), viewportModel.panYPx(density)))
         val multiSelectionBox = if (design.selectedNodeIds.size > 1) selectionHandleBounds(layout, design.selectedNodeIds) else null
 
         // Primary (single) selection geometry — the only case that gets rotated handles,
@@ -319,8 +385,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         handleCanvasKey(state, event.key, event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
                     }
-                    // Hover + scroll (pan / ctrl-zoom) + per-position resize cursor.
-                    .pointerInput(pageId, viewport, ws.tool) {
+                    // Hover + scroll (pan / ctrl-zoom) + per-position resize cursor. `viewport`
+                    // is deliberately not a key here — see the rememberUpdatedState comment
+                    // above; keying on it would restart this block (dropping scroll events)
+                    // on every frame of an in-flight wheel-zoom animation.
+                    .pointerInput(pageId, ws.tool) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent()
@@ -333,7 +402,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         }
                                         val modifiers = event.keyboardModifiers
                                         if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
-                                            zoomAt(state, change.position, -change.scrollDelta.y, density)
+                                            val factor = zoomFactorForScroll(-change.scrollDelta.y)
+                                            if (factor != 1f) {
+                                                // Anchor to the live *visible* zoom, not the pending
+                                                // target: a direction reversal (notably at the min/max
+                                                // clamp) then re-aims from what the user sees rather than
+                                                // crawling out of the clamp. The ease loop keeps up while
+                                                // scrolling, so continuous notches still accumulate.
+                                                val base = state.workspace.viewport.zoom
+                                                wheelZoomTarget = (base * factor)
+                                                    .coerceIn(WorkspaceLimits.MinZoom, WorkspaceLimits.MaxZoom)
+                                                wheelZoomFocus = change.position
+                                                wheelZoomPulse.trySend(Unit)
+                                            }
                                         } else {
                                             val scrollX = if (modifiers.isShiftPressed) change.scrollDelta.y else change.scrollDelta.x
                                             val scrollY = if (modifiers.isShiftPressed) 0f else change.scrollDelta.y
@@ -365,8 +446,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             }
                         }
                     }
-                    // Press / drag / tap.
-                    .pointerInput(pageId, viewport, ws.tool, design.selectedNodeId, design.selectedNodeIds, spaceHeld) {
+                    // Press / drag / tap. `viewport` is intentionally not a key — see the
+                    // rememberUpdatedState comment above; an in-flight zoom animation would
+                    // otherwise cancel any drag/resize/rotate gesture in progress every frame.
+                    .pointerInput(pageId, ws.tool, design.selectedNodeId, design.selectedNodeIds, spaceHeld) {
                         val slop = viewConfiguration.touchSlop
                         awaitEachGesture {
                             val down = awaitFirstDown()
@@ -1420,6 +1503,22 @@ private const val SnapThresholdPx = 6f
 /** Screen-space distance between the rotate affordance and the top-center handle. */
 private const val RotateHandleScreenOffsetPx = 26f
 
+/**
+ * Exponential decay rate (1/s) for the wheel-zoom follow loop: at each frame the live zoom
+ * closes the fraction `1 - exp(-rate * dt)` of the gap to its target, so the reach time is
+ * frame-rate independent. ~18 lands ~95% of the way there in ~150ms, matching [animateZoomTo]'s
+ * button-zoom tween duration.
+ */
+private const val WheelZoomFollowRate = 18f
+
+/**
+ * Convergence tolerance for the wheel-zoom follow loop, as a fraction of the zoom magnitude.
+ * Relative (not absolute) so the loop settles the same way at 0.05 as at 16 — an absolute
+ * epsilon large enough to terminate near 16 would swallow whole notches near 0.05, stalling
+ * zoom-in at the minimum.
+ */
+private const val WheelZoomConvergeFraction = 1e-3f
+
 /** Nearest resize handle to [pos], accounting for the component's own [rotationDegrees]. */
 private fun rotatedHandleAt(box: BoundsBox, rotationDegrees: Double, viewport: CanvasViewport, pos: Offset): ResizeHandle? {
     val points = rotatedHandlePoints(box, rotationDegrees)
@@ -2117,14 +2216,6 @@ private fun fitViewport(
                 panOffsetYDp = panYpx / density,
             ),
         )
-    }
-}
-
-private fun zoomAt(state: MissionEditorStateHolder, focus: Offset, signedScroll: Float, density: Float) {
-    val factor = zoomFactorForScroll(signedScroll)
-    if (factor == 1f) return
-    state.updateWorkspace {
-        it.copy(viewport = it.viewport.zoomAround(focus.x, focus.y, factor, density))
     }
 }
 
