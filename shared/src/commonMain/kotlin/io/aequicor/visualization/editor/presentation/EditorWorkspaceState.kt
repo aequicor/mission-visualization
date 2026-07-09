@@ -29,8 +29,6 @@ data class EditorWorkspaceState(
     val viewport: EditorViewport = EditorViewport(),
     /** True when W/H edits and canvas corner-resize keep the object's aspect ratio. */
     val lockAspectRatio: Boolean = false,
-    /** Node currently hovered on the canvas or in Layers (outline feedback), or "". */
-    val hoveredNodeId: String = "",
     /** Layer ids whose children are collapsed in the Layers tree (default: expanded). */
     val collapsedLayers: Set<String> = emptySet(),
     /** Node in vector edit mode, or "" when not editing a vector. */

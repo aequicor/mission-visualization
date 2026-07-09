@@ -516,7 +516,7 @@ private fun LayerRowView(
     val ws = state.workspace
     val node = row.node
     val selected = node.id in design.selectedNodeIds
-    val hovered = node.id == ws.hoveredNodeId
+    val hovered = node.id == state.hoveredNodeId
     val hasChildren = node.children.isNotEmpty()
     val collapsed = node.id in ws.collapsedLayers
     val visible = node.visible.literalOrNull() ?: true
@@ -534,8 +534,8 @@ private fun LayerRowView(
                 awaitPointerEventScope {
                     while (true) {
                         val e = awaitPointerEvent()
-                        if (e.type == PointerEventType.Enter) state.updateWorkspace { it.copy(hoveredNodeId = node.id) }
-                        if (e.type == PointerEventType.Exit && ws.hoveredNodeId == node.id) state.updateWorkspace { it.copy(hoveredNodeId = "") }
+                        if (e.type == PointerEventType.Enter) state.updateHoveredNode(node.id)
+                        if (e.type == PointerEventType.Exit && state.hoveredNodeId == node.id) state.updateHoveredNode("")
                     }
                 }
             }

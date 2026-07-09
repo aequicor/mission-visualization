@@ -94,6 +94,10 @@ class MissionEditorStateHolder(
     var workspace by mutableStateOf(EditorWorkspaceState())
         private set
 
+    /** Node currently hovered on the canvas or in Layers; separated from workspace to avoid full workbench recomposition on pointer moves. */
+    var hoveredNodeId by mutableStateOf("")
+        private set
+
     /** Last computed layout of the previewed frame, in document coordinates. */
     var artboardLayout by mutableStateOf<LayoutBox?>(null)
         private set
@@ -172,15 +176,23 @@ class MissionEditorStateHolder(
     }
 
     fun onArtboardLayout(layout: LayoutBox?) {
+        if (artboardLayout == layout) return
         artboardLayout = layout
     }
 
     fun onCanvasExportBounds(bounds: CanvasExportBounds) {
+        if (canvasExportBounds == bounds) return
         canvasExportBounds = bounds
     }
 
+    fun updateHoveredNode(nodeId: String) {
+        if (hoveredNodeId == nodeId) return
+        hoveredNodeId = nodeId
+    }
+
     fun updateWorkspace(block: (EditorWorkspaceState) -> EditorWorkspaceState) {
-        workspace = block(workspace)
+        val next = block(workspace)
+        if (next != workspace) workspace = next
     }
 
     fun toggleSection(section: InspectorSection) {

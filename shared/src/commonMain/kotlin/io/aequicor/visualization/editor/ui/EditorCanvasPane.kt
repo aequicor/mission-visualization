@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -270,22 +271,36 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
 
         // Fit the current screen once per page (keeps the user's later zoom/pan).
         var fittedPage by remember { mutableStateOf("") }
-        if (layout != null && canvasWpx > 0f && fittedPage != pageId) {
+        LaunchedEffect(layout, canvasWpx, canvasHpx, pageId, density) {
+            val currentLayout = layout ?: return@LaunchedEffect
+            if (canvasWpx <= 0f || canvasHpx <= 0f || fittedPage == pageId) return@LaunchedEffect
             fittedPage = pageId
-            fitViewport(state, layout.x, layout.y, layout.width, layout.height, canvasWpx, canvasHpx, density)
+            fitViewport(
+                state,
+                currentLayout.x,
+                currentLayout.y,
+                currentLayout.width,
+                currentLayout.height,
+                canvasWpx,
+                canvasHpx,
+                density,
+            )
         }
         // Honor an explicit fit-screen / fit-selection request from the zoom controls.
-        if (layout != null && canvasWpx > 0f && ws.pendingFit != PendingFit.None) {
-            val rect = when (ws.pendingFit) {
-                PendingFit.Selection -> selectionBounds(layout, design.selectedNodeIds) ?: FitRect(layout.x, layout.y, layout.width, layout.height)
-                else -> FitRect(layout.x, layout.y, layout.width, layout.height)
+        LaunchedEffect(layout, canvasWpx, canvasHpx, ws.pendingFit, design.selectedNodeIds, density) {
+            val currentLayout = layout ?: return@LaunchedEffect
+            val pendingFit = ws.pendingFit
+            if (canvasWpx <= 0f || canvasHpx <= 0f || pendingFit == PendingFit.None) return@LaunchedEffect
+            val rect = when (pendingFit) {
+                PendingFit.Selection -> selectionBounds(currentLayout, design.selectedNodeIds)
+                    ?: FitRect(currentLayout.x, currentLayout.y, currentLayout.width, currentLayout.height)
+                else -> FitRect(currentLayout.x, currentLayout.y, currentLayout.width, currentLayout.height)
             }
-            state.updateWorkspace { it.copy(pendingFit = PendingFit.None) }
-            fitViewport(state, rect.x, rect.y, rect.w, rect.h, canvasWpx, canvasHpx, density)
+            fitViewport(state, rect.x, rect.y, rect.w, rect.h, canvasWpx, canvasHpx, density, consumePendingFit = true)
         }
 
         // Smoothly ease +/-/1:1 button zoom around the canvas center (see [animateZoomTo]).
-        LaunchedEffect(ws.pendingZoomTo, canvasWpx, canvasHpx) {
+        LaunchedEffect(ws.pendingZoomTo, canvasWpx, canvasHpx, density) {
             val target = ws.pendingZoomTo ?: return@LaunchedEffect
             if (canvasWpx <= 0f || canvasHpx <= 0f) return@LaunchedEffect
             animateZoomTo(state, target, canvasWpx / 2f, canvasHpx / 2f, density)
@@ -315,6 +330,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var wheelZoomTarget by remember { mutableStateOf<Float?>(null) }
         var wheelZoomFocus by remember { mutableStateOf(Offset.Zero) }
         val wheelZoomPulse = remember { Channel<Unit>(Channel.CONFLATED) }
+        DisposableEffect(wheelZoomPulse) {
+            onDispose { wheelZoomPulse.close() }
+        }
         LaunchedEffect(density) {
             while (true) {
                 wheelZoomPulse.receive()
@@ -357,6 +375,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         // thus drop pending events from) the whole gesture handler for the entire zoom.
         val zoomPx by rememberUpdatedState(viewportModel.zoomPx(density))
         val viewport by rememberUpdatedState(CanvasViewport(zoomPx, viewportModel.panXPx(density), viewportModel.panYPx(density)))
+        val hoveredNodeId = state.hoveredNodeId
         val scrollbars = layout?.canvasContentBounds()?.let { contentBounds ->
             canvasScrollbarsFor(
                 viewport = viewportModel,
@@ -414,6 +433,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var shiftHeld by remember { mutableStateOf(false) }
         var altHeld by remember { mutableStateOf(false) }
         var spaceHeld by remember { mutableStateOf(false) }
+        val latestSpaceHeld by rememberUpdatedState(spaceHeld)
         val windowFocused = LocalWindowInfo.current.isWindowFocused
         var lastTapMark by remember { mutableStateOf<TimeSource.Monotonic.ValueTimeMark?>(null) }
         var lastTapId by remember { mutableStateOf("") }
@@ -508,14 +528,16 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             val liveDesign = state.designState
                                             val liveLayout = state.artboardLayout
                                             val hit = hitNode(liveLayout, liveDesign.document, viewport, change.position)
-                                            if (hit != state.workspace.hoveredNodeId) {
-                                                state.updateWorkspace { it.copy(hoveredNodeId = hit) }
-                                            }
+                                            state.updateHoveredNode(hit)
                                             hoverCursor = resolveHandleCursor(
-                                                liveDesign, liveLayout, viewport, change.position, ws.tool, spaceHeld,
+                                                liveDesign, liveLayout, viewport, change.position, ws.tool, latestSpaceHeld,
                                                 vectorEditNodeId = state.workspace.vectorEditNodeId,
                                             )
                                         }
+                                    }
+                                    PointerEventType.Exit -> {
+                                        state.updateHoveredNode("")
+                                        hoverCursor = null
                                     }
                                     else -> Unit
                                 }
@@ -1012,8 +1034,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             // doc→screen projection and the theme colors so that module stays free of viewport/theme.
             val project: (Double, Double) -> Offset = { docX, docY -> viewport.toScreen(docX, docY) }
             val guideStyle = colors.guideStyle()
-            if (ws.hoveredNodeId.isNotBlank() && ws.hoveredNodeId !in design.selectedNodeIds && !altHeld) {
-                layout?.effectiveTransformFor(ws.hoveredNodeId)?.let { t ->
+            if (hoveredNodeId.isNotBlank() && hoveredNodeId !in design.selectedNodeIds && !altHeld) {
+                layout?.effectiveTransformFor(hoveredNodeId)?.let { t ->
                     drawRotatedOutline(t.box, t.rotation, viewport, colors.accent.copy(alpha = 0.85f), width = 1.5f)
                 }
             }
@@ -1082,7 +1104,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
 
             if (altHeld && primarySelectionBox != null) {
-                val altTargetBox = altMeasurementTarget(design, ws, layout, parentOfPrimarySelection, primarySelectionId)
+                val altTargetBox = altMeasurementTarget(design, hoveredNodeId, layout, parentOfPrimarySelection, primarySelectionId)
                 if (altTargetBox != null) {
                     drawAltMeasurement(
                         selected = primarySelectionBox,
@@ -1320,6 +1342,8 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
     val kind = node.kind as? DesignNodeKind.Shape ?: return
     val box = layout?.findBySourceId(editId) ?: return
     val network = kind.network
+    val latestViewport by rememberUpdatedState(viewport)
+    val latestZoomPx by rememberUpdatedState(zoomPx)
 
     // Legacy `d`-string shapes (no structural network) keep the pre-network anchor tooling.
     if (network == null || network.isEmpty()) {
@@ -1333,7 +1357,7 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
     val selected = state.workspace.vectorSelectedVertex
 
     Canvas(
-        Modifier.fillMaxSize().pointerInput(editId, viewport) {
+        Modifier.fillMaxSize().pointerInput(editId) {
             awaitEachGesture {
                 val down = awaitFirstDown()
                 // Re-read live geometry (the captured `network`/`fit` are frozen at pointerInput
@@ -1346,26 +1370,27 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                 val liveFit = meetFit(overlayViewBox(liveKind, liveNetwork) ?: liveRect, liveRect)
                 val liveScale = liveFit.a
                 if (!liveScale.isFinite() || liveScale <= 0.0) return@awaitEachGesture
+                val liveViewport = latestViewport
                 val press = down.position
                 val tool = state.workspace.tool
                 down.consume() // vector-edit mode owns the press; never let it also move the node
 
                 // Priority 1: a bezier control handle.
-                val handleHit = pickHandle(liveNetwork, liveFit, viewport, press)
+                val handleHit = pickHandle(liveNetwork, liveFit, liveViewport, press)
                 if (handleHit != null) {
                     val (vertexIndex, side) = handleHit
                     state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(vertexIndex, side.toVertexPart())) }
                     dragNetwork(state, editId, down) { delta ->
                         DesignEditorIntent.MoveVectorHandle(
                             editId, vertexIndex, side,
-                            delta.x / zoomPx / liveScale, delta.y / zoomPx / liveScale,
+                            delta.x / latestZoomPx / liveScale, delta.y / latestZoomPx / liveScale,
                         )
                     }
                     return@awaitEachGesture
                 }
 
                 // Priority 2: an on-path anchor.
-                val anchorHit = pickAnchor(liveNetwork, liveFit, viewport, press)
+                val anchorHit = pickAnchor(liveNetwork, liveFit, liveViewport, press)
                 if (anchorHit != null) {
                     // Pen: clicking the first vertex of an open loop closes the path.
                     if (tool == EditorTool.Pen && anchorHit == 0 && !liveNetwork.isClosedLoop() && liveNetwork.vertices.size >= 3) {
@@ -1376,7 +1401,7 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                     dragNetwork(state, editId, down) { delta ->
                         DesignEditorIntent.MoveVectorVertex(
                             editId, anchorHit,
-                            delta.x / zoomPx / liveScale, delta.y / zoomPx / liveScale,
+                            delta.x / latestZoomPx / liveScale, delta.y / latestZoomPx / liveScale,
                         )
                     }
                     return@awaitEachGesture
@@ -1384,14 +1409,14 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
 
                 // Empty press: outside the box leaves edit mode; a pen press near a segment
                 // splits it at the pointer (inserting a new vertex there).
-                if (!press.insideScreenBox(liveBox, viewport)) {
+                if (!press.insideScreenBox(liveBox, liveViewport)) {
                     state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                     return@awaitEachGesture
                 }
                 if (tool == EditorTool.Pen) {
-                    val segmentIndex = pickSegment(liveNetwork, liveFit, viewport, press)
+                    val segmentIndex = pickSegment(liveNetwork, liveFit, liveViewport, press)
                     if (segmentIndex != null) {
-                        val (shapeX, shapeY) = liveFit.inverse().apply(viewport.toDocX(press.x), viewport.toDocY(press.y))
+                        val (shapeX, shapeY) = liveFit.inverse().apply(liveViewport.toDocX(press.x), liveViewport.toDocY(press.y))
                         val newIndex = liveNetwork.vertices.size
                         state.dispatch(DesignEditorIntent.AddVectorVertex(editId, segmentIndex, shapeX, shapeY))
                         state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(newIndex, VectorVertexPart.Anchor)) }
@@ -1452,28 +1477,40 @@ private fun LegacyVectorEditOverlay(
             io.aequicor.visualization.editor.presentation.vectorAnchors(path.d).map { pathIndex to it }
         }
     }
+    val latestAnchors by rememberUpdatedState(anchors)
+    val latestBox by rememberUpdatedState(box)
+    val latestScaleX by rememberUpdatedState(scaleX)
+    val latestScaleY by rememberUpdatedState(scaleY)
+    val latestViewport by rememberUpdatedState(viewport)
+    val latestZoomPx by rememberUpdatedState(zoomPx)
     Canvas(
-        Modifier.fillMaxSize().pointerInput(editId, viewport) {
+        Modifier.fillMaxSize().pointerInput(editId) {
             awaitEachGesture {
                 val down = awaitFirstDown()
-                val nearest = anchors.minByOrNull { (_, a) ->
-                    val sx = viewport.toScreen(box.x + a.x * scaleX, box.y + a.y * scaleY)
+                val currentAnchors = latestAnchors
+                val currentBox = latestBox
+                val currentScaleX = latestScaleX
+                val currentScaleY = latestScaleY
+                val currentViewport = latestViewport
+                val nearest = currentAnchors.minByOrNull { (_, a) ->
+                    val sx = currentViewport.toScreen(currentBox.x + a.x * currentScaleX, currentBox.y + a.y * currentScaleY)
                     (sx - down.position).getDistanceSquared()
                 }
                 val within = nearest?.let { (_, a) ->
-                    val sx = viewport.toScreen(box.x + a.x * scaleX, box.y + a.y * scaleY)
+                    val sx = currentViewport.toScreen(currentBox.x + a.x * currentScaleX, currentBox.y + a.y * currentScaleY)
                     (sx - down.position).getDistance() <= AnchorGrabRadiusPx
                 } ?: false
-                if (!within || nearest == null) {
-                    val tl = viewport.toScreen(box.x, box.y)
-                    val br = viewport.toScreen(box.right, box.bottom)
+                if (!within) {
+                    val tl = currentViewport.toScreen(currentBox.x, currentBox.y)
+                    val br = currentViewport.toScreen(currentBox.right, currentBox.bottom)
                     val outside = down.position.x < tl.x || down.position.y < tl.y ||
                         down.position.x > br.x || down.position.y > br.y
                     if (outside) state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                     return@awaitEachGesture
                 }
+                val hit = nearest
                 state.updateWorkspace {
-                    it.copy(vectorSelectedPoint = io.aequicor.visualization.editor.presentation.VectorPointRef(nearest.first, nearest.second.index))
+                    it.copy(vectorSelectedPoint = io.aequicor.visualization.editor.presentation.VectorPointRef(hit.first, hit.second.index))
                 }
                 state.dispatch(DesignEditorIntent.BeginInteraction)
                 var last = down.position
@@ -1486,8 +1523,8 @@ private fun LegacyVectorEditOverlay(
                     if (d != Offset.Zero) {
                         state.dispatch(
                             DesignEditorIntent.MoveVectorPoint(
-                                editId, nearest.first, nearest.second.index,
-                                (d.x / zoomPx / scaleX).toDouble(), (d.y / zoomPx / scaleY).toDouble(),
+                                editId, hit.first, hit.second.index,
+                                d.x / latestZoomPx / currentScaleX, d.y / latestZoomPx / currentScaleY,
                             ),
                         )
                         ch.consume()
@@ -2174,12 +2211,11 @@ private data class AltTarget(val bounds: BoundsBox, val rotation: Double)
  */
 private fun altMeasurementTarget(
     design: DesignEditorState,
-    ws: io.aequicor.visualization.editor.presentation.EditorWorkspaceState,
+    hoveredId: String,
     layout: LayoutBox?,
     parentBox: BoundsBox?,
     selectedId: String?,
 ): AltTarget? {
-    val hoveredId = ws.hoveredNodeId
     if (hoveredId.isNotBlank() && hoveredId != selectedId && hoveredId !in design.selectedNodeIds) {
         layout?.effectiveTransformFor(hoveredId)?.let { t -> return AltTarget(t.box, t.rotation) }
     }
@@ -2685,6 +2721,7 @@ private fun fitViewport(
     canvasWpx: Float,
     canvasHpx: Float,
     density: Float,
+    consumePendingFit: Boolean = false,
 ) {
     if (w <= 0 || h <= 0) return
     val margin = 0.9f
@@ -2695,6 +2732,7 @@ private fun fitViewport(
     val panYpx = (canvasHpx - h.toFloat() * effPx) / 2f - y.toFloat() * effPx
     state.updateWorkspace {
         it.copy(
+            pendingFit = if (consumePendingFit) PendingFit.None else it.pendingFit,
             viewport = it.viewport.copy(
                 zoom = logicalZoom,
                 panOffsetXDp = panXpx / density,
