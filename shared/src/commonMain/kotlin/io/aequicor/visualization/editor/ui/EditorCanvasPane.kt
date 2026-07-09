@@ -60,8 +60,10 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
@@ -92,6 +94,9 @@ import io.aequicor.visualization.editor.presentation.EditorTool
 import io.aequicor.visualization.editor.presentation.FocusMode
 import io.aequicor.visualization.editor.presentation.GapMeasurement
 import io.aequicor.visualization.editor.presentation.GeoPoint
+import io.aequicor.visualization.editor.presentation.HandleSide
+import io.aequicor.visualization.editor.presentation.VectorVertexPart
+import io.aequicor.visualization.editor.presentation.VectorVertexRef
 import io.aequicor.visualization.editor.presentation.NewObjectKind
 import io.aequicor.visualization.editor.presentation.PendingFit
 import io.aequicor.visualization.editor.presentation.ResizeCursorKind
@@ -131,12 +136,17 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import io.aequicor.visualization.engine.backend.compose.selectableNodeId
+import io.aequicor.visualization.engine.ir.geometry.Affine2D
+import io.aequicor.visualization.engine.ir.geometry.RectD
+import io.aequicor.visualization.engine.ir.geometry.meetFit
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.engine.ir.model.VectorNetwork
+import io.aequicor.visualization.engine.ir.model.VectorVertex
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.math.PI
 import kotlin.math.abs
@@ -247,13 +257,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var fittedPage by remember { mutableStateOf("") }
         if (layout != null && canvasWpx > 0f && fittedPage != pageId) {
             fittedPage = pageId
-            fitViewport(state, 0.0, 0.0, layout.width, layout.height, canvasWpx, canvasHpx, density)
+            fitViewport(state, layout.x, layout.y, layout.width, layout.height, canvasWpx, canvasHpx, density)
         }
         // Honor an explicit fit-screen / fit-selection request from the zoom controls.
         if (layout != null && canvasWpx > 0f && ws.pendingFit != PendingFit.None) {
             val rect = when (ws.pendingFit) {
-                PendingFit.Selection -> selectionBounds(layout, design.selectedNodeIds) ?: FitRect(0.0, 0.0, layout.width, layout.height)
-                else -> FitRect(0.0, 0.0, layout.width, layout.height)
+                PendingFit.Selection -> selectionBounds(layout, design.selectedNodeIds) ?: FitRect(layout.x, layout.y, layout.width, layout.height)
+                else -> FitRect(layout.x, layout.y, layout.width, layout.height)
             }
             state.updateWorkspace { it.copy(pendingFit = PendingFit.None) }
             fitViewport(state, rect.x, rect.y, rect.w, rect.h, canvasWpx, canvasHpx, density)
@@ -398,19 +408,31 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val down = awaitFirstDown()
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
+                            // The pointerInput coroutine can outlive document/layout recompositions
+                            // during resize. Read a fresh press-time snapshot so the next press hit-tests
+                            // the handles that are currently drawn, not the geometry from setup time.
+                            val pressDesign = state.designState
+                            val pressWorkspace = state.workspace
+                            val pressDocument = pressDesign.document ?: return@awaitEachGesture
+                            val pressLayout = state.artboardLayout
+                            val pressRootId = pressDocument.pageById(pressDesign.selectedPageId)
+                                ?.children
+                                ?.firstOrNull()
+                                ?.id
+                                .orEmpty()
                             val forcePan = currentEvent.buttons.isTertiaryPressed || spaceHeld
-                            val primaryBox = design.selectedNodeId.takeIf { it.isNotBlank() }?.let { layout?.findBySourceId(it) }
+                            val primaryBox = pressDesign.selectedNodeId.takeIf { it.isNotBlank() }?.let { pressLayout?.findBySourceId(it) }
                             // A locked selection exposes no resize handles (design-book §7).
-                            val selectionLocked = state.designState.selectedNodeIds.any { id -> document.nodeById(id)?.locked == true }
-                            val isSingleSelection = state.designState.selectedNodeIds.size == 1
-                            val inVectorEdit = isSingleSelection && design.selectedNodeId == ws.vectorEditNodeId
-                            val selectedResizeBox = if (state.designState.selectedNodeIds.size > 1) {
-                                selectionHandleBounds(layout, state.designState.selectedNodeIds)
+                            val selectionLocked = pressDesign.selectedNodeIds.any { id -> pressDocument.nodeById(id)?.locked == true }
+                            val isSingleSelection = pressDesign.selectedNodeIds.size == 1
+                            val inVectorEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.vectorEditNodeId
+                            val selectedResizeBox = if (pressDesign.selectedNodeIds.size > 1) {
+                                selectionHandleBounds(pressLayout, pressDesign.selectedNodeIds)
                             } else {
                                 primaryBox?.toBoundsBox()
                             }
                             val selectionRotation = if (isSingleSelection) primaryBox?.node?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && ws.tool == EditorTool.Select && !selectionLocked && !inVectorEdit
+                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit
                             val handle = selectedResizeBox?.takeIf { handlesActive }
                                 ?.let { box -> rotatedHandleAt(box, selectionRotation, viewport, start) }
                             val rotateHit = handle == null && isSingleSelection &&
@@ -419,8 +441,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     val point = rotateAffordancePoint(box, selectionRotation, offsetDoc)
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
-                            val hitId = hitNode(layout, document, viewport, start)
-                            val mode = resolveCanvasOperation(ws.tool, forcePan, handle, rotateHit, hitId)
+                            val hitId = hitNode(pressLayout, pressDocument, viewport, start)
+                            val mode = resolveCanvasOperation(pressWorkspace.tool, forcePan, handle, rotateHit, hitId)
 
                             // A press whose top-most hit is the current selection — or a descendant
                             // showing through inside a selected container — drags the selection instead
@@ -428,12 +450,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // "drag moves object"; a nested object is reached by double-click). An
                             // unrelated object stacked on top is not part of the selection, so it still
                             // wins the press (§10 "topmost selectable layer gets priority").
-                            val pressOnSelection = document.pressHitBelongsToSelection(design.selectedNodeIds, hitId)
+                            val pressOnSelection = pressDocument.pressHitBelongsToSelection(pressDesign.selectedNodeIds, hitId)
 
                             // Pre-press selection so a drag moves the pressed node — but never when the
                             // press already lands on the current selection (reselecting there would grab
                             // the nested element) nor on a shift-add.
-                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in design.selectedNodeIds && !shiftHeld) {
+                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !shiftHeld) {
                                 state.dispatch(DesignEditorIntent.SelectNode(hitId))
                             }
                             val moveStartPositions = if (mode == CanvasOperation.Move) {
@@ -449,9 +471,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val reorderBaseline = (mode == CanvasOperation.Move).let {
                                 if (!it) return@let null
                                 val singleId = state.designState.selectedNodeIds.singleOrNull() ?: return@let null
-                                if (document.isCoordinatePositioned(singleId)) return@let null
-                                val parentId = document.parentNodeOf(singleId)?.id ?: return@let null
-                                val parentBox = layout?.findBySourceId(parentId) ?: return@let null
+                                if (pressDocument.isCoordinatePositioned(singleId)) return@let null
+                                val parentId = pressDocument.parentNodeOf(singleId)?.id ?: return@let null
+                                val parentBox = pressLayout?.findBySourceId(parentId) ?: return@let null
                                 val horizontal = when (parentBox.node.layout.mode) {
                                     LayoutMode.Horizontal -> true
                                     LayoutMode.Vertical -> false
@@ -475,9 +497,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // is rotated (snapping assumes an axis-aligned container coordinate space).
                             val snapBaseline = if (mode == CanvasOperation.Move && reorderBaseline == null) {
                                 val ids = state.designState.selectedNodeIds
-                                val boxes = ids.mapNotNull { id -> layout?.findBySourceId(id) }
-                                val parentBox = document.parentNodeOf(state.designState.selectedNodeId)?.id
-                                    ?.let { layout?.findBySourceId(it) }
+                                val boxes = ids.mapNotNull { id -> pressLayout?.findBySourceId(id) }
+                                val parentBox = pressDocument.parentNodeOf(state.designState.selectedNodeId)?.id
+                                    ?.let { pressLayout?.findBySourceId(it) }
                                 if (boxes.isEmpty() || parentBox == null || parentBox.node.rotation != 0.0) {
                                     null
                                 } else {
@@ -490,13 +512,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         .map { it.toBoundsBox() }
                                     val containers = buildList {
                                         add(parentBox.toBoundsBox())
-                                        var ancestorId = document.parentNodeOf(parentBox.node.sourceId)?.id
+                                        var ancestorId = pressDocument.parentNodeOf(parentBox.node.sourceId)?.id
                                         while (ancestorId != null) {
-                                            val ancestorBox = layout?.findBySourceId(ancestorId)
+                                            val ancestorBox = pressLayout?.findBySourceId(ancestorId)
                                             if (ancestorBox != null && ancestorBox.node.rotation == 0.0) {
                                                 add(ancestorBox.toBoundsBox())
                                             }
-                                            ancestorId = document.parentNodeOf(ancestorId)?.id
+                                            ancestorId = pressDocument.parentNodeOf(ancestorId)?.id
                                         }
                                     }
                                     SnapBaseline(axisAlignedBounds(corners), containers, siblings)
@@ -512,12 +534,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             var last = start
                             val resizeBaseline = (mode as? CanvasOperation.Resize)?.let { selectedResizeBox }
                             val resizeTargets = (mode as? CanvasOperation.Resize)?.let {
-                                resizeTargets(document, layout, state.designState.selectedNodeIds)
+                                resizeTargets(pressDocument, pressLayout, state.designState.selectedNodeIds)
                             }.orEmpty()
-                            val rotateBaseline = if (mode == CanvasOperation.Rotate && selectedResizeBox != null && design.selectedNodeId.isNotBlank()) {
+                            val rotateBaseline = if (mode == CanvasOperation.Rotate && selectedResizeBox != null && pressDesign.selectedNodeId.isNotBlank()) {
                                 val center = GeoPoint(selectedResizeBox.centerX, selectedResizeBox.centerY)
                                 RotateBaseline(
-                                    nodeId = design.selectedNodeId,
+                                    nodeId = pressDesign.selectedNodeId,
                                     center = center,
                                     startAngle = angleFromCenterDegrees(center, GeoPoint(viewport.toDocX(start.x), viewport.toDocY(start.y))),
                                     startRotation = selectionRotation,
@@ -647,15 +669,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         if (moved) {
                                             val rect = marquee
                                             if (rect != null) {
-                                                val ids = nodesIn(layout, document, viewport, rect)
-                                                val next = if (shiftHeld) design.selectedNodeIds + ids else ids
+                                                val ids = nodesIn(pressLayout, pressDocument, viewport, rect)
+                                                val next = if (shiftHeld) pressDesign.selectedNodeIds + ids else ids
                                                 state.dispatch(DesignEditorIntent.SelectNodes(next))
                                             }
                                         } else if (hitId.isBlank()) {
                                             // Clicking inside the root frame's body selects the root
                                             // (Figma: clicking a frame's empty area selects the frame);
                                             // clicking the canvas outside all frames clears the selection.
-                                            val rootBox = layout
+                                            val rootBox = pressLayout
                                             if (rootBox != null && rootBox.hitTest(viewport.toDocX(start.x), viewport.toDocY(start.y)) != null) {
                                                 state.dispatch(DesignEditorIntent.SelectNode(rootBox.node.sourceId))
                                             } else {
@@ -665,7 +687,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     }
                                     is CanvasOperation.Create -> {
                                         val end = constrainCreatePoint(start, last, mode.kind, shiftHeld)
-                                        commitCreate(state, mode, start, end, zoomPx, viewport, rootNode.id, moved)
+                                        commitCreate(state, mode, start, end, zoomPx, viewport, pressRootId, moved)
                                         state.updateWorkspace { it.copy(tool = EditorTool.Select) }
                                     }
                                     CanvasOperation.Move -> {
@@ -897,6 +919,27 @@ private fun TextEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox?,
 
 // --- Vector edit overlay -----------------------------------------------------
 
+/** Screen-space grab radius for a bezier control-handle dot. */
+private const val HandleGrabRadiusPx = 11f
+
+/** Screen-space grab radius for an on-path vertex anchor. */
+private const val AnchorGrabRadiusPx = 12f
+
+/** Screen-space distance within which an empty-canvas pen press splits a segment. */
+private const val SegmentGrabRadiusPx = 8f
+
+/**
+ * Point/handle editing overlay for the shape in vector-edit mode. When the node carries a
+ * structural [VectorNetwork] it draws and drags that (anchors, sharp-corner squares, bezier
+ * handles), mapping network/view-box space to screen through the SAME `meetFit` the renderer
+ * uses so painted geometry, drawn anchors and hit-testing all agree. A network-less shape that
+ * still has legacy `paths[].d` falls back to [LegacyVectorEditOverlay].
+ *
+ * Drags are in-memory per frame (MoveVectorVertex / MoveVectorHandle) bracketed by
+ * BeginInteraction … CommitVectorNetwork + EndInteraction, so the whole drag surgically
+ * rewrites the SLM network once and yields a single undo entry (see [dragNetwork]). Discrete
+ * pen affordances (add vertex on a segment, close the path) commit on their own.
+ */
 @Composable
 private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox?, viewport: CanvasViewport, zoomPx: Float) {
     val colors = LocalEditorColors.current
@@ -905,7 +948,131 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
     val node = state.designState.document?.nodeById(editId) ?: return
     val kind = node.kind as? DesignNodeKind.Shape ?: return
     val box = layout?.findBySourceId(editId) ?: return
-    // Anchors are authored in the shape's viewBox / path space, scaled to the box.
+    val network = kind.network
+
+    // Legacy `d`-string shapes (no structural network) keep the pre-network anchor tooling.
+    if (network == null || network.isEmpty()) {
+        LegacyVectorEditOverlay(state, kind, box, viewport, zoomPx)
+        return
+    }
+
+    // View-box → box fit shared with the renderer (aspect-preserving "meet"); identity-safe.
+    val boxRect = RectD(box.x, box.y, box.right, box.bottom)
+    val fit = meetFit(overlayViewBox(kind, network) ?: boxRect, boxRect)
+    val selected = state.workspace.vectorSelectedVertex
+
+    Canvas(
+        Modifier.fillMaxSize().pointerInput(editId, viewport) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                // Re-read live geometry (the captured `network`/`fit` are frozen at pointerInput
+                // setup and go stale after edits), mirroring the main gesture handler.
+                val liveNode = state.designState.document?.nodeById(editId) ?: return@awaitEachGesture
+                val liveKind = liveNode.kind as? DesignNodeKind.Shape ?: return@awaitEachGesture
+                val liveNetwork = liveKind.network?.takeIf { it.isNotEmpty() } ?: return@awaitEachGesture
+                val liveBox = state.artboardLayout?.findBySourceId(editId) ?: return@awaitEachGesture
+                val liveRect = RectD(liveBox.x, liveBox.y, liveBox.right, liveBox.bottom)
+                val liveFit = meetFit(overlayViewBox(liveKind, liveNetwork) ?: liveRect, liveRect)
+                val liveScale = liveFit.a
+                if (!liveScale.isFinite() || liveScale <= 0.0) return@awaitEachGesture
+                val press = down.position
+                val tool = state.workspace.tool
+                down.consume() // vector-edit mode owns the press; never let it also move the node
+
+                // Priority 1: a bezier control handle.
+                val handleHit = pickHandle(liveNetwork, liveFit, viewport, press)
+                if (handleHit != null) {
+                    val (vertexIndex, side) = handleHit
+                    state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(vertexIndex, side.toVertexPart())) }
+                    dragNetwork(state, editId, down) { delta ->
+                        DesignEditorIntent.MoveVectorHandle(
+                            editId, vertexIndex, side,
+                            delta.x / zoomPx / liveScale, delta.y / zoomPx / liveScale,
+                        )
+                    }
+                    return@awaitEachGesture
+                }
+
+                // Priority 2: an on-path anchor.
+                val anchorHit = pickAnchor(liveNetwork, liveFit, viewport, press)
+                if (anchorHit != null) {
+                    // Pen: clicking the first vertex of an open loop closes the path.
+                    if (tool == EditorTool.Pen && anchorHit == 0 && !liveNetwork.isClosedLoop() && liveNetwork.vertices.size >= 3) {
+                        state.dispatch(DesignEditorIntent.CloseVectorNetwork(editId))
+                        return@awaitEachGesture
+                    }
+                    state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(anchorHit, VectorVertexPart.Anchor)) }
+                    dragNetwork(state, editId, down) { delta ->
+                        DesignEditorIntent.MoveVectorVertex(
+                            editId, anchorHit,
+                            delta.x / zoomPx / liveScale, delta.y / zoomPx / liveScale,
+                        )
+                    }
+                    return@awaitEachGesture
+                }
+
+                // Empty press: outside the box leaves edit mode; a pen press near a segment
+                // splits it at the pointer (inserting a new vertex there).
+                if (!press.insideScreenBox(liveBox, viewport)) {
+                    state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
+                    return@awaitEachGesture
+                }
+                if (tool == EditorTool.Pen) {
+                    val segmentIndex = pickSegment(liveNetwork, liveFit, viewport, press)
+                    if (segmentIndex != null) {
+                        val (shapeX, shapeY) = liveFit.inverse().apply(viewport.toDocX(press.x), viewport.toDocY(press.y))
+                        val newIndex = liveNetwork.vertices.size
+                        state.dispatch(DesignEditorIntent.AddVectorVertex(editId, segmentIndex, shapeX, shapeY))
+                        state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(newIndex, VectorVertexPart.Anchor)) }
+                    }
+                }
+            }
+        },
+    ) {
+        // Tangent lines + control-handle dots first, so anchors draw on top.
+        network.vertices.forEach { vertex ->
+            val anchor = vertexScreen(fit, viewport, vertex)
+            handleTip(fit, viewport, vertex, HandleSide.In)?.let { tip ->
+                drawLine(colors.softStroke, anchor, tip, strokeWidth = 1f)
+                drawCircle(colors.accent, radius = 3.5f, center = tip)
+            }
+            handleTip(fit, viewport, vertex, HandleSide.Out)?.let { tip ->
+                drawLine(colors.softStroke, anchor, tip, strokeWidth = 1f)
+                drawCircle(colors.accent, radius = 3.5f, center = tip)
+            }
+        }
+        network.vertices.forEachIndexed { index, vertex ->
+            val anchor = vertexScreen(fit, viewport, vertex)
+            val isSelected = selected?.vertexIndex == index && selected.part == VectorVertexPart.Anchor
+            val fill = if (isSelected) colors.accent else Color.White
+            if (vertex.corner) {
+                val half = 5f
+                val topLeft = Offset(anchor.x - half, anchor.y - half)
+                drawRect(fill, topLeft = topLeft, size = Size(half * 2, half * 2))
+                drawRect(colors.accent, topLeft = topLeft, size = Size(half * 2, half * 2), style = Stroke(width = 1.5f))
+            } else {
+                drawCircle(fill, radius = 5f, center = anchor)
+                drawCircle(colors.accent, radius = 5f, center = anchor, style = Stroke(width = 1.5f))
+            }
+        }
+    }
+}
+
+/**
+ * Legacy `d`-string vector editing (no structural network): flat on-path anchors from
+ * [vectorAnchors], dragged through [DesignEditorIntent.MoveVectorPoint]. Kept for shapes the
+ * compiler emitted as inline paths without a network.
+ */
+@Composable
+private fun LegacyVectorEditOverlay(
+    state: MissionEditorStateHolder,
+    kind: DesignNodeKind.Shape,
+    box: LayoutBox,
+    viewport: CanvasViewport,
+    zoomPx: Float,
+) {
+    val colors = LocalEditorColors.current
+    val editId = state.workspace.vectorEditNodeId
     val viewBox = kind.viewBox
     val scaleX = if (viewBox != null && viewBox.width > 0) box.width / viewBox.width else 1.0
     val scaleY = if (viewBox != null && viewBox.height > 0) box.height / viewBox.height else 1.0
@@ -918,22 +1085,20 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
         Modifier.fillMaxSize().pointerInput(editId, viewport) {
             awaitEachGesture {
                 val down = awaitFirstDown()
-                // Find the nearest anchor to the press.
                 val nearest = anchors.minByOrNull { (_, a) ->
                     val sx = viewport.toScreen(box.x + a.x * scaleX, box.y + a.y * scaleY)
                     (sx - down.position).getDistanceSquared()
                 }
                 val within = nearest?.let { (_, a) ->
                     val sx = viewport.toScreen(box.x + a.x * scaleX, box.y + a.y * scaleY)
-                    (sx - down.position).getDistance() <= 12f
+                    (sx - down.position).getDistance() <= AnchorGrabRadiusPx
                 } ?: false
                 if (!within || nearest == null) {
-                    // A press outside the shape's bounds leaves vector edit mode (Figma-like).
                     val tl = viewport.toScreen(box.x, box.y)
                     val br = viewport.toScreen(box.right, box.bottom)
                     val outside = down.position.x < tl.x || down.position.y < tl.y ||
                         down.position.x > br.x || down.position.y > br.y
-                    if (outside) state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null) }
+                    if (outside) state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                     return@awaitEachGesture
                 }
                 state.updateWorkspace {
@@ -969,13 +1134,175 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
     }
 }
 
-/** Enters text-editing (text nodes) or vector-edit (vector shapes) on double-click. */
+// --- Vector-network overlay geometry helpers ---------------------------------
+
+/** Maps [HandleSide] to the workspace selection part. */
+private fun HandleSide.toVertexPart(): VectorVertexPart =
+    if (this == HandleSide.Out) VectorVertexPart.OutHandle else VectorVertexPart.InHandle
+
+/** True when a segment closes the loop (last vertex back to the first) — see [VectorNetwork.closePath]. */
+private fun VectorNetwork.isClosedLoop(): Boolean =
+    segments.any { it.from == vertices.lastIndex && it.to == 0 }
+
+/**
+ * The network's own coordinate space as a view-box: the shape's authored [DesignViewBox] when
+ * present, else the axis-aligned extent of its vertices and handle tips (mirroring the resolver's
+ * `geometry.bounds()` fallback so the overlay fit matches what is painted).
+ */
+private fun overlayViewBox(kind: DesignNodeKind.Shape, network: VectorNetwork): RectD? {
+    kind.viewBox?.let { return RectD(it.x, it.y, it.x + it.width, it.y + it.height) }
+    if (network.vertices.isEmpty()) return null
+    var minX = Double.POSITIVE_INFINITY
+    var minY = Double.POSITIVE_INFINITY
+    var maxX = Double.NEGATIVE_INFINITY
+    var maxY = Double.NEGATIVE_INFINITY
+    fun include(x: Double, y: Double) {
+        if (x < minX) minX = x
+        if (y < minY) minY = y
+        if (x > maxX) maxX = x
+        if (y > maxY) maxY = y
+    }
+    network.vertices.forEach { vertex ->
+        include(vertex.x, vertex.y)
+        vertex.inHandle?.let { include(vertex.x + it.dx, vertex.y + it.dy) }
+        vertex.outHandle?.let { include(vertex.x + it.dx, vertex.y + it.dy) }
+    }
+    if (minX > maxX || minY > maxY) return null
+    return RectD(minX, minY, maxX, maxY)
+}
+
+/** Screen position of a vertex anchor under [fit]. */
+private fun vertexScreen(fit: Affine2D, viewport: CanvasViewport, vertex: VectorVertex): Offset {
+    val (x, y) = fit.apply(vertex.x, vertex.y)
+    return viewport.toScreen(x, y)
+}
+
+/** Screen position of a vertex's [side] bezier handle tip, or null when that handle is absent. */
+private fun handleTip(fit: Affine2D, viewport: CanvasViewport, vertex: VectorVertex, side: HandleSide): Offset? {
+    val handle = if (side == HandleSide.Out) vertex.outHandle else vertex.inHandle
+    return handle?.let {
+        val (x, y) = fit.apply(vertex.x + it.dx, vertex.y + it.dy)
+        viewport.toScreen(x, y)
+    }
+}
+
+/** Nearest bezier control handle within [HandleGrabRadiusPx] of [press], or null. */
+private fun pickHandle(network: VectorNetwork, fit: Affine2D, viewport: CanvasViewport, press: Offset): Pair<Int, HandleSide>? {
+    var best: Pair<Int, HandleSide>? = null
+    var bestDist = HandleGrabRadiusPx
+    network.vertices.forEachIndexed { index, vertex ->
+        listOf(HandleSide.In, HandleSide.Out).forEach { side ->
+            handleTip(fit, viewport, vertex, side)?.let { tip ->
+                val dist = (tip - press).getDistance()
+                if (dist <= bestDist) {
+                    bestDist = dist
+                    best = index to side
+                }
+            }
+        }
+    }
+    return best
+}
+
+/** Nearest on-path anchor within [AnchorGrabRadiusPx] of [press], or null. */
+private fun pickAnchor(network: VectorNetwork, fit: Affine2D, viewport: CanvasViewport, press: Offset): Int? {
+    var best: Int? = null
+    var bestDist = AnchorGrabRadiusPx
+    network.vertices.forEachIndexed { index, vertex ->
+        val dist = (vertexScreen(fit, viewport, vertex) - press).getDistance()
+        if (dist <= bestDist) {
+            bestDist = dist
+            best = index
+        }
+    }
+    return best
+}
+
+/** Nearest segment (as a straight screen chord) within [SegmentGrabRadiusPx] of [press], or null. */
+private fun pickSegment(network: VectorNetwork, fit: Affine2D, viewport: CanvasViewport, press: Offset): Int? {
+    var best: Int? = null
+    var bestDist = SegmentGrabRadiusPx
+    network.segments.forEachIndexed { index, segment ->
+        val from = network.vertices.getOrNull(segment.from) ?: return@forEachIndexed
+        val to = network.vertices.getOrNull(segment.to) ?: return@forEachIndexed
+        val dist = distanceToSegment(press, vertexScreen(fit, viewport, from), vertexScreen(fit, viewport, to))
+        if (dist <= bestDist) {
+            bestDist = dist
+            best = index
+        }
+    }
+    return best
+}
+
+/** Perpendicular distance from [p] to the finite screen segment [a]–[b]. */
+private fun distanceToSegment(p: Offset, a: Offset, b: Offset): Float {
+    val abx = b.x - a.x
+    val aby = b.y - a.y
+    val len2 = abx * abx + aby * aby
+    val t = if (len2 == 0f) 0f else (((p.x - a.x) * abx + (p.y - a.y) * aby) / len2).coerceIn(0f, 1f)
+    return hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby))
+}
+
+/** Whether [this] screen point lies within [box]'s (unrotated) on-screen rectangle. */
+private fun Offset.insideScreenBox(box: LayoutBox, viewport: CanvasViewport): Boolean {
+    val tl = viewport.toScreen(box.x, box.y)
+    val br = viewport.toScreen(box.right, box.bottom)
+    return x >= min(tl.x, br.x) && x <= max(tl.x, br.x) && y >= min(tl.y, br.y) && y <= max(tl.y, br.y)
+}
+
+/**
+ * Runs a network drag: each frame dispatches the in-memory move [intentForDelta] builds from the
+ * screen-space delta; on release commits the mutated network to SLM once. The BeginInteraction
+ * checkpoint is opened only on the first real move (a bare click selects without an undo entry),
+ * so a move…commit sequence coalesces into a single undo entry (writeBackEdits skips the fork
+ * while interacting).
+ */
+private suspend fun AwaitPointerEventScope.dragNetwork(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    down: PointerInputChange,
+    intentForDelta: (Offset) -> DesignEditorIntent,
+) {
+    var began = false
+    var last = down.position
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull() ?: break
+        if (change.changedToUp()) break
+        val delta = change.position - last
+        last = change.position
+        if (delta == Offset.Zero) continue
+        if (!began) {
+            state.dispatch(DesignEditorIntent.BeginInteraction)
+            began = true
+        }
+        state.dispatch(intentForDelta(delta))
+        change.consume()
+    }
+    if (began) {
+        state.dispatch(DesignEditorIntent.CommitVectorNetwork(nodeId))
+        state.dispatch(DesignEditorIntent.EndInteraction)
+    }
+}
+
+/**
+ * Enters text-editing (text nodes) or vector-edit (shapes) on double-click. A shape that already
+ * carries a structural network — or is authored as `shape: vector` — enters point-edit mode
+ * directly; a parametric primitive (rect/ellipse/polygon/star/line/arrow) is first baked into an
+ * editable network via [DesignEditorIntent.ConvertToEditableVector], and the overlay picks up the
+ * fresh network on the next frame.
+ */
 private fun enterEditMode(state: MissionEditorStateHolder, nodeId: String) {
     val node = state.designState.document?.nodeById(nodeId) ?: return
+    val kind = node.kind
     when {
-        node.kind is DesignNodeKind.Text -> state.dispatch(DesignEditorIntent.SetEditingText(nodeId))
-        node.kind is DesignNodeKind.Shape && (node.kind as DesignNodeKind.Shape).shape == ShapeType.Vector ->
-            state.updateWorkspace { it.copy(vectorEditNodeId = nodeId, vectorSelectedPoint = null) }
+        kind is DesignNodeKind.Text -> state.dispatch(DesignEditorIntent.SetEditingText(nodeId))
+        kind is DesignNodeKind.Shape && (kind.network?.isNotEmpty() == true || kind.shape == ShapeType.Vector) ->
+            state.updateWorkspace { it.copy(vectorEditNodeId = nodeId, vectorSelectedPoint = null, vectorSelectedVertex = null) }
+        kind is DesignNodeKind.Shape -> {
+            state.dispatch(DesignEditorIntent.ConvertToEditableVector(nodeId))
+            state.updateWorkspace { it.copy(vectorEditNodeId = nodeId, vectorSelectedPoint = null, vectorSelectedVertex = null) }
+        }
         else -> Unit
     }
 }
@@ -1013,6 +1340,14 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         key == Key.DirectionRight -> nudge(step, 0.0)
         key == Key.DirectionUp -> nudge(0.0, -step)
         key == Key.DirectionDown -> nudge(0.0, step)
+        // In vector-edit mode Delete/Backspace removes the selected vertex, not the node.
+        (key == Key.Delete || key == Key.Backspace) &&
+            state.workspace.vectorEditNodeId.isNotBlank() && state.workspace.vectorSelectedVertex != null -> {
+            val ws = state.workspace
+            state.dispatch(DesignEditorIntent.DeleteVectorVertex(ws.vectorEditNodeId, ws.vectorSelectedVertex!!.vertexIndex))
+            state.updateWorkspace { it.copy(vectorSelectedVertex = null) }
+            true
+        }
         (key == Key.Delete || key == Key.Backspace) && selection.isNotEmpty() -> {
             state.dispatch(DesignEditorIntent.DeleteNodes(selection)); true
         }
@@ -1028,7 +1363,7 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             when {
                 // A live drag takes priority: abort it (revert + no undo entry).
                 state.activeDrag -> state.requestCancelDrag()
-                state.workspace.vectorEditNodeId.isNotBlank() -> state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null) }
+                state.workspace.vectorEditNodeId.isNotBlank() -> state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                 state.designState.editingTextNodeId.isNotBlank() -> state.dispatch(DesignEditorIntent.SetEditingText(""))
                 state.workspace.isMainOnly -> state.updateWorkspace { it.copy(focusMode = FocusMode.Normal) }
                 else -> state.dispatch(DesignEditorIntent.ClearSelection)
@@ -1766,7 +2101,8 @@ private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set
         val node = document.nodeById(id) ?: return@mapNotNull null
         if (node.locked || node.visible.literalOrNull() == false) return@mapNotNull null
         val box = layout.findBySourceId(id) ?: return@mapNotNull null
-        ResizeTarget(nodeId = id, baseline = box.toBoundsBox(), originPosition = node.position, rotation = box.node.rotation)
+        val originPosition = node.position ?: DesignPoint().takeIf { document.isCoordinatePositioned(id) }
+        ResizeTarget(nodeId = id, baseline = box.toBoundsBox(), originPosition = originPosition, rotation = box.node.rotation)
     }
 }
 
@@ -1974,7 +2310,7 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
                     EditorSvgIcon(
                         icon = toolIcon(tool),
                         contentDescription = tool.label,
-                        modifier = Modifier.size(19.dp),
+                        modifier = Modifier.size(24.dp),
                         tint = if (active) Color.White else colors.ink,
                     )
                 }

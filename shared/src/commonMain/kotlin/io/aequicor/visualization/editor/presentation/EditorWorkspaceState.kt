@@ -35,8 +35,10 @@ data class EditorWorkspaceState(
     val collapsedLayers: Set<String> = emptySet(),
     /** Node in vector edit mode, or "" when not editing a vector. */
     val vectorEditNodeId: String = "",
-    /** Selected vector anchor (path index, point index) in vector edit mode, or null. */
+    /** Selected vector anchor (path index, point index) in legacy `d`-string vector edit mode, or null. */
     val vectorSelectedPoint: VectorPointRef? = null,
+    /** Selected element (vertex anchor or a bezier handle) in structural-network vector edit mode, or null. */
+    val vectorSelectedVertex: VectorVertexRef? = null,
     /** A pending fit-to request the canvas applies on its next layout pass. */
     val pendingFit: PendingFit = PendingFit.None,
     /**
@@ -62,6 +64,12 @@ data class EditorWorkspaceState(
 
 /** Reference to a single editable vector anchor. */
 data class VectorPointRef(val pathIndex: Int, val pointIndex: Int)
+
+/** Which part of a network vertex a structural vector-edit selection targets. */
+enum class VectorVertexPart { Anchor, InHandle, OutHandle }
+
+/** Reference to a selected element (anchor or a bezier handle) of a structural vector network. */
+data class VectorVertexRef(val vertexIndex: Int, val part: VectorVertexPart = VectorVertexPart.Anchor)
 
 /** Workspace focus: `Normal` shows all chrome; `MainOnly` leaves just the canvas. */
 enum class FocusMode { Normal, MainOnly }

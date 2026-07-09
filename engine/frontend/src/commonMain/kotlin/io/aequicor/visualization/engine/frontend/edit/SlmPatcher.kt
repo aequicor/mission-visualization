@@ -9,7 +9,11 @@ import io.aequicor.visualization.engine.frontend.fnv1a64
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
+import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
+import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
@@ -318,12 +322,83 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
         YamlPayload.Mapping(listOf("typography" to TypographyYamlWriter.typography(edit.style))),
     )
 
+    is SetViewBox -> PayloadOutcome.Ok(
+        TypedBlockKind.Vector,
+        YamlPayload.Mapping(listOf("viewBox" to viewBoxPayload(edit.viewBox))),
+    )
+
+    is SetVectorNetwork -> PayloadOutcome.Ok(
+        TypedBlockKind.Vector,
+        YamlPayload.Mapping(listOf("network" to NetworkYamlWriter.network(edit.network))),
+    )
+
+    is SetBooleanOp -> PayloadOutcome.Ok(
+        TypedBlockKind.Vector,
+        YamlPayload.Mapping(
+            listOf(
+                "boolean" to YamlPayload.Mapping(
+                    listOf(
+                        "op" to scalar(YamlScalarValue.Str(booleanOpToken(edit.op))),
+                        "children" to YamlPayload.Sequence(
+                            edit.children.map { scalar(YamlScalarValue.Str(it)) },
+                            replaceWhole = true,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    is SetCornerRadii -> PayloadOutcome.Ok(TypedBlockKind.Style, cornerRadiiPayload(edit.radius))
+
     // Structural edits never reach here: they are dispatched to SectionWriter upstream.
     is StructuralSlmEdit -> PayloadOutcome.Invalid("Structural edits do not compile to a typed-block payload")
 
     // Interaction/motion edits never reach here: they are dispatched to typedBlockSetPlan upstream.
     is SetInteractions, is SetMotion ->
         PayloadOutcome.Invalid("Interaction/motion edits are dispatched via typedBlockSetPlan")
+}
+
+private fun viewBoxPayload(viewBox: DesignViewBox): YamlPayload =
+    YamlPayload.Sequence(
+        listOf(viewBox.x, viewBox.y, viewBox.width, viewBox.height).map { scalar(YamlScalarValue.Num(it)) },
+        replaceWhole = true,
+    )
+
+/** Uniform radius -> single scalar; otherwise a per-corner map (the style reader accepts both). */
+private fun cornerRadiiPayload(radius: DesignCornerRadius): YamlPayload {
+    val corners = listOf(radius.topLeft, radius.topRight, radius.bottomRight, radius.bottomLeft)
+    val literals = corners.map { (it as? Bindable.Value)?.value }
+    val uniform = literals.all { it != null && it == literals.first() }
+    return if (uniform) {
+        YamlPayload.Mapping(listOf("radius" to scalar(YamlScalarValue.Num(literals.first() ?: 0.0))))
+    } else {
+        YamlPayload.Mapping(
+            listOf(
+                "radius" to YamlPayload.Mapping(
+                    listOf(
+                        "topLeft" to cornerScalar(radius.topLeft),
+                        "topRight" to cornerScalar(radius.topRight),
+                        "bottomRight" to cornerScalar(radius.bottomRight),
+                        "bottomLeft" to cornerScalar(radius.bottomLeft),
+                    ),
+                ),
+            ),
+        )
+    }
+}
+
+private fun cornerScalar(value: Bindable<Double>): YamlPayload = when (value) {
+    is Bindable.Value -> scalar(YamlScalarValue.Num(value.value))
+    is Bindable.VarRef -> scalar(YamlScalarValue.TokenRef(value.id))
+    else -> scalar(YamlScalarValue.Num(0.0))
+}
+
+private fun booleanOpToken(op: BooleanOperationKind): String = when (op) {
+    BooleanOperationKind.Union -> "union"
+    BooleanOperationKind.Subtract -> "subtract"
+    BooleanOperationKind.Intersect -> "intersect"
+    BooleanOperationKind.Exclude -> "exclude"
 }
 
 private fun sizingPayload(edit: SetSizing, target: EditTarget): PayloadOutcome {

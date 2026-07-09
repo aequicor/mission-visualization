@@ -7,6 +7,7 @@ import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
 import io.aequicor.visualization.engine.ir.model.EasingKind
 import io.aequicor.visualization.engine.ir.model.ExportFormat
 import io.aequicor.visualization.engine.ir.model.GradientKind
+import io.aequicor.visualization.engine.ir.model.HandleMirror
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
@@ -177,6 +178,12 @@ internal object ReaderEnums {
         "subtract" to BooleanOperationKind.Subtract,
         "intersect" to BooleanOperationKind.Intersect,
         "exclude" to BooleanOperationKind.Exclude,
+    )
+
+    val handleMirror: Map<String, HandleMirror> = mapOf(
+        "none" to HandleMirror.None,
+        "angle" to HandleMirror.Angle,
+        "angleAndLength" to HandleMirror.AngleAndLength,
     )
 
     val maskType: Map<String, MaskType> = mapOf(

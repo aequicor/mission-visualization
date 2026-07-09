@@ -7,7 +7,6 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -23,7 +22,18 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import io.aequicor.visualization.engine.ir.geometry.PathFillRule
+import io.aequicor.visualization.engine.ir.geometry.PathGeometry
+import io.aequicor.visualization.engine.ir.geometry.RectD
+import io.aequicor.visualization.engine.ir.geometry.arrowGeometry
+import io.aequicor.visualization.engine.ir.geometry.bounds
+import io.aequicor.visualization.engine.ir.geometry.lineGeometry
+import io.aequicor.visualization.engine.ir.geometry.parseSvgPathToGeometry
+import io.aequicor.visualization.engine.ir.geometry.regularPolygonGeometry
+import io.aequicor.visualization.engine.ir.geometry.starGeometry
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.MediaKind
@@ -37,13 +47,12 @@ import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes
 import kotlin.math.ceil
-import kotlin.math.cos
 import kotlin.math.min
-import kotlin.math.sin
 
 internal class DesignDrawContext(
     val textMeasurer: TextMeasurer,
     val density: Density,
+    val vectorAssets: VectorAssetProvider = NoVectorAssets,
 )
 
 private val PlaceholderImageColor = Color(0xFFD9E1EA)
@@ -105,7 +114,11 @@ private fun DrawScope.drawDesignBoxContent(
     drawChild: (DrawScope.(LayoutBox) -> Unit)? = null,
 ) {
     val node = box.node
-    val outline = outlinePath(box)
+    node.booleanOp?.let { op ->
+        drawBooleanOperation(box, op, context.vectorAssets)
+        return
+    }
+    val outline = outlinePath(box, provider = context.vectorAssets)
 
     node.effects.filterIsInstance<ResolvedEffect.DropShadow>().forEach { shadow ->
         translate(shadow.offset.x.toFloat(), shadow.offset.y.toFloat()) {
@@ -154,7 +167,7 @@ private fun DrawScope.drawDesignBoxContent(
 
     if (node.type == "table") drawTableDecorations(box)
 
-    node.strokes?.let { strokes -> drawStrokes(strokes, box) }
+    node.strokes?.let { strokes -> drawStrokes(strokes, box, context.vectorAssets) }
 }
 
 /**
@@ -182,7 +195,7 @@ private fun DrawScope.drawChildBoxes(
         if (child.node.mask != null) return@forEachIndexed // clip geometry only, never painted
         val clips = masks
             .filter { (maskIndex, mask) -> maskAppliesTo(mask, maskIndex, child, index) }
-            .map { (_, mask) -> maskClipPath(mask) }
+            .map { (_, mask) -> maskClipPath(mask, context.vectorAssets) }
         drawClippedBy(clips, 0) { paint(child) }
     }
 }
@@ -196,7 +209,7 @@ private fun DrawScope.drawClippedBy(clips: List<Path>, index: Int, block: DrawSc
 }
 
 /** Clip geometry of a mask node; the shape choice lives in [maskShapeFor]. */
-private fun maskClipPath(mask: LayoutBox): Path {
+private fun maskClipPath(mask: LayoutBox, provider: VectorAssetProvider = NoVectorAssets): Path {
     val rect = Rect(
         mask.x.toFloat(),
         mask.y.toFloat(),
@@ -206,7 +219,7 @@ private fun maskClipPath(mask: LayoutBox): Path {
     return when (maskShapeFor(mask.node)) {
         MaskShape.RoundedRect -> roundedRectPath(rect, mask.node.cornerRadius)
         MaskShape.Ellipse -> Path().apply { addOval(rect) }
-        MaskShape.VectorPath -> vectorPath(mask, rect)
+        MaskShape.VectorPath -> vectorPath(mask, rect, provider)
         MaskShape.BoundingBox -> Path().apply { addRect(rect) }
     }
 }
@@ -517,7 +530,11 @@ private fun ResolvedPaint.Gradient.toBrush(box: LayoutBox): Brush {
     }
 }
 
-private fun DrawScope.drawStrokes(strokes: ResolvedStrokes, box: LayoutBox) {
+private fun DrawScope.drawStrokes(
+    strokes: ResolvedStrokes,
+    box: LayoutBox,
+    provider: VectorAssetProvider = NoVectorAssets,
+) {
     if (strokes.paints.isEmpty()) return
     val dash = strokes.dashPattern.takeIf { it.size >= 2 }?.let { pattern ->
         PathEffect.dashPathEffect(pattern.map { it.toFloat() }.toFloatArray())
@@ -537,8 +554,13 @@ private fun DrawScope.drawStrokes(strokes: ResolvedStrokes, box: LayoutBox) {
         StrokeAlign.Center -> 0.0
         StrokeAlign.Outside -> -weight / 2.0
     }
-    val path = outlinePath(box, inset)
-    val style = Stroke(width = weight, pathEffect = dash)
+    val path = outlinePath(box, inset, provider)
+    val style = Stroke(
+        width = weight,
+        pathEffect = dash,
+        cap = strokeCapOf(strokes.cap),
+        join = strokeJoinOf(strokes.join),
+    )
     strokes.paints.forEach { paint -> drawResolvedPaint(paint, path, box, style) }
 }
 
@@ -572,7 +594,7 @@ private fun DrawScope.drawPerSideStroke(
     }
 
     fun line(start: Offset, end: Offset, weight: Double) {
-        drawLine(color, start, end, weight.toFloat(), pathEffect = dash)
+        drawLine(color, start, end, weight.toFloat(), cap = strokeCapOf(strokes.cap), pathEffect = dash)
     }
     strokes.weightTop?.takeIf { it > 0 }?.let { weight ->
         val y = top + weight.toFloat() * alignFactor
@@ -593,7 +615,11 @@ private fun DrawScope.drawPerSideStroke(
 }
 
 /** Builds the node outline in absolute coordinates, optionally inset (for strokes). */
-private fun outlinePath(box: LayoutBox, inset: Double = 0.0): Path {
+private fun outlinePath(
+    box: LayoutBox,
+    inset: Double = 0.0,
+    provider: VectorAssetProvider = NoVectorAssets,
+): Path {
     val node = box.node
     val rect = Rect(
         (box.x + inset).toFloat(),
@@ -601,16 +627,16 @@ private fun outlinePath(box: LayoutBox, inset: Double = 0.0): Path {
         (box.right - inset).toFloat(),
         (box.bottom - inset).toFloat(),
     )
-    val shape = node.shape?.shape
-    return when (shape) {
+    val insetRect = RectD(box.x + inset, box.y + inset, box.right - inset, box.bottom - inset)
+    return when (node.shape?.shape) {
+        // Ellipse/rounded-rect stay native for pixel-exact ovals and inset-aware corner clamping.
         ShapeType.Ellipse -> Path().apply { addOval(rect) }
-        ShapeType.Line -> Path().apply {
-            moveTo(rect.left, rect.center.y)
-            lineTo(rect.right, rect.center.y)
-        }
-        ShapeType.Polygon -> regularPolygonPath(rect, node.shape?.pointCount ?: 3)
-        ShapeType.Star -> starPath(rect, node.shape?.pointCount ?: 5, node.shape?.innerRadius ?: 0.4)
-        ShapeType.Vector -> vectorPath(box, rect)
+        ShapeType.Polygon -> regularPolygonGeometry(insetRect, node.shape?.pointCount ?: 3).toComposePath(insetRect)
+        ShapeType.Star ->
+            starGeometry(insetRect, node.shape?.pointCount ?: 5, node.shape?.innerRadius ?: 0.4).toComposePath(insetRect)
+        ShapeType.Line -> lineGeometry(insetRect).toComposePath(insetRect)
+        ShapeType.Arrow -> arrowGeometry(insetRect, node.strokes?.weight ?: 1.0).toComposePath(insetRect)
+        ShapeType.Vector -> vectorPath(box, rect, provider)
         else -> roundedRectPath(rect, node.cornerRadius, inset)
     }
 }
@@ -637,58 +663,95 @@ private fun roundedRectPath(rect: Rect, radius: ResolvedCornerRadius, inset: Dou
     return path
 }
 
-private fun regularPolygonPath(rect: Rect, points: Int): Path {
-    val path = Path()
-    val count = points.coerceAtLeast(3)
-    val cx = rect.center.x
-    val cy = rect.center.y
-    val rx = rect.width / 2f
-    val ry = rect.height / 2f
-    for (i in 0 until count) {
-        val angle = -90.0 + 360.0 * i / count
-        val radians = angle * 3.141592653589793 / 180.0
-        val x = cx + rx * cos(radians).toFloat()
-        val y = cy + ry * sin(radians).toFloat()
-        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+/**
+ * Vector geometry precedence:
+ * 1. inline lowering ([ResolvedNode.geometry]: inline `d` or a structural network in view-box
+ *    space) — always wins when present;
+ * 2. an external SVG asset (`pathRef`) then a design-system icon (`iconRef`), dereferenced via
+ *    the injected [VectorAssetProvider];
+ * 3. the box rectangle, when nothing is lowered and nothing dereferences.
+ *
+ * A dereferenced graphic is built into the same [PathGeometry] IR (parse each `d`, concatenate,
+ * fill rule from the first path, view-box from the graphic or the path bounds) so the adapter
+ * applies the identical meet-fit into the node box as an inline vector.
+ */
+private fun vectorPath(box: LayoutBox, rect: Rect, provider: VectorAssetProvider = NoVectorAssets): Path {
+    box.node.geometry?.let { return it.toComposePath(box.rectD()) }
+
+    val shape = box.node.shape
+    val ref = when {
+        shape == null -> null
+        shape.pathRef.isNotBlank() -> VectorRef.Svg(shape.pathRef)
+        shape.iconRef.isNotBlank() -> VectorRef.Icon(shape.iconRef)
+        else -> null
     }
-    path.close()
-    return path
+    ref?.let { provider.resolve(it) }
+        ?.let { graphicGeometry(it) }
+        ?.let { return it.toComposePath(box.rectD()) }
+
+    return Path().apply { addRect(rect) }
 }
 
-private fun starPath(rect: Rect, points: Int, innerRatio: Double): Path {
-    val path = Path()
-    val count = points.coerceAtLeast(3)
-    val cx = rect.center.x
-    val cy = rect.center.y
-    val rx = rect.width / 2f
-    val ry = rect.height / 2f
-    val inner = innerRatio.toFloat().coerceIn(0.05f, 1f)
-    for (i in 0 until count * 2) {
-        val angle = -90.0 + 180.0 * i / count
-        val radians = angle * 3.141592653589793 / 180.0
-        val scale = if (i % 2 == 0) 1f else inner
-        val x = cx + rx * scale * cos(radians).toFloat()
-        val y = cy + ry * scale * sin(radians).toFloat()
-        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-    }
-    path.close()
-    return path
+/**
+ * Builds the geometry IR from a provider-supplied [VectorGraphic], mirroring the engine's inline
+ * path lowering: each [io.aequicor.visualization.engine.ir.model.VectorPath] `d` parsed via
+ * [parseSvgPathToGeometry] and concatenated, fill rule from the first path's winding rule, and the
+ * source view box taken from the graphic (else the parsed path bounds). Returns null when the
+ * graphic carries no drawable geometry.
+ */
+private fun graphicGeometry(graphic: VectorGraphic): PathGeometry? {
+    val firstPath = graphic.paths.firstOrNull() ?: return null
+    val fillRule = if (firstPath.windingRule == "evenodd") PathFillRule.EvenOdd else PathFillRule.NonZero
+    val commands = graphic.paths.flatMap { parseSvgPathToGeometry(it.d).commands }
+    if (commands.isEmpty()) return null
+    val geometry = PathGeometry(commands, fillRule)
+    return geometry.copy(sourceViewBox = graphic.viewBox.toRectD() ?: geometry.bounds())
 }
 
-private fun vectorPath(box: LayoutBox, rect: Rect): Path {
+private fun DesignViewBox?.toRectD(): RectD? =
+    if (this != null && width > 0.0 && height > 0.0) RectD(x, y, x + width, y + height) else null
+
+/**
+ * Combines the operand children of a boolean node into one path via `Path.op` and paints the
+ * boolean node's own fills/strokes on it; the children are not drawn as ordinary siblings.
+ */
+private fun DrawScope.drawBooleanOperation(
+    box: LayoutBox,
+    op: BooleanOperationKind,
+    provider: VectorAssetProvider = NoVectorAssets,
+) {
     val node = box.node
-    val paths = node.shape?.paths.orEmpty()
-    if (paths.isEmpty()) return Path().apply { addRect(rect) }
-    val combined = Path()
-    paths.forEach { vector -> combined.addPath(parseSvgPath(vector.d)) }
-    val authoredWidth = node.size.width ?: box.width
-    val authoredHeight = node.size.height ?: box.height
-    val scaleX = if (authoredWidth > 0.0) (box.width / authoredWidth).toFloat() else 1f
-    val scaleY = if (authoredHeight > 0.0) (box.height / authoredHeight).toFloat() else 1f
-    val matrix = Matrix().apply {
-        translate(box.x.toFloat(), box.y.toFloat())
-        scale(scaleX, scaleY)
+    val merged = booleanOutline(box, provider) ?: return
+
+    node.effects.filterIsInstance<ResolvedEffect.DropShadow>().forEach { shadow ->
+        translate(shadow.offset.x.toFloat(), shadow.offset.y.toFloat()) {
+            val alpha = (shadow.color.alpha / 255f) * 0.9f
+            drawPath(merged, shadow.color.toComposeColor().copy(alpha = alpha))
+        }
     }
-    combined.transform(matrix)
-    return combined
+    node.fills.forEach { fill -> drawResolvedPaint(fill, merged, box) }
+    node.strokes?.let { strokes ->
+        if (strokes.paints.isNotEmpty() && strokes.weight > 0.0) {
+            val style = Stroke(
+                width = strokes.weight.toFloat(),
+                cap = strokeCapOf(strokes.cap),
+                join = strokeJoinOf(strokes.join),
+            )
+            strokes.paints.forEach { paint -> drawResolvedPaint(paint, merged, box, style) }
+        }
+    }
+}
+
+/** Folds a boolean node's children left-to-right; leaves (and nested booleans) use their outline. */
+private fun booleanOutline(box: LayoutBox, provider: VectorAssetProvider = NoVectorAssets): Path? {
+    val op = box.node.booleanOp ?: return outlinePath(box, provider = provider)
+    val childPaths = box.children.mapNotNull { booleanOutline(it, provider) }
+    if (childPaths.isEmpty()) return null
+    val operation = pathOperationOf(op)
+    var merged = childPaths.first()
+    for (index in 1 until childPaths.size) {
+        val next = childPaths[index]
+        merged = Path().apply { op(merged, next, operation) }
+    }
+    return merged
 }

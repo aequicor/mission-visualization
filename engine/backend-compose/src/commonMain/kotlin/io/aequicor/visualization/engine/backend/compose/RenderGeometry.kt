@@ -206,7 +206,7 @@ internal fun maskShapeFor(node: ResolvedNode): MaskShape =
         null, ShapeType.Rectangle -> MaskShape.RoundedRect
         ShapeType.Ellipse -> MaskShape.Ellipse
         ShapeType.Vector ->
-            if (node.shape?.paths.orEmpty().isNotEmpty()) MaskShape.VectorPath else MaskShape.BoundingBox
+            if (node.geometry != null) MaskShape.VectorPath else MaskShape.BoundingBox
         ShapeType.Polygon, ShapeType.Star, ShapeType.Line, ShapeType.Arrow -> MaskShape.BoundingBox
     }
 

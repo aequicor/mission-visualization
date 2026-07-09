@@ -1,0 +1,85 @@
+package io.aequicor.visualization.engine.ir.layout
+
+import io.aequicor.visualization.engine.ir.geometry.PathCommand
+import io.aequicor.visualization.engine.ir.geometry.PathGeometry
+import io.aequicor.visualization.engine.ir.geometry.RectD
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
+import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+
+class HitTestTest {
+
+    private fun shapeBox(
+        shape: DesignNodeKind.Shape,
+        width: Double = 100.0,
+        height: Double = 100.0,
+        rotation: Double = 0.0,
+        strokes: ResolvedStrokes? = null,
+        geometry: PathGeometry? = null,
+    ): LayoutBox = LayoutBox(
+        node = ResolvedNode(
+            id = "s", sourceId = "s", type = "shape", name = "s",
+            rotation = rotation, shape = shape, strokes = strokes, geometry = geometry,
+        ),
+        x = 0.0, y = 0.0, width = width, height = height,
+    )
+
+    @Test
+    fun starCenterHitsButNotchMisses() {
+        val box = shapeBox(DesignNodeKind.Shape(ShapeType.Star, pointCount = 5, innerRadius = 0.4))
+        assertEquals(box, box.hitTest(50.0, 50.0))
+        assertNull(box.hitTest(2.0, 50.0)) // notch between two points
+        assertNull(box.hitTest(1.0, 1.0)) // bbox corner, outside the star
+    }
+
+    @Test
+    fun ellipseCornerOfBoxMisses() {
+        val box = shapeBox(DesignNodeKind.Shape(ShapeType.Ellipse))
+        assertEquals(box, box.hitTest(50.0, 50.0))
+        assertNull(box.hitTest(3.0, 3.0)) // outside the inscribed ellipse
+    }
+
+    @Test
+    fun plainRectangleKeepsBoundingBoxHit() {
+        val box = shapeBox(DesignNodeKind.Shape(ShapeType.Rectangle))
+        assertEquals(box, box.hitTest(1.0, 1.0)) // AABB corner still hits a plain rect
+    }
+
+    @Test
+    fun rotatedStarNotchStillMisses() {
+        val box = shapeBox(DesignNodeKind.Shape(ShapeType.Star, pointCount = 5, innerRadius = 0.4), rotation = 33.0)
+        assertEquals(box, box.hitTest(50.0, 50.0)) // center is rotation-invariant
+    }
+
+    @Test
+    fun loweredVectorGeometryMapsThroughViewBoxFit() {
+        // lower-left triangle in a 10x10 viewBox, fit into a 100x100 box
+        val geometry = PathGeometry(
+            commands = listOf(
+                PathCommand.MoveTo(0.0, 0.0),
+                PathCommand.LineTo(10.0, 0.0),
+                PathCommand.LineTo(0.0, 10.0),
+                PathCommand.Close,
+            ),
+            sourceViewBox = RectD(0.0, 0.0, 10.0, 10.0),
+        )
+        val box = shapeBox(DesignNodeKind.Shape(ShapeType.Vector), geometry = geometry)
+        assertEquals(box, box.hitTest(30.0, 30.0)) // maps to (3,3): inside x+y<10
+        assertNull(box.hitTest(80.0, 80.0)) // maps to (8,8): outside x+y<10
+    }
+
+    @Test
+    fun openLineHitByStrokeDistance() {
+        val box = shapeBox(
+            DesignNodeKind.Shape(ShapeType.Line),
+            height = 20.0,
+            strokes = ResolvedStrokes(weight = 4.0),
+        )
+        assertEquals(box, box.hitTest(50.0, 10.0)) // on the centerline
+        assertNull(box.hitTest(50.0, 19.0)) // far from the stroke
+    }
+}

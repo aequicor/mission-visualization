@@ -299,6 +299,8 @@ class DesignResolver(
             cornerRadius = resolveCornerRadius(override?.cornerRadius ?: node.cornerRadius, scope),
             text = (node.kind as? DesignNodeKind.Text)?.let { resolveText(it, override, scope) },
             shape = node.kind as? DesignNodeKind.Shape,
+            geometry = (node.kind as? DesignNodeKind.Shape)?.let { lowerShapeGeometry(it) },
+            booleanOp = (node.kind as? DesignNodeKind.BooleanOperation)?.operation,
             scroll = node.scroll,
             role = node.role,
             blendMode = node.blendMode,
@@ -764,6 +766,8 @@ class DesignResolver(
             weightLeft = perSide?.left?.let { resolveDouble(it, scope, 0.0) },
             align = strokes.align,
             dashPattern = strokes.dashPattern,
+            cap = strokes.cap,
+            join = strokes.join,
         )
     }
 

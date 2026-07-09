@@ -1,13 +1,17 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignTransition
+import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.engine.ir.model.HandleMirror
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.MotionKeyframes
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
@@ -197,6 +201,74 @@ sealed interface DesignEditorIntent {
         val dx: Double,
         val dy: Double,
     ) : DesignEditorIntent
+
+    /** Swaps a shape's parametric primitive kind (rectangle/ellipse/polygon/…). Tier-1. */
+    data class SetShapeType(val nodeId: String, val shape: ShapeType) : DesignEditorIntent
+
+    /** Sets a polygon/star's point count. Tier-1. */
+    data class SetPointCount(val nodeId: String, val count: Int) : DesignEditorIntent
+
+    /** Sets a star's inner-radius ratio (0..1). Tier-1. */
+    data class SetStarInnerRadius(val nodeId: String, val ratio: Double) : DesignEditorIntent
+
+    /** Sets a vector shape's design-system icon reference. Tier-1. */
+    data class SetIconRef(val nodeId: String, val ref: String) : DesignEditorIntent
+
+    /** Sets a vector shape's SVG-asset path reference. Tier-1. */
+    data class SetPathRef(val nodeId: String, val ref: String) : DesignEditorIntent
+
+    /** Sets a vector shape's viewBox. Tier-1. */
+    data class SetVectorViewBox(val nodeId: String, val viewBox: DesignViewBox) : DesignEditorIntent
+
+    /** Sets the operator of a boolean-operation node. Tier-1. */
+    data class SetBooleanOperation(val nodeId: String, val op: BooleanOperationKind) : DesignEditorIntent
+
+    /** Bakes a parametric shape into an editable [io.aequicor.visualization.engine.ir.model.VectorNetwork]. Tier-1. */
+    data class ConvertToEditableVector(val nodeId: String) : DesignEditorIntent
+
+    /** In-memory (per-drag frame): moves network vertex [vertexIndex] by a parent-relative delta. */
+    data class MoveVectorVertex(
+        val nodeId: String,
+        val vertexIndex: Int,
+        val dx: Double,
+        val dy: Double,
+    ) : DesignEditorIntent
+
+    /** In-memory (per-drag frame): moves one bezier handle of vertex [vertexIndex] (mirror-aware). */
+    data class MoveVectorHandle(
+        val nodeId: String,
+        val vertexIndex: Int,
+        val side: HandleSide,
+        val dx: Double,
+        val dy: Double,
+    ) : DesignEditorIntent
+
+    /** Sets vertex [vertexIndex]'s handle-mirror mode, then commits the network. Tier-1. */
+    data class SetVertexMirror(
+        val nodeId: String,
+        val vertexIndex: Int,
+        val mirror: HandleMirror,
+    ) : DesignEditorIntent
+
+    /** Toggles vertex [vertexIndex]'s sharp-corner flag, then commits the network. Tier-1. */
+    data class ToggleVertexCorner(val nodeId: String, val vertexIndex: Int) : DesignEditorIntent
+
+    /** Splits segment [segmentIndex] at (x, y), inserting a vertex, then commits the network. Tier-1. */
+    data class AddVectorVertex(
+        val nodeId: String,
+        val segmentIndex: Int,
+        val x: Double,
+        val y: Double,
+    ) : DesignEditorIntent
+
+    /** Removes network vertex [vertexIndex], then commits the network. Tier-1. */
+    data class DeleteVectorVertex(val nodeId: String, val vertexIndex: Int) : DesignEditorIntent
+
+    /** Closes an open path (last vertex back to first), then commits the network. Tier-1. */
+    data class CloseVectorNetwork(val nodeId: String) : DesignEditorIntent
+
+    /** Persists the node's current in-memory network to SLM in one surgical rewrite (drag release). Tier-1. */
+    data class CommitVectorNetwork(val nodeId: String) : DesignEditorIntent
 
     // --- Interaction checkpoints (canvas drags) ----------------------------
 

@@ -3,6 +3,9 @@ package io.aequicor.visualization.engine.ir.serialization
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.HandleMirror
+import io.aequicor.visualization.engine.ir.model.HandleOffset
+import io.aequicor.visualization.engine.ir.model.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
@@ -369,7 +372,64 @@ private fun JsonObjectBuilder.putShapeKindFields(kind: DesignNodeKind.Shape) {
             },
         )
     }
+    kind.network?.takeIf { it.isNotEmpty() }?.let { put("network", writeVectorNetwork(it)) }
 }
+
+private fun writeVectorNetwork(network: VectorNetwork): JsonObject =
+    buildJsonObject {
+        put(
+            "vertices",
+            JsonArray(
+                network.vertices.map { vertex ->
+                    buildJsonObject {
+                        put("x", vertex.x)
+                        put("y", vertex.y)
+                        vertex.inHandle?.let { put("in", writeHandleOffset(it)) }
+                        vertex.outHandle?.let { put("out", writeHandleOffset(it)) }
+                        if (vertex.mirror != HandleMirror.None) put("mirror", handleMirrorName(vertex.mirror))
+                        if (vertex.corner) put("corner", true)
+                    }
+                },
+            ),
+        )
+        put(
+            "segments",
+            JsonArray(
+                network.segments.map { segment ->
+                    buildJsonObject {
+                        put("from", segment.from)
+                        put("to", segment.to)
+                    }
+                },
+            ),
+        )
+        if (network.regions.isNotEmpty()) {
+            put(
+                "regions",
+                JsonArray(
+                    network.regions.map { region ->
+                        buildJsonObject {
+                            if (region.windingRule != "nonzero") put("windingRule", region.windingRule)
+                            put("loops", JsonArray(region.loops.map { loop -> JsonArray(loop.map { JsonPrimitive(it) }) }))
+                        }
+                    },
+                ),
+            )
+        }
+    }
+
+private fun writeHandleOffset(handle: HandleOffset): JsonObject =
+    buildJsonObject {
+        put("dx", handle.dx)
+        put("dy", handle.dy)
+    }
+
+private fun handleMirrorName(mirror: HandleMirror): String =
+    when (mirror) {
+        HandleMirror.None -> "none"
+        HandleMirror.Angle -> "angle"
+        HandleMirror.AngleAndLength -> "angleAndLength"
+    }
 
 private fun JsonObjectBuilder.putInstanceKindFields(kind: DesignNodeKind.Instance) {
     put("componentId", stringJson(kind.componentId))

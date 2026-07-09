@@ -20,7 +20,7 @@ class MissionDocumentLayoutIntegrationTest {
 
     @Test
     fun missionDocumentsCompileAndMergeWithoutErrors() {
-        assertEquals(3, documents.compiled.size)
+        assertEquals(4, documents.compiled.size)
         documents.compiled.forEachIndexed { index, compiled ->
             assertTrue(compiled.isSuccess, "${documents.sources[index].fileName} failed to compile")
         }
@@ -32,11 +32,11 @@ class MissionDocumentLayoutIntegrationTest {
 
         val document = assertNotNull(documents.document)
         assertEquals(
-            listOf("Mission Overview", "Telemetry", "Event Log"),
+            listOf("Mission Overview", "Telemetry", "Event Log", "Shapes Showcase"),
             document.pages.map { it.name },
         )
         assertEquals(
-            listOf("missionOverview", "missionTelemetry", "missionEventLog"),
+            listOf("missionOverview", "missionTelemetry", "missionEventLog", "shapesShowcase"),
             document.pages.map { it.id },
         )
         // Duplicated definitions collapse: two documents ship the default wire tile,

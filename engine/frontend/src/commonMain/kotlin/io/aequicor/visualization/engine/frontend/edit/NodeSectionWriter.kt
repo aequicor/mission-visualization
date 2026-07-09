@@ -2,15 +2,18 @@ package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VectorPath
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 
 /**
@@ -56,6 +59,7 @@ internal object NodeSectionWriter {
         add(headingLine(node, level))
         addAll(SlmBlockRenderer.entryLines("node", nodePayload(node), 0))
         shapePayload(node)?.let { addAll(SlmBlockRenderer.entryLines("shape", it, 0)) }
+        vectorPayload(node)?.let { addAll(SlmBlockRenderer.entryLines("vector", it, 0)) }
         layoutPayload(node)?.let { addAll(SlmBlockRenderer.entryLines("layout", it, 0)) }
         stylePayload(node)?.let { addAll(SlmBlockRenderer.entryLines("style", it, 0)) }
         textPayload(node)?.let { addAll(SlmBlockRenderer.entryLines("text", it, 0)) }
@@ -139,6 +143,9 @@ internal object NodeSectionWriter {
 
     private fun shapePayload(node: DesignNode): YamlPayload.Mapping? {
         val shape = node.kind as? DesignNodeKind.Shape ?: return null
+        // Vector geometry (paths/network/refs) is emitted by [vectorPayload]; the `shape:` block
+        // only carries parametric-primitive fields.
+        if (shape.shape == ShapeType.Vector) return null
         return YamlPayload.Mapping(
             buildList {
                 add("kind" to str(shapeToken(shape.shape)))
@@ -146,6 +153,69 @@ internal object NodeSectionWriter {
                 shape.innerRadius?.let { add("innerRadius" to num(it)) }
             },
         )
+    }
+
+    // --- vector block (geometry: refs, inline paths, structural network, boolean ops) ---
+
+    /**
+     * The `vector:` block for a vector shape or a boolean-operation node. Fixes the prior
+     * silent geometry drop on structural insert — [shapePayload] never emitted paths, refs,
+     * viewBox, network, or boolean operands.
+     */
+    private fun vectorPayload(node: DesignNode): YamlPayload.Mapping? {
+        (node.kind as? DesignNodeKind.BooleanOperation)?.let { boolean ->
+            return YamlPayload.Mapping(
+                listOf(
+                    "boolean" to YamlPayload.Mapping(
+                        listOf(
+                            "op" to str(booleanOpToken(boolean.operation)),
+                            "children" to YamlPayload.Sequence(node.children.map { str(it.id) }),
+                        ),
+                    ),
+                ),
+            )
+        }
+        val shape = node.kind as? DesignNodeKind.Shape ?: return null
+        if (shape.shape != ShapeType.Vector) return null
+        val entries = buildList {
+            if (shape.iconRef.isNotEmpty()) add("iconRef" to str(shape.iconRef))
+            if (shape.pathRef.isNotEmpty()) add("pathRef" to str(shape.pathRef))
+            shape.viewBox?.let { add("viewBox" to viewBoxPayload(it)) }
+            val network = shape.network
+            if (network != null && network.isNotEmpty()) {
+                add("network" to NetworkYamlWriter.network(network))
+            } else if (shape.paths.isNotEmpty()) {
+                add("paths" to pathsPayload(shape.paths))
+            }
+        }
+        // A bare `kind: vector` when nothing else is authored keeps the node a vector on reload.
+        return if (entries.isEmpty()) YamlPayload.Mapping(listOf("kind" to str("vector"))) else YamlPayload.Mapping(entries)
+    }
+
+    private fun viewBoxPayload(viewBox: DesignViewBox): YamlPayload =
+        YamlPayload.Sequence(
+            listOf(num(viewBox.x), num(viewBox.y), num(viewBox.width), num(viewBox.height)),
+            replaceWhole = true,
+        )
+
+    private fun pathsPayload(paths: List<VectorPath>): YamlPayload =
+        YamlPayload.Sequence(
+            paths.map { path ->
+                YamlPayload.Mapping(
+                    buildList {
+                        if (path.windingRule != "nonzero") add("windingRule" to str(path.windingRule))
+                        add("d" to str(path.d))
+                    },
+                )
+            },
+            replaceWhole = true,
+        )
+
+    private fun booleanOpToken(op: BooleanOperationKind): String = when (op) {
+        BooleanOperationKind.Union -> "union"
+        BooleanOperationKind.Subtract -> "subtract"
+        BooleanOperationKind.Intersect -> "intersect"
+        BooleanOperationKind.Exclude -> "exclude"
     }
 
     // --- layout block (auto layout + the canonical size carrier) ---

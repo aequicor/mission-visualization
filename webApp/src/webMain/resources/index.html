@@ -72,6 +72,35 @@
     };
   })();
 </script>
+<script>
+  // Compose/Skiko does not currently resize the canvas backing store when Chrome's
+  // page zoom changes devicePixelRatio in-place. In that stale state the browser
+  // scales the old bitmap and the whole UI, especially toolbar icons, becomes soft.
+  // A debounced reload recreates the canvas at the new DPR.
+  (function () {
+    var currentDpr = window.devicePixelRatio || 1;
+    var timer = 0;
+    var reloading = false;
+
+    function checkDpr() {
+      var nextDpr = window.devicePixelRatio || 1;
+      if (Math.abs(nextDpr - currentDpr) < 0.001) return;
+      currentDpr = nextDpr;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        if (reloading) return;
+        reloading = true;
+        window.location.reload();
+      }, 350);
+    }
+
+    window.addEventListener('resize', checkDpr);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', checkDpr);
+    }
+    setInterval(checkDpr, 750);
+  })();
+</script>
 <script type="application/javascript" src="webApp.js"></script>
 </body>
 </html>
