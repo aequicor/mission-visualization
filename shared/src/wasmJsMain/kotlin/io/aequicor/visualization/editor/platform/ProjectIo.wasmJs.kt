@@ -73,6 +73,27 @@ private fun ensureProjectIoInstalled() {
             });
           }
 
+          function chooseDirectoryFiles() {
+            return new Promise(function (resolve) {
+              var input = document.createElement("input");
+              input.type = "file";
+              input.multiple = true;
+              input.accept = ".layout.md,.slm.md,.slm,.md,text/markdown,text/plain";
+              if ("webkitdirectory" in input) {
+                input.webkitdirectory = true;
+                input.directory = true;
+              }
+              input.style.position = "fixed";
+              input.style.left = "-10000px";
+              input.onchange = function () {
+                resolve(input.files ? Array.prototype.slice.call(input.files) : []);
+                input.remove();
+              };
+              document.body.appendChild(input);
+              input.click();
+            });
+          }
+
           function findEndOfCentralDirectory(bytes) {
             var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
             var min = Math.max(0, bytes.length - 65557);
@@ -142,8 +163,29 @@ private fun ensureProjectIoInstalled() {
             }
           }
 
+          async function readPickedSources(files) {
+            var out = [];
+            for (var i = 0; i < files.length; i++) {
+              var file = files[i];
+              var name = file.webkitRelativePath || file.name;
+              if (sourceLike(name)) {
+                out.push({ fileName: safeName(name, file.name), content: await file.text() });
+              }
+            }
+            return out;
+          }
+
+          async function openFolderViaInput() {
+            var files = await chooseDirectoryFiles();
+            if (!files.length) return;
+            persistSources(await readPickedSources(files));
+          }
+
           async function openFolder() {
-            if (!window.showDirectoryPicker) throw new Error("Chrome File System Access API is unavailable.");
+            if (!window.showDirectoryPicker) {
+              await openFolderViaInput();
+              return;
+            }
             var handle = await window.showDirectoryPicker({ mode: "read" });
             var files = [];
             await walkDirectory(handle, "", files);
@@ -241,7 +283,10 @@ private fun ensureProjectIoInstalled() {
           }
 
           async function saveFolder(sourcesJson) {
-            if (!window.showDirectoryPicker) throw new Error("Chrome File System Access API is unavailable.");
+            if (!window.showDirectoryPicker) {
+              saveZip(sourcesJson);
+              return;
+            }
             var handle = await window.showDirectoryPicker({ mode: "readwrite" });
             var files = parseSourcesJson(sourcesJson);
             for (var i = 0; i < files.length; i++) {

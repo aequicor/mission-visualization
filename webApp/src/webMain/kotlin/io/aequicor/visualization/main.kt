@@ -8,6 +8,7 @@ import androidx.compose.ui.window.ComposeViewport
 @OptIn(ExperimentalComposeUiApi::class)
 fun main() {
     installFullscreenHotkey()
+    installModifierReleaseOnFocusChange()
     // Compose owns only #compose-root; the intro overlay (#mv-loader) is a separate
     // sibling in index.html, so mounting Compose never touches or removes it — we
     // fade it out ourselves once the first frame is painted.
@@ -22,6 +23,57 @@ fun main() {
             dismissLoadingOverlay()
         }
     }
+}
+
+/**
+ * Browsers often do not deliver the real `keyup` for Alt/Shift/Space when focus leaves the
+ * page via OS app switching (notably Alt+Tab). Compose's canvas keeps modifier state from
+ * key events, so synthesize a release on focus/visibility changes to clear stale modifiers.
+ */
+@OptIn(kotlin.js.ExperimentalWasmJsInterop::class)
+private fun installModifierReleaseOnFocusChange() {
+    js(
+        """
+        (function () {
+          if (window.__mvModifierReleaseInstalled) return;
+          window.__mvModifierReleaseInstalled = true;
+          window.__mvModifierReleaseCount = 0;
+
+          function dispatchKeyup(target, key, code) {
+            if (!target || typeof target.dispatchEvent !== "function") return;
+            try {
+              target.dispatchEvent(new KeyboardEvent("keyup", {
+                key: key,
+                code: code,
+                bubbles: true,
+                cancelable: true,
+                altKey: false,
+                ctrlKey: false,
+                metaKey: false,
+                shiftKey: false
+              }));
+            } catch (_) {}
+          }
+
+          function releaseModifiers() {
+            window.__mvModifierReleaseCount += 1;
+            var targets = [document.activeElement, document.body, document, window];
+            for (var i = 0; i < targets.length; i += 1) {
+              dispatchKeyup(targets[i], "Alt", "AltLeft");
+              dispatchKeyup(targets[i], "Shift", "ShiftLeft");
+              dispatchKeyup(targets[i], " ", "Space");
+              dispatchKeyup(targets[i], "Spacebar", "Space");
+            }
+          }
+
+          window.addEventListener("blur", releaseModifiers, true);
+          window.addEventListener("focus", releaseModifiers, true);
+          window.addEventListener("pagehide", releaseModifiers, true);
+          document.addEventListener("visibilitychange", releaseModifiers, true);
+          document.addEventListener("focusout", releaseModifiers, true);
+        })();
+        """,
+    )
 }
 
 /** Fades out and removes the `#mv-loader` intro overlay defined in `index.html`. */

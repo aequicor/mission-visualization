@@ -72,6 +72,7 @@ import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isAltPressed as isPointerAltPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
@@ -437,13 +438,14 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         val windowFocused = LocalWindowInfo.current.isWindowFocused
         var lastTapMark by remember { mutableStateOf<TimeSource.Monotonic.ValueTimeMark?>(null) }
         var lastTapId by remember { mutableStateOf("") }
+        fun resetHeldModifiers() {
+            shiftHeld = false
+            altHeld = false
+            spaceHeld = false
+        }
         LaunchedEffect(pageId) { runCatching { focusRequester.requestFocus() } }
         LaunchedEffect(windowFocused) {
-            if (!windowFocused) {
-                shiftHeld = false
-                altHeld = false
-                spaceHeld = false
-            }
+            if (!windowFocused) resetHeldModifiers()
         }
         // A stale handle cursor must not survive a tool/selection change without a pointer move.
         LaunchedEffect(ws.tool, spaceHeld, design.selectedNodeId, design.selectedNodeIds, primarySelectionRotation) { hoverCursor = null }
@@ -489,6 +491,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent()
+                                val modifiers = event.keyboardModifiers
+                                shiftHeld = modifiers.isShiftPressed
+                                altHeld = modifiers.isPointerAltPressed
                                 when (event.type) {
                                     PointerEventType.Scroll -> {
                                         val change = event.changes.firstOrNull() ?: continue
@@ -496,7 +501,6 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         if (state.workspace.pendingZoomTo != null) {
                                             state.updateWorkspace { it.copy(pendingZoomTo = null) }
                                         }
-                                        val modifiers = event.keyboardModifiers
                                         if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
                                             val factor = zoomFactorForScroll(-change.scrollDelta.y)
                                             if (factor != 1f) {
@@ -552,6 +556,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         awaitEachGesture {
                             val gestureStart = awaitCanvasGestureStart()
                             val down = gestureStart.change
+                            shiftHeld = gestureStart.shiftPressed
+                            altHeld = gestureStart.altPressed
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
                             // The pointerInput coroutine can outlive document/layout recompositions
@@ -745,6 +751,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
 
                             while (true) {
                                 val event = awaitPointerEvent()
+                                val modifiers = event.keyboardModifiers
+                                shiftHeld = modifiers.isShiftPressed
+                                altHeld = modifiers.isPointerAltPressed
                                 val change = event.changes.firstOrNull() ?: break
                                 if (mode == CanvasOperation.Pan && panFromTertiaryButton && !event.buttons.isTertiaryPressed) break
                                 // Escape (routed through the key handler) aborts a live drag; check
@@ -2025,6 +2034,8 @@ private const val WheelZoomConvergeFraction = 1e-3f
 private data class CanvasGestureStart(
     val change: PointerInputChange,
     val tertiaryButton: Boolean,
+    val shiftPressed: Boolean,
+    val altPressed: Boolean,
 )
 
 /**
@@ -2036,13 +2047,24 @@ private suspend fun AwaitPointerEventScope.awaitCanvasGestureStart(): CanvasGest
     while (true) {
         val event = awaitPointerEvent()
         val change = event.changes.firstOrNull() ?: continue
+        val modifiers = event.keyboardModifiers
         if (!change.isConsumed && event.buttons.isTertiaryPressed) {
-            return CanvasGestureStart(change, tertiaryButton = true)
+            return CanvasGestureStart(
+                change = change,
+                tertiaryButton = true,
+                shiftPressed = modifiers.isShiftPressed,
+                altPressed = modifiers.isPointerAltPressed,
+            )
         }
         val allMouse = event.changes.all { it.type == PointerType.Mouse }
         val regularDown = event.changes.all { it.changedToDown() }
         if (regularDown && (!allMouse || event.buttons.isPrimaryPressed)) {
-            return CanvasGestureStart(change, tertiaryButton = false)
+            return CanvasGestureStart(
+                change = change,
+                tertiaryButton = false,
+                shiftPressed = modifiers.isShiftPressed,
+                altPressed = modifiers.isPointerAltPressed,
+            )
         }
     }
 }
