@@ -21,8 +21,20 @@ class ResizeMathTest {
         dx: Double,
         dy: Double,
         lockRatio: Boolean = false,
+        maxWidth: Double? = null,
+        maxHeight: Double? = null,
+        canMoveLeft: Boolean = true,
+        canMoveRight: Boolean = true,
+        canMoveTop: Boolean = true,
+        canMoveBottom: Boolean = true,
     ): List<Double> {
-        val r = computeResize(baseW, baseH, handle, dx, dy, lockRatio = lockRatio)
+        val r = computeResize(
+            baseW, baseH, handle, dx, dy,
+            maxWidth = maxWidth, maxHeight = maxHeight,
+            canMoveLeft = canMoveLeft, canMoveRight = canMoveRight,
+            canMoveTop = canMoveTop, canMoveBottom = canMoveBottom,
+            lockRatio = lockRatio,
+        )
         return listOf(baseX + r.dx, baseY + r.dy, r.width, r.height)
     }
 
@@ -91,4 +103,47 @@ class ResizeMathTest {
         val box = resize(ResizeHandle.Right, 50.0, 0.0, lockRatio = true)
         assertEquals(listOf(100.0, 100.0, 250.0, 100.0), box)
     }
+
+    // --- Direction gating: a blocked edge is inert (the reported flow-layout bug) ---
+
+    @Test fun leftEdgeBlockedDraggingLeftDoesNothing() {
+        // Middle child of a horizontal auto-layout: its left edge is flow-pinned. Dragging it
+        // left must NOT grow the box (previously it grew rightward).
+        assertEquals(listOf(100.0, 100.0, 200.0, 100.0), resize(ResizeHandle.Left, -50.0, 0.0, canMoveLeft = false))
+    }
+
+    @Test fun leftEdgeBlockedDraggingRightDoesNothing() =
+        assertEquals(listOf(100.0, 100.0, 200.0, 100.0), resize(ResizeHandle.Left, 50.0, 0.0, canMoveLeft = false))
+
+    @Test fun topEdgeBlockedDoesNothing() =
+        assertEquals(listOf(100.0, 100.0, 200.0, 100.0), resize(ResizeHandle.Top, -40.0, 0.0, canMoveTop = false))
+
+    @Test fun blockedCornerMovesOnlyTheFreeAxis() {
+        // TopLeft with the left edge pinned: width stays, only the height (top) grows.
+        val box = resize(ResizeHandle.TopLeft, -50.0, -40.0, canMoveLeft = false)
+        assertEquals(listOf(100.0, 60.0, 200.0, 140.0), box)
+    }
+
+    @Test fun rightEdgeMovableInFlowStillResizes() {
+        // The flow end edge (right) can grow — only the start edge is blocked.
+        assertEquals(listOf(100.0, 100.0, 260.0, 100.0), resize(ResizeHandle.Right, 60.0, 0.0, canMoveLeft = false))
+    }
+
+    // --- Max-size clamp: capped growth must not shove the opposite edge ---
+
+    @Test fun maxWidthCapsRightHandleWithoutMovingOrigin() {
+        val box = resize(ResizeHandle.Right, 500.0, 0.0, maxWidth = 300.0)
+        assertEquals(listOf(100.0, 100.0, 300.0, 100.0), box)
+    }
+
+    @Test fun maxWidthCapsLeftHandleAndPinsRightEdge() {
+        // Left handle capped at maxWidth: width stops at 300 and the right edge stays at 300
+        // (origin shifts to keep it pinned) instead of the box sliding left.
+        val box = resize(ResizeHandle.Left, -500.0, 0.0, maxWidth = 300.0)
+        assertEquals(listOf(0.0, 100.0, 300.0, 100.0), box)
+        assertEquals(300.0, box[0] + box[2], "right edge stays pinned at 300")
+    }
+
+    @Test fun maxHeightCapsBottomHandle() =
+        assertEquals(listOf(100.0, 100.0, 200.0, 150.0), resize(ResizeHandle.Bottom, 0.0, 500.0, maxHeight = 150.0))
 }
