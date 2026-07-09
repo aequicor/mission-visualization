@@ -62,8 +62,18 @@ private val UnknownPaintColor = Color(0xFFC9CFD6)
 private val MissingAssetColor = Color(0xFFF3D6DE)
 private val MissingAssetHatch = Color(0x66B0455F)
 
-/** Draws a laid-out node tree in document coordinates (the caller applies zoom). */
-internal fun DrawScope.drawDesignBox(box: LayoutBox, context: DesignDrawContext) {
+/**
+ * Draws a laid-out node tree in document coordinates (the caller applies zoom).
+ *
+ * [drawChild], when non-null, replaces the default recursive draw of each child so a caller can
+ * wrap children in extra transforms (e.g. the Scene renderer's per-node motion overrides) while
+ * still inheriting this node's group opacity, rotation, clip and sibling-mask wrapping.
+ */
+internal fun DrawScope.drawDesignBox(
+    box: LayoutBox,
+    context: DesignDrawContext,
+    drawChild: (DrawScope.(LayoutBox) -> Unit)? = null,
+) {
     val node = box.node
     if (node.opacity <= 0.0) return
 
@@ -73,28 +83,36 @@ internal fun DrawScope.drawDesignBox(box: LayoutBox, context: DesignDrawContext)
         val bounds = Rect(-1_000_000f, -1_000_000f, 1_000_000f, 1_000_000f)
         val layerPaint = Paint().apply { alpha = node.opacity.toFloat() }
         drawContext.canvas.saveLayer(bounds, layerPaint)
-        drawWithRotation(box, context)
+        drawWithRotation(box, context, drawChild)
         drawContext.canvas.restore()
     } else {
-        drawWithRotation(box, context)
+        drawWithRotation(box, context, drawChild)
     }
 }
 
-private fun DrawScope.drawWithRotation(box: LayoutBox, context: DesignDrawContext) {
+private fun DrawScope.drawWithRotation(
+    box: LayoutBox,
+    context: DesignDrawContext,
+    drawChild: (DrawScope.(LayoutBox) -> Unit)?,
+) {
     val rotation = box.node.rotation
     if (rotation != 0.0) {
         rotate(
             degrees = rotation.toFloat(),
             pivot = Offset((box.x + box.width / 2).toFloat(), (box.y + box.height / 2).toFloat()),
         ) {
-            drawDesignBoxContent(box, context)
+            drawDesignBoxContent(box, context, drawChild)
         }
     } else {
-        drawDesignBoxContent(box, context)
+        drawDesignBoxContent(box, context, drawChild)
     }
 }
 
-private fun DrawScope.drawDesignBoxContent(box: LayoutBox, context: DesignDrawContext) {
+private fun DrawScope.drawDesignBoxContent(
+    box: LayoutBox,
+    context: DesignDrawContext,
+    drawChild: (DrawScope.(LayoutBox) -> Unit)? = null,
+) {
     val node = box.node
     node.booleanOp?.let { op ->
         drawBooleanOperation(box, op, context.vectorAssets)
@@ -140,10 +158,10 @@ private fun DrawScope.drawDesignBoxContent(box: LayoutBox, context: DesignDrawCo
     if (box.children.isNotEmpty()) {
         if (node.layout.clipsContent) {
             clipPath(outline) {
-                drawChildBoxes(box, context)
+                drawChildBoxes(box, context, drawChild)
             }
         } else {
-            drawChildBoxes(box, context)
+            drawChildBoxes(box, context, drawChild)
         }
     }
 
@@ -159,11 +177,18 @@ private fun DrawScope.drawDesignBoxContent(box: LayoutBox, context: DesignDrawCo
  * `appliesTo` ids, else every following sibling). Alpha and luminance masks
  * both reduce to this shape clip; no alpha sampling happens.
  */
-private fun DrawScope.drawChildBoxes(box: LayoutBox, context: DesignDrawContext) {
+private fun DrawScope.drawChildBoxes(
+    box: LayoutBox,
+    context: DesignDrawContext,
+    drawChild: (DrawScope.(LayoutBox) -> Unit)? = null,
+) {
+    fun DrawScope.paint(child: LayoutBox) {
+        if (drawChild != null) drawChild(child) else drawDesignBox(child, context)
+    }
     val children = box.children
     val masks = children.withIndex().filter { (_, child) -> child.node.mask != null }
     if (masks.isEmpty()) {
-        children.forEach { child -> drawDesignBox(child, context) }
+        children.forEach { child -> paint(child) }
         return
     }
     children.forEachIndexed { index, child ->
@@ -171,7 +196,7 @@ private fun DrawScope.drawChildBoxes(box: LayoutBox, context: DesignDrawContext)
         val clips = masks
             .filter { (maskIndex, mask) -> maskAppliesTo(mask, maskIndex, child, index) }
             .map { (_, mask) -> maskClipPath(mask, context.vectorAssets) }
-        drawClippedBy(clips, 0) { drawDesignBox(child, context) }
+        drawClippedBy(clips, 0) { paint(child) }
     }
 }
 

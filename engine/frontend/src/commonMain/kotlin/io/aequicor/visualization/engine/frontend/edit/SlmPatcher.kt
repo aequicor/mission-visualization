@@ -120,14 +120,32 @@ private fun applyResolved(
             is EditTargetResolution.Resolved -> resolution.target
         }
         anchorLine = target.anchorSpan.startLine
-        val compiledEdit = when (val outcome = editPayload(edit, target)) {
-            is PayloadOutcome.Invalid -> {
-                diagnostics.error(outcome.message, anchorLine)
-                return failed()
+        // Interaction/motion edits rewrite whole typed-block entries addressed by their line span
+        // (see typedBlockSetPlan); everything else merges a payload via YamlPathWriter.
+        when (edit) {
+            is SetInteractions -> {
+                val payloads = edit.interactions.map { InteractionYamlWriter.interaction(it) }
+                if (payloads.any { it == null }) {
+                    diagnostics.error("Interaction is not expressible in SLM", anchorLine)
+                    return failed()
+                }
+                typedBlockSetPlan(source, target, lineIndex, TypedBlockKind.Interaction, payloads.filterNotNull())
             }
-            is PayloadOutcome.Ok -> outcome
+            is SetMotion -> typedBlockSetPlan(
+                source, target, lineIndex, TypedBlockKind.Motion,
+                edit.motion?.let { listOf(MotionYamlWriter.motion(it)) } ?: emptyList(),
+            )
+            else -> {
+                val compiledEdit = when (val outcome = editPayload(edit, target)) {
+                    is PayloadOutcome.Invalid -> {
+                        diagnostics.error(outcome.message, anchorLine)
+                        return failed()
+                    }
+                    is PayloadOutcome.Ok -> outcome
+                }
+                YamlPathWriter(lineIndex).plan(target, compiledEdit.blockKind, compiledEdit.payload)
+            }
         }
-        YamlPathWriter(lineIndex).plan(target, compiledEdit.blockKind, compiledEdit.payload)
     }
     val ops = when (plan) {
         is WritePlan.Failed -> {
@@ -335,6 +353,10 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
 
     // Structural edits never reach here: they are dispatched to SectionWriter upstream.
     is StructuralSlmEdit -> PayloadOutcome.Invalid("Structural edits do not compile to a typed-block payload")
+
+    // Interaction/motion edits never reach here: they are dispatched to typedBlockSetPlan upstream.
+    is SetInteractions, is SetMotion ->
+        PayloadOutcome.Invalid("Interaction/motion edits are dispatched via typedBlockSetPlan")
 }
 
 private fun viewBoxPayload(viewBox: DesignViewBox): YamlPayload =

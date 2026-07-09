@@ -89,6 +89,7 @@ import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.DocumentRect
 import io.aequicor.visualization.editor.presentation.DeviceMode
+import io.aequicor.visualization.editor.presentation.EditorMode
 import io.aequicor.visualization.editor.presentation.EditorTool
 import io.aequicor.visualization.editor.presentation.FocusMode
 import io.aequicor.visualization.editor.presentation.GapMeasurement
@@ -225,6 +226,7 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             DeviceControl(ws.deviceMode) { mode -> state.updateWorkspace { it.copy(deviceMode = mode) } }
+            SceneModeToggle(ws.mode) { mode -> state.updateWorkspace { it.copy(mode = mode) } }
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 FloatingToolbar(ws.tool) { tool -> state.updateWorkspace { it.copy(tool = tool) } }
             }
@@ -334,7 +336,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
         }
 
-        if (document != null && rootNode != null) {
+        if (document != null && rootNode != null && ws.mode == EditorMode.Scene) {
+            // Scene mode: play prototype behavior instead of editing (design-book §19).
+            SceneStage(state, viewport, Modifier.fillMaxSize())
+        } else if (document != null && rootNode != null) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -776,8 +781,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         }
 
         // Hover + selection + center-line + Alt-measurement overlays (screen space; never
-        // touches the document — see design-book §18).
+        // touches the document — see design-book §18). Scene mode hides all edit affordances (§19).
         Canvas(Modifier.matchParentSize()) {
+            if (ws.mode != EditorMode.Canvas) return@Canvas
             if (ws.hoveredNodeId.isNotBlank() && ws.hoveredNodeId !in design.selectedNodeIds && !altHeld) {
                 layout?.findBySourceId(ws.hoveredNodeId)?.let { box ->
                     drawRotatedOutline(box.toBoundsBox(), box.node.rotation, viewport, colors.accent.copy(alpha = 0.85f), width = 1.5f)
@@ -857,11 +863,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
         }
 
-        // Vector edit mode: draw/drag path anchors of the target shape.
-        VectorEditOverlay(state, layout, viewport, zoomPx)
+        // Vector/text edit overlays are Canvas-only: in Scene mode they must not render over the
+        // prototype nor let a leaked in-progress edit dispatch document mutations (§19 read-only).
+        if (ws.mode == EditorMode.Canvas) {
+            // Vector edit mode: draw/drag path anchors of the target shape.
+            VectorEditOverlay(state, layout, viewport, zoomPx)
 
-        // Inline text editing overlay for a double-clicked text node.
-        TextEditOverlay(state, layout, viewport)
+            // Inline text editing overlay for a double-clicked text node.
+            TextEditOverlay(state, layout, viewport)
+        }
     }
 }
 
@@ -2199,6 +2209,42 @@ private fun cursorFor(tool: EditorTool) = when (tool) {
 }
 
 // --- Bottom controls ---------------------------------------------------------
+
+/** Segmented `[Canvas | Scene]` mode switch (design-book §19). Writes only workspace — no undo entry. */
+@Composable
+private fun SceneModeToggle(selected: EditorMode, onSelect: (EditorMode) -> Unit) {
+    val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(8.dp)
+    Surface(
+        modifier = Modifier.height(48.dp).clip(shape),
+        shape = shape,
+        color = Color.White,
+        border = BorderStroke(1.dp, colors.panelStroke),
+        shadowElevation = 2.dp,
+    ) {
+        Row {
+            EditorMode.entries.forEach { mode ->
+                val active = mode == selected
+                Box(
+                    modifier = Modifier.width(72.dp).fillMaxHeight()
+                        .background(if (active) colors.accent else colors.controlSurface)
+                        .clickable { onSelect(mode) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        mode.title,
+                        color = if (active) Color.White else colors.ink,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) {

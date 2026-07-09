@@ -15,6 +15,12 @@ data class EditorWorkspaceState(
     val sourceCollapsed: Boolean = false,
     val inspectorCollapsed: Boolean = false,
     val focusMode: FocusMode = FocusMode.Normal,
+    /**
+     * Canvas edits the static screen (click selects); Scene plays prototype behavior (click
+     * executes interactions). This is a view preference — switching never touches the document,
+     * so it can never create an undo entry, and selection/viewport survive the switch for free.
+     */
+    val mode: EditorMode = EditorMode.Canvas,
     val tool: EditorTool = EditorTool.Select,
     val deviceMode: DeviceMode = DeviceMode.Pc,
     val sourceTab: SourceTab = SourceTab.Layers,
@@ -68,6 +74,9 @@ data class VectorVertexRef(val vertexIndex: Int, val part: VectorVertexPart = Ve
 /** Workspace focus: `Normal` shows all chrome; `MainOnly` leaves just the canvas. */
 enum class FocusMode { Normal, MainOnly }
 
+/** The two editing modes (design-book §19): static [Canvas] editing vs. [Scene] prototype playback. */
+enum class EditorMode(val title: String) { Canvas("Canvas"), Scene("Scene") }
+
 /** A one-shot fit request the canvas consumes once its size and layout are known. */
 enum class PendingFit { None, Screen, Selection }
 
@@ -97,6 +106,7 @@ enum class SourceTab(val label: CompactLabel) {
 
 enum class InspectorTab(val label: CompactLabel) {
     Design(CompactLabel("Design", "Design", "Dsgn")),
+    Prototype(CompactLabel("Prototype", "Proto", "Prt")),
     Comments(CompactLabel("Comments", "Com", "Com")),
     ;
 
@@ -118,6 +128,8 @@ enum class InspectorSection(val label: CompactLabel) {
     Effects(CompactLabel("Effects", "FX", "FX")),
     Typography(CompactLabel("Typography", "Type", "Typ")),
     Constraints(CompactLabel("Constraints", "Const", "Cnst")),
+    Interactions(CompactLabel("Interactions", "Interact", "Int")),
+    Motion(CompactLabel("Motion", "Motion", "Mot")),
     ;
 
     val title: String get() = label.full

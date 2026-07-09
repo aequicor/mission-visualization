@@ -63,6 +63,13 @@ internal object NodeSectionWriter {
         layoutPayload(node)?.let { addAll(SlmBlockRenderer.entryLines("layout", it, 0)) }
         stylePayload(node)?.let { addAll(SlmBlockRenderer.entryLines("style", it, 0)) }
         textPayload(node)?.let { addAll(SlmBlockRenderer.entryLines("text", it, 0)) }
+        // Authored behavior: each interaction is its own `interaction:` block; motion is a single
+        // `motion:` block. A subtree carrying an inexpressible interaction is gated out upstream
+        // (isStructurallyExpressible), so a null emit here never silently drops behavior.
+        node.interactions.forEach { interaction ->
+            InteractionYamlWriter.interaction(interaction)?.let { addAll(SlmBlockRenderer.entryLines("interaction", it, 0)) }
+        }
+        node.motion?.let { motion -> addAll(SlmBlockRenderer.entryLines("motion", MotionYamlWriter.motion(motion), 0)) }
     }
 
     // --- heading ---
