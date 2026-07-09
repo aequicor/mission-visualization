@@ -126,6 +126,72 @@ fun axisAlignedBounds(points: List<GeoPoint>): BoundsBox {
     return BoundsBox(minX, minY, maxX - minX, maxY - minY)
 }
 
+// --- Inherited (ancestor) rotation --------------------------------------------
+//
+// The layout engine ignores rotation: every box is axis-aligned in one shared root-local
+// coordinate space, and the Compose backend applies each node's rotation about its own center
+// at draw time by *nesting* `rotate(pivot)` transforms (root outermost). So a node whose own
+// `rotation` is 0 is still drawn rotated when an ancestor (e.g. the root frame) is rotated — its
+// content follows, but its layout box does not move. The editor overlays (selection outline,
+// handles, rotate affordance) map a node's own box + own rotation to the screen, so under a
+// rotated ancestor they float in the pre-rotation position: the root-container rotation bug.
+// [effectiveTransform] composes the ancestor rotations so the overlays follow the same transform
+// the renderer applies.
+
+/**
+ * One ancestor's contribution to a descendant's on-screen placement: a rotation by [degrees]
+ * about [center] (the ancestor's own center, in the shared root-local coordinate space the
+ * layout engine produces).
+ */
+data class AncestorRotation(val center: GeoPoint, val degrees: Double)
+
+/**
+ * A node's on-screen (visual) placement once every rotated ancestor is composed in.
+ *
+ * A composition of rigid rotations is itself rigid, so the node's axis-aligned layout box maps to
+ * a congruent box: same width/height, its center carried to [box].center, rotated by [rotation]
+ * about that center — exactly what feeding [box] and [rotation] to [rotatedCorners] /
+ * [rotatedHandlePoints] reproduces. [ownRotation] (the node's own `rotation`, unchanged) is kept
+ * separately: a resize must undo the *full* visual [rotation] to read the drag in the box's own
+ * axes but re-express the resulting position shift in the shared root-local frame — which differs
+ * from the box's own frame only by [ownRotation] — and a rotate gesture edits only [ownRotation].
+ */
+data class EffectiveTransform(
+    val box: BoundsBox,
+    val rotation: Double,
+    val ownRotation: Double,
+)
+
+/**
+ * Composes [ancestors] (nearest-first: immediate parent first, root last) onto a node's own
+ * axis-aligned [box] and [ownRotation], yielding its on-screen [EffectiveTransform]. The node's
+ * own rotation fixes its own center, so only the ancestors move it: each rotates the running
+ * center about its own center — matching the renderer's outermost-first `rotate` nesting, where
+ * the immediate parent's transform is applied to the node's content first and the root's last.
+ */
+fun effectiveTransform(
+    box: BoundsBox,
+    ownRotation: Double,
+    ancestors: List<AncestorRotation>,
+): EffectiveTransform {
+    var center = GeoPoint(box.centerX, box.centerY)
+    var rotation = ownRotation
+    ancestors.forEach { ancestor ->
+        center = rotatePointAroundCenter(center, ancestor.center, ancestor.degrees)
+        rotation += ancestor.degrees
+    }
+    val visualBox = BoundsBox(center.x - box.width / 2.0, center.y - box.height / 2.0, box.width, box.height)
+    return EffectiveTransform(box = visualBox, rotation = rotation, ownRotation = ownRotation)
+}
+
+/**
+ * The net rotation a nested node inherits from its [ancestors] (beyond its own). Only the angle
+ * matters for de-rotating a drag *vector* — a composition of rotations about different centers is
+ * still a rotation by the sum of the angles — so this is the amount to undo when mapping a
+ * document-space move delta back into the node's root-local position frame.
+ */
+fun ancestorRotationDegrees(ancestors: List<AncestorRotation>): Double = ancestors.sumOf { it.degrees }
+
 // --- Resize cursor orientation --------------------------------------------------
 
 /** The four cursor orientations a resize handle can show. */
