@@ -58,6 +58,15 @@ data class SetNodePosition(
 ) : SlmEdit
 
 /**
+ * Sets the node's rotation (degrees): writes `node: position: rotation` (the block `NodeBlockReader`
+ * reads x/y/rotation from), merging into an existing `position:` map without disturbing its `x`/`y`.
+ */
+data class SetNodeRotation(
+    override val nodeId: String,
+    val degrees: Double,
+) : SlmEdit
+
+/**
  * Updates one or both Figma-style constraints under the node contract. Keeping the
  * two axes in one edit prevents horizontal/vertical constraint changes from creating
  * separate source patches and separate undo checkpoints.

@@ -109,13 +109,27 @@ import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.angleFromCenterDegrees
 import io.aequicor.visualization.editor.presentation.axisAlignedBounds
 import io.aequicor.visualization.editor.presentation.LineSegment
-import io.aequicor.visualization.editor.presentation.AnchorGuide
-import io.aequicor.visualization.editor.presentation.AnchorKind
-import io.aequicor.visualization.editor.presentation.AnchorResult
-import io.aequicor.visualization.editor.presentation.SpacingBar
-import io.aequicor.visualization.editor.presentation.centerAnchorLines
 import io.aequicor.visualization.editor.presentation.computeResize
-import io.aequicor.visualization.editor.presentation.computeAnchors
+import io.aequicor.visualization.editor.presentation.toMovingEdges
+import io.aequicor.visualization.editor.presentation.toSnapBox
+import io.aequicor.visualization.subsystems.anchoring.AnchorGuide
+import io.aequicor.visualization.subsystems.anchoring.CenterAnchorLines
+import io.aequicor.visualization.subsystems.anchoring.KeyRotationAngles
+import io.aequicor.visualization.subsystems.anchoring.MoveSnapState
+import io.aequicor.visualization.subsystems.anchoring.ResizeSnapOutput
+import io.aequicor.visualization.subsystems.anchoring.ResizeSnapState
+import io.aequicor.visualization.subsystems.anchoring.RotateSnapState
+import io.aequicor.visualization.subsystems.anchoring.SnapBox
+import io.aequicor.visualization.subsystems.anchoring.SpacingBar
+import io.aequicor.visualization.subsystems.anchoring.centerAnchorLines
+import io.aequicor.visualization.subsystems.anchoring.neighborRotationCandidates
+import io.aequicor.visualization.subsystems.anchoring.solveMoveSnap
+import io.aequicor.visualization.subsystems.anchoring.solveResizeSnap
+import io.aequicor.visualization.subsystems.anchoring.solveRotateSnap
+import io.aequicor.visualization.subsystems.anchoring.compose.GuideStyle
+import io.aequicor.visualization.subsystems.anchoring.compose.drawAnchorGuide
+import io.aequicor.visualization.subsystems.anchoring.compose.drawCenterAnchorLines
+import io.aequicor.visualization.subsystems.anchoring.compose.drawSpacingBar
 import io.aequicor.visualization.editor.presentation.translate
 import io.aequicor.visualization.editor.presentation.flowInsertionIndex
 import io.aequicor.visualization.editor.presentation.flowInsertionLine
@@ -339,6 +353,14 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var snapGuides by remember { mutableStateOf<List<AnchorGuide>>(emptyList()) }
         // Equal-spacing distribution bars for the same drag; empty otherwise.
         var spacingBars by remember { mutableStateOf<List<SpacingBar>>(emptyList()) }
+        // Which axes magnetically caught an anchor this frame — drives the solid center line per axis
+        // (design-book §18: dashed while searching, solid on catch). None outside a move drag.
+        var snappedAxes by remember { mutableStateOf(SnappedAxes.None) }
+        // True while a resize drag snaps the box's width/height to equal a neighbour's — tints the size badge.
+        var resizeMatched by remember { mutableStateOf(false) }
+        // Live rotation-snap feedback (angle + whether magnetically caught); null outside a rotate drag.
+        var rotateIndicator by remember { mutableStateOf<RotateIndicator?>(null) }
+        var rotateDragActive by remember { mutableStateOf(false) }
 
         // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Space
         // for pan, Alt for the read-only measurement overlay).
@@ -554,24 +576,21 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         val vb = box.toBoundsBox().visualBounds(box.node.rotation)
                                         listOf(GeoPoint(vb.x, vb.y), GeoPoint(vb.right, vb.bottom))
                                     }
-                                    val siblings = parentBox.children
-                                        .filter { it.node.sourceId !in ids }
-                                        .map { it.toBoundsBox() }
-                                    val containers = buildList {
-                                        add(parentBox.toBoundsBox())
-                                        var ancestorId = pressDocument.parentNodeOf(parentBox.node.sourceId)?.id
-                                        while (ancestorId != null) {
-                                            val ancestorBox = pressLayout?.findBySourceId(ancestorId)
-                                            if (ancestorBox != null && ancestorBox.node.rotation == 0.0) {
-                                                add(ancestorBox.toBoundsBox())
-                                            }
-                                            ancestorId = pressDocument.parentNodeOf(ancestorId)?.id
-                                        }
-                                    }
-                                    SnapBaseline(axisAlignedBounds(corners), containers, siblings)
+                                    val context = collectSnapContext(pressDocument, pressLayout, parentBox, ids)
+                                    SnapBaseline(axisAlignedBounds(corners), context.containers, context.siblings)
                                 }
                             } else {
                                 null
+                            }
+                            // Resize snap context (unrotated single selection only): the box's siblings +
+                            // its unrotated ancestor containers, to align the dragged edge / match sizes.
+                            val resizeSnapBaseline: SnapContext? = (mode as? CanvasOperation.Resize)?.let {
+                                val id = pressDesign.selectedNodeId.takeIf { sid -> sid.isNotBlank() } ?: return@let null
+                                if (!isSingleSelection || selectionLocked || selectionRotation != 0.0) return@let null
+                                val parentId = pressDocument.parentNodeOf(id)?.id ?: return@let null
+                                val parentBox = pressLayout?.findBySourceId(parentId) ?: return@let null
+                                if (parentBox.node.rotation != 0.0) return@let null
+                                collectSnapContext(pressDocument, pressLayout, parentBox, setOf(id))
                             }
 
                             var moved = false
@@ -585,11 +604,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             }.orEmpty()
                             val rotateBaseline = if (mode == CanvasOperation.Rotate && selectedResizeBox != null && pressDesign.selectedNodeId.isNotBlank()) {
                                 val center = GeoPoint(selectedResizeBox.centerX, selectedResizeBox.centerY)
+                                // Sibling rotations feed the rotation magnet so the box can line up with a neighbour.
+                                val neighborRotations = pressDocument.parentNodeOf(pressDesign.selectedNodeId)?.id
+                                    ?.let { pressLayout?.findBySourceId(it) }
+                                    ?.children
+                                    ?.filter { it.node.sourceId != pressDesign.selectedNodeId }
+                                    ?.map { it.node.rotation }
+                                    .orEmpty()
                                 RotateBaseline(
                                     nodeId = pressDesign.selectedNodeId,
                                     center = center,
                                     startAngle = angleFromCenterDegrees(center, GeoPoint(viewport.toDocX(start.x), viewport.toDocY(start.y))),
                                     startRotation = selectionRotation,
+                                    neighborAngles = neighborRotationCandidates(neighborRotations),
                                 )
                             } else {
                                 null
@@ -601,6 +628,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // — the incremental MoveNodes model can't stably snap a raw per-frame delta.
                             var appliedDx = 0.0
                             var appliedDy = 0.0
+                            // Sticky-snap latches carried across this gesture's frames (hysteresis).
+                            var moveSnapState = MoveSnapState.None
+                            var resizeSnapState = ResizeSnapState.None
+                            var rotateSnapState = RotateSnapState.None
 
                             while (true) {
                                 val event = awaitPointerEvent()
@@ -650,17 +681,31 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         val lockY = shiftHeld && abs(accY) <= abs(accX)
                                         val dragDx = if (lockX) 0.0 else rawDx
                                         val dragDy = if (lockY) 0.0 else rawDy
-                                        val anchor = snapBaseline?.let { base ->
-                                            computeAnchors(base.startUnionBounds.translate(dragDx, dragDy), base.containers, base.siblings, (SnapThresholdPx / zoomPx).toDouble())
-                                        } ?: AnchorResult(0.0, 0.0, emptyList())
-                                        val totalDx = dragDx + (if (lockX) 0.0 else anchor.dx)
-                                        val totalDy = dragDy + (if (lockY) 0.0 else anchor.dy)
+                                        val snap = snapBaseline?.let { base ->
+                                            // Feed the RAW pointer-driven box (never a snapped one) so the sticky
+                                            // release distance is measured against the pointer — else an axis
+                                            // would keep measuring against itself and latch forever.
+                                            solveMoveSnap(
+                                                base.startUnionBounds.translate(dragDx, dragDy).toSnapBox(),
+                                                base.containers.map { it.toSnapBox() },
+                                                base.siblings.map { it.toSnapBox() },
+                                                catch = (SnapCatchPx / zoomPx).toDouble(),
+                                                release = (SnapReleasePx / zoomPx).toDouble(),
+                                                allowX = !lockX,
+                                                allowY = !lockY,
+                                                prior = moveSnapState,
+                                            )
+                                        }
+                                        moveSnapState = snap?.state ?: MoveSnapState.None
+                                        val totalDx = dragDx + (snap?.dx ?: 0.0)
+                                        val totalDy = dragDy + (snap?.dy ?: 0.0)
                                         // Read the live selection: a new node may have been selected on press.
                                         state.dispatch(DesignEditorIntent.MoveNodes(state.designState.selectedNodeIds, totalDx - appliedDx, totalDy - appliedDy))
                                         appliedDx = totalDx
                                         appliedDy = totalDy
-                                        snapGuides = anchor.guides
-                                        spacingBars = anchor.spacing
+                                        snapGuides = snap?.guides ?: emptyList()
+                                        spacingBars = snap?.spacing ?: emptyList()
+                                        snappedAxes = SnappedAxes(x = snap?.snappedX == true, y = snap?.snappedY == true)
                                         dragMoveActive = true
                                         badge = null
                                     }
@@ -678,9 +723,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             )
                                         } else {
                                             resizeTargets.firstOrNull()?.let { target ->
+                                                val lockRatio = state.workspace.lockAspectRatio || shiftHeld
+                                                val snap = snapResizeDeltas(
+                                                    resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
+                                                    resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                )
+                                                resizeSnapState = snap.output?.state ?: ResizeSnapState.None
                                                 applyResize(
                                                     state, target.nodeId, resizeBaseline, target.originPosition, mode.handle,
-                                                    accX / zoomPx, accY / zoomPx, state.workspace.lockAspectRatio || shiftHeld,
+                                                    snap.docDx, snap.docDy, lockRatio,
                                                     // The rotation compensation must match the rotation the
                                                     // handle/baseline were resolved against at press time
                                                     // (0 for a multi-selection's axis-aligned group box), not
@@ -691,6 +742,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                     // handle never accounted for.
                                                     rotationDegrees = selectionRotation,
                                                 )
+                                                snapGuides = snap.output?.guides ?: emptyList()
+                                                resizeMatched = snap.output?.match?.let { it.widthMatched || it.heightMatched } == true
                                             }
                                         }
                                         badge = null
@@ -698,9 +751,24 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     CanvasOperation.Rotate -> if (rotateBaseline != null) {
                                         val pointerDoc = GeoPoint(viewport.toDocX(pos.x), viewport.toDocY(pos.y))
                                         val currentAngle = angleFromCenterDegrees(rotateBaseline.center, pointerDoc)
-                                        var nextRotation = normalizeAngleDegrees(rotateBaseline.startRotation + (currentAngle - rotateBaseline.startAngle))
-                                        if (shiftHeld) nextRotation = normalizeAngleDegrees(snapAngleToIncrement(nextRotation, 15.0))
+                                        val freeAngle = normalizeAngleDegrees(rotateBaseline.startRotation + (currentAngle - rotateBaseline.startAngle))
+                                        val nextRotation = if (shiftHeld) {
+                                            // Shift = the classic hard 15° step (magnet off, latch cleared).
+                                            rotateSnapState = RotateSnapState.None
+                                            normalizeAngleDegrees(snapAngleToIncrement(freeAngle, 15.0)).also {
+                                                rotateIndicator = RotateIndicator(it, caught = false)
+                                            }
+                                        } else {
+                                            val snap = solveRotateSnap(
+                                                freeAngle, KeyRotationAngles, rotateBaseline.neighborAngles,
+                                                RotateCatchDeg, RotateReleaseDeg, rotateSnapState,
+                                            )
+                                            rotateSnapState = snap.state
+                                            rotateIndicator = RotateIndicator(snap.angle, snap.caught)
+                                            snap.angle
+                                        }
                                         state.dispatch(DesignEditorIntent.SetRotation(rotateBaseline.nodeId, nextRotation))
+                                        rotateDragActive = true
                                         badge = null
                                     }
                                 }
@@ -771,15 +839,22 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             )
                                         } else {
                                             resizeTargets.firstOrNull()?.let { target ->
+                                                val lockRatio = state.workspace.lockAspectRatio || shiftHeld
+                                                // Re-derive the snapped deltas (prior = the final latch) so the
+                                                // magnetic edge/size persists to the SLM source, not the raw drag.
+                                                val snap = snapResizeDeltas(
+                                                    resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
+                                                    resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                )
                                                 commitResizeWriteBack(
                                                     state = state,
                                                     nodeId = target.nodeId,
                                                     baseline = resizeBaseline,
                                                     originPos = target.originPosition,
                                                     handle = mode.handle,
-                                                    docDx = accX / zoomPx,
-                                                    docDy = accY / zoomPx,
-                                                    lockRatio = state.workspace.lockAspectRatio || shiftHeld,
+                                                    docDx = snap.docDx,
+                                                    docDy = snap.docDy,
+                                                    lockRatio = lockRatio,
                                                     // The rotation compensation must match the rotation the
                                                     // handle/baseline were resolved against at press time
                                                     // (0 for a multi-selection's axis-aligned group box), not
@@ -793,6 +868,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             }
                                         }
                                     }
+                                    CanvasOperation.Rotate -> if (moved && rotateBaseline != null) {
+                                        // Persist the final (possibly magnet-snapped) angle to the SLM source
+                                        // — SetRotation only mutated the working document per frame.
+                                        val finalAngle = state.designState.document?.nodeById(rotateBaseline.nodeId)?.rotation
+                                            ?: rotateBaseline.startRotation
+                                        state.dispatch(DesignEditorIntent.RotateNode(rotateBaseline.nodeId, finalAngle))
+                                    }
                                     else -> Unit
                                 }
                                 if (documentBegan) state.dispatch(DesignEditorIntent.EndInteraction)
@@ -805,6 +887,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             reorderPreview = null
                             snapGuides = emptyList()
                             spacingBars = emptyList()
+                            snappedAxes = SnappedAxes.None
+                            resizeMatched = false
+                            rotateIndicator = null
+                            rotateDragActive = false
                         }
                     }
                     .pointerHoverIcon(hoverCursor ?: if (spaceHeld) PointerIcon.Hand else cursorFor(ws.tool)),
@@ -831,6 +917,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         // touches the document — see design-book §18). Scene mode hides all edit affordances (§19).
         Canvas(Modifier.matchParentSize()) {
             if (ws.mode != EditorMode.Canvas) return@Canvas
+            // Anchoring overlays paint through the :subsystems:anchoring-compose renderer, fed a
+            // doc→screen projection and the theme colors so that module stays free of viewport/theme.
+            val project: (Double, Double) -> Offset = { docX, docY -> viewport.toScreen(docX, docY) }
+            val guideStyle = colors.guideStyle()
             if (ws.hoveredNodeId.isNotBlank() && ws.hoveredNodeId !in design.selectedNodeIds && !altHeld) {
                 layout?.findBySourceId(ws.hoveredNodeId)?.let { box ->
                     drawRotatedOutline(box.toBoundsBox(), box.node.rotation, viewport, colors.accent.copy(alpha = 0.85f), width = 1.5f)
@@ -851,8 +941,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             // Beautiful-anchor guides (additive to the always-on center anchor lines below):
             // blue alignment lines, amber golden-ratio lines, dashed proportion lines, and green
             // equal-spacing distribution bars with px badges.
-            snapGuides.forEach { guide -> drawAnchorGuide(guide, viewport, colors, textMeasurer) }
-            spacingBars.forEach { bar -> drawSpacingBar(bar, viewport, colors, textMeasurer) }
+            snapGuides.forEach { guide -> drawAnchorGuide(guide, project, guideStyle, textMeasurer) }
+            spacingBars.forEach { bar -> drawSpacingBar(bar, project, guideStyle, textMeasurer) }
 
             if (multiSelectionBox != null && ws.vectorEditNodeId.isBlank()) {
                 drawRotatedOutline(multiSelectionBox, 0.0, viewport, colors.accent, width = 1.5f)
@@ -861,15 +951,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
 
             if (primarySelectionBox != null) {
-                // Baseline dashed center lines when idle; a bold emphasized pair while the
-                // component is actively being dragged (design-book §18, "critical feature").
+                // Center anchor lines (design-book §18, "critical feature"): both axes dashed while
+                // dragging; a snapped axis turns solid the moment it magnetically catches. Phase 2
+                // keeps the pre-existing "solid while dragging" feel — Phase 3 swaps these flags for
+                // the per-axis snapped state.
                 if (parentOfPrimarySelection != null) {
-                    val lines = centerAnchorLines(primarySelectionBox, parentOfPrimarySelection)
-                    if (dragMoveActive) {
-                        drawEmphasizedAnchorLines(lines, viewport, colors.accent)
-                    } else {
-                        drawDashedCenterLines(lines, viewport, colors.accent.copy(alpha = 0.5f))
-                    }
+                    val lines = centerAnchorLines(primarySelectionBox.toSnapBox(), parentOfPrimarySelection.toSnapBox())
+                    drawCenterAnchorLines(
+                        lines,
+                        verticalSolid = dragMoveActive && snappedAxes.x,
+                        horizontalSolid = dragMoveActive && snappedAxes.y,
+                        project = project,
+                        style = guideStyle,
+                    )
                 }
 
                 drawRotatedOutline(primarySelectionBox, primarySelectionRotation, viewport, colors.accent, width = 1.5f)
@@ -877,12 +971,23 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 // so suppress handles and the rotate affordance but keep the rest of the overlay.
                 if (!primarySelectionLocked && !primarySelectionInVectorEdit) {
                     drawRotatedHandles(primarySelectionBox, primarySelectionRotation, viewport, colors.accent)
-                    if (!dragMoveActive) {
+                    if (!dragMoveActive && !rotateDragActive) {
                         val offsetDoc = (RotateHandleScreenOffsetPx / zoomPx).toDouble()
                         drawRotateAffordance(primarySelectionBox, primarySelectionRotation, offsetDoc, viewport, colors.accent)
                     }
                 }
-                drawSizeBadge(primarySelectionBox, primarySelectionRotation, viewport, textMeasurer, colors)
+                // Green badge while a resize snap matches a neighbour's width/height (design-book §18).
+                drawSizeBadge(
+                    primarySelectionBox, primarySelectionRotation, viewport, textMeasurer, colors,
+                    background = if (resizeMatched) colors.statusPositive else colors.accent,
+                )
+                // Rotation magnet feedback: the live angle, green when it magnetically caught (design-book §18).
+                rotateIndicator?.let { ind ->
+                    val offsetDoc = (RotateHandleScreenOffsetPx / zoomPx).toDouble()
+                    val at = rotateAffordancePoint(primarySelectionBox, primarySelectionRotation, offsetDoc)
+                    val bg = if (ind.caught) colors.statusPositive else colors.accent
+                    drawFilledBadge("${ind.angle.roundToInt()}°", viewport.toScreen(at.x, at.y), bg, textMeasurer)
+                }
             }
 
             if (altHeld && primarySelectionBox != null) {
@@ -1451,7 +1556,12 @@ private data class RotateBaseline(
     val center: GeoPoint,
     val startAngle: Double,
     val startRotation: Double,
+    /** Neighbour rotation snap candidates (each sibling's rotation and its +90°); empty for none. */
+    val neighborAngles: List<Double>,
 )
+
+/** Live rotation-snap feedback while rotating: the applied [angle] and whether it magnetically caught. */
+private data class RotateIndicator(val angle: Double, val caught: Boolean)
 
 /**
  * Fixed drag-start reference for reordering an Auto layout child: its parent and flow
@@ -1488,6 +1598,73 @@ private data class SnapBaseline(
     val siblings: List<BoundsBox>,
 )
 
+/** The anchor targets a snap resolves against: co-resident [siblings] plus the unrotated ancestor [containers]. */
+private data class SnapContext(
+    val containers: List<BoundsBox>,
+    val siblings: List<BoundsBox>,
+)
+
+/**
+ * Gathers the [SnapContext] for a node whose parent is [parentBox]: the parent's children minus
+ * [excludeIds] (siblings), and the parent plus every unrotated ancestor up to the root (containers).
+ * Shared by the move and resize snap baselines.
+ */
+private fun collectSnapContext(
+    document: DesignDocument,
+    layout: LayoutBox?,
+    parentBox: LayoutBox,
+    excludeIds: Set<String>,
+): SnapContext {
+    val siblings = parentBox.children
+        .filter { it.node.sourceId !in excludeIds }
+        .map { it.toBoundsBox() }
+    val containers = buildList {
+        add(parentBox.toBoundsBox())
+        var ancestorId = document.parentNodeOf(parentBox.node.sourceId)?.id
+        while (ancestorId != null) {
+            val ancestorBox = layout?.findBySourceId(ancestorId)
+            if (ancestorBox != null && ancestorBox.node.rotation == 0.0) add(ancestorBox.toBoundsBox())
+            ancestorId = document.parentNodeOf(ancestorId)?.id
+        }
+    }
+    return SnapContext(containers, siblings)
+}
+
+/** The docDx/docDy to feed the resize (raw + snap correction) plus the snap output, or the raw deltas when snapping is off. */
+private data class SnappedResize(val docDx: Float, val docDy: Float, val output: ResizeSnapOutput?)
+
+/**
+ * Folds a resize drag's raw deltas through the magnetic resize snap: builds the candidate box from
+ * [computeResize], snaps its moving edges to [context]'s neighbours/containers (edge/center align +
+ * dimension match), and returns the corrected deltas. Snapping is off (raw deltas) when there is no
+ * [context] (rotated/grouped/locked selection) or [lockRatio] is on (aspect-preserving, unsnapped).
+ */
+private fun snapResizeDeltas(
+    baseline: BoundsBox,
+    handle: ResizeHandle,
+    rawDocDx: Float,
+    rawDocDy: Float,
+    lockRatio: Boolean,
+    context: SnapContext?,
+    catchPx: Double,
+    releasePx: Double,
+    prior: ResizeSnapState,
+): SnappedResize {
+    if (context == null || lockRatio) return SnappedResize(rawDocDx, rawDocDy, null)
+    val result = computeResize(baseline.width, baseline.height, handle, rawDocDx.toDouble(), rawDocDy.toDouble(), lockRatio = false)
+    val candidate = SnapBox(baseline.x + result.dx, baseline.y + result.dy, result.width, result.height)
+    val output = solveResizeSnap(
+        candidate,
+        handle.toMovingEdges(),
+        context.containers.map { it.toSnapBox() },
+        context.siblings.map { it.toSnapBox() },
+        catch = catchPx,
+        release = releasePx,
+        prior = prior,
+    )
+    return SnappedResize(rawDocDx + output.dx.toFloat(), rawDocDy + output.dy.toFloat(), output)
+}
+
 private fun LayoutBox.toBoundsBox(): BoundsBox =
     BoundsBox(x = x, y = y, width = width, height = height)
 
@@ -1497,8 +1674,22 @@ private fun BoundsBox.visualBounds(rotationDegrees: Double): BoundsBox =
 
 private const val HandleHitRadiusPx = 11f
 
-/** Screen-space radius within which a free-move drag magnetically snaps to an alignment line. */
-private const val SnapThresholdPx = 6f
+/** Screen-space radius within which a free-move drag magnetically *catches* an alignment line. */
+private const val SnapCatchPx = 7f
+
+/** Screen-space radius a caught line *holds* out to before releasing — the hysteresis "sticky" feel. */
+private const val SnapReleasePx = 16f
+
+/** Which axes magnetically caught an anchor this move-drag frame; drives the per-axis solid center line. */
+private data class SnappedAxes(val x: Boolean, val y: Boolean) {
+    companion object {
+        val None = SnappedAxes(x = false, y = false)
+    }
+}
+
+/** Angular catch/release radii (degrees) for the rotation magnet — hysteresis like the move/resize snaps. */
+private const val RotateCatchDeg = 4.0
+private const val RotateReleaseDeg = 9.0
 
 /** Screen-space distance between the rotate affordance and the top-center handle. */
 private const val RotateHandleScreenOffsetPx = 26f
@@ -1611,29 +1802,6 @@ private fun DrawScope.drawRotateAffordance(
     drawCircle(color, radius = 6f, center = screenPoint, style = Stroke(width = 1.5f))
 }
 
-private fun DrawScope.drawDashedCenterLines(lines: io.aequicor.visualization.editor.presentation.CenterAnchorLines, viewport: CanvasViewport, color: Color) {
-    val dash = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
-    val h = lines.horizontal
-    val v = lines.vertical
-    drawLine(color, viewport.toScreen(h.x1, h.y1), viewport.toScreen(h.x2, h.y2), strokeWidth = 1f, pathEffect = dash)
-    drawLine(color, viewport.toScreen(v.x1, v.y1), viewport.toScreen(v.x2, v.y2), strokeWidth = 1f, pathEffect = dash)
-}
-
-/** The emphasized central anchor lines shown while a component is being dragged — the main positioning feedback (design-book §18, critical feature). */
-private fun DrawScope.drawEmphasizedAnchorLines(lines: io.aequicor.visualization.editor.presentation.CenterAnchorLines, viewport: CanvasViewport, color: Color) {
-    val h = lines.horizontal
-    val v = lines.vertical
-    val hStart = viewport.toScreen(h.x1, h.y1)
-    val hEnd = viewport.toScreen(h.x2, h.y2)
-    val vStart = viewport.toScreen(v.x1, v.y1)
-    val vEnd = viewport.toScreen(v.x2, v.y2)
-    drawLine(color, hStart, hEnd, strokeWidth = 1.5f)
-    drawLine(color, vStart, vEnd, strokeWidth = 1.5f)
-    listOf(hStart, hEnd, vStart, vEnd).forEach { p -> drawCircle(color, radius = 2.5f, center = p) }
-    // The crossing point (component center) gets its own marker.
-    drawCircle(color, radius = 3f, center = Offset(vStart.x, hStart.y))
-}
-
 /** The insertion-line feedback while dragging an Auto layout child to a new position among its flow siblings. */
 private fun DrawScope.drawInsertionLine(preview: ReorderPreview, viewport: CanvasViewport, color: Color) {
     val baseline = preview.baseline
@@ -1651,11 +1819,12 @@ private fun DrawScope.drawSizeBadge(
     viewport: CanvasViewport,
     textMeasurer: TextMeasurer,
     colors: io.aequicor.visualization.editor.ui.theme.EditorColors,
+    background: Color = colors.accent,
 ) {
     val visual = box.visualBounds(rotationDegrees)
     val bottomCenter = viewport.toScreen(visual.centerX, visual.bottom)
     val label = "${formatMeasurement(box.width)} x ${formatMeasurement(box.height)}"
-    drawFilledBadge(label, Offset(bottomCenter.x, bottomCenter.y + 14f), colors.accent, textMeasurer)
+    drawFilledBadge(label, Offset(bottomCenter.x, bottomCenter.y + 14f), background, textMeasurer)
 }
 
 private fun formatMeasurement(value: Double): String = value.formatPx()
@@ -1820,66 +1989,14 @@ private fun DrawScope.drawMeasurementLine(start: Offset, end: Offset, color: Col
     drawLine(color, start, end, strokeWidth = 1.5f, pathEffect = effect)
 }
 
-/**
- * Draws one beautiful-anchor [guide] in overlay space, styled by kind: blue for edge/center
- * alignment, a solid amber line with a "φ" badge for a golden-ratio line, and a dashed amber line
- * with a fraction badge for a simple proportion. Equal-spacing wins are drawn as [SpacingBar]s
- * instead, so `EqualSpacing` here is just a harmless fallback.
- */
-private fun DrawScope.drawAnchorGuide(
-    guide: AnchorGuide,
-    viewport: CanvasViewport,
-    colors: io.aequicor.visualization.editor.ui.theme.EditorColors,
-    textMeasurer: TextMeasurer,
-) {
-    val start = viewport.toScreen(guide.line.x1, guide.line.y1)
-    val end = viewport.toScreen(guide.line.x2, guide.line.y2)
-    when (guide.kind) {
-        // The equal-distance family (EqualSpacing/EqualMargin/MatchGap) draws green bars via
-        // drawSpacingBar, never guide lines — this accent-line branch is a harmless fallback.
-        AnchorKind.Alignment, AnchorKind.EqualSpacing, AnchorKind.EqualMargin, AnchorKind.MatchGap ->
-            drawLine(colors.accent, start, end, strokeWidth = 1f)
-        AnchorKind.GoldenRatio -> {
-            drawLine(colors.statusWarning, start, end, strokeWidth = 1f)
-            guide.label?.let { drawFilledBadge(it, midpoint(start, end), colors.statusWarning, textMeasurer) }
-        }
-        AnchorKind.Proportion -> {
-            val dash = PathEffect.dashPathEffect(floatArrayOf(5f, 4f))
-            drawLine(colors.statusWarning.copy(alpha = 0.75f), start, end, strokeWidth = 1f, pathEffect = dash)
-            guide.label?.let { drawFilledBadge(it, midpoint(start, end), colors.statusWarning.copy(alpha = 0.9f), textMeasurer) }
-        }
-    }
-}
-
-/** Draws an equal-spacing distribution [bar] as a green measurement line with end caps and a px gap badge. */
-private fun DrawScope.drawSpacingBar(
-    bar: SpacingBar,
-    viewport: CanvasViewport,
-    colors: io.aequicor.visualization.editor.ui.theme.EditorColors,
-    textMeasurer: TextMeasurer,
-) {
-    val start = viewport.toScreen(bar.segment.x1, bar.segment.y1)
-    val end = viewport.toScreen(bar.segment.x2, bar.segment.y2)
-    val green = colors.statusPositive
-    drawMeasurementLine(start, end, green, dashed = false)
-    drawSpacingCap(start, end, green)
-    drawSpacingCap(end, start, green)
-    drawOutlinedBadge(formatMeasurement(bar.gap), midpoint(start, end), green, colors.badgeSurface, textMeasurer)
-}
-
-/** A short perpendicular tick at [at], oriented across the bar running from [other] to [at]. */
-private fun DrawScope.drawSpacingCap(at: Offset, other: Offset, color: Color) {
-    val dx = at.x - other.x
-    val dy = at.y - other.y
-    val length = hypot(dx, dy)
-    if (length == 0f) return
-    val px = -dy / length
-    val py = dx / length
-    val half = 3f
-    drawLine(color, Offset(at.x - px * half, at.y - py * half), Offset(at.x + px * half, at.y + py * half), strokeWidth = 1f)
-}
-
-private fun midpoint(a: Offset, b: Offset): Offset = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+/** Builds the anchoring renderer's [GuideStyle] from the editor theme tokens (colors → renderer contract). */
+private fun io.aequicor.visualization.editor.ui.theme.EditorColors.guideStyle(): GuideStyle = GuideStyle(
+    accent = accent,
+    accentSoft = accent.copy(alpha = 0.5f),
+    positive = statusPositive,
+    warning = statusWarning,
+    badgeSurface = badgeSurface,
+)
 
 /**
  * Resolves a handle resize via the pure [computeResize] (all geometry rules and the

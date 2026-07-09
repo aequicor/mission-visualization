@@ -61,6 +61,11 @@ kotlin {
             // api: editor state / use-case API exposes SlmCompileResult.
             api(projects.engine.frontend)
 
+            // Anchoring/snapping subsystem: pure engine (api — result types cross the UI boundary)
+            // + Compose overlay renderer (implementation — used only inside editor.ui).
+            api(projects.subsystems.anchoring)
+            implementation(projects.subsystems.anchoringCompose)
+
             // Local draft persistence: coroutines for autosave flow, serialization for the envelope.
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
