@@ -21,6 +21,7 @@ import io.aequicor.visualization.engine.frontend.edit.SetBooleanOp
 import io.aequicor.visualization.engine.frontend.edit.SetStrokes
 import io.aequicor.visualization.engine.frontend.edit.SetSizing
 import io.aequicor.visualization.engine.frontend.edit.SetNodePosition
+import io.aequicor.visualization.engine.frontend.edit.SetNodeRotation
 import io.aequicor.visualization.engine.frontend.edit.SetStyleProperty
 import io.aequicor.visualization.engine.frontend.edit.SetText as SetTextEdit
 import io.aequicor.visualization.engine.frontend.edit.SetTextStyle
@@ -133,6 +134,7 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         }
         is DesignEditorIntent.UpdateConstraints -> state.updateConstraintsWriteBack(intent)
         is DesignEditorIntent.SetRotation -> state.editUnlockedNode(intent.nodeId) { it.copy(rotation = intent.degrees) }
+        is DesignEditorIntent.RotateNode -> state.rotationNodeWriteBack(intent)
         is DesignEditorIntent.SetAbsolutePosition -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(
                 layoutChild = node.layoutChild.copy(absolute = true),
@@ -1047,6 +1049,11 @@ private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.Res
 private fun DesignEditorState.positionNodeWriteBack(intent: DesignEditorIntent.PositionNode): DesignEditorState =
     writeBackEdits(intent.nodeId, listOf(SetNodePosition(intent.nodeId, intent.x, intent.y))) { node ->
         node.copy(position = DesignPoint(intent.x, intent.y))
+    }
+
+private fun DesignEditorState.rotationNodeWriteBack(intent: DesignEditorIntent.RotateNode): DesignEditorState =
+    writeBackEdits(intent.nodeId, listOf(SetNodeRotation(intent.nodeId, intent.degrees))) { node ->
+        node.copy(rotation = intent.degrees)
     }
 
 private fun DesignEditorState.updateConstraintsWriteBack(intent: DesignEditorIntent.UpdateConstraints): DesignEditorState {
