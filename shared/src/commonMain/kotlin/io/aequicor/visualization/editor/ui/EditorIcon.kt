@@ -67,6 +67,9 @@ internal enum class EditorIcon(resourceName: String) {
     Close("close"),
     ArrowUp("arrow_up"),
     ArrowDown("arrow_down"),
+    DeviceDesktop("desktop_windows"),
+    DeviceMobile("smartphone"),
+    DeviceTablet("tablet_mac"),
     ;
 
     val resourcePath: String = "files/editor-icons/$resourceName.svg"

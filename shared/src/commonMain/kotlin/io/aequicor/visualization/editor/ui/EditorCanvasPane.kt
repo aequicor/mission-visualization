@@ -2266,14 +2266,11 @@ private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) 
                         .clickable { onSelect(mode) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        mode.title,
-                        color = if (active) colors.accent else Color.Black,
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
+                    EditorSvgIcon(
+                        icon = deviceIcon(mode),
+                        contentDescription = mode.title,
+                        modifier = Modifier.size(20.dp),
+                        tint = if (active) colors.accent else Color.Black,
                     )
                 }
             }
@@ -2317,6 +2314,12 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
             }
         }
     }
+}
+
+private fun deviceIcon(mode: DeviceMode): EditorIcon = when (mode) {
+    DeviceMode.Pc -> EditorIcon.DeviceDesktop
+    DeviceMode.Mob -> EditorIcon.DeviceMobile
+    DeviceMode.Tab -> EditorIcon.DeviceTablet
 }
 
 private fun toolIcon(tool: EditorTool): EditorIcon = when (tool) {
