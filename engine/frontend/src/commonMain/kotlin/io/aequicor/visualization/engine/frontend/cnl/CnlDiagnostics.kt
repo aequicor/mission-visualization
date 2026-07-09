@@ -5,53 +5,53 @@ import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 /**
  * The CNL rule catalog — the dedicated place for CNL error handling. Every diagnostic
  * names **which rule** was broken and **how to fix it** (with a correct example), so a
- * generator (DeepSeek) can self-correct from the message alone. The catalog is mirrored
- * human-readably in `SLM-SKILL.md`.
+ * generator can self-correct from the message alone. The catalog is mirrored human-readably
+ * in `SLM-SKILL.md`.
  *
- * Each message is emitted as `[CNL:<id>] <what>. [Возможно: …] Правило: … Как исправить: …`.
+ * Each message is emitted as `[CNL:<id>] <what>. [Did you mean …] Rule: … How to fix: …`.
  * CNL problems are **warnings**, not errors: the element still compiles from its valid
  * phrases, and the author sees exactly what to repair.
  */
 internal enum class CnlRule(val id: String, val ruleText: String, val fixText: String) {
     UnknownKeyword(
         "unknown-keyword",
-        "После существительного-элемента идут только известные свойства (цвет, размер, радиус, отступ, паддинги, поворот, позиция, прозрачность, обводка, направление, выравнивание).",
-        "Проверьте написание ключевого слова. Например: «цвет #00B843», «радиус 15», «отступ 16».",
+        "After the element noun only known properties may follow (color, size, radius, gap, padding, rotation, position, opacity, stroke, direction, align).",
+        "Check the keyword spelling. For example: \"color #00B843\", \"radius 15\", \"gap 16\".",
     ),
     MissingValue(
         "missing-value",
-        "У свойства должно быть значение сразу после ключевого слова.",
-        "Добавьте значение. Например: «цвет #00B843», «радиус 15».",
+        "A property needs a value right after its keyword.",
+        "Add a value. For example: \"color #00B843\", \"radius 15\".",
     ),
     BadColor(
         "bad-color",
-        "Цвет задаётся как #RRGGBB, #RGB, #RRGGBBAA или \$токен.",
-        "Например: «цвет #00B843» или «цвет \$color.accent».",
+        "A color is #RRGGBB, #RGB, #RRGGBBAA or \$token.",
+        "For example: \"color #00B843\" or \"color \$color.accent\".",
     ),
     BadNumber(
         "bad-number",
-        "Значение свойства должно быть числом.",
-        "Например: «радиус 15», «отступ 16», «прозрачность 0.5».",
+        "A property value must be a number.",
+        "For example: \"radius 15\", \"gap 16\", \"opacity 0.5\".",
     ),
     IncompleteSize(
         "incomplete-size",
-        "Размер задаётся как «<ширина> на <высота>» (два числа через «на»/«x»/«×»).",
-        "Например: «120 на 15» или «размер 120 на 15».",
+        "Size is \"<width> by <height>\" (two numbers joined by \"by\"/\"x\"/\"×\").",
+        "For example: \"120 by 15\" or \"size 120 by 15\".",
     ),
     UnterminatedText(
         "unterminated-text",
-        "Текст в кавычках должен быть закрыт: «…» или \"…\".",
-        "Например: Текст «Активные миссии».",
+        "Quoted text must be closed: «…» or \"…\".",
+        "For example: Text «Active missions».",
     ),
     BadDirection(
         "bad-direction",
-        "Направление выравнивания: вверх, вниз, влево, вправо, центр.",
-        "Например: «родительский контейнер вверх».",
+        "Alignment direction is one of: top, bottom, left, right, center.",
+        "For example: \"align center\".",
     ),
     StrayNumber(
         "stray-number",
-        "Отдельное число должно относиться к свойству (размеру, повороту, радиусу…).",
-        "Например: «размер 120 на 15», «поворот 30 градусов», «радиус 15».",
+        "A lone number must belong to a property (size, rotation, radius…).",
+        "For example: \"size 120 by 15\", \"rotation 30 degrees\", \"radius 15\".",
     ),
     ;
 }
@@ -65,9 +65,9 @@ internal object CnlDiagnostics {
         what: String,
         suggestion: String? = null,
     ) {
-        val hint = suggestion?.let { " Возможно, вы имели в виду «$it»." }.orEmpty()
+        val hint = suggestion?.let { " Did you mean \"$it\"." }.orEmpty()
         diagnostics.warning(
-            "[CNL:${rule.id}] $what.$hint Правило: ${rule.ruleText} Как исправить: ${rule.fixText}",
+            "[CNL:${rule.id}] $what.$hint Rule: ${rule.ruleText} How to fix: ${rule.fixText}",
             line,
             blockPath = "cnl",
         )

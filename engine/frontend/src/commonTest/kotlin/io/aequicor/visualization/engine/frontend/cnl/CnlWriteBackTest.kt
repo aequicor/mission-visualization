@@ -24,15 +24,15 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/** Editor edits on a CNL-authored node patch the sentence in place (design J write-back). */
+/** Editor edits on a CNL-authored node patch the sentence in place (surgical write-back). */
 class CnlWriteBackTest {
     private fun screen(body: String): String = slm(
         """
         ---
         screen: demo
-        sourceLocale: ru-RU
+        sourceLocale: en-US
         targetLocales:
-          - ru-RU
+          - en-US
         ---
 
         # Demo
@@ -50,54 +50,54 @@ class CnlWriteBackTest {
 
     @Test
     fun editFillReplacesColorInPlace() {
-        val source = screen("Прямоугольник 120 на 15 цвет #00B843 радиус 15 отступ 16")
+        val source = screen("Rectangle 120 by 15 color #00B843 radius 15 gap 16")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
         val result = applySlmEdit(source, SetFills(id, listOf(DesignPaint.Solid(DesignColor(0xFFFF0000).bindable()))), compiled)
         val next = assertNotNull(result.newSource)
-        assertTrue("цвет #FF0000" in next, next)
+        assertTrue("color #FF0000" in next, next)
         assertFalse("#00B843" in next)
-        assertTrue("Прямоугольник 120 на 15 цвет #FF0000 радиус 15 отступ 16" in next, next)
+        assertTrue("Rectangle 120 by 15 color #FF0000 radius 15 gap 16" in next, next)
     }
 
     @Test
     fun editRadiusAndGapReplaceInPlace() {
-        val source = screen("Прямоугольник 120 на 15 цвет #00B843 радиус 15 отступ 16")
+        val source = screen("Rectangle 120 by 15 color #00B843 radius 15 gap 16")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
         val radius = applySlmEdit(source, SetCornerRadii(id, DesignCornerRadius.all(8.0.bindable())), compiled)
-        assertTrue("радиус 8" in assertNotNull(radius.newSource))
+        assertTrue("radius 8" in assertNotNull(radius.newSource))
         val gap = applySlmEdit(source, SetLayoutProperty(id, LayoutProp.Gap, YamlScalarValue.Num(24.0)), compiled)
-        assertTrue("отступ 24" in assertNotNull(gap.newSource))
+        assertTrue("gap 24" in assertNotNull(gap.newSource))
     }
 
     @Test
     fun editResizeReplacesBothDimensions() {
-        val source = screen("Прямоугольник 120 на 15 цвет #00B843")
+        val source = screen("Rectangle 120 by 15 color #00B843")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
         val edit = SetSizing(id, SizingSpec(SizingMode.Fixed, 200.0), SizingSpec(SizingMode.Fixed, 40.0))
         val next = assertNotNull(applySlmEdit(source, edit, compiled).newSource)
-        assertTrue("200 на 40" in next, next)
+        assertTrue("200 by 40" in next, next)
     }
 
     @Test
     fun missingPropertyIsAppendedAsPhrase() {
-        val source = screen("Прямоугольник 120 на 15 цвет #00B843")
+        val source = screen("Rectangle 120 by 15 color #00B843")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
         val next = assertNotNull(applySlmEdit(source, SetCornerRadii(id, DesignCornerRadius.all(12.0.bindable())), compiled).newSource)
-        assertTrue("Прямоугольник 120 на 15 цвет #00B843 радиус 12" in next, next)
+        assertTrue("Rectangle 120 by 15 color #00B843 radius 12" in next, next)
     }
 
     @Test
     fun editTextReplacesLiteral() {
-        val source = screen("Текст «Привет» размер 20")
+        val source = screen("Text «Hello» size 20")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Text }
-        val next = assertNotNull(applySlmEdit(source, SetText(id, "Пока"), compiled).newSource)
-        assertTrue("Текст «Пока» размер 20" in next, next)
-        assertFalse("Привет" in next)
+        val next = assertNotNull(applySlmEdit(source, SetText(id, "Bye"), compiled).newSource)
+        assertTrue("Text «Bye» size 20" in next, next)
+        assertFalse("Hello" in next)
     }
 
     @Test
     fun editKeepsEverythingElseByteForByte() {
-        val source = screen("Прямоугольник 120 на 15 цвет #00B843 радиус 15 отступ 16")
+        val source = screen("Rectangle 120 by 15 color #00B843 radius 15 gap 16")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
         val next = assertNotNull(applySlmEdit(source, SetFills(id, listOf(DesignPaint.Solid(DesignColor(0xFF112233).bindable()))), compiled).newSource)
         assertEquals(source.replace("#00B843", "#112233"), next)
