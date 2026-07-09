@@ -57,6 +57,7 @@ import io.aequicor.visualization.editor.presentation.InspectorSection
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
+import io.aequicor.visualization.editor.platform.CanvasExportBounds
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
@@ -95,6 +96,10 @@ class MissionEditorStateHolder(
 
     /** Last computed layout of the previewed frame, in document coordinates. */
     var artboardLayout by mutableStateOf<LayoutBox?>(null)
+        private set
+
+    /** Last known browser-window bounds of the editable canvas surface, used for export crops. */
+    var canvasExportBounds by mutableStateOf<CanvasExportBounds?>(null)
         private set
 
     /** True while a canvas move/resize drag is live; Escape then cancels it. */
@@ -168,6 +173,10 @@ class MissionEditorStateHolder(
 
     fun onArtboardLayout(layout: LayoutBox?) {
         artboardLayout = layout
+    }
+
+    fun onCanvasExportBounds(bounds: CanvasExportBounds) {
+        canvasExportBounds = bounds
     }
 
     fun updateWorkspace(block: (EditorWorkspaceState) -> EditorWorkspaceState) {

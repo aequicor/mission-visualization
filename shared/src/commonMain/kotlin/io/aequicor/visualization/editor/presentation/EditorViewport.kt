@@ -36,6 +36,12 @@ data class EditorViewport(
             panOffsetYDp = panOffsetYDp + deltaYpx / density,
         )
 
+    fun panToDocumentStartX(documentX: Double): EditorViewport =
+        copy(panOffsetXDp = -(documentX * zoom).toFloat())
+
+    fun panToDocumentStartY(documentY: Double): EditorViewport =
+        copy(panOffsetYDp = -(documentY * zoom).toFloat())
+
     /**
      * Zoom around a screen-space focus point while keeping the document coordinate under
      * the cursor fixed. Pan changes here are viewport-only and never alter document geometry.
@@ -77,6 +83,143 @@ fun zoomFactorForScroll(
     sensitivity: Float = WorkspaceLimits.ZoomWheelSensitivity,
     maxStep: Float = WorkspaceLimits.MaxZoomScrollStep,
 ): Float = exp(signedScroll.coerceIn(-maxStep, maxStep) * sensitivity)
+
+data class CanvasScrollbarAxisMetrics(
+    val visible: Boolean,
+    val trackLengthPx: Float = 0f,
+    val thumbOffsetPx: Float = 0f,
+    val thumbLengthPx: Float = 0f,
+    val minDocumentStart: Double = 0.0,
+    val maxDocumentStart: Double = 0.0,
+) {
+    val maxThumbOffsetPx: Float get() = (trackLengthPx - thumbLengthPx).coerceAtLeast(0f)
+
+    fun documentStartForThumbOffset(offsetPx: Float): Double {
+        if (!visible || maxThumbOffsetPx <= 0f) return minDocumentStart
+        val fraction = (offsetPx / maxThumbOffsetPx).coerceIn(0f, 1f).toDouble()
+        return minDocumentStart + (maxDocumentStart - minDocumentStart) * fraction
+    }
+}
+
+data class CanvasScrollbarsMetrics(
+    val horizontal: CanvasScrollbarAxisMetrics = CanvasScrollbarAxisMetrics(visible = false),
+    val vertical: CanvasScrollbarAxisMetrics = CanvasScrollbarAxisMetrics(visible = false),
+)
+
+fun canvasScrollbarsFor(
+    viewport: EditorViewport,
+    contentBounds: BoundsBox,
+    viewportWidthPx: Float,
+    viewportHeightPx: Float,
+    density: Float,
+    scrollbarThicknessPx: Float,
+    minThumbLengthPx: Float,
+): CanvasScrollbarsMetrics {
+    val zoomPx = viewport.zoomPx(density)
+    if (zoomPx <= 0f || viewportWidthPx <= 0f || viewportHeightPx <= 0f ||
+        contentBounds.width <= 0.0 || contentBounds.height <= 0.0
+    ) {
+        return CanvasScrollbarsMetrics()
+    }
+    val visibleWidthDoc = viewportWidthPx / zoomPx
+    val visibleHeightDoc = viewportHeightPx / zoomPx
+    val visibleLeft = viewport.toDocumentX(0f, density)
+    val visibleTop = viewport.toDocumentY(0f, density)
+    val horizontalContentOverflows = contentBounds.width * zoomPx > viewportWidthPx + ScrollbarVisibilityEpsilonPx
+    val verticalContentOverflows = contentBounds.height * zoomPx > viewportHeightPx + ScrollbarVisibilityEpsilonPx
+    val horizontalRange = figmaCanvasScrollRange(
+        contentStart = contentBounds.x,
+        contentEnd = contentBounds.right,
+        visibleStart = visibleLeft,
+        visibleLength = visibleWidthDoc.toDouble(),
+        addViewportMargin = horizontalContentOverflows,
+    )
+    val verticalRange = figmaCanvasScrollRange(
+        contentStart = contentBounds.y,
+        contentEnd = contentBounds.bottom,
+        visibleStart = visibleTop,
+        visibleLength = visibleHeightDoc.toDouble(),
+        addViewportMargin = verticalContentOverflows,
+    )
+    val horizontalVisible = horizontalRange.length * zoomPx > viewportWidthPx + ScrollbarVisibilityEpsilonPx
+    val verticalVisible = verticalRange.length * zoomPx > viewportHeightPx + ScrollbarVisibilityEpsilonPx
+    val horizontalTrackPx = (viewportWidthPx - if (verticalVisible) scrollbarThicknessPx else 0f).coerceAtLeast(0f)
+    val verticalTrackPx = (viewportHeightPx - if (horizontalVisible) scrollbarThicknessPx else 0f).coerceAtLeast(0f)
+    return CanvasScrollbarsMetrics(
+        horizontal = scrollbarAxisFor(
+            visible = horizontalVisible,
+            contentStart = horizontalRange.start,
+            contentLength = horizontalRange.length,
+            visibleStart = visibleLeft,
+            visibleLength = visibleWidthDoc.toDouble(),
+            trackLengthPx = horizontalTrackPx,
+            minThumbLengthPx = minThumbLengthPx,
+        ),
+        vertical = scrollbarAxisFor(
+            visible = verticalVisible,
+            contentStart = verticalRange.start,
+            contentLength = verticalRange.length,
+            visibleStart = visibleTop,
+            visibleLength = visibleHeightDoc.toDouble(),
+            trackLengthPx = verticalTrackPx,
+            minThumbLengthPx = minThumbLengthPx,
+        ),
+    )
+}
+
+private data class CanvasScrollRange(val start: Double, val end: Double) {
+    val length: Double get() = end - start
+}
+
+private fun figmaCanvasScrollRange(
+    contentStart: Double,
+    contentEnd: Double,
+    visibleStart: Double,
+    visibleLength: Double,
+    addViewportMargin: Boolean,
+): CanvasScrollRange {
+    val margin = if (addViewportMargin) visibleLength * FigmaCanvasScrollbarViewportMarginFraction else 0.0
+    val visibleEnd = visibleStart + visibleLength
+    return CanvasScrollRange(
+        start = minOf(contentStart - margin, visibleStart),
+        end = maxOf(contentEnd + margin, visibleEnd),
+    )
+}
+
+private fun scrollbarAxisFor(
+    visible: Boolean,
+    contentStart: Double,
+    contentLength: Double,
+    visibleStart: Double,
+    visibleLength: Double,
+    trackLengthPx: Float,
+    minThumbLengthPx: Float,
+): CanvasScrollbarAxisMetrics {
+    if (!visible || trackLengthPx <= 0f || contentLength <= 0.0 || visibleLength <= 0.0) {
+        return CanvasScrollbarAxisMetrics(visible = false)
+    }
+    val minStart = contentStart
+    val maxStart = contentStart + contentLength - visibleLength
+    if (maxStart <= minStart) return CanvasScrollbarAxisMetrics(visible = false)
+
+    val minThumb = minThumbLengthPx.coerceAtMost(trackLengthPx)
+    val thumbLength = (trackLengthPx * (visibleLength / contentLength).toFloat())
+        .coerceIn(minThumb, trackLengthPx)
+    val maxThumbOffset = (trackLengthPx - thumbLength).coerceAtLeast(0f)
+    val fraction = ((visibleStart - minStart) / (maxStart - minStart)).coerceIn(0.0, 1.0)
+    return CanvasScrollbarAxisMetrics(
+        visible = true,
+        trackLengthPx = trackLengthPx,
+        thumbOffsetPx = maxThumbOffset * fraction.toFloat(),
+        thumbLengthPx = thumbLength,
+        minDocumentStart = minStart,
+        maxDocumentStart = maxStart,
+    )
+}
+
+private const val FigmaCanvasScrollbarViewportMarginFraction = 0.5
+
+private const val ScrollbarVisibilityEpsilonPx = 0.5f
 
 /** Convenience wrapper used where pointer coordinates must be converted as a pair. */
 data class PointerDocumentTransform(

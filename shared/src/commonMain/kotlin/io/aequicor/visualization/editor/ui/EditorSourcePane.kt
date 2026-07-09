@@ -1,9 +1,14 @@
 package io.aequicor.visualization.editor.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -24,18 +29,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
@@ -57,8 +70,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
+import io.aequicor.visualization.editor.platform.CanvasExportCrop
+import io.aequicor.visualization.editor.platform.platformAppendCanvasPdfPage
+import io.aequicor.visualization.editor.platform.platformBeginPdfExport
+import io.aequicor.visualization.editor.platform.platformDownloadProjectZip
+import io.aequicor.visualization.editor.platform.platformExportCanvasPng
+import io.aequicor.visualization.editor.platform.platformFinishPdfExport
+import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
+import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
+import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
+import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
+import io.aequicor.visualization.editor.presentation.PendingFit
 import io.aequicor.visualization.editor.presentation.ScreenPreset
 import io.aequicor.visualization.editor.presentation.SourceTab
 import io.aequicor.visualization.editor.presentation.ZOrderMove
@@ -69,13 +94,14 @@ import io.aequicor.visualization.editor.presentation.topLevelOwnerPage
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPage
+import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** Left column: Source / Resources / Layers tabs plus the Screens list. */
 @Composable
 fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modifier) {
-    val colors = LocalEditorColors.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Surface(
             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -84,13 +110,7 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
             shadowElevation = 0.dp,
         ) {
             Column(Modifier.fillMaxSize()) {
-                TabStrip(
-                    tabs = SourceTab.entries,
-                    selected = state.workspace.sourceTab,
-                    title = { it.label },
-                    icon = ::sourceTabIcon,
-                    onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
-                )
+                SourcePaneHeader(state)
                 when (state.workspace.sourceTab) {
                     SourceTab.Markdown -> SourceMarkdown(state)
                     SourceTab.Resources -> EmptyTab(SourceTab.Resources.label)
@@ -103,6 +123,173 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
 }
 
 @Composable
+private fun SourcePaneHeader(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
+    val scope = rememberCoroutineScope()
+    var menuExpanded by remember { mutableStateOf(false) }
+    var menuPane by remember { mutableStateOf(ProjectMenuPane.Root) }
+
+    fun openRootMenu() {
+        menuPane = ProjectMenuPane.Root
+        menuExpanded = true
+    }
+
+    fun closeMenu() {
+        menuExpanded = false
+        menuPane = ProjectMenuPane.Root
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .background(colors.raisedSurface),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(44.dp)
+                .fillMaxHeight()
+                .border(BorderStroke(1.dp, colors.softStroke)),
+            contentAlignment = Alignment.Center,
+        ) {
+            SmallIconButton(
+                icon = EditorIcon.AppMenu,
+                contentDescription = "Project menu",
+                onClick = ::openRootMenu,
+                modifier = Modifier.size(30.dp),
+            )
+            EditorDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                when (menuPane) {
+                    ProjectMenuPane.Root -> {
+                        EditorDropdownMenuItem("Открыть") { menuPane = ProjectMenuPane.Open }
+                        EditorDropdownMenuItem("Сохранить") { menuPane = ProjectMenuPane.Save }
+                        EditorDropdownMenuItem("Экспортировать") { menuPane = ProjectMenuPane.Export }
+                        EditorDropdownMenuItem("Развернуть на весь экран (F10)") {
+                            closeMenu()
+                            platformToggleFullscreen()
+                        }
+                    }
+                    ProjectMenuPane.Open -> {
+                        EditorDropdownMenuItem("Назад") { menuPane = ProjectMenuPane.Root }
+                        EditorDropdownMenuItem("Открыть ZIP архив") {
+                            closeMenu()
+                            platformOpenProjectZipArchive()
+                        }
+                        EditorDropdownMenuItem("Выбрать папку на ПК") {
+                            closeMenu()
+                            platformOpenProjectFolder()
+                        }
+                    }
+                    ProjectMenuPane.Save -> {
+                        EditorDropdownMenuItem("Назад") { menuPane = ProjectMenuPane.Root }
+                        EditorDropdownMenuItem("Сохранить работу в браузере") {
+                            closeMenu()
+                            state.saveDraftNow()
+                        }
+                        EditorDropdownMenuItem("Сохранить в папку на ПК") {
+                            closeMenu()
+                            platformSaveProjectFolder(encodeProjectSourcesJson(state.designState.sources))
+                        }
+                        EditorDropdownMenuItem("Сохранить ZIP архивом") {
+                            closeMenu()
+                            platformDownloadProjectZip(encodeProjectSourcesJson(state.designState.sources))
+                        }
+                    }
+                    ProjectMenuPane.Export -> {
+                        EditorDropdownMenuItem("Назад") { menuPane = ProjectMenuPane.Root }
+                        EditorDropdownMenuItem("PNG - весь экран") {
+                            closeMenu()
+                            exportCurrentScreenPng(state)
+                        }
+                        EditorDropdownMenuItem("PNG - выбранный компонент") {
+                            closeMenu()
+                            exportSelectedComponentPng(state)
+                        }
+                        EditorDropdownMenuItem("PDF - все экраны") {
+                            closeMenu()
+                            scope.launch { exportAllScreensPdf(state) }
+                        }
+                    }
+                }
+            }
+        }
+        Box(Modifier.weight(1f)) {
+            TabStrip(
+                tabs = SourceTab.entries,
+                selected = state.workspace.sourceTab,
+                title = { it.label },
+                icon = ::sourceTabIcon,
+                onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
+            )
+        }
+    }
+}
+
+private enum class ProjectMenuPane { Root, Open, Save, Export }
+
+private fun exportCurrentScreenPng(state: MissionEditorStateHolder) {
+    val pageName = state.designState.document
+        ?.pageById(state.designState.selectedPageId)
+        ?.name
+        ?.ifBlank { state.designState.selectedPageId }
+        ?: "screen"
+    val crop = state.artboardLayout?.let { exportCropForBox(state, it) }
+    platformExportCanvasPng("${safeExportName(pageName)}.png", crop)
+}
+
+private fun exportSelectedComponentPng(state: MissionEditorStateHolder) {
+    val selectedId = state.designState.selectedNodeId
+    val layout = state.artboardLayout ?: return
+    val box = layout.findBySourceId(selectedId) ?: return
+    val nodeName = state.designState.document?.nodeById(selectedId)?.name?.ifBlank { selectedId } ?: selectedId
+    platformExportCanvasPng("${safeExportName(nodeName)}.png", exportCropForBox(state, box))
+}
+
+private suspend fun exportAllScreensPdf(state: MissionEditorStateHolder) {
+    val document = state.designState.document ?: return
+    val originalPageId = state.designState.selectedPageId
+    val originalViewport = state.workspace.viewport
+    platformBeginPdfExport()
+    document.pages.forEach { page ->
+        state.dispatch(DesignEditorIntent.SelectPage(page.id))
+        state.updateWorkspace { it.copy(pendingFit = PendingFit.Screen) }
+        waitFrames(4)
+        val crop = state.artboardLayout?.let { exportCropForBox(state, it) }
+        platformAppendCanvasPdfPage(page.name.ifBlank { page.id }, crop)
+    }
+    platformFinishPdfExport("mission-visualization-screens.pdf")
+    if (originalPageId.isNotBlank()) {
+        state.dispatch(DesignEditorIntent.SelectPage(originalPageId))
+    }
+    state.updateWorkspace { it.copy(viewport = originalViewport, pendingFit = PendingFit.None) }
+}
+
+private suspend fun waitFrames(count: Int) {
+    repeat(count) {
+        withFrameNanos { }
+    }
+}
+
+private fun exportCropForBox(state: MissionEditorStateHolder, box: LayoutBox): CanvasExportCrop? {
+    val bounds = state.canvasExportBounds ?: return null
+    val viewport = state.workspace.viewport
+    val density = bounds.density
+    val left = bounds.left + viewport.toScreenX(box.x, density)
+    val top = bounds.top + viewport.toScreenY(box.y, density)
+    val width = box.width * viewport.zoomPx(density)
+    val height = box.height * viewport.zoomPx(density)
+    if (width <= 0.0 || height <= 0.0) return null
+    return CanvasExportCrop(left, top, width, height)
+}
+
+private fun safeExportName(value: String): String =
+    value.lowercase()
+        .replace(Regex("""[^a-z0-9а-яё._-]+"""), "-")
+        .trim('-', '.', '_')
+        .ifBlank { "export" }
+
+@Composable
 private fun EmptyTab(title: CompactLabel) {
     val colors = LocalEditorColors.current
     Box(Modifier.fillMaxSize().background(colors.paneSurface), contentAlignment = Alignment.Center) {
@@ -112,6 +299,7 @@ private fun EmptyTab(title: CompactLabel) {
 
 // --- Markdown source viewer --------------------------------------------------
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SourceMarkdown(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
@@ -146,50 +334,66 @@ private fun SourceMarkdown(state: MissionEditorStateHolder) {
     val editorHeight = ((lineCount * SourceCodeLineHeightDp) + 24).dp
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
+    val stableCursorScrollSpec = remember {
+        object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.paneSurface)) {
         val contentHeight = maxOf(editorHeight, maxHeight)
-        Row(
-            modifier = Modifier.fillMaxSize()
-                .verticalScroll(verticalScroll)
-                .horizontalScroll(horizontalScroll),
-        ) {
-            Column(
-                modifier = Modifier.width(46.dp).height(contentHeight).background(colors.gutterSurface).padding(top = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+        CompositionLocalProvider(LocalBringIntoViewSpec provides stableCursorScrollSpec) {
+            Row(
+                modifier = Modifier.fillMaxSize()
+                    .verticalScroll(verticalScroll)
+                    .horizontalScroll(horizontalScroll),
             ) {
-                repeat(lineCount) { index ->
-                    Text(
-                        (index + 1).toString(),
-                        modifier = Modifier.height(SourceCodeLineHeightDp.dp),
-                        color = colors.gutterInk,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
+                Column(
+                    modifier = Modifier.width(46.dp).height(contentHeight).background(colors.gutterSurface).padding(top = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    repeat(lineCount) { index ->
+                        Text(
+                            (index + 1).toString(),
+                            modifier = Modifier.height(SourceCodeLineHeightDp.dp),
+                            color = colors.gutterInk,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+                Box(Modifier.width(editorWidth).height(contentHeight).padding(top = 12.dp, start = 12.dp, end = 12.dp)) {
+                    BasicTextField(
+                        value = fieldValue,
+                        onValueChange = { next ->
+                            fieldValue = next
+                            if (next.text != source.content) {
+                                state.dispatch(DesignEditorIntent.EditSource(source.index, next.text))
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        textStyle = codeStyle,
+                        cursorBrush = SolidColor(colors.accent),
+                        singleLine = false,
                     )
                 }
             }
-            Box(Modifier.width(editorWidth).height(contentHeight).padding(top = 12.dp, start = 12.dp, end = 12.dp)) {
-                BasicTextField(
-                    value = fieldValue,
-                    onValueChange = { next ->
-                        fieldValue = next
-                        if (next.text != source.content) {
-                            state.dispatch(DesignEditorIntent.EditSource(source.index, next.text))
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                    textStyle = codeStyle,
-                    cursorBrush = SolidColor(colors.accent),
-                    singleLine = false,
-                )
-            }
         }
+        VerticalScrollbar(
+            adapter = rememberScrollbarAdapter(verticalScroll),
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(bottom = SourceScrollbarThicknessDp.dp),
+        )
+        HorizontalScrollbar(
+            adapter = rememberScrollbarAdapter(horizontalScroll),
+            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 46.dp, end = SourceScrollbarThicknessDp.dp),
+        )
     }
 }
 
 private const val SourceCodeLineHeightDp = 20
 private const val SourceCodeLineHeightSp = 20
 private const val SourceCodeCharWidthDp = 8
+private const val SourceScrollbarThicknessDp = 12
 
 /** SLM source of the page currently selected, or null for an in-memory screen. */
 private data class SourceReference(val index: Int, val content: String)
@@ -516,6 +720,7 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
                                     val count = (document?.pages?.size ?: 0) + 1
                                     state.dispatch(DesignEditorIntent.CreateScreen(preset, "Screen $count"))
                                 },
+                                leadingContent = { ScreenPresetPreview(preset) },
                             )
                         }
                     }
@@ -532,6 +737,35 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ScreenPresetPreview(preset: ScreenPreset, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val ratio = (preset.width / preset.height).toFloat().coerceIn(0.35f, 1.8f)
+        val maxW = size.width - 2f
+        val maxH = size.height - 2f
+        val w: Float
+        val h: Float
+        if (ratio >= 1f) {
+            w = maxW
+            h = maxW / ratio
+        } else {
+            h = maxH
+            w = maxH * ratio
+        }
+        val topLeft = Offset((size.width - w) / 2f, (size.height - h) / 2f)
+        val corner = CornerRadius(2f, 2f)
+        drawRoundRect(colors.selectionFill, topLeft = topLeft, size = Size(w, h), cornerRadius = corner)
+        drawRoundRect(colors.controlInk, topLeft = topLeft, size = Size(w, h), cornerRadius = corner, style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
+        when (preset) {
+            ScreenPreset.Desktop -> drawLine(colors.accent, Offset(topLeft.x + w * 0.35f, topLeft.y + h + 2f), Offset(topLeft.x + w * 0.65f, topLeft.y + h + 2f), strokeWidth = 1.dp.toPx())
+            ScreenPreset.Tablet,
+            ScreenPreset.Mobile -> drawCircle(colors.accent, radius = 1.2f, center = Offset(topLeft.x + w / 2f, topLeft.y + h - 2.2f))
+            ScreenPreset.Square -> drawCircle(colors.accent, radius = 1.4f, center = Offset(topLeft.x + w - 3f, topLeft.y + 3f))
         }
     }
 }

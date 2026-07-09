@@ -315,6 +315,19 @@
     setInterval(checkDpr, 750);
   })();
 </script>
+<script>
+  // Skiko renders the Compose UI through WebGL. Without a preserved drawing
+  // buffer, exporting the canvas after a frame can produce a black PNG/PDF.
+  (function () {
+    var originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, attributes) {
+      if (type === 'webgl' || type === 'webgl2') {
+        attributes = Object.assign({}, attributes || {}, { preserveDrawingBuffer: true });
+      }
+      return originalGetContext.call(this, type, attributes);
+    };
+  })();
+</script>
 <script type="application/javascript" src="webApp.js"></script>
 </body>
 </html>

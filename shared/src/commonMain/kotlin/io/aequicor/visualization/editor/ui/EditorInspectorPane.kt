@@ -42,6 +42,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -527,12 +528,16 @@ private fun SizingControls(state: MissionEditorStateHolder, node: DesignNode) {
             options = SizingMode.entries.map { it.sizingLabel() },
             onSelect = { state.dispatch(DesignEditorIntent.UpdateSizingMode(nodeId, horizontal = sizingFromLabel(it))) },
             modifier = Modifier.weight(1f),
+            leadingContent = { SizingModePreview(node.sizing?.horizontal ?: SizingMode.Fixed) },
+            optionLeadingContent = { label -> SizingModePreview(sizingFromLabel(label)) },
         )
         CompactSelectField(
             value = (node.sizing?.vertical ?: SizingMode.Fixed).sizingLabel(),
             options = SizingMode.entries.map { it.sizingLabel() },
             onSelect = { state.dispatch(DesignEditorIntent.UpdateSizingMode(nodeId, vertical = sizingFromLabel(it))) },
             modifier = Modifier.weight(1f),
+            leadingContent = { SizingModePreview(node.sizing?.vertical ?: SizingMode.Fixed) },
+            optionLeadingContent = { label -> SizingModePreview(sizingFromLabel(label)) },
         )
     }
 }
@@ -566,6 +571,8 @@ private fun AppearanceSection(state: MissionEditorStateHolder, node: DesignNode,
         value = node.blendMode.ifBlank { "normal" },
         options = BlendModes,
         maxFieldWidth = 220.dp,
+        leadingContent = { BlendModePreview(node.blendMode.ifBlank { "normal" }) },
+        optionLeadingContent = { BlendModePreview(it) },
     ) {
         state.dispatch(DesignEditorIntent.SetBlendMode(nodeId, it))
     }
@@ -619,7 +626,12 @@ private fun FillRow(state: MissionEditorStateHolder, nodeId: String, index: Int,
                 else -> FillTypeChip(kind.displayName)
             }
         }
-        SmallSelect(kind.displayName, FillKind.entries.map { it.displayName }) { label ->
+        SmallSelect(
+            value = kind.displayName,
+            options = FillKind.entries.map { it.displayName },
+            leadingContent = { FillKindPreview(kind) },
+            optionLeadingContent = { label -> FillKind.entries.firstOrNull { it.displayName == label }?.let { FillKindPreview(it) } },
+        ) { label ->
             FillKind.entries.firstOrNull { it.displayName == label }?.let { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetType(index, it))) }
         }
         RemoveButton { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.RemoveAt(index))) }
@@ -745,7 +757,12 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
         InspectorNumberField("W", (strokes.weight.literalOrNull() ?: 1.0).formatPx(), "", nodeId, Modifier.weight(1f), enabled = enabled) {
             state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetWeight(it)))
         }
-        SmallSelect(strokes.align.strokeLabel(), StrokeAlign.entries.map { it.strokeLabel() }) { label ->
+        SmallSelect(
+            value = strokes.align.strokeLabel(),
+            options = StrokeAlign.entries.map { it.strokeLabel() },
+            leadingContent = { StrokeAlignPreview(strokes.align) },
+            optionLeadingContent = { label -> StrokeAlign.entries.firstOrNull { it.strokeLabel() == label }?.let { StrokeAlignPreview(it) } },
+        ) { label ->
             StrokeAlign.entries.firstOrNull { it.strokeLabel() == label }?.let { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetAlign(it))) }
         }
     }
@@ -759,7 +776,13 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
         if (shape == io.aequicor.visualization.engine.ir.model.ShapeType.Line || shape == io.aequicor.visualization.engine.ir.model.ShapeType.Arrow) {
             Spacer(Modifier.height(6.dp))
             LabeledField("Ends") {
-                SelectField(strokes.cap, listOf("butt", "round", "square", "arrow"), onSelect = { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetCap(it))) })
+                SelectField(
+                    value = strokes.cap,
+                    options = listOf("butt", "round", "square", "arrow"),
+                    onSelect = { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetCap(it))) },
+                    leadingContent = { StrokeCapPreview(strokes.cap) },
+                    optionLeadingContent = { StrokeCapPreview(it) },
+                )
             }
         }
     }
@@ -801,6 +824,8 @@ private fun ShapeControls(state: MissionEditorStateHolder, nodeId: String, shape
                         ?.let { state.dispatch(DesignEditorIntent.SetShapeType(nodeId, it)) }
                 }
             },
+            leadingContent = { ShapeTypePreview(shape.shape) },
+            optionLeadingContent = { label -> ShapeType.entries.firstOrNull { it.shapeTypeLabel() == label }?.let { ShapeTypePreview(it) } },
         )
     }
     if (shape.shape == ShapeType.Polygon || shape.shape == ShapeType.Star) {
@@ -895,6 +920,10 @@ private fun BooleanOpControls(state: MissionEditorStateHolder, nodeId: String, k
                         ?.let { state.dispatch(DesignEditorIntent.SetBooleanOperation(nodeId, it)) }
                 }
             },
+            leadingContent = { BooleanOperationPreview(kind.operation) },
+            optionLeadingContent = { label ->
+                BooleanOperationKind.entries.firstOrNull { it.booleanOpLabel() == label }?.let { BooleanOperationPreview(it) }
+            },
         )
     }
 }
@@ -959,6 +988,106 @@ private fun BooleanOperationKind.booleanOpLabel() = when (this) {
     BooleanOperationKind.Exclude -> "Exclude"
 }
 
+@Composable
+private fun ShapeTypePreview(shape: ShapeType, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val stroke = Stroke(1.5.dp.toPx())
+        val ink = colors.controlInk
+        val fill = colors.selectionFill
+        when (shape) {
+            ShapeType.Rectangle -> {
+                val rect = Size(size.width - 5f, size.height - 7f)
+                drawRoundRect(fill, topLeft = Offset(2.5f, 3.5f), size = rect, cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()))
+                drawRoundRect(ink, topLeft = Offset(2.5f, 3.5f), size = rect, cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()), style = stroke)
+            }
+            ShapeType.Ellipse -> {
+                drawOval(fill, topLeft = Offset(2.5f, 3f), size = Size(size.width - 5f, size.height - 6f))
+                drawOval(ink, topLeft = Offset(2.5f, 3f), size = Size(size.width - 5f, size.height - 6f), style = stroke)
+            }
+            ShapeType.Polygon -> {
+                val path = Path().apply {
+                    moveTo(size.width / 2f, 2.5f)
+                    lineTo(size.width - 2.5f, size.height - 3f)
+                    lineTo(2.5f, size.height - 3f)
+                    close()
+                }
+                drawPath(path, fill)
+                drawPath(path, ink, style = stroke)
+            }
+            ShapeType.Star -> {
+                val path = Path().apply {
+                    moveTo(size.width / 2f, 2f)
+                    lineTo(size.width * 0.62f, size.height * 0.38f)
+                    lineTo(size.width - 2f, size.height * 0.38f)
+                    lineTo(size.width * 0.70f, size.height * 0.58f)
+                    lineTo(size.width * 0.82f, size.height - 2f)
+                    lineTo(size.width / 2f, size.height * 0.74f)
+                    lineTo(size.width * 0.18f, size.height - 2f)
+                    lineTo(size.width * 0.30f, size.height * 0.58f)
+                    lineTo(2f, size.height * 0.38f)
+                    lineTo(size.width * 0.38f, size.height * 0.38f)
+                    close()
+                }
+                drawPath(path, fill)
+                drawPath(path, ink, style = stroke)
+            }
+            ShapeType.Line -> {
+                drawLine(ink, Offset(3f, size.height - 4f), Offset(size.width - 3f, 4f), strokeWidth = 2.dp.toPx())
+            }
+            ShapeType.Arrow -> {
+                val start = Offset(3f, size.height - 4f)
+                val end = Offset(size.width - 3f, 4f)
+                drawLine(ink, start, end, strokeWidth = 2.dp.toPx())
+                drawLine(ink, end, Offset(end.x - 6f, end.y + 1f), strokeWidth = 2.dp.toPx())
+                drawLine(ink, end, Offset(end.x - 1f, end.y + 6f), strokeWidth = 2.dp.toPx())
+            }
+            ShapeType.Vector -> {
+                val path = Path().apply {
+                    moveTo(2.5f, size.height - 4f)
+                    cubicTo(size.width * 0.35f, 1f, size.width * 0.65f, size.height + 1f, size.width - 2.5f, 4f)
+                }
+                drawPath(path, ink, style = Stroke(1.8.dp.toPx()))
+            }
+        }
+    }
+}
+
+@Composable
+private fun BooleanOperationPreview(operation: BooleanOperationKind, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val first = colors.controlInk.copy(alpha = 0.75f)
+        val second = colors.accent.copy(alpha = 0.42f)
+        val surface = colors.raisedSurface
+        val left = Offset(2f, 6f)
+        val right = Offset(6f, 2f)
+        val box = Size(10f, 10f)
+        val radius = CornerRadius(2f, 2f)
+        when (operation) {
+            BooleanOperationKind.Union -> {
+                drawRoundRect(first, left, box, radius)
+                drawRoundRect(second, right, box, radius)
+            }
+            BooleanOperationKind.Subtract -> {
+                drawRoundRect(first, left, box, radius)
+                drawRoundRect(surface, right, box, radius)
+                drawRoundRect(colors.controlInk, right, box, radius, style = Stroke(1.dp.toPx()))
+            }
+            BooleanOperationKind.Intersect -> {
+                drawRoundRect(first.copy(alpha = 0.18f), left, box, radius, style = Stroke(1.dp.toPx()))
+                drawRoundRect(second.copy(alpha = 0.18f), right, box, radius, style = Stroke(1.dp.toPx()))
+                drawRoundRect(colors.accent, Offset(6f, 6f), Size(6f, 6f), radius)
+            }
+            BooleanOperationKind.Exclude -> {
+                drawRoundRect(first, left, box, radius)
+                drawRoundRect(second, right, box, radius)
+                drawRoundRect(surface, Offset(6f, 6f), Size(6f, 6f), radius)
+            }
+        }
+    }
+}
+
 // --- Effects -----------------------------------------------------------------
 
 @Composable
@@ -973,7 +1102,14 @@ private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
         val visible = effect.visible.literalOrNull() ?: true
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             LayerToggle(visible) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.ToggleAt(index))) }
-            SmallSelect(effect.effectLabel(), EffectType.entries.map { it.displayName }, modifier = Modifier.weight(1f)) { label ->
+            val type = effect.effectType()
+            SmallSelect(
+                value = effect.effectLabel(),
+                options = EffectType.entries.map { it.displayName },
+                modifier = Modifier.weight(1f),
+                leadingContent = { EffectTypeIcon(type) },
+                optionLeadingContent = { label -> EffectType.entries.firstOrNull { it.displayName == label }?.let { EffectTypeIcon(it) } },
+            ) { label ->
                 EffectType.entries.firstOrNull { it.displayName == label }?.let { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.SetType(index, it))) }
             }
             RemoveButton { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.RemoveAt(index))) }
@@ -1106,6 +1242,8 @@ private fun CompactLabeledSelectField(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     maxFieldWidth: Dp = InspectorCompactSelectMaxWidth,
+    leadingContent: (@Composable () -> Unit)? = null,
+    optionLeadingContent: (@Composable (String) -> Unit)? = null,
     onSelect: (String) -> Unit,
 ) {
     LabeledField(label) {
@@ -1115,6 +1253,8 @@ private fun CompactLabeledSelectField(
             onSelect = onSelect,
             modifier = modifier.widthIn(max = maxFieldWidth).fillMaxWidth(),
             enabled = enabled,
+            leadingContent = leadingContent,
+            optionLeadingContent = optionLeadingContent,
         )
     }
 }
@@ -1353,6 +1493,8 @@ private fun CompactSelectField(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     leadingIcon: EditorIcon? = null,
+    leadingContent: (@Composable () -> Unit)? = null,
+    optionLeadingContent: (@Composable (String) -> Unit)? = null,
 ) {
     val colors = LocalEditorColors.current
     var expanded by remember { mutableStateOf(false) }
@@ -1365,10 +1507,14 @@ private fun CompactSelectField(
             border = BorderStroke(1.dp, if (expanded) colors.accent else if (enabled) colors.controlStroke else colors.controlDisabledStroke),
         ) {
             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                leadingIcon?.let {
-                    EditorSvgIcon(it, contentDescription = null, modifier = Modifier.size(13.dp), tint = if (enabled) colors.ink else colors.mutedInk)
-                    Spacer(Modifier.width(6.dp))
+                DropdownLeadingBox(size = 14.dp) {
+                    when {
+                        leadingContent != null -> leadingContent()
+                        leadingIcon != null -> DropdownMenuIcon(leadingIcon, modifier = Modifier.size(13.dp), tint = if (enabled) colors.ink else colors.mutedInk)
+                        else -> DefaultDropdownLeadingContent(value, modifier = Modifier.size(13.dp), tint = if (enabled) colors.ink else colors.mutedInk)
+                    }
                 }
+                Spacer(Modifier.width(6.dp))
                 Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (enabled) colors.ink else colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(11.dp), tint = colors.controlInk)
             }
@@ -1381,10 +1527,130 @@ private fun CompactSelectField(
                         expanded = false
                         onSelect(option)
                     },
+                    leadingContent = {
+                        when {
+                            optionLeadingContent != null -> optionLeadingContent(option)
+                            leadingIcon != null -> DropdownMenuIcon(leadingIcon, modifier = Modifier.size(16.dp))
+                            else -> DefaultDropdownLeadingContent(option, modifier = Modifier.size(16.dp))
+                        }
+                    },
                 )
             }
         }
     }
+}
+
+@Composable
+private fun SizingModePreview(mode: SizingMode, modifier: Modifier = Modifier.size(14.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val stroke = Stroke(1.3.dp.toPx())
+        val ink = colors.controlInk
+        val fill = colors.selectionFill
+        when (mode) {
+            SizingMode.Fixed -> {
+                drawRoundRect(fill, Offset(2f, 3f), Size(size.width - 4f, size.height - 6f), CornerRadius(2f, 2f))
+                drawRoundRect(ink, Offset(2f, 3f), Size(size.width - 4f, size.height - 6f), CornerRadius(2f, 2f), style = stroke)
+            }
+            SizingMode.Hug -> {
+                drawLine(ink, Offset(3f, 3f), Offset(3f, size.height - 3f), strokeWidth = 1.5.dp.toPx())
+                drawLine(ink, Offset(size.width - 3f, 3f), Offset(size.width - 3f, size.height - 3f), strokeWidth = 1.5.dp.toPx())
+                drawRoundRect(fill, Offset(5f, 5f), Size(size.width - 10f, size.height - 10f), CornerRadius(2f, 2f))
+            }
+            SizingMode.Fill -> {
+                drawLine(ink, Offset(2f, size.height / 2f), Offset(size.width - 2f, size.height / 2f), strokeWidth = 1.5.dp.toPx())
+                drawLine(ink, Offset(2f, size.height / 2f), Offset(5f, size.height / 2f - 3f), strokeWidth = 1.5.dp.toPx())
+                drawLine(ink, Offset(2f, size.height / 2f), Offset(5f, size.height / 2f + 3f), strokeWidth = 1.5.dp.toPx())
+                drawLine(ink, Offset(size.width - 2f, size.height / 2f), Offset(size.width - 5f, size.height / 2f - 3f), strokeWidth = 1.5.dp.toPx())
+                drawLine(ink, Offset(size.width - 2f, size.height / 2f), Offset(size.width - 5f, size.height / 2f + 3f), strokeWidth = 1.5.dp.toPx())
+            }
+        }
+    }
+}
+
+@Composable
+private fun BlendModePreview(label: String, modifier: Modifier = Modifier.size(16.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val leftColor = colors.accent.copy(alpha = if (label == "normal") 0.55f else 0.72f)
+        val rightColor = when (label) {
+            "multiply", "color-burn", "darken" -> Color(0xFFFFB300).copy(alpha = 0.82f)
+            "screen", "lighten", "color-dodge" -> Color(0xFF55D6BE).copy(alpha = 0.68f)
+            "difference" -> Color(0xFFE95F7A).copy(alpha = 0.76f)
+            else -> Color(0xFFFFB300).copy(alpha = 0.62f)
+        }
+        drawCircle(leftColor, radius = size.minDimension * 0.34f, center = Offset(size.width * 0.40f, size.height * 0.52f))
+        drawCircle(rightColor, radius = size.minDimension * 0.34f, center = Offset(size.width * 0.62f, size.height * 0.46f))
+        drawCircle(colors.controlInk, radius = size.minDimension * 0.34f, center = Offset(size.width * 0.40f, size.height * 0.52f), style = Stroke(1.dp.toPx()))
+        drawCircle(colors.controlInk, radius = size.minDimension * 0.34f, center = Offset(size.width * 0.62f, size.height * 0.46f), style = Stroke(1.dp.toPx()))
+    }
+}
+
+@Composable
+private fun FillKindPreview(kind: FillKind, modifier: Modifier = Modifier.size(16.dp)) {
+    val colors = LocalEditorColors.current
+    when (kind) {
+        FillKind.Solid -> DropdownMenuIcon(EditorIcon.Fill, modifier = modifier, tint = colors.controlInk)
+        FillKind.Image -> DropdownMenuIcon(EditorIcon.Image, modifier = modifier, tint = colors.controlInk)
+        FillKind.LinearGradient,
+        FillKind.RadialGradient -> Canvas(modifier) {
+            val brush = if (kind == FillKind.LinearGradient) {
+                Brush.horizontalGradient(listOf(colors.accent, Color(0xFFFFB300)))
+            } else {
+                Brush.radialGradient(listOf(colors.accent, Color(0xFFFFB300)), radius = size.minDimension * 0.65f)
+            }
+            drawRoundRect(brush, Offset(1.5f, 2.5f), Size(size.width - 3f, size.height - 5f), CornerRadius(3f, 3f))
+            drawRoundRect(colors.controlInk, Offset(1.5f, 2.5f), Size(size.width - 3f, size.height - 5f), CornerRadius(3f, 3f), style = Stroke(1.dp.toPx()))
+        }
+    }
+}
+
+@Composable
+private fun StrokeAlignPreview(align: StrokeAlign, modifier: Modifier = Modifier.size(16.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val rectTop = 4f
+        val rectHeight = size.height - 8f
+        drawRoundRect(colors.selectionFill, Offset(3f, rectTop), Size(size.width - 6f, rectHeight), CornerRadius(2f, 2f))
+        drawRoundRect(colors.controlInk, Offset(3f, rectTop), Size(size.width - 6f, rectHeight), CornerRadius(2f, 2f), style = Stroke(1.dp.toPx()))
+        val y = when (align) {
+            StrokeAlign.Inside -> rectTop + 2f
+            StrokeAlign.Center -> rectTop + rectHeight / 2f
+            StrokeAlign.Outside -> rectTop - 1f
+        }
+        drawLine(colors.accent, Offset(2f, y), Offset(size.width - 2f, y), strokeWidth = 2.dp.toPx())
+    }
+}
+
+@Composable
+private fun StrokeCapPreview(cap: String, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val start = Offset(3f, size.height / 2f)
+        val end = Offset(size.width - 4f, size.height / 2f)
+        drawLine(colors.controlInk, start, end, strokeWidth = 2.dp.toPx())
+        when (cap) {
+            "round" -> drawCircle(colors.accent, radius = 3f, center = end)
+            "square" -> drawRect(colors.accent, topLeft = Offset(end.x - 2.5f, end.y - 2.5f), size = Size(5f, 5f))
+            "arrow" -> {
+                drawLine(colors.accent, end, Offset(end.x - 5f, end.y - 4f), strokeWidth = 2.dp.toPx())
+                drawLine(colors.accent, end, Offset(end.x - 5f, end.y + 4f), strokeWidth = 2.dp.toPx())
+            }
+            else -> drawLine(colors.accent, Offset(end.x, end.y - 4f), Offset(end.x, end.y + 4f), strokeWidth = 2.dp.toPx())
+        }
+    }
+}
+
+@Composable
+private fun EffectTypeIcon(type: EffectType?, modifier: Modifier = Modifier.size(16.dp)) {
+    val icon = when (type) {
+        EffectType.DropShadow -> EditorIcon.Visibility
+        EffectType.InnerShadow -> EditorIcon.Visibility
+        EffectType.LayerBlur -> EditorIcon.BlurOn
+        EffectType.BackgroundBlur -> EditorIcon.BlurOn
+        null -> EditorIcon.Design
+    }
+    DropdownMenuIcon(icon, modifier = modifier)
 }
 
 private data class IconStripItem(
@@ -1683,8 +1949,22 @@ internal fun TinyButton(label: String, enabled: Boolean = true, onClick: () -> U
 }
 
 @Composable
-internal fun SmallSelect(value: String, options: List<String>, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
-    SelectField(value = value, options = options, onSelect = onSelect, modifier = modifier.width(96.dp))
+internal fun SmallSelect(
+    value: String,
+    options: List<String>,
+    modifier: Modifier = Modifier,
+    leadingContent: (@Composable () -> Unit)? = null,
+    optionLeadingContent: (@Composable (String) -> Unit)? = null,
+    onSelect: (String) -> Unit,
+) {
+    SelectField(
+        value = value,
+        options = options,
+        onSelect = onSelect,
+        modifier = modifier.width(108.dp),
+        leadingContent = leadingContent,
+        optionLeadingContent = optionLeadingContent,
+    )
 }
 
 // --- Color fields (wrap the shared color picker into the inspector's edit model) -----
@@ -1973,6 +2253,14 @@ private fun DesignEffect.effectLabel(): String = when (this) {
     is DesignEffect.LayerBlur -> EffectType.LayerBlur.displayName
     is DesignEffect.BackgroundBlur -> EffectType.BackgroundBlur.displayName
     is DesignEffect.Unknown -> "Effect"
+}
+
+private fun DesignEffect.effectType(): EffectType? = when (this) {
+    is DesignEffect.DropShadow -> EffectType.DropShadow
+    is DesignEffect.InnerShadow -> EffectType.InnerShadow
+    is DesignEffect.LayerBlur -> EffectType.LayerBlur
+    is DesignEffect.BackgroundBlur -> EffectType.BackgroundBlur
+    is DesignEffect.Unknown -> null
 }
 
 private val BlendModes = listOf("normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "difference")

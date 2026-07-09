@@ -160,6 +160,8 @@ private fun ActionEditor(
                     value = screens.firstOrNull { it.first == action.to }?.second ?: action.to.ifBlank { "Pick a screen" },
                     options = screens.map { it.second },
                     onSelect = { label -> screens.firstOrNull { it.second == label }?.first?.let { if (!locked) dispatch(InteractionOp.SetActionTarget(i, j, it)) } },
+                    leadingContent = { DropdownMenuIcon(EditorIcon.Screens) },
+                    optionLeadingContent = { DropdownMenuIcon(EditorIcon.Screens) },
                 )
             }
             LabeledField("Motion") {

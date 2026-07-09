@@ -30,6 +30,17 @@ class ViewportMathTest {
     }
 
     @Test
+    fun panToDocumentStartPlacesDocumentCoordinateOnViewportEdge() {
+        val viewport = EditorViewport(zoom = 1.25f, panOffsetXDp = 8f, panOffsetYDp = 10f)
+            .panToDocumentStartX(240.0)
+            .panToDocumentStartY(120.0)
+        val density = 2f
+
+        assertClose(240.0, viewport.toDocumentX(0f, density))
+        assertClose(120.0, viewport.toDocumentY(0f, density))
+    }
+
+    @Test
     fun zoomAroundKeepsFocusedDocumentPointStable() {
         val viewport = EditorViewport(zoom = 1f, panOffsetXDp = 20f, panOffsetYDp = 30f)
         val density = 2f
@@ -82,6 +93,76 @@ class ViewportMathTest {
         val max = WorkspaceLimits.MaxZoomScrollStep
         assertEquals(zoomFactorForScroll(max), zoomFactorForScroll(max * 10f))
         assertEquals(zoomFactorForScroll(-max), zoomFactorForScroll(-max * 10f))
+    }
+
+    @Test
+    fun canvasScrollbarsAreHiddenWhenContentFitsViewport() {
+        val metrics = canvasScrollbarsFor(
+            viewport = EditorViewport(zoom = 1f),
+            contentBounds = BoundsBox(0.0, 0.0, 300.0, 200.0),
+            viewportWidthPx = 600f,
+            viewportHeightPx = 400f,
+            density = 1f,
+            scrollbarThicknessPx = 12f,
+            minThumbLengthPx = 32f,
+        )
+
+        assertTrue(!metrics.horizontal.visible)
+        assertTrue(!metrics.vertical.visible)
+    }
+
+    @Test
+    fun canvasScrollbarsExposeOnlyOverflowingAxesWithFigmaMargin() {
+        val metrics = canvasScrollbarsFor(
+            viewport = EditorViewport(zoom = 2f),
+            contentBounds = BoundsBox(0.0, 0.0, 600.0, 100.0),
+            viewportWidthPx = 800f,
+            viewportHeightPx = 400f,
+            density = 1f,
+            scrollbarThicknessPx = 12f,
+            minThumbLengthPx = 32f,
+        )
+
+        assertTrue(metrics.horizontal.visible)
+        assertTrue(!metrics.vertical.visible)
+        assertClose(320.0, metrics.horizontal.thumbLengthPx.toDouble(), epsilon = 0.001)
+        assertClose(160.0, metrics.horizontal.thumbOffsetPx.toDouble(), epsilon = 0.001)
+    }
+
+    @Test
+    fun canvasScrollbarThumbTracksPanOffset() {
+        val viewport = EditorViewport(zoom = 1f).panToDocumentStartX(300.0)
+        val metrics = canvasScrollbarsFor(
+            viewport = viewport,
+            contentBounds = BoundsBox(0.0, 0.0, 1000.0, 500.0),
+            viewportWidthPx = 400f,
+            viewportHeightPx = 500f,
+            density = 1f,
+            scrollbarThicknessPx = 12f,
+            minThumbLengthPx = 32f,
+        )
+
+        assertTrue(metrics.horizontal.visible)
+        assertClose(142.8571, metrics.horizontal.thumbOffsetPx.toDouble(), epsilon = 0.001)
+        assertClose(300.0, metrics.horizontal.documentStartForThumbOffset(metrics.horizontal.thumbOffsetPx))
+        assertClose(800.0, metrics.horizontal.documentStartForThumbOffset(metrics.horizontal.maxThumbOffsetPx))
+    }
+
+    @Test
+    fun canvasScrollbarRangeExpandsToCurrentViewportWhenPannedPastContent() {
+        val viewport = EditorViewport(zoom = 1f).panToDocumentStartX(700.0)
+        val metrics = canvasScrollbarsFor(
+            viewport = viewport,
+            contentBounds = BoundsBox(0.0, 0.0, 300.0, 200.0),
+            viewportWidthPx = 400f,
+            viewportHeightPx = 400f,
+            density = 1f,
+            scrollbarThicknessPx = 12f,
+            minThumbLengthPx = 32f,
+        )
+
+        assertTrue(metrics.horizontal.visible)
+        assertClose(700.0, metrics.horizontal.documentStartForThumbOffset(metrics.horizontal.maxThumbOffsetPx))
     }
 
     private fun assertClose(expected: Double, actual: Double, epsilon: Double = 0.0001) {

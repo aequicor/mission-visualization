@@ -342,7 +342,12 @@ internal fun SelectLike(value: String, modifier: Modifier = Modifier) {
         color = colors.controlSurface,
         border = BorderStroke(1.dp, colors.controlStroke),
     ) {
-        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            DropdownLeadingBox(size = 18.dp) { DefaultDropdownLeadingContent(value, modifier = Modifier.size(16.dp)) }
             Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
         }
@@ -355,6 +360,8 @@ internal fun SelectField(
     options: List<String>,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    leadingContent: (@Composable () -> Unit)? = null,
+    optionLeadingContent: (@Composable (String) -> Unit)? = null,
 ) {
     val colors = LocalEditorColors.current
     var expanded by remember { mutableStateOf(false) }
@@ -366,7 +373,14 @@ internal fun SelectField(
             color = colors.controlSurface,
             border = BorderStroke(1.dp, colors.controlStroke),
         ) {
-            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                DropdownLeadingBox(size = 18.dp) {
+                    if (leadingContent != null) leadingContent() else DefaultDropdownLeadingContent(value, modifier = Modifier.size(16.dp))
+                }
                 Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
             }
@@ -376,6 +390,7 @@ internal fun SelectField(
                 EditorDropdownMenuItem(
                     text = option,
                     onClick = { expanded = false; onSelect(option) },
+                    leadingContent = optionLeadingContent?.let { content -> { content(option) } },
                 )
             }
         }
@@ -434,6 +449,7 @@ internal fun EditorDropdownMenu(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
+        modifier = Modifier.widthIn(min = 220.dp),
         shape = RoundedCornerShape(6.dp),
         containerColor = colors.raisedSurface,
         tonalElevation = 0.dp,
@@ -445,7 +461,11 @@ internal fun EditorDropdownMenu(
 }
 
 @Composable
-internal fun EditorDropdownMenuItem(text: String, onClick: () -> Unit) {
+internal fun EditorDropdownMenuItem(
+    text: String,
+    leadingContent: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     val colors = LocalEditorColors.current
     DropdownMenuItem(
         text = {
@@ -459,7 +479,84 @@ internal fun EditorDropdownMenuItem(text: String, onClick: () -> Unit) {
             )
         },
         onClick = onClick,
+        leadingIcon = {
+            DropdownLeadingBox(size = 18.dp) {
+                if (leadingContent != null) leadingContent() else DefaultDropdownLeadingContent(text, modifier = Modifier.size(16.dp))
+            }
+        },
     )
+}
+
+@Composable
+internal fun DropdownMenuIcon(
+    icon: EditorIcon,
+    modifier: Modifier = Modifier.size(16.dp),
+    tint: Color = LocalEditorColors.current.controlInk,
+) {
+    EditorSvgIcon(icon = icon, contentDescription = null, modifier = modifier, tint = tint)
+}
+
+@Composable
+internal fun DefaultDropdownLeadingContent(
+    label: String,
+    modifier: Modifier = Modifier.size(16.dp),
+    tint: Color = LocalEditorColors.current.controlInk,
+) {
+    DropdownMenuIcon(icon = dropdownIconForLabel(label), modifier = modifier, tint = tint)
+}
+
+@Composable
+internal fun DropdownLeadingBox(size: Dp, content: @Composable () -> Unit) {
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+        content()
+    }
+}
+
+internal fun dropdownIconForLabel(label: String): EditorIcon {
+    val normalized = label.lowercase()
+    return when {
+        "назад" in normalized -> EditorIcon.ArrowBack
+        normalized == "back" -> EditorIcon.KeyboardReturn
+        "откры" in normalized || normalized.startsWith("open") -> EditorIcon.FolderOpen
+        "сохран" in normalized || normalized.startsWith("save") -> EditorIcon.Save
+        "папк" in normalized || "folder" in normalized -> EditorIcon.Folder
+        "экспорт" in normalized || "export" in normalized -> EditorIcon.Export
+        "png" in normalized -> EditorIcon.Image
+        "pdf" in normalized -> EditorIcon.PictureAsPdf
+        "zip" in normalized -> EditorIcon.Folder
+        "on click" in normalized -> EditorIcon.TouchApp
+        "on press" in normalized -> EditorIcon.HandPan
+        "delay" in normalized -> EditorIcon.Timer
+        "navigate" in normalized -> EditorIcon.Link
+        "target" in normalized || "screen" in normalized || "pick a screen" in normalized -> EditorIcon.Screens
+        "desktop" in normalized -> EditorIcon.DeviceDesktop
+        "tablet" in normalized -> EditorIcon.DeviceTablet
+        "mobile" in normalized -> EditorIcon.DeviceMobile
+        "instant" in normalized -> EditorIcon.PlayArrow
+        "dissolve" in normalized || "push" in normalized || "slide" in normalized || "move" in normalized || "animate" in normalized -> EditorIcon.TransitionSlide
+        "ease" in normalized || "linear" in normalized -> EditorIcon.MotionPhotosOn
+        "fade" in normalized || "pop" in normalized || "float" in normalized || "pulse" in normalized || "spin" in normalized || "custom" in normalized -> EditorIcon.MotionPhotosOn
+        "solid" in normalized -> EditorIcon.Fill
+        "radial" in normalized || "gradient" in normalized -> EditorIcon.Gradient
+        "image" in normalized -> EditorIcon.Image
+        "drop shadow" in normalized || "inner shadow" in normalized -> EditorIcon.Visibility
+        "blur" in normalized -> EditorIcon.BlurOn
+        "inside" in normalized || "outside" in normalized -> EditorIcon.Stroke
+        "butt" in normalized || "round" in normalized || "square" in normalized || "arrow" in normalized -> EditorIcon.Stroke
+        "fixed" in normalized -> EditorIcon.AspectRatio
+        "hug" in normalized -> EditorIcon.ConstraintHorizontal
+        "fill" in normalized -> EditorIcon.Fill
+        "left" in normalized -> EditorIcon.AlignHorizontalLeft
+        "right" in normalized -> EditorIcon.AlignHorizontalRight
+        "top" in normalized -> EditorIcon.AlignVerticalTop
+        "bottom" in normalized -> EditorIcon.AlignVerticalBottom
+        "center" in normalized -> EditorIcon.AlignHorizontalCenter
+        "scale" in normalized -> EditorIcon.AspectRatio
+        "union" in normalized || "subtract" in normalized || "intersect" in normalized || "exclude" in normalized -> EditorIcon.Component
+        "normal" in normalized || "multiply" in normalized || "screen" in normalized || "overlay" in normalized ||
+            "darken" in normalized || "lighten" in normalized || "color-" in normalized || "difference" in normalized -> EditorIcon.Design
+        else -> EditorIcon.Select
+    }
 }
 
 private fun compactLabelFor(text: String): CompactLabel = when (text) {

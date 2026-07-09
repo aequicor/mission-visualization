@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -76,7 +77,10 @@ import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.AnnotatedString
@@ -91,6 +95,8 @@ import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.AncestorRotation
 import io.aequicor.visualization.editor.presentation.BoundsBox
 import io.aequicor.visualization.editor.presentation.CanvasOperation
+import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
+import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.DocumentRect
@@ -118,6 +124,7 @@ import io.aequicor.visualization.editor.presentation.effectiveTransform
 import io.aequicor.visualization.editor.presentation.EffectiveTransform
 import io.aequicor.visualization.editor.presentation.LineSegment
 import io.aequicor.visualization.editor.presentation.computeResize
+import io.aequicor.visualization.editor.presentation.canvasScrollbarsFor
 import io.aequicor.visualization.editor.presentation.toMovingEdges
 import io.aequicor.visualization.editor.presentation.toSnapBox
 import io.aequicor.visualization.subsystems.anchoring.AnchorGuide
@@ -157,6 +164,7 @@ import io.aequicor.visualization.editor.presentation.rotatedCorners
 import io.aequicor.visualization.editor.presentation.rotatedHandlePoints
 import io.aequicor.visualization.editor.presentation.snapAngleToIncrement
 import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
+import io.aequicor.visualization.editor.platform.CanvasExportBounds
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
@@ -239,7 +247,23 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
     val rootNode = document?.pageById(pageId)?.children?.firstOrNull()
     val textMeasurer = rememberTextMeasurer()
 
-    BoxWithConstraints(Modifier.fillMaxSize().padding(4.dp)) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .padding(4.dp)
+            .onGloballyPositioned { coordinates ->
+                val bounds = coordinates.boundsInWindow()
+                state.onCanvasExportBounds(
+                    CanvasExportBounds(
+                        left = bounds.left.toDouble(),
+                        top = bounds.top.toDouble(),
+                        width = bounds.width.toDouble(),
+                        height = bounds.height.toDouble(),
+                        density = density,
+                    ),
+                )
+            },
+    ) {
         val canvasWpx = maxWidth.value * density
         val canvasHpx = maxHeight.value * density
         val layout = state.artboardLayout
@@ -333,6 +357,17 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         // thus drop pending events from) the whole gesture handler for the entire zoom.
         val zoomPx by rememberUpdatedState(viewportModel.zoomPx(density))
         val viewport by rememberUpdatedState(CanvasViewport(zoomPx, viewportModel.panXPx(density), viewportModel.panYPx(density)))
+        val scrollbars = layout?.canvasContentBounds()?.let { contentBounds ->
+            canvasScrollbarsFor(
+                viewport = viewportModel,
+                contentBounds = contentBounds,
+                viewportWidthPx = canvasWpx,
+                viewportHeightPx = canvasHpx,
+                density = density,
+                scrollbarThicknessPx = CanvasScrollbarThicknessDp * density,
+                minThumbLengthPx = CanvasScrollbarMinThumbDp * density,
+            )
+        } ?: CanvasScrollbarsMetrics()
         val multiSelectionBox = if (design.selectedNodeIds.size > 1) selectionHandleBounds(layout, design.selectedNodeIds) else null
 
         // Primary (single) selection geometry — the only case that gets rotated handles,
@@ -379,9 +414,17 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var shiftHeld by remember { mutableStateOf(false) }
         var altHeld by remember { mutableStateOf(false) }
         var spaceHeld by remember { mutableStateOf(false) }
+        val windowFocused = LocalWindowInfo.current.isWindowFocused
         var lastTapMark by remember { mutableStateOf<TimeSource.Monotonic.ValueTimeMark?>(null) }
         var lastTapId by remember { mutableStateOf("") }
         LaunchedEffect(pageId) { runCatching { focusRequester.requestFocus() } }
+        LaunchedEffect(windowFocused) {
+            if (!windowFocused) {
+                shiftHeld = false
+                altHeld = false
+                spaceHeld = false
+            }
+        }
         // A stale handle cursor must not survive a tool/selection change without a pointer move.
         LaunchedEffect(ws.tool, spaceHeld, design.selectedNodeId, design.selectedNodeIds, primarySelectionRotation) { hoverCursor = null }
 
@@ -1072,6 +1115,134 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             // Inline text editing overlay for a double-clicked text node.
             TextEditOverlay(state, layout, viewport)
         }
+        CanvasScrollbars(state, scrollbars)
+    }
+}
+
+@Composable
+private fun BoxScope.CanvasScrollbars(state: MissionEditorStateHolder, metrics: CanvasScrollbarsMetrics) {
+    if (!metrics.horizontal.visible && !metrics.vertical.visible) return
+    val colors = LocalEditorColors.current
+    val density = LocalDensity.current.density
+    val trackColor = Color.Transparent
+    val thumbColor = colors.ink.copy(alpha = 0.30f)
+
+    if (metrics.horizontal.visible) {
+        CanvasScrollbar(
+            metrics = metrics.horizontal,
+            horizontal = true,
+            trackColor = trackColor,
+            thumbColor = thumbColor,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .height(CanvasScrollbarThicknessDp.dp)
+                .padding(end = if (metrics.vertical.visible) CanvasScrollbarThicknessDp.dp else 0.dp),
+            onThumbOffset = { thumbOffset ->
+                val documentX = metrics.horizontal.documentStartForThumbOffset(thumbOffset)
+                state.updateWorkspace { it.copy(viewport = it.viewport.panToDocumentStartX(documentX)) }
+            },
+            density = density,
+        )
+    }
+    if (metrics.vertical.visible) {
+        CanvasScrollbar(
+            metrics = metrics.vertical,
+            horizontal = false,
+            trackColor = trackColor,
+            thumbColor = thumbColor,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(CanvasScrollbarThicknessDp.dp)
+                .padding(bottom = if (metrics.horizontal.visible) CanvasScrollbarThicknessDp.dp else 0.dp),
+            onThumbOffset = { thumbOffset ->
+                val documentY = metrics.vertical.documentStartForThumbOffset(thumbOffset)
+                state.updateWorkspace { it.copy(viewport = it.viewport.panToDocumentStartY(documentY)) }
+            },
+            density = density,
+        )
+    }
+    if (metrics.horizontal.visible && metrics.vertical.visible) {
+        Box(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .size(CanvasScrollbarThicknessDp.dp)
+                .background(trackColor),
+        )
+    }
+}
+
+@Composable
+private fun CanvasScrollbar(
+    metrics: CanvasScrollbarAxisMetrics,
+    horizontal: Boolean,
+    trackColor: Color,
+    thumbColor: Color,
+    modifier: Modifier,
+    onThumbOffset: (Float) -> Unit,
+    density: Float,
+) {
+    val latestMetrics by rememberUpdatedState(metrics)
+    val latestOnThumbOffset by rememberUpdatedState(onThumbOffset)
+    var dragThumbOffset by remember { mutableStateOf(0f) }
+    var dragGrabOffset by remember { mutableStateOf(0f) }
+    Box(
+        modifier
+            .background(trackColor)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .pointerInput(horizontal) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    run {
+                        val current = latestMetrics
+                        val pointerOffset = if (horizontal) down.position.x else down.position.y
+                        val thumbStart = current.thumbOffsetPx
+                        val thumbEnd = thumbStart + current.thumbLengthPx
+                        dragGrabOffset = if (pointerOffset in thumbStart..thumbEnd) {
+                            pointerOffset - thumbStart
+                        } else {
+                            current.thumbLengthPx / 2f
+                        }
+                        dragThumbOffset = (pointerOffset - dragGrabOffset).coerceIn(0f, current.maxThumbOffsetPx)
+                        latestOnThumbOffset(dragThumbOffset)
+                        down.consume()
+                    }
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.changedToUp()) {
+                            change.consume()
+                            break
+                        }
+                        val current = latestMetrics
+                        val pointerOffset = if (horizontal) change.position.x else change.position.y
+                        dragThumbOffset = (pointerOffset - dragGrabOffset).coerceIn(0f, current.maxThumbOffsetPx)
+                        latestOnThumbOffset(dragThumbOffset)
+                        change.consume()
+                    }
+                }
+            },
+    ) {
+        Box(
+            Modifier
+                .offset {
+                    if (horizontal) {
+                        androidx.compose.ui.unit.IntOffset(metrics.thumbOffsetPx.roundToInt(), 0)
+                    } else {
+                        androidx.compose.ui.unit.IntOffset(0, metrics.thumbOffsetPx.roundToInt())
+                    }
+                }
+                .then(
+                    if (horizontal) {
+                        Modifier.width((metrics.thumbLengthPx / density).dp).fillMaxHeight()
+                    } else {
+                        Modifier.fillMaxWidth().height((metrics.thumbLengthPx / density).dp)
+                    },
+                )
+                .padding(2.dp)
+                .background(thumbColor, RoundedCornerShape(99.dp)),
+        )
     }
 }
 
@@ -1721,6 +1892,23 @@ private fun snapResizeDeltas(
 private fun LayoutBox.toBoundsBox(): BoundsBox =
     BoundsBox(x = x, y = y, width = width, height = height)
 
+private fun LayoutBox.toContentBoundsBox(): BoundsBox =
+    BoundsBox(x = x, y = y, width = contentWidth, height = contentHeight)
+
+private fun LayoutBox.canvasContentBounds(): BoundsBox {
+    val boxes = allBoxes().flatMap { box ->
+        listOf(
+            box.toBoundsBox().visualBounds(box.node.rotation),
+            box.toContentBoundsBox().visualBounds(box.node.rotation),
+        )
+    }
+    val minX = boxes.minOf { it.x }
+    val minY = boxes.minOf { it.y }
+    val maxX = boxes.maxOf { it.right }
+    val maxY = boxes.maxOf { it.bottom }
+    return BoundsBox(minX, minY, maxX - minX, maxY - minY)
+}
+
 /** The transformed visual bounds of a (possibly rotated) box: itself when unrotated, else the axis-aligned bounding box of its rotated corners. */
 private fun BoundsBox.visualBounds(rotationDegrees: Double): BoundsBox =
     if (rotationDegrees == 0.0) this else axisAlignedBounds(rotatedCorners(this, rotationDegrees))
@@ -1776,6 +1964,10 @@ private const val RotateReleaseDeg = 9.0
 
 /** Screen-space distance between the rotate affordance and the top-center handle. */
 private const val RotateHandleScreenOffsetPx = 26f
+
+private const val CanvasScrollbarThicknessDp = 10f
+
+private const val CanvasScrollbarMinThumbDp = 36f
 
 /**
  * Exponential decay rate (1/s) for the wheel-zoom follow loop: at each frame the live zoom
