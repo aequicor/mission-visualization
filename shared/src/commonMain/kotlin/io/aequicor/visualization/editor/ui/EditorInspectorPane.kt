@@ -100,12 +100,6 @@ import kotlin.math.roundToInt
 fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Modifier) {
     val colors = LocalEditorColors.current
     Column(modifier) {
-        CompactText(
-            label = CompactLabel("Inspector", "Inspect", "Insp"),
-            modifier = Modifier.padding(start = 8.dp, bottom = 12.dp),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-        )
         Surface(
             modifier = Modifier.fillMaxSize(),
             shape = RoundedCornerShape(8.dp),

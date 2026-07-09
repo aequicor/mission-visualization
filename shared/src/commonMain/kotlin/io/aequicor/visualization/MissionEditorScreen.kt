@@ -35,8 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -216,36 +214,12 @@ fun MissionEditorApp() {
 
 @Composable
 private fun MissionEditorScreen(state: MissionEditorStateHolder) {
-    val colors = LocalEditorColors.current
-    val isMainOnly = state.workspace.isMainOnly
-    val shellShape = RoundedCornerShape(if (isMainOnly) 0.dp else 18.dp)
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.linearGradient(listOf(colors.chromeGradientStart, colors.chrome, colors.chromeGradientEnd)))
-            .padding(if (isMainOnly) 0.dp else 28.dp),
-    ) {
+    // The editor fills the window edge-to-edge: no chrome frame, no shell margin, no
+    // rounded shell corners — the working area gets the whole viewport.
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    // A soft shadow cast onto the chrome behind the shell — clip = false so the
-                    // blur isn't cut off at the shape's own edge, and enough outer padding above
-                    // so it fades out before reaching the window edge instead of hard-clipping
-                    // into what reads as a rectangle outline.
-                    if (isMainOnly) {
-                        Modifier
-                    } else {
-                        Modifier.shadow(
-                            elevation = 28.dp,
-                            shape = shellShape,
-                            clip = false,
-                            ambientColor = colors.ink.copy(alpha = 0.14f),
-                            spotColor = colors.ink.copy(alpha = 0.22f),
-                        )
-                    },
-                ),
-            shape = shellShape,
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(0.dp),
             color = Color.White,
             shadowElevation = 0.dp,
         ) {
@@ -264,7 +238,7 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
 private fun WorkbenchLayout(state: MissionEditorStateHolder) {
     val ws = state.workspace
     val inspectorWidthDp = ws.inspectorWidthDp.coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxInspectorDp)
-    Row(modifier = Modifier.fillMaxSize().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+    Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         // Left: Source + Screens (or collapsed rail).
         if (ws.sourceCollapsed) {
             CollapsedRail(label = "Source", icon = EditorIcon.Source, onExpand = { state.updateWorkspace { it.copy(sourceCollapsed = false) } })
@@ -415,18 +389,6 @@ private fun CollapsedRail(label: String, icon: EditorIcon, onExpand: () -> Unit)
                 Text(ch.toString(), style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
             }
         }
-    }
-}
-
-/** Small hamburger badge reused by the source pane header. */
-@Composable
-internal fun MenuButton() {
-    val colors = LocalEditorColors.current
-    Box(
-        modifier = Modifier.size(44.dp).background(colors.accent, RoundedCornerShape(8.dp)),
-        contentAlignment = Alignment.Center,
-    ) {
-        EditorSvgIcon(icon = EditorIcon.AppMenu, contentDescription = "App menu", modifier = Modifier.size(24.dp), tint = Color.White)
     }
 }
 
