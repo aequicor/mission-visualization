@@ -275,6 +275,18 @@ val MissionTelemetrySlm: String = missionSlm(
     style:
       fills:
         - color: "#FFFFFF"
+    motion:
+      fallback:
+        type: keyframes
+        durationMs: 900
+        loop: true
+        frames:
+          - at: 0
+            opacity: 0.4
+          - at: 0.5
+            opacity: 1
+          - at: 1
+            opacity: 0.4
 
     ### Text: Live
 

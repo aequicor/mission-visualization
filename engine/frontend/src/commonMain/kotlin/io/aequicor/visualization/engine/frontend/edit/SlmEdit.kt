@@ -2,6 +2,8 @@ package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.ir.model.DesignEffect
+import io.aequicor.visualization.engine.ir.model.DesignInteraction
+import io.aequicor.visualization.engine.ir.model.DesignMotion
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
@@ -143,6 +145,30 @@ data class SetEffects(
 data class SetTextStyle(
     override val nodeId: String,
     val style: DesignTextStyle,
+) : SlmEdit
+
+/**
+ * Rewrites the node's WHOLE SET of `interaction:` typed-block entries from the working list.
+ * Interactions accumulate as separate sibling `interaction:` blocks (the compiler appends rather
+ * than last-wins), so unlike fills there is no single list to splice: every existing `interaction:`
+ * entry bound to the node's anchor is removed and the list is re-emitted in order. An empty list
+ * removes them all cleanly. Not expressible in place (→ the caller falls back in-memory, source
+ * untouched) when any action uses `CubicBezier` easing, a `DesignAction.Unknown`, a bound
+ * `SetVariable` value, or an overlay carrying `offset`/`background`; see [InteractionYamlWriter].
+ */
+data class SetInteractions(
+    override val nodeId: String,
+    val interactions: List<DesignInteraction>,
+) : SlmEdit
+
+/**
+ * Replaces / creates / removes the single `motion:` entry (motion is last-win). A null [motion]
+ * removes the entry. A ref-only motion or an inline keyframes fallback both round-trip; motion has
+ * no inexpressible case.
+ */
+data class SetMotion(
+    override val nodeId: String,
+    val motion: DesignMotion?,
 ) : SlmEdit
 
 /**

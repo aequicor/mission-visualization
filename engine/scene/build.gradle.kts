@@ -4,8 +4,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidMultiplatformLibrary)
-    alias(libs.plugins.composeMultiplatform)
-    alias(libs.plugins.composeCompiler)
 }
 
 kotlin {
@@ -24,7 +22,7 @@ kotlin {
     }
 
     androidLibrary {
-        namespace = "io.aequicor.visualization.engine.backend.compose"
+        namespace = "io.aequicor.visualization.engine.scene"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
 
@@ -36,11 +34,6 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(projects.engine.ir)
-            api(projects.engine.scene)
-
-            implementation(libs.compose.runtime)
-            implementation(libs.compose.foundation)
-            implementation(libs.compose.ui)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

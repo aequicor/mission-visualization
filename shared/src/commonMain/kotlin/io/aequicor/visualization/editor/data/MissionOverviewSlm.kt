@@ -144,6 +144,15 @@ val MissionOverviewSlm: String = missionSlm(
       radius: §radius
       fills:
         - token: color.placeholder
+    interaction:
+      trigger: onClick
+      action: navigate
+      to: missionTelemetry
+      animation:
+        type: push
+        direction: left
+        easing: easeOut
+        durationMs: 320
 
     ## Frame: Tiles
 

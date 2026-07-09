@@ -2,7 +2,10 @@ package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignTransition
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
+import io.aequicor.visualization.engine.ir.model.InteractionTrigger
+import io.aequicor.visualization.engine.ir.model.MotionKeyframes
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.SizingMode
@@ -209,11 +212,76 @@ sealed interface DesignEditorIntent {
      */
     data object CancelInteraction : DesignEditorIntent
 
+    // --- Prototype behavior (interactions + motion) ------------------------
+
+    /**
+     * Mutates the node's interaction list via [op] and writes the node's whole `interaction:`
+     * block set back to SLM (in-memory fallback when inexpressible). The op-command idiom keeps
+     * the working document and the whole-set write-back payload in lockstep (like [FillCommand]).
+     */
+    data class InteractionCommand(val nodeId: String, val op: InteractionOp) : DesignEditorIntent
+
+    /** Mutates the node's motion clip via [op] and writes the `motion:` block back to SLM. */
+    data class MotionCommand(val nodeId: String, val op: MotionOp) : DesignEditorIntent
+
     // --- History -----------------------------------------------------------
 
     data object Undo : DesignEditorIntent
 
     data object Redo : DesignEditorIntent
+}
+
+/** Which prototype action an interaction step performs (the v1 authorable subset). */
+enum class ProtoActionKind { Navigate, Back }
+
+/** A canned keyframe animation the Motion section offers as a one-click starting point. */
+enum class MotionPreset { FadeIn, Pop, Float, Pulse, Spin }
+
+/**
+ * Interaction-list mutation. Interactions are addressed by index `i`; an action within an
+ * interaction by `(i, j)`. Every op is applied to the whole `node.interactions` list, so the
+ * reducer derives the SLM write-back payload from the same transform (no per-field drift).
+ */
+sealed interface InteractionOp {
+    /** Append a default `onClick → Navigate` (target = first other screen). */
+    data object Add : InteractionOp
+
+    /** Append `onClick → Navigate([target], [transition])` — used by the P5 drag-to-screen gesture. */
+    data class AddNavigate(val target: String, val transition: DesignTransition) : InteractionOp
+
+    data class RemoveAt(val i: Int) : InteractionOp
+
+    data class SetTrigger(
+        val i: Int,
+        val trigger: InteractionTrigger,
+        val delayMs: Double? = null,
+    ) : InteractionOp
+
+    /** Append a default action (Navigate) to interaction [i]. */
+    data class AddAction(val i: Int) : InteractionOp
+
+    data class RemoveAction(val i: Int, val j: Int) : InteractionOp
+
+    data class SetActionType(val i: Int, val j: Int, val kind: ProtoActionKind) : InteractionOp
+
+    data class SetActionTarget(val i: Int, val j: Int, val target: String) : InteractionOp
+
+    data class SetActionTransition(val i: Int, val j: Int, val transition: DesignTransition) : InteractionOp
+}
+
+/** Motion-clip mutation for the selected node's single `motion:` block. */
+sealed interface MotionOp {
+    /** Enable = create a default (Pulse) clip; disable = clear the clip. */
+    data class SetEnabled(val enabled: Boolean) : MotionOp
+
+    data class SetPreset(val preset: MotionPreset) : MotionOp
+
+    data class SetDuration(val ms: Double) : MotionOp
+
+    data class SetLoop(val loop: Boolean) : MotionOp
+
+    /** Full keyframe replacement (used by the P6 timeline editor). */
+    data class SetKeyframes(val keyframes: MotionKeyframes) : MotionOp
 }
 
 /** Editor-facing layout modes; `Free` and `Stack` both map onto [LayoutMode.None]. */

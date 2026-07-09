@@ -119,6 +119,7 @@ fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Mo
                 )
                 when (state.workspace.inspectorTab) {
                     InspectorTab.Design -> InspectorDesign(state)
+                    InspectorTab.Prototype -> InspectorPrototype(state)
                     InspectorTab.Comments -> EmptyInspector("No comments yet.")
                 }
             }
@@ -127,7 +128,7 @@ fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Mo
 }
 
 @Composable
-private fun EmptyInspector(text: String) {
+internal fun EmptyInspector(text: String) {
     val colors = LocalEditorColors.current
     Box(Modifier.fillMaxSize().padding(16.dp)) {
         Text(text, color = colors.mutedInk, style = MaterialTheme.typography.bodySmall)
@@ -185,7 +186,7 @@ private fun SelectionHeader(state: MissionEditorStateHolder, node: DesignNode) {
 }
 
 @Composable
-private fun Section(
+internal fun Section(
     state: MissionEditorStateHolder,
     section: InspectorSection,
     visible: Boolean = true,
@@ -1309,7 +1310,7 @@ private fun RotationControls(
 // --- Small shared bits -------------------------------------------------------
 
 @Composable
-private fun SectionHeaderAdd(label: String, onAdd: () -> Unit) {
+internal fun SectionHeaderAdd(label: String, onAdd: () -> Unit) {
     val colors = LocalEditorColors.current
     Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
@@ -1318,13 +1319,13 @@ private fun SectionHeaderAdd(label: String, onAdd: () -> Unit) {
 }
 
 @Composable
-private fun MutedNote(text: String) {
+internal fun MutedNote(text: String) {
     val colors = LocalEditorColors.current
     Text(text, color = colors.mutedInk, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
-private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = checked, onCheckedChange = onChange)
         Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
@@ -1346,10 +1347,11 @@ private fun LayerToggle(visible: Boolean, onClick: () -> Unit) {
 
 private fun inspectorTabIcon(tab: InspectorTab): EditorIcon = when (tab) {
     InspectorTab.Design -> EditorIcon.Design
+    InspectorTab.Prototype -> EditorIcon.Link
     InspectorTab.Comments -> EditorIcon.Comments
 }
 
-private fun inspectorSectionIcon(section: InspectorSection): EditorIcon = when (section) {
+internal fun inspectorSectionIcon(section: InspectorSection): EditorIcon = when (section) {
     InspectorSection.Position -> EditorIcon.Position
     InspectorSection.Layout -> EditorIcon.Layout
     InspectorSection.Appearance -> EditorIcon.Design
@@ -1358,10 +1360,12 @@ private fun inspectorSectionIcon(section: InspectorSection): EditorIcon = when (
     InspectorSection.Effects -> EditorIcon.Gradient
     InspectorSection.Typography -> EditorIcon.Typography
     InspectorSection.Constraints -> EditorIcon.Position
+    InspectorSection.Interactions -> EditorIcon.Link
+    InspectorSection.Motion -> EditorIcon.Rotate
 }
 
 @Composable
-private fun RemoveButton(onClick: () -> Unit) {
+internal fun RemoveButton(onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     Box(Modifier.size(22.dp).clip(RoundedCornerShape(11.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         EditorSvgIcon(EditorIcon.Close, contentDescription = "Remove", modifier = Modifier.size(14.dp), tint = colors.statusDanger)
@@ -1385,7 +1389,7 @@ private fun TinyIconButton(icon: EditorIcon, contentDescription: String, onClick
 }
 
 @Composable
-private fun TinyButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun TinyButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     val shape = RoundedCornerShape(5.dp)
     Surface(
@@ -1401,7 +1405,7 @@ private fun TinyButton(label: String, enabled: Boolean = true, onClick: () -> Un
 }
 
 @Composable
-private fun SmallSelect(value: String, options: List<String>, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
+internal fun SmallSelect(value: String, options: List<String>, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
     SelectField(value = value, options = options, onSelect = onSelect, modifier = modifier.width(96.dp))
 }
 

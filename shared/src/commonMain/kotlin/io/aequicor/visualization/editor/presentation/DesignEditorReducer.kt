@@ -7,10 +7,13 @@ import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.edit.DeleteSection
 import io.aequicor.visualization.engine.frontend.edit.InsertChildSubtree
 import io.aequicor.visualization.engine.frontend.edit.LayoutProp
+import io.aequicor.visualization.engine.frontend.edit.isInteractionExpressibleInSlm
 import io.aequicor.visualization.engine.frontend.edit.MoveSection
 import io.aequicor.visualization.engine.frontend.edit.RenameNode as RenameNodeEdit
 import io.aequicor.visualization.engine.frontend.edit.SetEffects
 import io.aequicor.visualization.engine.frontend.edit.SetFills
+import io.aequicor.visualization.engine.frontend.edit.SetInteractions
+import io.aequicor.visualization.engine.frontend.edit.SetMotion
 import io.aequicor.visualization.engine.frontend.edit.SetLayoutProperty
 import io.aequicor.visualization.engine.frontend.edit.SetNodeConstraints
 import io.aequicor.visualization.engine.frontend.edit.SetStrokes
@@ -232,6 +235,14 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.SetTextAutoResize -> state.editUnlockedNode(intent.nodeId) { node ->
             val kind = node.kind as? DesignNodeKind.Text ?: return@editUnlockedNode node
             node.copy(kind = kind.copy(autoResize = intent.mode))
+        }
+
+        // --- Prototype behavior (interactions + motion) ---
+        is DesignEditorIntent.InteractionCommand -> state.interactionsWriteBack(intent.nodeId) { node ->
+            node.copy(interactions = applyInteractionOp(node.interactions, intent.op, state.defaultNavTarget(intent.nodeId)))
+        }
+        is DesignEditorIntent.MotionCommand -> state.motionWriteBack(intent.nodeId) { node ->
+            node.copy(motion = applyMotionOp(node.motion, intent.op))
         }
 
         // --- Vector ---
@@ -772,6 +783,38 @@ private fun DesignEditorState.writeBackEdits(
 }
 
 /**
+ * Routes an interactions edit through SLM write-back. [transform] both derives the whole-set
+ * `SetInteractions` payload and mirrors onto the working document; an inexpressible interaction
+ * (CubicBezier easing, unknown action, …) or an unaddressable node falls back to in-memory via
+ * [writeBackEdits]. An empty list cleanly removes the blocks.
+ */
+private fun DesignEditorState.interactionsWriteBack(
+    nodeId: String,
+    transform: (DesignNode) -> DesignNode,
+): DesignEditorState {
+    val node = document?.nodeById(nodeId) ?: return this
+    if (isNodeLocked(nodeId)) return this
+    return writeBackEdits(nodeId, listOf(SetInteractions(nodeId, transform(node).interactions)), patchNode = transform)
+}
+
+/** Routes a motion edit through write-back; a null motion cleanly removes the `motion:` block. */
+private fun DesignEditorState.motionWriteBack(
+    nodeId: String,
+    transform: (DesignNode) -> DesignNode,
+): DesignEditorState {
+    val node = document?.nodeById(nodeId) ?: return this
+    if (isNodeLocked(nodeId)) return this
+    return writeBackEdits(nodeId, listOf(SetMotion(nodeId, transform(node).motion)), patchNode = transform)
+}
+
+/** First screen a Navigate authored on [nodeId] should default to: the first OTHER page id. */
+private fun DesignEditorState.defaultNavTarget(nodeId: String): String {
+    val doc = document ?: return ""
+    val currentPageId = doc.pageOfNode(nodeId)?.id
+    return doc.pages.firstOrNull { it.id != currentPageId }?.id ?: currentPageId.orEmpty()
+}
+
+/**
  * Routes a fills edit through SLM write-back when the resulting list is non-empty
  * (removing every fill would leave a dangling `fills:`, so that falls back to in-memory).
  * [transform] both derives the payload and mirrors onto the working document.
@@ -1000,6 +1043,11 @@ private fun DesignNode.identityFingerprint(): List<Any?> = listOf(
     size.width,
     size.height,
     kindFingerprint(kind),
+    // Authored behavior must survive a structural rewrite: a section that recompiles without its
+    // interactions/motion diverges here and the veto keeps the edit in-memory. Source maps differ
+    // between the intended tree and a recompile, so compare interactions without them.
+    interactions.map { it.copy(sourceMap = null) },
+    motion,
 )
 
 /** Kind discriminator for [identityFingerprint]: enough to tell same-name/size nodes of different kinds apart. */
@@ -1026,7 +1074,10 @@ private fun DesignNode.isStructurallyExpressible(): Boolean {
         is DesignNodeKind.Shape -> nodeKind.paths.isEmpty() && nodeKind.iconRef.isEmpty() && nodeKind.pathRef.isEmpty()
         else -> false
     }
-    return kindOk && children.all { it.isStructurallyExpressible() }
+    // A node carrying an interaction the SLM writer can't round-trip (CubicBezier easing, unknown
+    // action, …) would persist a behavior-stripped section — keep the whole subtree in-memory.
+    val behaviorOk = interactions.all { isInteractionExpressibleInSlm(it) }
+    return kindOk && behaviorOk && children.all { it.isStructurallyExpressible() }
 }
 
 /**
