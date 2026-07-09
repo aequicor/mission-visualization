@@ -82,6 +82,19 @@ class NodeBlockReaderTest {
     }
 
     @Test
+    fun positionArrayShorthand() {
+        val (patch, collector) = readSingle(
+            """
+            node:
+              id: card
+              position: [72, 96]
+            """,
+        )
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        assertEquals(NodePatch(id = "card", x = 72.0, y = 96.0), patch)
+    }
+
+    @Test
     fun specAbsoluteChildNodeBlock() {
         val (patch, _) = readSingle(
             """

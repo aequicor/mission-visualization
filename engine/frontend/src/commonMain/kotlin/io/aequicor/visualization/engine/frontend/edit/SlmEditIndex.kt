@@ -11,6 +11,8 @@ import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 class SlmEditIndex internal constructor(
     internal val anchorOwners: Map<String, SlmSourceSpan>,
     internal val irSpliceNodes: Set<String>,
+    /** Nodes authored as a CNL element sentence; their edits route through [CnlWriter]. */
+    internal val cnlOwners: Map<String, SlmSourceSpan> = emptyMap(),
 ) {
     companion object {
         val Empty: SlmEditIndex = SlmEditIndex(emptyMap(), emptySet())

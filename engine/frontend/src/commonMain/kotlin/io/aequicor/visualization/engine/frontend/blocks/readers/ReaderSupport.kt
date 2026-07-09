@@ -48,6 +48,10 @@ internal fun YamlMap.listValue(key: String, reading: BlockReading): YamlList? {
 
 internal fun YamlValue.stringOrNull(): String? = (this as? YamlScalar)?.value as? String
 
+/** The number at [index] of a flow/block list, e.g. `position: [72, 96]` -> `numberAt(0) == 72.0`. */
+internal fun YamlList.numberAt(index: Int): Double? =
+    (items.getOrNull(index) as? YamlScalar)?.value as? Double
+
 internal fun YamlMap.string(key: String, reading: BlockReading): String? {
     val value = entries[key] ?: return null
     val scalar = value as? YamlScalar ?: run {

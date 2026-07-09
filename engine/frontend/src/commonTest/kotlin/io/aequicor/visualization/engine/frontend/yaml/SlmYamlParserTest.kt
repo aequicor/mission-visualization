@@ -202,9 +202,20 @@ class SlmYamlParserTest {
     }
 
     @Test
-    fun unquotedHashStartsCommentSoValueIsNull() {
-        val map = parse("light: #ffffff").asMap()
-        assertNull(map.entries.getValue("light").asScalar().value)
+    fun unquotedHexColorIsKeptAsValueNotComment() {
+        // Weak models write `color: #1E293B` without quotes; keep it rather than eating it as a comment.
+        assertEquals("#ffffff", parse("light: #ffffff").asMap().entries.getValue("light").asScalar().value)
+        assertEquals("#1E293B", parse("color: #1E293B").asMap().entries.getValue("color").asScalar().value)
+        assertEquals("#abc", parse("c: #abc").asMap().entries.getValue("c").asScalar().value)
+        // Bare hex inside an inline map is kept too.
+        val style = parse("style: {fill: #EAF5FF}").asMap().entries.getValue("style").asMap()
+        assertEquals("#EAF5FF", style.entries.getValue("fill").asScalar().value)
+    }
+
+    @Test
+    fun nonHexHashIsStillAComment() {
+        assertEquals("value", parse("note: value # comment").asMap().entries.getValue("note").asScalar().value)
+        assertNull(parse("empty: # only a comment").asMap().entries.getValue("empty").asScalar().value)
     }
 
     @Test

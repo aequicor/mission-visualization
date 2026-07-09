@@ -2,6 +2,7 @@ package io.aequicor.visualization.engine.frontend.blocks.readers
 
 import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
 import io.aequicor.visualization.engine.frontend.blocks.SizingPatch
+import io.aequicor.visualization.engine.frontend.yaml.YamlList
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
@@ -13,9 +14,10 @@ import io.aequicor.visualization.engine.ir.model.GuideLine
 import io.aequicor.visualization.engine.ir.model.GuideOrientation
 import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
 import io.aequicor.visualization.engine.ir.model.LayoutGridDefinition
+import io.aequicor.visualization.engine.ir.model.SizingMode
 
 private val knownKeys = setOf(
-    "mode", "padding", "gap", "align", "distribution", "wrap", "sizing", "clipContent",
+    "mode", "padding", "gap", "align", "distribution", "wrap", "sizing", "size", "clipContent",
     "overflow", "scroll", "ignoreAutoLayout", "position", "columns", "rows", "placement",
     "guides", "grids",
 )
@@ -32,9 +34,10 @@ internal fun readLayoutBlock(value: YamlValue, reading: BlockReading): LayoutPat
     val gap = readGap(map, reading)
     val align = map.mapValue("align", reading)
     val sizing = map.mapValue("sizing", reading)
+    val size = readSize(map, reading)
     val overflow = map.mapValue("overflow", reading)
     val scroll = map.mapValue("scroll", reading)
-    val position = map.mapValue("position", reading)
+    val position = readPosition(map, reading)
     val columns = readTrackAxis(map, "columns", reading)
     val rows = readTrackAxis(map, "rows", reading)
 
@@ -52,21 +55,21 @@ internal fun readLayoutBlock(value: YamlValue, reading: BlockReading): LayoutPat
         baseline = align?.enum("baseline", ReaderEnums.baseline, reading),
         distribution = map.enum("distribution", ReaderEnums.distribution, reading),
         wrap = map.boolean("wrap", reading),
-        sizingWidth = sizing?.value("width")?.let { readSizingAxis(it, "width", reading) },
-        sizingHeight = sizing?.value("height")?.let { readSizingAxis(it, "height", reading) },
+        sizingWidth = sizing?.value("width")?.let { readSizingAxis(it, "width", reading) } ?: size?.first,
+        sizingHeight = sizing?.value("height")?.let { readSizingAxis(it, "height", reading) } ?: size?.second,
         clipContent = map.boolean("clipContent", reading),
         overflowX = overflow?.enum("x", ReaderEnums.overflow, reading),
         overflowY = overflow?.enum("y", ReaderEnums.overflow, reading),
         scrollDirection = scroll?.enum("direction", ReaderEnums.scrollDirection, reading),
         scrollFixedChildren = scroll?.stringList("fixedChildren", reading),
         ignoreAutoLayout = map.boolean("ignoreAutoLayout", reading),
-        positionMode = position?.enum("mode", positionModes, reading),
-        anchorInlineStart = position?.anchor("inlineStart", "left", reading),
-        anchorInlineEnd = position?.anchor("inlineEnd", "right", reading),
-        anchorBlockStart = position?.anchor("blockStart", "top", reading),
-        anchorBlockEnd = position?.anchor("blockEnd", "bottom", reading),
-        positionX = position?.double("x", reading),
-        positionY = position?.double("y", reading),
+        positionMode = position?.map?.enum("mode", positionModes, reading),
+        anchorInlineStart = position?.map?.anchor("inlineStart", "left", reading),
+        anchorInlineEnd = position?.map?.anchor("inlineEnd", "right", reading),
+        anchorBlockStart = position?.map?.anchor("blockStart", "top", reading),
+        anchorBlockEnd = position?.map?.anchor("blockEnd", "bottom", reading),
+        positionX = position?.x,
+        positionY = position?.y,
         gridColumns = columns?.tracks,
         gridRows = rows?.tracks,
         implicitRows = rows?.implicitTrack,
@@ -77,7 +80,56 @@ internal fun readLayoutBlock(value: YamlValue, reading: BlockReading): LayoutPat
     )
 }
 
+// --- position: map (mode/anchors/x/y) or `[x, y]` shorthand pair ---
+
+private class PositionSpec(val map: YamlMap?, val x: Double?, val y: Double?)
+
+private fun readPosition(map: YamlMap, reading: BlockReading): PositionSpec? {
+    val value = map.value("position") ?: return null
+    return when (value) {
+        is YamlMap -> PositionSpec(value, value.double("x", reading), value.double("y", reading))
+        is YamlList -> {
+            if (value.items.size != 2) {
+                reading.warning("`position` list must be `[x, y]`", value)
+                PositionSpec(null, null, null)
+            } else {
+                PositionSpec(null, value.numberAt(0), value.numberAt(1))
+            }
+        }
+        else -> {
+            reading.warning("`position` must be a map or a `[x, y]` pair", value)
+            null
+        }
+    }
+}
+
 // --- sizing ---
+
+/** `size: [<w>, <h>]` shorthand where each axis is `fill`/`hug`/`fixed`/a number or a map. */
+private fun readSize(map: YamlMap, reading: BlockReading): Pair<SizingPatch?, SizingPatch?>? {
+    val value = map.value("size") ?: return null
+    val list = value as? YamlList
+    if (list == null || list.items.size != 2) {
+        reading.warning("`size` must be a `[width, height]` pair", value)
+        return null
+    }
+    return readSizeAxis(list.items[0], "width", reading) to readSizeAxis(list.items[1], "height", reading)
+}
+
+private fun readSizeAxis(value: YamlValue, axis: String, reading: BlockReading): SizingPatch? {
+    when (val raw = (value as? YamlScalar)?.value) {
+        is Double -> return SizingPatch(mode = SizingMode.Fixed, value = raw)
+        is String -> {
+            ReaderEnums.sizingMode[raw]?.let { return SizingPatch(mode = it) }
+            reading.warning("`size` $axis must be a number, `fill`, `hug` or `fixed`", value)
+            return null
+        }
+        else -> {}
+    }
+    if (value is YamlMap) return readSizingAxis(value, axis, reading)
+    reading.warning("`size` $axis must be a number, mode name or map", value)
+    return null
+}
 
 /** `width: fill` shorthand or `{ type, value, min, max }` map. */
 internal fun readSizingAxis(value: YamlValue, axis: String, reading: BlockReading): SizingPatch? {

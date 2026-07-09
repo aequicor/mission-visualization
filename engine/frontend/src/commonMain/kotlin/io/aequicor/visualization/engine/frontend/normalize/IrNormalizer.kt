@@ -99,6 +99,7 @@ private class Normalization(
     private val escapeHatch = IrEscapeHatch(diagnostics, fileName)
     private val textEntries = mutableListOf<TextEntry>()
     private val anchorOwners = mutableMapOf<String, SlmSourceSpan>()
+    private val cnlOwners = mutableMapOf<String, SlmSourceSpan>()
     private val irSpliceNodes = mutableSetOf<String>()
     private val variableCollections = LinkedHashMap<String, VariableCollection>()
     private val prototypeVariables = LinkedHashMap<String, PrototypeVariable>()
@@ -170,7 +171,7 @@ private class Normalization(
         return NormalizedScreen(
             document = document,
             textEntries = textEntries.toList(),
-            editIndex = SlmEditIndex(anchorOwners.toMap(), irSpliceNodes.toSet()),
+            editIndex = SlmEditIndex(anchorOwners.toMap(), irSpliceNodes.toSet(), cnlOwners.toMap()),
         )
     }
 
@@ -229,6 +230,7 @@ private class Normalization(
         )
 
         if (node.isAnchor) anchorOwners[id] = node.span
+        if (node.isCnlElement) cnlOwners[id] = node.span
         collectNodeTexts(node, id, explicit, i18nKeyProp)
         return design
     }

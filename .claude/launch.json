@@ -5,7 +5,8 @@
       "name": "webApp",
       "runtimeExecutable": "./gradlew",
       "runtimeArgs": [":webApp:wasmJsBrowserDevelopmentRun"],
-      "port": 8080
+      "port": 8080,
+      "autoPort": true
     }
   ]
 }

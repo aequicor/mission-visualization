@@ -256,6 +256,50 @@ class LayoutBlockReaderTest {
     }
 
     @Test
+    fun sizeShorthandPair() {
+        val (fixed, _) = readSingle("layout:\n  size: [1408, 992]")
+        assertEquals(
+            LayoutPatch(
+                sizingWidth = SizingPatch(mode = SizingMode.Fixed, value = 1408.0),
+                sizingHeight = SizingPatch(mode = SizingMode.Fixed, value = 992.0),
+            ),
+            fixed,
+        )
+        val (modes, _) = readSingle("layout:\n  size: [fill, hug]")
+        assertEquals(
+            LayoutPatch(
+                sizingWidth = SizingPatch(mode = SizingMode.Fill),
+                sizingHeight = SizingPatch(mode = SizingMode.Hug),
+            ),
+            modes,
+        )
+    }
+
+    @Test
+    fun explicitSizingWinsOverSizeShorthand() {
+        val (patch, _) = readSingle(
+            """
+            layout:
+              size: [fill, hug]
+              sizing:
+                width:
+                  type: fixed
+                  value: 320
+            """,
+        )
+        val layout = assertIs<LayoutPatch>(patch)
+        assertEquals(SizingPatch(mode = SizingMode.Fixed, value = 320.0), layout.sizingWidth)
+        assertEquals(SizingPatch(mode = SizingMode.Hug), layout.sizingHeight)
+    }
+
+    @Test
+    fun positionArrayShorthand() {
+        val (patch, collector) = readSingle("layout:\n  position: [72, 96]")
+        assertTrue(collector.diagnostics.isEmpty())
+        assertEquals(LayoutPatch(positionX = 72.0, positionY = 96.0), patch)
+    }
+
+    @Test
     fun logicalPaddingShorthandsInlineAndBlock() {
         val (patch, collector) = readSingle(
             """

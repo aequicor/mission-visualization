@@ -29,7 +29,9 @@ only at the very edge:
     probes; diagnostics carry `IR-*` codes.
 - `:engine:frontend` — the SLM compiler (pure Kotlin, under construction):
   markdown/frontmatter/typed-block parsing, semantic extraction, normalization
-  and slug/order resolution that turn `*.layout.md` sources into the IR.
+  and slug/order resolution that turn `*.layout.md` sources into the IR. The
+  `cnl` package is a self-contained layer for authoring elements as natural
+  sentences (see **CNL** below).
 - `:engine:backend-compose` — this renderer: `DesignArtboard` +
   `ComposeDesignTextMeasurer` + the canvas drawing pass. The only engine module
   that depends on Compose.
@@ -48,6 +50,31 @@ flowchart LR
 
 JSON documents enter the same pipeline through `:engine:ir` `serialization`
 instead of the frontend.
+
+## CNL (controlled natural language)
+
+The `cnl` package (`engine/frontend/.../cnl/`) lets an element be authored as one
+natural-language **sentence** instead of YAML — e.g.
+`Прямоугольник 120 на 15 цвет #00B843 радиус 15 паддинги 10 отступ 16`. It is a
+self-contained, bidirectional front-slice of the frontend:
+
+- `CnlVocabulary` — bilingual (RU + EN) keyword tables (nouns → node type, property
+  keywords, enum/direction words). The single source of truth for the grammar.
+- `CnlParser` — tokenizes a line (numbers, `#hex`/`$token`, `«…»`/`"…"` text) into a
+  positioned `CnlElement`, and **desugars** it into the same `node`/`shape`/`layout`/
+  `style`/`text` typed patches the block readers consume — so downstream compilation is
+  unchanged. Container headings (`## Панель колонка отступ 16`) split into name + a
+  property suffix via `CnlParser.parseHeading`.
+- `CnlDiagnostics` — the dedicated CNL error catalog: every violation names the broken
+  rule and how to fix it (with an example), so a generator can self-correct.
+- Write-back: `edit/CnlWriter` re-parses the sentence and replaces a value token in place
+  (or appends a phrase); nodes it owns are recorded in `SlmEditIndex.cnlOwners`. Edits a
+  sentence cannot express fall back to the typed-block path.
+
+CNL depends only on the frontend's YAML/blocks/markdown layers (no Compose, no `:engine`
+outside `ir`). It **coexists** with typed YAML blocks — the explicit block is always the
+precise/escape layer; CNL is the natural-language convenience on top. Contract and
+authoring guide: `design-book/semantic-layout-markdown-i18n.md` and `SLM-SKILL.md`.
 
 ## Layering rules
 

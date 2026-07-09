@@ -109,7 +109,14 @@ private fun applyResolved(
     // Structural edits (create/delete/move) synthesize or drop whole heading sections and
     // resolve their footprint arithmetically; attribute edits patch a scalar/list in place.
     var anchorLine = 0
-    val plan = if (edit is StructuralSlmEdit) {
+    // CNL-authored nodes patch their sentence in place; an edit the sentence cannot express
+    // falls through to the typed-block path (which appends a typed block below the sentence).
+    val cnlSpan = if (edit !is StructuralSlmEdit) editIndex.cnlOwners[edit.nodeId] else null
+    val cnlPlan = cnlSpan?.let { CnlWriter.plan(source, it, edit, lineIndex) } as? WritePlan.Ops
+    val plan = if (cnlPlan != null && cnlSpan != null) {
+        anchorLine = cnlSpan.startLine
+        cnlPlan
+    } else if (edit is StructuralSlmEdit) {
         structuralPlan(edit, editIndex, source, lineIndex, fileName)
     } else {
         val target = when (val resolution = resolveEditTarget(source, edit.nodeId, editIndex, lineIndex, fileName)) {
