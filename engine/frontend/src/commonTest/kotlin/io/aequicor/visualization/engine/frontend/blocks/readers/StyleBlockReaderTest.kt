@@ -7,6 +7,7 @@ import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
@@ -204,5 +205,54 @@ class StyleBlockReaderTest {
         val style = assertIs<StylePatch>(patch)
         assertEquals(listOf<DesignPaint>(DesignPaint.Unknown("plasma")), style.fills)
         assertTrue(collector.diagnostics.any { "plasma" in it.message })
+    }
+
+    @Test
+    fun singularFillAndStrokeShorthands() {
+        val (patch, collector) = readSingle(
+            """
+            style:
+              fill: "#EAF5FF"
+              stroke: "#CEE1F2"
+            """,
+        )
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        val style = assertIs<StylePatch>(patch)
+        assertEquals(listOf(DesignPaint.Solid(DesignColor(0xFFEAF5FF).bindable())), style.fills)
+        val strokes = assertIs<DesignStrokes>(style.strokes)
+        assertEquals(listOf(DesignPaint.Solid(DesignColor(0xFFCEE1F2).bindable())), strokes.paints)
+        assertEquals(1.0.bindable(), strokes.weight)
+        assertEquals(StrokeAlign.Inside, strokes.align)
+    }
+
+    @Test
+    fun singularFillTokenAndStrokeMap() {
+        val (patch, collector) = readSingle(
+            """
+            style:
+              fill: §color.surface
+              stroke:
+                color: "#CEE1F2"
+                weight: 2
+                position: outside
+            """,
+        )
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        val style = assertIs<StylePatch>(patch)
+        assertEquals(listOf(DesignPaint.Solid(Bindable.VarRef("color.surface"))), style.fills)
+        val strokes = assertIs<DesignStrokes>(style.strokes)
+        assertEquals(listOf(DesignPaint.Solid(DesignColor(0xFFCEE1F2).bindable())), strokes.paints)
+        assertEquals(2.0.bindable(), strokes.weight)
+        assertEquals(StrokeAlign.Outside, strokes.align)
+    }
+
+    @Test
+    fun unquotedHexFillCompiles() {
+        val (patch, collector) = readSingle("style:\n  fill: #1E293B")
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        assertEquals(
+            listOf(DesignPaint.Solid(DesignColor(0xFF1E293B).bindable())),
+            assertIs<StylePatch>(patch).fills,
+        )
     }
 }

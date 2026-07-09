@@ -12,10 +12,12 @@ import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
 import io.aequicor.visualization.engine.frontend.blocks.MediaPatch
 import io.aequicor.visualization.engine.frontend.blocks.NodePatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
+import io.aequicor.visualization.engine.frontend.cnl.CnlParser
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.expr.SlmExpression
 import io.aequicor.visualization.engine.frontend.frontmatter.SlmFrontmatter
 import io.aequicor.visualization.engine.frontend.markdown.BlockquoteBlock
+import io.aequicor.visualization.engine.frontend.markdown.CnlElementBlock
 import io.aequicor.visualization.engine.frontend.markdown.CommentRun
 import io.aequicor.visualization.engine.frontend.markdown.ExpressionRun
 import io.aequicor.visualization.engine.frontend.markdown.FencedCodeBlock
@@ -102,6 +104,7 @@ private class SemanticExtractor(
         var variant: Map<String, String> = emptyMap()
         var irSplice: IrSpliceBlock? = null
         var isAnchor = false
+        var isCnlElement = false
         var isComponentDef = false
         val propBindings = LinkedHashMap<String, SlmExpression>()
         val explicitPatches = mutableListOf<io.aequicor.visualization.engine.frontend.markdown.TypedEntry>()
@@ -133,6 +136,7 @@ private class SemanticExtractor(
                 semanticPatches = semanticPatches.toList(),
                 irSplice = irSplice,
                 isAnchor = isAnchor,
+                isCnlElement = isCnlElement,
                 isComponentDef = isComponentDef,
                 children = builtChildren,
                 span = span,
@@ -277,6 +281,13 @@ private class SemanticExtractor(
         when (block) {
             is TypedAttributeBlock -> (state.anchor ?: root).explicitPatches += block.entries
 
+            is CnlElementBlock -> {
+                val node = cnlNode(block, path)
+                attach(container, state, node)
+                state.anchor = node
+                state.pendingKey = null
+            }
+
             is ParagraphBlock -> return handleParagraph(block, container, state, path, next)
 
             is ListBlock -> attach(container, state, listNode(block, path))
@@ -343,6 +354,32 @@ private class SemanticExtractor(
             state.pendingCondition = null
         }
         container.children += node
+    }
+
+    // --- CNL element sentences ---
+
+    /** A CNL element (`Прямоугольник 120 на 15 …`) → a node with desugared typed patches. */
+    private fun cnlNode(block: CnlElementBlock, path: List<String>): NodeBuilder {
+        val element = block.element
+        val kind = when (element.noun?.nodeType) {
+            "text" -> SemanticKind.Text
+            "media" -> SemanticKind.Media
+            else -> SemanticKind.Group
+        }
+        val node = NodeBuilder(kind, block.span)
+        node.isAnchor = true
+        node.isCnlElement = true
+        element.noun?.role?.let { node.role = it }
+        element.textLiteral?.let { literal ->
+            node.name = literal.raw
+            node.text = SemanticText(
+                defaultText = literal.raw,
+                keyHint = KeyHint.SectionText(path),
+                span = block.span,
+            )
+        }
+        node.explicitPatches += CnlParser.desugar(element, block.span.startLine, diagnostics)
+        return node
     }
 
     // --- paragraphs ---

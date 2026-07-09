@@ -50,6 +50,8 @@ data class SemanticNode(
     val irSplice: IrSpliceBlock? = null,
     /** True when the node owns a markdown anchor element (edit-index addressable). */
     val isAnchor: Boolean = false,
+    /** True when authored as a CNL element sentence; edits route through the CNL writer. */
+    val isCnlElement: Boolean = false,
     /** True for `Component:`-marked subtrees; lifted by ComponentLifter. */
     val isComponentDef: Boolean = false,
     val children: List<SemanticNode> = emptyList(),

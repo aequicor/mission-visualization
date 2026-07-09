@@ -2,6 +2,7 @@ package io.aequicor.visualization.engine.frontend.blocks.readers
 
 import io.aequicor.visualization.engine.frontend.blocks.NodePatch
 import io.aequicor.visualization.engine.frontend.blocks.NodePositionMode
+import io.aequicor.visualization.engine.frontend.yaml.YamlList
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
@@ -34,7 +35,12 @@ internal fun readNodeBlock(value: YamlValue, reading: BlockReading): NodePatch? 
         return null
     }
     map.warnUnknownKeys(knownKeys, reading)
-    val position = map.mapValue("position", reading)
+    val positionRaw = map.value("position")
+    val position = positionRaw as? YamlMap
+    val positionArray = (positionRaw as? YamlList)?.takeIf { it.items.size == 2 }
+    if (positionRaw != null && position == null && positionArray == null) {
+        reading.warning("`position` must be a map or a `[x, y]` pair", positionRaw)
+    }
     val constraints = map.mapValue("constraints", reading)
     return NodePatch(
         type = map.string("type", reading),
@@ -45,8 +51,8 @@ internal fun readNodeBlock(value: YamlValue, reading: BlockReading): NodePatch? 
         locked = map.boolean("locked", reading),
         order = map.int("order", reading),
         positionMode = position?.enum("mode", positionModes, reading),
-        x = position?.double("x", reading),
-        y = position?.double("y", reading),
+        x = position?.double("x", reading) ?: positionArray?.numberAt(0),
+        y = position?.double("y", reading) ?: positionArray?.numberAt(1),
         rotation = position?.double("rotation", reading),
         constraintsHorizontal = constraints?.enum("horizontal", ReaderEnums.horizontalConstraint, reading),
         constraintsVertical = constraints?.enum("vertical", ReaderEnums.verticalConstraint, reading),

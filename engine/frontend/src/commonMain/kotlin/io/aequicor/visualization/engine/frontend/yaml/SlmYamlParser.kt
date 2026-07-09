@@ -59,7 +59,11 @@ private class YamlSubsetParser(
         return result
     }
 
-    /** Cuts a ` # comment` (whitespace-preceded, outside quotes) and full-line comments. */
+    /**
+     * Cuts a ` # comment` (whitespace-preceded, outside quotes) and full-line comments.
+     * An unquoted `#RGB`/`#RRGGBB`/`#RRGGBBAA` hex color is NOT a comment: weak models
+     * routinely write `color: #1E293B` without quotes, so we keep it as a value token.
+     */
     private fun stripTrailingComment(line: String): String {
         var inSingle = false
         var inDouble = false
@@ -71,12 +75,25 @@ private class YamlSubsetParser(
                 '\'' -> if (!inDouble) inSingle = !inSingle
                 '#' -> if (!inSingle && !inDouble) {
                     val prev = line.getOrNull(i - 1)
-                    if (prev == null || prev == ' ' || prev == '\t') return line.take(i)
+                    if ((prev == null || prev == ' ' || prev == '\t') && !isHexColorToken(line, i)) {
+                        return line.take(i)
+                    }
                 }
             }
             i++
         }
         return line
+    }
+
+    /** `#` at [at] followed by 3/4/6/8 hex digits and a value boundary — a color, not a comment. */
+    private fun isHexColorToken(line: String, at: Int): Boolean {
+        var j = at + 1
+        while (j < line.length && line[j].digitToIntOrNull(16) != null) j++
+        val length = j - (at + 1)
+        if (length != 3 && length != 4 && length != 6 && length != 8) return false
+        val after = line.getOrNull(j)
+        return after == null || after == ' ' || after == '\t' ||
+            after == ',' || after == '}' || after == ']'
     }
 
     private fun isListItemRow(content: String): Boolean =

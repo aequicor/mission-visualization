@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.frontend.blocks.readers
 
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
+import io.aequicor.visualization.engine.frontend.yaml.YamlList
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
@@ -16,8 +17,8 @@ import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.bindable
 
 private val knownKeys = setOf(
-    "opacity", "blendMode", "radius", "cornerSmoothing", "fills", "strokes", "effects",
-    "fillStyle", "textStyle", "effectStyle", "gridStyle",
+    "opacity", "blendMode", "radius", "cornerSmoothing", "fill", "fills", "stroke", "strokes",
+    "effects", "fillStyle", "textStyle", "effectStyle", "gridStyle",
 )
 
 /** `style:` block — opacity/blend, radius, fills, strokes, effects, shared style refs. */
@@ -32,7 +33,7 @@ internal fun readStyleBlock(value: YamlValue, reading: BlockReading): StylePatch
         opacity = map.bindableDouble("opacity", reading),
         blendMode = map.string("blendMode", reading),
         radius = readRadius(map, reading),
-        fills = readPaints(map, "fills", reading),
+        fills = readFills(map, reading),
         strokes = readStrokes(map, reading),
         effects = effects?.effects,
         fillStyle = map.string("fillStyle", reading),
@@ -73,6 +74,17 @@ private fun readRadius(map: YamlMap, reading: BlockReading): DesignCornerRadius?
 }
 
 // --- paints (fills and stroke paints) ---
+
+/** `fills:` list plus the singular `fill:` shorthand (scalar color, `$token`, or map). */
+private fun readFills(map: YamlMap, reading: BlockReading): List<DesignPaint>? {
+    val list = readPaints(map, "fills", reading)
+    val single = map.value("fill")?.let { readPaint(it, reading) }
+    return when {
+        single != null && list != null -> listOf(single) + list
+        single != null -> listOf(single)
+        else -> list
+    }
+}
 
 internal fun readPaints(map: YamlMap, key: String, reading: BlockReading): List<DesignPaint>? {
     val list = map.listValue(key, reading) ?: return null
@@ -188,26 +200,35 @@ internal fun readFocalPoint(value: YamlValue?, reading: BlockReading): DesignPoi
 // --- strokes ---
 
 private fun readStrokes(map: YamlMap, reading: BlockReading): DesignStrokes? {
-    val list = map.listValue("strokes", reading) ?: return null
+    // `strokes:` list plus the singular `stroke:` shorthand (scalar color or map).
+    val items: List<YamlValue> = buildList {
+        map.value("stroke")?.let { add(it) }
+        map.listValue("strokes", reading)?.let { addAll(it.items) }
+    }
+    if (items.isEmpty()) return null
     var weight: Bindable<Double>? = null
     var align: StrokeAlign? = null
     var dash: List<Double>? = null
     var cap: String? = null
     var join: String? = null
-    val paints = list.items.mapNotNull { item ->
-        val stroke = item as? YamlMap ?: run {
-            reading.warning("`strokes` items must be maps", item)
-            return@mapNotNull null
+    val paints = items.mapNotNull { item ->
+        when (item) {
+            is YamlScalar -> bindableColor(item, "stroke", reading)?.let { DesignPaint.Solid(it) }
+            is YamlMap -> {
+                item.bindableDouble("weight", reading)?.let { weight = it }
+                item.enum("position", ReaderEnums.strokeAlign, reading)?.let { align = it }
+                (item.value("dash") as? YamlList)?.let { d ->
+                    dash = d.items.mapNotNull { (it as? YamlScalar)?.value as? Double }
+                }
+                item.string("caps", reading)?.let { cap = it }
+                item.string("joins", reading)?.let { join = it }
+                paintColor(item, reading)?.let { DesignPaint.Solid(it) }
+            }
+            else -> {
+                reading.warning("`strokes` items must be maps or color scalars", item)
+                null
+            }
         }
-        stroke.bindableDouble("weight", reading)?.let { weight = it }
-        stroke.enum("position", ReaderEnums.strokeAlign, reading)?.let { align = it }
-        (stroke.value("dash") as? io.aequicor.visualization.engine.frontend.yaml.YamlList)?.let { d ->
-            dash = d.items.mapNotNull { (it as? YamlScalar)?.value as? Double }
-        }
-        stroke.string("caps", reading)?.let { cap = it }
-        stroke.string("joins", reading)?.let { join = it }
-        val color = paintColor(stroke, reading) ?: return@mapNotNull null
-        DesignPaint.Solid(color)
     }
     return DesignStrokes(
         paints = paints,

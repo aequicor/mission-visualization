@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.frontend.markdown
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.frontend.cnl.CnlParser
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.parseSlmYaml
@@ -54,7 +55,9 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
                 line.isBlank -> i++
 
                 headingMatch(line.text) != null -> {
-                    blocks += parseHeading(line)
+                    val (heading, attrs) = parseHeading(line)
+                    blocks += heading
+                    attrs?.let { blocks += it }
                     i++
                 }
 
@@ -106,9 +109,15 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
                 }
 
                 else -> {
-                    val (block, next) = parseParagraph(lines, i)
-                    blocks += block
-                    i = next
+                    val cnl = cnlElementOf(line)
+                    if (cnl != null) {
+                        blocks += cnl
+                        i++
+                    } else {
+                        val (block, next) = parseParagraph(lines, i)
+                        blocks += block
+                        i = next
+                    }
                 }
             }
         }
@@ -127,17 +136,26 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
         return level to contentStart
     }
 
-    private fun parseHeading(line: Line): HeadingBlock {
+    /** A heading, plus the synthetic typed block from its trailing CNL container properties. */
+    private fun parseHeading(line: Line): Pair<HeadingBlock, TypedAttributeBlock?> {
         val (level, contentStart) = headingMatch(line.text)!!
         if (level >= 4) {
             diagnostics.info("Heading level $level is treated as a nested section", line.number)
         }
         val content = line.text.substring(contentStart).trimEnd()
-        return HeadingBlock(
+        val split = CnlParser.parseHeading(content, line.number, line.columnOffset + contentStart + 1, diagnostics)
+        val name = split?.name ?: content
+        val heading = HeadingBlock(
             level = level,
-            inlines = inlineParser.parseLine(content, line.number, line.columnOffset + contentStart),
+            inlines = inlineParser.parseLine(name, line.number, line.columnOffset + contentStart),
             span = SlmSourceSpan(line.number, line.number),
         )
+        val typed = split?.let {
+            val entries = CnlParser.desugar(it.element, line.number, diagnostics)
+            entries.takeIf { list -> list.isNotEmpty() }
+                ?.let { list -> TypedAttributeBlock(list, SlmSourceSpan(line.number, line.number)) }
+        }
+        return heading to typed
     }
 
     // --- fenced code blocks ---
@@ -411,6 +429,15 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
             j++
         }
         return null
+    }
+
+    // --- controlled natural language element sentences ---
+
+    /** A CNL element line (`Прямоугольник 120 на 15 …`) → block, or null when it is prose. */
+    private fun cnlElementOf(line: Line): CnlElementBlock? {
+        val element = CnlParser.parseElement(line.text, line.number, line.columnOffset + 1, diagnostics)
+            ?: return null
+        return CnlElementBlock(element, SlmSourceSpan(line.number, line.number))
     }
 
     // --- typed attribute blocks ---

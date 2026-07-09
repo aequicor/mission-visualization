@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.markdown.BlockquoteBlock
+import io.aequicor.visualization.engine.frontend.markdown.CnlElementBlock
 import io.aequicor.visualization.engine.frontend.markdown.FencedCodeBlock
 import io.aequicor.visualization.engine.frontend.markdown.HeadingBlock
 import io.aequicor.visualization.engine.frontend.markdown.HtmlCommentBlock
@@ -102,6 +103,9 @@ private class Walker(
                 is ImageBlock -> current = cursorAt(block.span) ?: Cursor.Foreign
 
                 is TableBlock -> current = cursorAt(block.span) ?: Cursor.Foreign
+
+                // A CNL element sentence is its own anchor; a following typed group binds to it.
+                is CnlElementBlock -> current = cursorAt(block.span) ?: Cursor.Foreign
 
                 is FencedCodeBlock, is HtmlCommentBlock -> {}
             }

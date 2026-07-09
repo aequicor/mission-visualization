@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.frontend.markdown
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.frontend.cnl.CnlElement
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 
 /** 1-based inclusive line range of a block in the SLM source. */
@@ -106,5 +107,15 @@ data class FencedCodeBlock(
 /** Standalone `<!-- ... -->` line(s); attaches to the next text-bearing element. */
 data class HtmlCommentBlock(
     val text: String,
+    override val span: SlmSourceSpan,
+) : SlmBlock
+
+/**
+ * A controlled-natural-language element sentence, e.g. `Прямоугольник 120 на 15 цвет #00B843`.
+ * The parsed [element] carries per-value source spans; the extractor turns it into a node and
+ * the write-back path re-parses the sentence to patch a value in place.
+ */
+data class CnlElementBlock(
+    val element: CnlElement,
     override val span: SlmSourceSpan,
 ) : SlmBlock
