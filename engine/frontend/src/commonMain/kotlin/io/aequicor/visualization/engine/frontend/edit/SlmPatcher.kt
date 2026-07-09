@@ -275,6 +275,17 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
         ),
     )
 
+    is SetNodeRotation -> PayloadOutcome.Ok(
+        TypedBlockKind.Node,
+        YamlPayload.Mapping(
+            listOf(
+                "position" to YamlPayload.Mapping(
+                    listOf("rotation" to scalar(YamlScalarValue.Num(edit.degrees))),
+                ),
+            ),
+        ),
+    )
+
     is SetNodeConstraints -> constraintsPayload(edit)
 
     is SetLayoutProperty -> PayloadOutcome.Ok(

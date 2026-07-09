@@ -65,6 +65,13 @@ class ViewportMathTest {
     }
 
     @Test
+    fun mouseWheelNotchZoomsGradually() {
+        val notch = zoomFactorForScroll(4f)
+
+        assertTrue(notch in 1.08f..1.12f, "one wheel notch should zoom by about 10%, not 50%")
+    }
+
+    @Test
     fun scrollZoomFactorIsSymmetricAndReversible() {
         // exp(a·k)·exp(-a·k) == 1, so an in/out pair round-trips to the same zoom.
         assertClose(1.0, (zoomFactorForScroll(1.3f) * zoomFactorForScroll(-1.3f)).toDouble())

@@ -86,6 +86,12 @@ sealed interface DesignEditorIntent {
     data class SetRotation(val nodeId: String, val degrees: Double) : DesignEditorIntent
 
     /**
+     * Rotation write-back: unlike the in-memory [SetRotation], this rewrites the owning SLM
+     * source (`position.rotation`) and remerges. Dispatched on rotate-drag release / inspector commit.
+     */
+    data class RotateNode(val nodeId: String, val degrees: Double) : DesignEditorIntent
+
+    /**
      * Pulls an Auto layout child out of the flow ([DesignLayoutChild.absolute]): an
      * explicit user action (design-book §18 "Auto layout boundary"), never automatic —
      * [x]/[y] are the child's current parent-relative position at the moment it detaches,
@@ -132,6 +138,11 @@ sealed interface DesignEditorIntent {
 
     /** Creates a new screen (top-level frame + its own page). */
     data class CreateScreen(val preset: ScreenPreset, val title: String) : DesignEditorIntent
+
+    // --- Source ------------------------------------------------------------
+
+    /** Replaces one authored SLM source file and recompiles it for the live preview. */
+    data class EditSource(val sourceIndex: Int, val content: String) : DesignEditorIntent
 
     // --- Layout container --------------------------------------------------
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,11 +22,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +40,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -48,8 +52,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
@@ -110,10 +116,10 @@ private fun EmptyTab(title: CompactLabel) {
 private fun SourceMarkdown(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
     val design = state.designState
-    val sourceText = remember(design.selectedPageId, design.sources) {
+    val source = remember(design.selectedPageId, design.sources, design.compiledResults) {
         sourceForSelectedPage(state)
     }
-    if (sourceText == null) {
+    if (source == null) {
         Box(Modifier.fillMaxSize().background(colors.paneSurface), contentAlignment = Alignment.Center) {
             Text(
                 "This screen was created in the editor and has no SLM source yet.",
@@ -124,46 +130,80 @@ private fun SourceMarkdown(state: MissionEditorStateHolder) {
         }
         return
     }
-    val lines = remember(sourceText) { sourceText.lines() }
-    Row(
-        modifier = Modifier.fillMaxSize().background(colors.paneSurface)
-            .verticalScroll(rememberScrollState())
-            .horizontalScroll(rememberScrollState()),
-    ) {
-        Column(
-            modifier = Modifier.width(46.dp).background(colors.gutterSurface).padding(top = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+    var fieldValue by remember(source.index) { mutableStateOf(TextFieldValue(source.content)) }
+    LaunchedEffect(source.index, source.content) {
+        if (fieldValue.text != source.content) fieldValue = TextFieldValue(source.content)
+    }
+    val lines = remember(source.content) { source.content.lines().ifEmpty { listOf("") } }
+    val lineCount = lines.size.coerceAtLeast(1)
+    val longestLine = lines.maxOfOrNull { it.length } ?: 0
+    val codeStyle = MaterialTheme.typography.bodySmall.copy(
+        color = colors.codeInk,
+        fontFamily = FontFamily.Monospace,
+        lineHeight = SourceCodeLineHeightSp.sp,
+    )
+    val editorWidth = ((longestLine.coerceAtLeast(48) * SourceCodeCharWidthDp) + 28).dp
+    val editorHeight = ((lineCount * SourceCodeLineHeightDp) + 24).dp
+    val verticalScroll = rememberScrollState()
+    val horizontalScroll = rememberScrollState()
+
+    BoxWithConstraints(Modifier.fillMaxSize().background(colors.paneSurface)) {
+        val contentHeight = maxOf(editorHeight, maxHeight)
+        Row(
+            modifier = Modifier.fillMaxSize()
+                .verticalScroll(verticalScroll)
+                .horizontalScroll(horizontalScroll),
         ) {
-            lines.forEachIndexed { index, _ ->
-                Text((index + 1).toString(), modifier = Modifier.height(20.dp), color = colors.gutterInk, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+            Column(
+                modifier = Modifier.width(46.dp).height(contentHeight).background(colors.gutterSurface).padding(top = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                repeat(lineCount) { index ->
+                    Text(
+                        (index + 1).toString(),
+                        modifier = Modifier.height(SourceCodeLineHeightDp.dp),
+                        color = colors.gutterInk,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
             }
-        }
-        Column(Modifier.padding(top = 12.dp, start = 12.dp, end = 12.dp)) {
-            lines.forEach { line ->
-                Text(
-                    line.ifEmpty { " " },
-                    modifier = Modifier.height(20.dp),
-                    color = colors.codeInk,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Clip,
+            Box(Modifier.width(editorWidth).height(contentHeight).padding(top = 12.dp, start = 12.dp, end = 12.dp)) {
+                BasicTextField(
+                    value = fieldValue,
+                    onValueChange = { next ->
+                        fieldValue = next
+                        if (next.text != source.content) {
+                            state.dispatch(DesignEditorIntent.EditSource(source.index, next.text))
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    textStyle = codeStyle,
+                    cursorBrush = SolidColor(colors.accent),
+                    singleLine = false,
                 )
             }
         }
     }
 }
 
+private const val SourceCodeLineHeightDp = 20
+private const val SourceCodeLineHeightSp = 20
+private const val SourceCodeCharWidthDp = 8
+
 /** SLM source of the page currently selected, or null for an in-memory screen. */
-private fun sourceForSelectedPage(state: MissionEditorStateHolder): String? {
+private data class SourceReference(val index: Int, val content: String)
+
+private fun sourceForSelectedPage(state: MissionEditorStateHolder): SourceReference? {
     val design = state.designState
     val pageId = design.selectedPageId
     design.compiledResults.forEachIndexed { index, result ->
         val doc = result.document ?: return@forEachIndexed
         val screenId = doc.screen?.id.orEmpty()
         val matches = doc.pages.any { page -> screenId.ifBlank { page.id } == pageId }
-        if (matches) return design.sources.getOrNull(index)?.content
+        if (matches) {
+            return design.sources.getOrNull(index)?.let { SourceReference(index, it.content) }
+        }
     }
     return null
 }
