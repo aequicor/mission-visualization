@@ -1,7 +1,5 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
-import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
@@ -34,7 +32,7 @@ class InteractionMotionReducerTest {
     private val nodeId = "overview_wide"
 
     private fun freshState(): DesignEditorState =
-        createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())())
+        createDesignEditorState(legacyMissionDocuments())
 
     private fun DesignEditorState.node() = assertNotNull(document?.nodeById(nodeId))
 

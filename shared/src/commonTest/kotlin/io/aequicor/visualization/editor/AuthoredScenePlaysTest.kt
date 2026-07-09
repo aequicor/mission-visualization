@@ -1,7 +1,5 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
-import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.InteractionOp
 import io.aequicor.visualization.editor.presentation.MotionOp
@@ -34,7 +32,7 @@ class AuthoredScenePlaysTest {
     private val nodeId = "overview_wide"
 
     private fun freshDocument(): DesignDocument =
-        assertNotNull(createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())()).document)
+        assertNotNull(createDesignEditorState(legacyMissionDocuments()).document)
 
     private fun runtimeFor(document: DesignDocument): Pair<SceneRuntime, SceneProjection> {
         val composer = ScreenComposer(document, DesignLayoutEngine(ApproximateTextMeasurer()))
@@ -43,7 +41,7 @@ class AuthoredScenePlaysTest {
 
     @Test
     fun interactionAuthoredInInspectorPlaysInScene() {
-        val state = createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())())
+        val state = createDesignEditorState(legacyMissionDocuments())
         val authored = reduceDesignEditor(state, DesignEditorIntent.InteractionCommand(nodeId, InteractionOp.Add))
         val document = assertNotNull(authored.document)
 
@@ -58,7 +56,7 @@ class AuthoredScenePlaysTest {
 
     @Test
     fun motionPresetAuthoredInInspectorPlaysInScene() {
-        val state = createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())())
+        val state = createDesignEditorState(legacyMissionDocuments())
         val authored = reduceDesignEditor(state, DesignEditorIntent.MotionCommand(nodeId, MotionOp.SetPreset(MotionPreset.Pulse)))
         val document = assertNotNull(authored.document)
 

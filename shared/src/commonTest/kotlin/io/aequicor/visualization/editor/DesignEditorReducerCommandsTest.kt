@@ -1,7 +1,5 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
-import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.EditorLayoutMode
@@ -38,7 +36,7 @@ import kotlin.test.assertTrue
 class DesignEditorReducerCommandsTest {
 
     private fun freshState(): DesignEditorState =
-        createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())())
+        createDesignEditorState(legacyMissionDocuments())
 
     private fun DesignEditorState.rootFrameId(): String =
         assertNotNull(document?.pageById(selectedPageId)?.children?.firstOrNull()?.id, "no root frame")

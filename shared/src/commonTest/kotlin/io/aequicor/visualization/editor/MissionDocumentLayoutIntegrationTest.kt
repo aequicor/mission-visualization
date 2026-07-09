@@ -39,11 +39,11 @@ class MissionDocumentLayoutIntegrationTest {
             listOf("missionOverview", "missionTelemetry", "missionEventLog", "shapesShowcase"),
             document.pages.map { it.id },
         )
-        // Duplicated definitions collapse: two documents ship the default wire tile,
-        // all three ship the theme variables collection.
+        // Duplicated definitions collapse: Telemetry ships the wire tiles, Event Log the
+        // log row, and every document ships the identical theme variables collection.
+        // (Mission Overview is now an app-UI wireframe and contributes no components.)
         assertTrue("cmp_wire_tile_default" in document.components)
         assertTrue("cmp_wire_tile_highlight" in document.components)
-        assertTrue("cmp_wire_card" in document.components)
         assertTrue("cmp_log_row" in document.components)
         assertEquals(setOf("theme"), document.variables.collections.keys)
     }
@@ -70,14 +70,16 @@ class MissionDocumentLayoutIntegrationTest {
             "mission doc resolve diagnostics: ${resolver.diagnostics}",
         )
 
+        // Mission Overview is a Free-layout (`mode: none`) wireframe of the editor app:
+        // its three working panels are absolutely positioned side by side.
         val overview = document.pages.first()
         val overviewBox = engine.layout(assertNotNull(resolver.resolvePage(overview).firstOrNull()))
-        val tiles = listOf("tile_1", "tile_2", "tile_3").map { id ->
+        val panels = listOf("src_panel", "cv_panel", "in_panel").map { id ->
             assertNotNull(overviewBox.findBySourceId(id), "missing $id")
         }
-        assertEquals(tiles[0].width, tiles[1].width, "tiles share the row equally")
-        assertEquals(tiles[1].width, tiles[2].width)
-        assertEquals(150.0, tiles[0].height, "tile height comes from the component definition")
+        assertTrue(panels[0].x < panels[1].x, "Source sits left of Canvas")
+        assertTrue(panels[1].x < panels[2].x, "Canvas sits left of Inspector")
+        assertEquals(944.0, panels[0].height, "panel height is fixed by the wireframe")
     }
 
     @Test
