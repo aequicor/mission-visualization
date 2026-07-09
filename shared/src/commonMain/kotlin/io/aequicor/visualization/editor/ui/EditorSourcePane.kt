@@ -71,17 +71,6 @@ import kotlin.math.roundToInt
 fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modifier) {
     val colors = LocalEditorColors.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            io.aequicor.visualization.MenuButton()
-            CompactText(
-                label = CompactLabel("Source", "Src", "Src"),
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            DraftButton("Save", onClick = state::saveDraftNow)
-            DraftButton("Reset", onClick = state::resetToDefaults)
-        }
         Surface(
             modifier = Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(8.dp),
@@ -104,30 +93,6 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
             }
         }
         ScreensPanel(state, Modifier.fillMaxWidth().height(300.dp))
-    }
-}
-
-/**
- * Small chip in the source-pane header. "Save" force-flushes the draft; "Reset" clears
- * it and reloads the bundled defaults. Autosave keeps the draft current on its own, so
- * these are explicit-control affordances, not the only save path.
- */
-@Composable
-private fun DraftButton(label: String, onClick: () -> Unit) {
-    val colors = LocalEditorColors.current
-    Surface(
-        modifier = Modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(6.dp),
-        color = colors.raisedSurface,
-        border = BorderStroke(1.dp, colors.panelStroke),
-    ) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = colors.ink,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 

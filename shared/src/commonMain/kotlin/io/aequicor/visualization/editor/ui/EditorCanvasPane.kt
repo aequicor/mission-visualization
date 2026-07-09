@@ -173,44 +173,8 @@ import kotlin.math.sin
 fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modifier) {
     val colors = LocalEditorColors.current
     val ws = state.workspace
-    val pageName = state.designState.document
-        ?.pageById(state.designState.selectedPageId)?.name.orEmpty().ifBlank { "Untitled" }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Canvas — $pageName",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HeaderIconButton(
-                    icon = EditorIcon.Source,
-                    contentDescription = "Toggle source panel",
-                    onClick = { state.updateWorkspace { it.copy(sourceCollapsed = !it.sourceCollapsed) } },
-                    active = ws.sourceCollapsed,
-                )
-                HeaderIconButton(
-                    icon = EditorIcon.Inspector,
-                    contentDescription = "Toggle inspector panel",
-                    onClick = { state.updateWorkspace { it.copy(inspectorCollapsed = !it.inspectorCollapsed) } },
-                    active = ws.inspectorCollapsed,
-                )
-                HeaderIconButton(
-                    icon = EditorIcon.ZoomFit,
-                    contentDescription = "Focus canvas",
-                    onClick = { state.updateWorkspace { it.copy(focusMode = FocusMode.MainOnly) } },
-                )
-            }
-        }
-
         Surface(
             modifier = Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(8.dp),
