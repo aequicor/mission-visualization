@@ -9,6 +9,213 @@
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     <link rel="manifest" href="manifest.webmanifest">
     <link type="text/css" rel="stylesheet" href="styles.css">
+    <script>
+      // ====================================================================
+      // Wasm download-progress meter.
+      //
+      // The generated loader (webApp.js) downloads TWO wasm binaries via
+      // `WebAssembly.instantiateStreaming(fetch(url), …)`: the Compose/Skiko
+      // runtime (~8 MB) and the app wasm (~4 MB prod / ~27 MB dev). Both go
+      // through window.fetch, so we wrap fetch for *.wasm URLs, pump the
+      // response body through a byte-counting stream, and drive a real
+      // percentage into the boot overlay (#mv-loader).
+      //
+      // This MUST run before webApp.js so the patched fetch is in place when
+      // the loader fires. It is fully defensive: any failure falls straight
+      // back to the untouched response, so progress tracking can never break
+      // the actual wasm load.
+      // ====================================================================
+      (function () {
+        if (window.__mvProgress) return;
+
+        // ---- byte accounting ----------------------------------------------
+        // Keyed by URL with OVERWRITE semantics: if the loader's streaming path
+        // fails and it re-fetches the same wasm for its arrayBuffer fallback,
+        // that URL's counter resets rather than double-counting.
+        var files = Object.create(null);   // url -> { received, cap }
+
+        // Build-time manifest of *uncompressed* wasm sizes keyed by filename,
+        // injected into the production distribution (see :webApp:packWasmDist).
+        // It's the only correct denominator when the host serves gzip/brotli —
+        // there response.body yields DECOMPRESSED bytes while Content-Length is
+        // the COMPRESSED size. Read LAZILY (first wasm fetch) so it's picked up
+        // no matter where the injected <script> sits relative to this one.
+        // Absent in dev → we fall back to Content-Length (exact when uncompressed).
+        var manifest, manifestTotal;
+        function ensureManifest() {
+          if (manifest !== undefined) return;
+          manifest = window.__MV_WASM_SIZES || null;
+          manifestTotal = 0;
+          if (manifest) {
+            for (var mk in manifest) {
+              if (typeof manifest[mk] === 'number') manifestTotal += manifest[mk];
+            }
+          }
+        }
+        function basename(u) {
+          try { return String(u).split('?')[0].split('#')[0].split('/').pop(); }
+          catch (_) { return String(u); }
+        }
+
+        // ---- eased display state ------------------------------------------
+        var targetPct = 0;   // where the bar should be (0..100)
+        var shownPct = 0;    // where it is right now (eased)
+        var finished = false;
+        var easeTimer = 0;
+        var creepTimer = 0;
+
+        var els = { resolved: false, fill: null, pct: null, wrap: null };
+        function resolveDom() {
+          if (els.resolved) return;
+          els.fill = document.getElementById('mv-progress-fill');
+          els.pct = document.getElementById('mv-progress-pct');
+          els.wrap = document.getElementById('mv-progress');
+          if (els.fill && els.pct) els.resolved = true;
+        }
+        function render() {
+          resolveDom();
+          var r = Math.round(shownPct);
+          if (els.fill) els.fill.style.width = shownPct.toFixed(1) + '%';
+          if (els.pct) els.pct.textContent = r;
+          if (els.wrap) {
+            els.wrap.setAttribute('aria-valuenow', String(r));
+            if (r > 0) els.wrap.classList.add('mv-progress--active');
+          }
+        }
+        // Eased via setTimeout (not requestAnimationFrame): rAF is fully paused
+        // in a hidden/background tab, which would freeze the meter if the user
+        // switches away mid-load; timers keep ticking (throttled) so progress
+        // still advances. The CSS `transition: width` smooths the bar between ticks.
+        function schedule() { if (!easeTimer) easeTimer = setTimeout(tick, 16); }
+        function tick() {
+          easeTimer = 0;
+          var diff = targetPct - shownPct;
+          if (Math.abs(diff) < 0.08) shownPct = targetPct;
+          else shownPct += diff * 0.2;
+          render();
+          if (shownPct !== targetPct) schedule();
+        }
+
+        // While the (downloaded) wasm compiles + Compose mounts, no bytes move,
+        // so gently creep the target 90 → 99 to signal "still working". Stopped
+        // by finish(). The real 100% is owned by the first-frame hand-off.
+        function startCreep() {
+          if (creepTimer || finished) return;
+          creepTimer = setInterval(function () {
+            if (finished) { clearInterval(creepTimer); creepTimer = 0; return; }
+            if (targetPct < 99) {
+              targetPct = Math.min(99, targetPct + (99 - targetPct) * 0.08 + 0.15);
+              schedule();
+            }
+          }, 220);
+        }
+
+        function recompute() {
+          if (finished) return;
+          var recv = 0, total = 0;
+          for (var k in files) {
+            var f = files[k];
+            recv += f.cap > 0 ? Math.min(f.received, f.cap) : f.received;
+            if (f.cap > 0) total += f.cap;
+          }
+          var frac;
+          if (manifestTotal > 0) {
+            frac = recv / manifestTotal;                 // accurate under gzip/brotli
+          } else if (total > 0) {
+            // Content-Length path: exact when uncompressed. Clamp so a compressed
+            // overshoot, or the total growing as a 2nd file appears, can't exceed 1.
+            frac = recv / Math.max(total, recv);
+          } else {
+            startCreep();                                // no size info → indeterminate
+            return;
+          }
+          frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
+          var t = frac * 90;       // downloads occupy 0..90; 90..99 is compile/mount
+          if (t > targetPct) { targetPct = t; schedule(); }
+          if (frac >= 0.999) startCreep();
+        }
+
+        // ---- SINGLE interception point: window.fetch ----------------------
+        // The generated loader downloads BOTH wasm binaries via
+        // instantiateStreaming(fetch(url), …) and skiko's fallback re-fetches
+        // via fetch().arrayBuffer() — so wrapping fetch alone covers every path
+        // with no double counting. We deliberately do NOT patch WebAssembly.*:
+        // the app wasm is linked with a 3rd compile-options arg (js-string
+        // builtins) that a naive instantiateStreaming wrapper would drop.
+        var canStream = (typeof ReadableStream !== 'undefined')
+          && (typeof TransformStream !== 'undefined')
+          && (typeof Response !== 'undefined') && !!window.fetch;
+        if (canStream) {
+          var origFetch = window.fetch.bind(window);
+          window.fetch = function (input, init) {
+            var url = (typeof input === 'string')
+              ? input
+              : (input && (input.url || input.href)) || String(input);
+            // ".wasm" optionally followed by ?query/#hash — so "foo.wasm.map"
+            // and "webApp.js" never qualify (a "." follows their ".wasm"/none).
+            if (!/\.wasm($|[?#])/i.test(String(url))) return origFetch(input, init);
+            ensureManifest();
+            // When a manifest exists, only track the files it lists (its total is
+            // our denominator; a stray/unexpected .wasm would skew the percentage).
+            if (manifest && !(basename(url) in manifest)) return origFetch(input, init);
+            return origFetch(input, init).then(function (resp) {
+              try {
+                if (!resp || !resp.ok || !resp.body || resp.type === 'opaque') return resp;
+                var key = url;
+                var manSize = manifest ? manifest[basename(url)] : 0;
+                // Content-Length is only a valid denominator when the transfer
+                // is NOT compressed (otherwise it's the compressed size while we
+                // count decompressed bytes). If compressed and unmanifested, we
+                // set cap 0 → this file drives the indeterminate creep instead
+                // of a lying percentage.
+                var enc = resp.headers.get('content-encoding');
+                var compressed = !!enc && !/^\s*identity\s*$/i.test(enc);
+                var clen = compressed ? 0 : (parseInt(resp.headers.get('content-length') || '0', 10) || 0);
+                files[key] = { received: 0, cap: (manSize || clen || 0) };
+                recompute();
+
+                // Consumer-driven backpressure: pipeThrough only pulls as the
+                // instantiator consumes, so a 27 MB stream never buffers wholesale.
+                var counter = new TransformStream({
+                  transform: function (chunk, controller) {
+                    files[key].received += (chunk && (chunk.byteLength || chunk.length)) || 0;
+                    recompute();
+                    controller.enqueue(chunk);
+                  }
+                });
+
+                // Rebuild the Response around the counting stream. Preserve the
+                // original headers VERBATIM (so a host's real Content-Type still
+                // drives the loader's own MIME fallback) but DELETE Content-Length
+                // and Content-Encoding: the bytes we re-emit are already
+                // decompressed, so a stale (compressed) length would truncate and
+                // a lingering encoding would make a consumer try to inflate again.
+                var headers = new Headers(resp.headers);
+                headers.delete('content-length');
+                headers.delete('content-encoding');
+                return new Response(resp.body.pipeThrough(counter), {
+                  status: resp.status,
+                  statusText: resp.statusText,
+                  headers: headers
+                });
+              } catch (_) {
+                return resp;   // ANY hiccup → hand back the untouched response
+              }
+            });
+          };
+        }
+
+        window.__mvProgress = {
+          // Called by the overlay lifecycle once Compose paints its first frame.
+          finish: function () {
+            finished = true;
+            if (creepTimer) { clearInterval(creepTimer); creepTimer = 0; }
+            targetPct = 100;
+            schedule();
+          }
+        };
+      })();
+    </script>
 </head>
 <body>
 <!-- Compose Multiplatform mounts its canvas into this container (see main.kt). -->
@@ -16,7 +223,7 @@
 
 <!-- Boot overlay: shown while the wasm bundle downloads and Compose mounts.
      Centred caption → lazurite sheen sweeps across it → the light condenses into a
-     heart parked on the right → a loader keeps pulsing below. Pure HTML + CSS. -->
+     heart parked on the right → a live download meter fills below. Pure HTML + CSS. -->
 <div id="mv-loader" role="status" aria-label="Loading Mission Visualization">
   <div class="mv-stage">
 
@@ -41,11 +248,16 @@
       </div>
     </div>
 
-    <!-- Looping loader (three lazurite dots) -->
-    <div class="mv-loader-track" aria-hidden="true">
-      <span class="mv-dot"></span>
-      <span class="mv-dot"></span>
-      <span class="mv-dot"></span>
+    <!-- Live download meter: a lazurite bar that fills with real wasm progress,
+         plus a percentage read-out. Driven by window.__mvProgress (see <head>). -->
+    <div id="mv-progress" class="mv-progress" role="progressbar"
+         aria-label="Download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="mv-progress__track">
+        <div id="mv-progress-fill" class="mv-progress__fill"></div>
+      </div>
+      <div class="mv-progress__read" aria-hidden="true">
+        <span id="mv-progress-pct" class="mv-progress__pct">0</span><span class="mv-progress__sign">%</span>
+      </div>
     </div>
 
   </div>
@@ -54,7 +266,8 @@
 <script>
   // Boot-overlay lifecycle. main.kt calls window.__mvHideLoader() once Compose has
   // painted its first frame. We keep a minimum on-screen time so that even a fast
-  // wasm load still shows the full sheen → heart intro before the overlay fades.
+  // wasm load still shows the full sheen → heart intro before the overlay fades,
+  // and we drive the meter to 100% at hand-off.
   (function () {
     var MIN_ON_SCREEN_MS = 2100;               // ≈ time for the heart to finish popping
     var start = Date.now();
@@ -62,6 +275,7 @@
       var el = document.getElementById('mv-loader');
       if (!el || el.dataset.hiding) return;
       el.dataset.hiding = '1';
+      if (window.__mvProgress) window.__mvProgress.finish();   // meter → 100%
       var wait = Math.max(0, MIN_ON_SCREEN_MS - (Date.now() - start));
       setTimeout(function () {
         el.classList.add('mv-hide');           // CSS opacity transition takes over
