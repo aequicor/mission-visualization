@@ -103,6 +103,7 @@ import io.aequicor.visualization.editor.presentation.NewObjectKind
 import io.aequicor.visualization.editor.presentation.PendingFit
 import io.aequicor.visualization.editor.presentation.ResizeCursorKind
 import io.aequicor.visualization.editor.presentation.SelectableBounds
+import io.aequicor.visualization.editor.presentation.ResizableEdges
 import io.aequicor.visualization.editor.presentation.ResizeHandle
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.ZOrderMove
@@ -120,6 +121,7 @@ import io.aequicor.visualization.editor.presentation.translate
 import io.aequicor.visualization.editor.presentation.flowInsertionIndex
 import io.aequicor.visualization.editor.presentation.flowInsertionLine
 import io.aequicor.visualization.editor.presentation.isCoordinatePositioned
+import io.aequicor.visualization.editor.presentation.resizableEdges
 import io.aequicor.visualization.editor.presentation.isSelfOrAncestor
 import io.aequicor.visualization.editor.presentation.marqueeSelection
 import io.aequicor.visualization.editor.presentation.measureGaps
@@ -679,7 +681,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         } else {
                                             resizeTargets.firstOrNull()?.let { target ->
                                                 applyResize(
-                                                    state, target.nodeId, resizeBaseline, target.originPosition, mode.handle,
+                                                    state, target, resizeBaseline, mode.handle,
                                                     accX / zoomPx, accY / zoomPx, state.workspace.lockAspectRatio || shiftHeld,
                                                     // The rotation compensation must match the rotation the
                                                     // handle/baseline were resolved against at press time
@@ -773,9 +775,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             resizeTargets.firstOrNull()?.let { target ->
                                                 commitResizeWriteBack(
                                                     state = state,
-                                                    nodeId = target.nodeId,
+                                                    target = target,
                                                     baseline = resizeBaseline,
-                                                    originPos = target.originPosition,
                                                     handle = mode.handle,
                                                     docDx = accX / zoomPx,
                                                     docDy = accY / zoomPx,
@@ -1443,6 +1444,11 @@ private data class ResizeTarget(
     val baseline: BoundsBox,
     val originPosition: DesignPoint?,
     val rotation: Double = 0.0,
+    val edges: ResizableEdges = ResizableEdges.All,
+    val minWidth: Double = 1.0,
+    val minHeight: Double = 1.0,
+    val maxWidth: Double? = null,
+    val maxHeight: Double? = null,
 )
 
 /** Fixed reference used at drag-start to resolve a live rotate gesture. */
@@ -1904,14 +1910,30 @@ private fun computeRotatedResize(
     docDy: Float,
     lockRatio: Boolean,
     rotationDegrees: Double,
+    edges: ResizableEdges = ResizableEdges.All,
+    minWidth: Double = 1.0,
+    minHeight: Double = 1.0,
+    maxWidth: Double? = null,
+    maxHeight: Double? = null,
 ): io.aequicor.visualization.editor.presentation.ResizeResult {
     val local = if (rotationDegrees != 0.0) rotateVector(docDx.toDouble(), docDy.toDouble(), -rotationDegrees) else GeoPoint(docDx.toDouble(), docDy.toDouble())
+    // [edges]/min/max describe the node's own local (pre-rotation) axes — exactly the frame
+    // computeResize runs in — so they pass through unrotated; only the returned dx/dy is rotated
+    // forward into the shared document frame below.
     val result = computeResize(
         baseWidth = baseline.width,
         baseHeight = baseline.height,
         handle = handle,
         docDx = local.x,
         docDy = local.y,
+        minWidth = minWidth,
+        minHeight = minHeight,
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        canMoveLeft = edges.left,
+        canMoveRight = edges.right,
+        canMoveTop = edges.top,
+        canMoveBottom = edges.bottom,
         lockRatio = lockRatio,
     )
     if (rotationDegrees == 0.0 || (result.dx == 0.0 && result.dy == 0.0)) return result
@@ -1921,22 +1943,40 @@ private fun computeRotatedResize(
 
 private fun applyResize(
     state: MissionEditorStateHolder,
-    nodeId: String,
+    target: ResizeTarget,
     baseline: BoundsBox,
-    originPos: DesignPoint?,
     handle: ResizeHandle,
     docDx: Float,
     docDy: Float,
     lockRatio: Boolean,
     rotationDegrees: Double = 0.0,
 ) {
-    val result = computeRotatedResize(baseline, handle, docDx, docDy, lockRatio, rotationDegrees)
+    val result = computeRotatedResize(
+        baseline, handle, docDx, docDy, lockRatio, rotationDegrees,
+        edges = target.edges,
+        minWidth = target.minWidth, minHeight = target.minHeight,
+        maxWidth = target.maxWidth, maxHeight = target.maxHeight,
+    )
     // Position is parent-relative; the parent doesn't move during a resize, so the change
     // in absolute origin equals the change in authored position.
+    val originPos = target.originPosition
     if (originPos != null && (result.dx != 0.0 || result.dy != 0.0)) {
-        state.dispatch(DesignEditorIntent.UpdatePosition(nodeId, x = originPos.x + result.dx, y = originPos.y + result.dy))
+        state.dispatch(DesignEditorIntent.UpdatePosition(target.nodeId, x = originPos.x + result.dx, y = originPos.y + result.dy))
     }
-    state.dispatch(DesignEditorIntent.UpdateSize(nodeId, width = result.width, height = result.height))
+    // Dispatch size only on an axis that actually changed, so a blocked-direction drag is a true
+    // no-op and an edge-only drag doesn't pin the untouched axis' sizing to Fixed (the reducer
+    // pins only the non-null axis).
+    val widthChanged = result.width != baseline.width
+    val heightChanged = result.height != baseline.height
+    if (widthChanged || heightChanged) {
+        state.dispatch(
+            DesignEditorIntent.UpdateSize(
+                target.nodeId,
+                width = result.width.takeIf { widthChanged },
+                height = result.height.takeIf { heightChanged },
+            ),
+        )
+    }
 }
 
 private fun applyGroupResize(
@@ -1967,20 +2007,35 @@ private fun applyGroupResize(
 
 private fun commitResizeWriteBack(
     state: MissionEditorStateHolder,
-    nodeId: String,
+    target: ResizeTarget,
     baseline: BoundsBox,
-    originPos: DesignPoint?,
     handle: ResizeHandle,
     docDx: Float,
     docDy: Float,
     lockRatio: Boolean,
     rotationDegrees: Double = 0.0,
 ) {
-    val result = computeRotatedResize(baseline, handle, docDx, docDy, lockRatio, rotationDegrees)
+    val result = computeRotatedResize(
+        baseline, handle, docDx, docDy, lockRatio, rotationDegrees,
+        edges = target.edges,
+        minWidth = target.minWidth, minHeight = target.minHeight,
+        maxWidth = target.maxWidth, maxHeight = target.maxHeight,
+    )
+    val originPos = target.originPosition
     if (originPos != null && (result.dx != 0.0 || result.dy != 0.0)) {
-        state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = originPos.x + result.dx, y = originPos.y + result.dy))
+        state.dispatch(DesignEditorIntent.PositionNode(target.nodeId, x = originPos.x + result.dx, y = originPos.y + result.dy))
     }
-    state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = result.width, height = result.height))
+    val widthChanged = result.width != baseline.width
+    val heightChanged = result.height != baseline.height
+    if (widthChanged || heightChanged) {
+        state.dispatch(
+            DesignEditorIntent.ResizeNode(
+                target.nodeId,
+                width = result.width.takeIf { widthChanged },
+                height = result.height.takeIf { heightChanged },
+            ),
+        )
+    }
 }
 
 private fun commitGroupResizeWriteBack(
@@ -2165,7 +2220,17 @@ private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set
         if (node.locked || node.visible.literalOrNull() == false) return@mapNotNull null
         val box = layout.findBySourceId(id) ?: return@mapNotNull null
         val originPosition = node.position ?: DesignPoint().takeIf { document.isCoordinatePositioned(id) }
-        ResizeTarget(nodeId = id, baseline = box.toBoundsBox(), originPosition = originPosition, rotation = box.node.rotation)
+        ResizeTarget(
+            nodeId = id,
+            baseline = box.toBoundsBox(),
+            originPosition = originPosition,
+            rotation = box.node.rotation,
+            edges = document.resizableEdges(id),
+            minWidth = node.minSize?.width ?: 1.0,
+            minHeight = node.minSize?.height ?: 1.0,
+            maxWidth = node.maxSize?.width,
+            maxHeight = node.maxSize?.height,
+        )
     }
 }
 

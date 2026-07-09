@@ -47,11 +47,16 @@ data class ResizeResult(
  * - dragging left/top moves the origin and the size so the opposite side stays fixed;
  * - dragging right/bottom never moves the origin;
  * - a corner changes both axes;
- * - width/height are clamped at [minWidth]/[minHeight], and — crucially — when a
- *   left/top edge is dragged past the opposite edge the position stops at
- *   `oppositeEdge - minSize` instead of sliding off (the delta is derived from the
- *   *clamped* size, not the raw pointer travel);
- * - [lockRatio] on a corner preserves the start aspect ratio.
+ * - width/height are clamped into `[minWidth, maxWidth]` / `[minHeight, maxHeight]`, and —
+ *   crucially — when a left/top edge is dragged past the opposite edge the position stops at
+ *   `oppositeEdge - minSize` instead of sliding off (the delta is derived from the *clamped*
+ *   size, not the raw pointer travel), and when the size caps at [maxWidth]/[maxHeight] the
+ *   origin stops there too (so a max-bound edge doesn't shove the opposite edge);
+ * - an edge whose `canMove*` flag is `false` is inert — it contributes no size change and no
+ *   origin shift, so dragging a direction the node cannot grow in (e.g. the flow-pinned start
+ *   edge of an auto-layout child) leaves the box untouched;
+ * - [lockRatio] on a corner preserves the start aspect ratio (only when both of the corner's
+ *   directions are movable).
  */
 fun computeResize(
     baseWidth: Double,
@@ -61,27 +66,49 @@ fun computeResize(
     docDy: Double,
     minWidth: Double = 1.0,
     minHeight: Double = 1.0,
+    maxWidth: Double? = null,
+    maxHeight: Double? = null,
+    canMoveLeft: Boolean = true,
+    canMoveRight: Boolean = true,
+    canMoveTop: Boolean = true,
+    canMoveBottom: Boolean = true,
     lockRatio: Boolean = false,
 ): ResizeResult {
+    val movesLeft = handle.movesLeft && canMoveLeft
+    val movesRight = handle.movesRight && canMoveRight
+    val movesTop = handle.movesTop && canMoveTop
+    val movesBottom = handle.movesBottom && canMoveBottom
+
     var width = baseWidth
     var height = baseHeight
-    if (handle.movesRight) width = baseWidth + docDx
-    if (handle.movesLeft) width = baseWidth - docDx
-    if (handle.movesBottom) height = baseHeight + docDy
-    if (handle.movesTop) height = baseHeight - docDy
-    width = width.coerceAtLeast(minWidth)
-    height = height.coerceAtLeast(minHeight)
+    if (movesRight) width = baseWidth + docDx
+    if (movesLeft) width = baseWidth - docDx
+    if (movesBottom) height = baseHeight + docDy
+    if (movesTop) height = baseHeight - docDy
+    width = clamp(width, minWidth, maxWidth)
+    height = clamp(height, minHeight, maxHeight)
 
-    if (lockRatio && baseHeight > 0.0 && baseWidth > 0.0 && handle.isCorner) {
+    // Aspect lock only when the grabbed corner can actually move on both axes; otherwise a
+    // pinned edge would fight the ratio and distort the free axis.
+    if (lockRatio && baseHeight > 0.0 && baseWidth > 0.0 && handle.isCorner &&
+        (movesLeft || movesRight) && (movesTop || movesBottom)
+    ) {
         val ratio = baseWidth / baseHeight
         // Drive height from the (already clamped) width, then re-clamp.
-        height = (width / ratio).coerceAtLeast(minHeight)
-        width = (height * ratio).coerceAtLeast(minWidth)
+        height = clamp(width / ratio, minHeight, maxHeight)
+        width = clamp(height * ratio, minWidth, maxWidth)
     }
 
-    // Position deltas come from the *clamped* size so the opposite edge stays pinned
-    // even after width/height bottoms out at the minimum.
-    val dx = if (handle.movesLeft) baseWidth - width else 0.0
-    val dy = if (handle.movesTop) baseHeight - height else 0.0
+    // Position deltas come from the *clamped* size so the opposite edge stays pinned even after
+    // width/height bottoms out at the minimum or caps at the maximum. A blocked edge left the
+    // size at its base, so the delta is naturally 0.
+    val dx = if (movesLeft) baseWidth - width else 0.0
+    val dy = if (movesTop) baseHeight - height else 0.0
     return ResizeResult(width = width, height = height, dx = dx, dy = dy)
+}
+
+/** Clamps [value] into `[min, max]`; a [max] below [min] is raised to [min] so min always wins. */
+private fun clamp(value: Double, min: Double, max: Double?): Double {
+    val lower = value.coerceAtLeast(min)
+    return if (max != null) lower.coerceAtMost(max.coerceAtLeast(min)) else lower
 }
