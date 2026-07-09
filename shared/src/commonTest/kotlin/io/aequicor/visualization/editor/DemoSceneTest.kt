@@ -1,7 +1,5 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
-import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.engine.ir.layout.ApproximateTextMeasurer
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.model.DesignAction
@@ -28,7 +26,9 @@ import kotlin.test.assertTrue
 class DemoSceneTest {
 
     private fun missionDocument(): DesignDocument {
-        val documents = compileMissionDocuments(DefaultDesignDocumentRepository().missionDocumentSources())
+        // The Overview demo scene moved into the frozen legacy fixture when the shipped
+        // Overview became an app-UI wireframe; the scene pipeline is still exercised here.
+        val documents = legacyMissionDocuments()
         // The demo authoring must not introduce compile errors.
         assertTrue(documents.diagnostics.none { it.severity.name == "Error" }, "demo SLM compiles cleanly")
         return assertNotNull(documents.document, "bundled mission docs compile")

@@ -1,7 +1,5 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
-import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
@@ -28,7 +26,7 @@ class DesignEditorReducerWriteBackTest {
     private val owningFile = "mission-overview.layout.md"
 
     private fun freshState(): DesignEditorState =
-        createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())())
+        createDesignEditorState(legacyMissionDocuments())
 
     private fun DesignEditorState.sourceContent(fileName: String): String =
         assertNotNull(sources.firstOrNull { it.fileName == fileName }, "missing source $fileName").content
