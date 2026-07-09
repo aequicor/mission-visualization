@@ -56,6 +56,7 @@ import io.aequicor.visualization.editor.presentation.FocusMode
 import io.aequicor.visualization.editor.presentation.InspectorSection
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
+import io.aequicor.visualization.editor.presentation.projectDisplayName
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
@@ -88,8 +89,16 @@ class MissionEditorStateHolder(
     private val loadDesignDocument: LoadDesignDocumentUseCase,
     private val draft: DraftController? = null,
 ) {
-    var designState by mutableStateOf(createDesignEditorState(loadDesignDocument()))
+    private val defaultDocuments = loadDesignDocument()
+
+    var designState by mutableStateOf(createDesignEditorState(defaultDocuments))
         private set
+
+    var projectName by mutableStateOf("")
+        private set
+
+    val displayProjectName: String
+        get() = projectDisplayName(projectName, designState.document?.name, designState.sources)
 
     var workspace by mutableStateOf(EditorWorkspaceState())
         private set
@@ -147,8 +156,9 @@ class MissionEditorStateHolder(
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     suspend fun runPersistence() {
         val draft = draft ?: return
-        draft.restore()?.let { sources ->
-            designState = createDesignEditorState(compileMissionDocuments(sources))
+        draft.restore()?.let { restored ->
+            projectName = restored.projectName
+            designState = createDesignEditorState(compileMissionDocuments(restored.files))
         }
         // Only the SLM `sources` are persisted; edits that do not write back leave them
         // unchanged, so snapshotFlow never emits for them. drop(1) skips the just-restored
@@ -157,22 +167,24 @@ class MissionEditorStateHolder(
             .drop(1)
             .distinctUntilChanged()
             .debounce(AutosaveDebounceMs)
-            .collect { sources -> draft.save(sources) }
+            .collect { sources -> draft.save(sources, displayProjectName) }
     }
 
     /** Explicit Save: force-flush the current SLM sources to the draft now. */
     fun saveDraftNow() {
-        draft?.saveNow(designState.sources)
+        draft?.saveNow(designState.sources, displayProjectName)
     }
 
     /** Reset: discard the draft and reseed the editor from the bundled default sources. */
     fun resetToDefaults() {
         val draft = draft
         if (draft == null) {
+            projectName = ""
             designState = createDesignEditorState(loadDesignDocument())
             return
         }
         draft.reset { designState = createDesignEditorState(loadDesignDocument()) }
+        projectName = ""
     }
 
     fun onArtboardLayout(layout: LayoutBox?) {

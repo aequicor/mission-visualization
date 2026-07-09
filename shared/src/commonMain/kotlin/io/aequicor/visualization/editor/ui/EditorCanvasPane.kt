@@ -419,9 +419,6 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var snapGuides by remember { mutableStateOf<List<AnchorGuide>>(emptyList()) }
         // Equal-spacing distribution bars for the same drag; empty otherwise.
         var spacingBars by remember { mutableStateOf<List<SpacingBar>>(emptyList()) }
-        // Which axes magnetically caught an anchor this frame — drives the solid center line per axis
-        // (design-book §18: dashed while searching, solid on catch). None outside a move drag.
-        var snappedAxes by remember { mutableStateOf(SnappedAxes.None) }
         // True while a resize drag snaps the box's width/height to equal a neighbour's — tints the size badge.
         var resizeMatched by remember { mutableStateOf(false) }
         // Live rotation-snap feedback (angle + whether magnetically caught); null outside a rotate drag.
@@ -830,7 +827,6 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         appliedDy = local.y
                                         snapGuides = snap?.guides ?: emptyList()
                                         spacingBars = snap?.spacing ?: emptyList()
-                                        snappedAxes = SnappedAxes(x = snap?.snappedX == true, y = snap?.snappedY == true)
                                         dragMoveActive = true
                                         badge = null
                                     }
@@ -1009,7 +1005,6 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             reorderPreview = null
                             snapGuides = emptyList()
                             spacingBars = emptyList()
-                            snappedAxes = SnappedAxes.None
                             resizeMatched = false
                             rotateIndicator = null
                             rotateDragActive = false
@@ -1073,16 +1068,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
 
             if (primarySelectionBox != null) {
-                // Center anchor lines (design-book §18, "critical feature"): both axes dashed while
-                // dragging; a snapped axis turns solid the moment it magnetically catches. Phase 2
-                // keeps the pre-existing "solid while dragging" feel — Phase 3 swaps these flags for
-                // the per-axis snapped state.
+                // Center anchor lines are the baseline crosshair, so they stay dashed during drag.
+                // Actual magnetic catches are drawn separately by snapGuides; if a guide coincides
+                // with the center line, that guide provides the solid visual.
                 if (parentOfPrimarySelection != null) {
                     val lines = centerAnchorLines(primarySelectionBox.toSnapBox(), parentOfPrimarySelection.toSnapBox())
                     drawCenterAnchorLines(
                         lines,
-                        verticalSolid = dragMoveActive && snappedAxes.x,
-                        horizontalSolid = dragMoveActive && snappedAxes.y,
+                        verticalSolid = false,
+                        horizontalSolid = false,
                         project = project,
                         style = guideStyle,
                     )
@@ -1996,13 +1990,6 @@ private const val SnapCatchPx = 7f
 
 /** Screen-space radius a caught line *holds* out to before releasing — the hysteresis "sticky" feel. */
 private const val SnapReleasePx = 16f
-
-/** Which axes magnetically caught an anchor this move-drag frame; drives the per-axis solid center line. */
-private data class SnappedAxes(val x: Boolean, val y: Boolean) {
-    companion object {
-        val None = SnappedAxes(x = false, y = false)
-    }
-}
 
 /** Angular catch/release radii (degrees) for the rotation magnet — hysteresis like the move/resize snaps. */
 private const val RotateCatchDeg = 4.0

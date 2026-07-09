@@ -7,6 +7,7 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 internal data class ProjectFilesEnvelopeDto(
+    val projectName: String = "",
     val files: List<ProjectFileDto>,
 )
 
@@ -18,6 +19,6 @@ internal data class ProjectFileDto(
 
 private val ProjectExchangeJson = Json { encodeDefaults = true }
 
-internal fun encodeProjectSourcesJson(sources: List<MissionDocumentSource>): String =
-    ProjectExchangeJson.encodeToString(ProjectFilesEnvelopeDto(sources.map { ProjectFileDto(it.fileName, it.content) }))
+internal fun encodeProjectSourcesJson(projectName: String, sources: List<MissionDocumentSource>): String =
+    ProjectExchangeJson.encodeToString(ProjectFilesEnvelopeDto(projectName, sources.map { ProjectFileDto(it.fileName, it.content) }))
 

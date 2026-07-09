@@ -4,6 +4,7 @@ import io.aequicor.visualization.editor.domain.ClearDraftUseCase
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.RestoreDraftSourcesUseCase
 import io.aequicor.visualization.editor.domain.SaveDraftUseCase
+import io.aequicor.visualization.editor.domain.WorkspaceDraft
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -19,15 +20,15 @@ class DraftController(
     private val restoreDraftSources: RestoreDraftSourcesUseCase,
     private val scope: CoroutineScope,
 ) {
-    /** Draft sources to seed the editor with on boot, or null to keep the defaults. */
-    suspend fun restore(): List<MissionDocumentSource>? = restoreDraftSources()
+    /** Draft to seed the editor with on boot, or null to keep the defaults. */
+    suspend fun restore(): WorkspaceDraft? = restoreDraftSources()
 
-    /** Persists [sources] now, suspending until written (used by autosave). */
-    suspend fun save(sources: List<MissionDocumentSource>) = saveDraft(sources)
+    /** Persists [sources] and project metadata now, suspending until written (used by autosave). */
+    suspend fun save(sources: List<MissionDocumentSource>, projectName: String) = saveDraft(sources, projectName)
 
     /** Fire-and-forget explicit save (the Save button). */
-    fun saveNow(sources: List<MissionDocumentSource>) {
-        scope.launch { saveDraft(sources) }
+    fun saveNow(sources: List<MissionDocumentSource>, projectName: String) {
+        scope.launch { saveDraft(sources, projectName) }
     }
 
     /** Clears the draft, then runs [onCleared] to reseed the editor (the Reset button). */

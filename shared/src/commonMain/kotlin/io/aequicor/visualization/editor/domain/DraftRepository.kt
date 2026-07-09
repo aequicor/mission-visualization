@@ -15,6 +15,7 @@ const val DraftSchemaVersion: Int = 1
 data class WorkspaceDraft(
     val schemaVersion: Int,
     val files: List<MissionDocumentSource>,
+    val projectName: String = "",
 )
 
 /**

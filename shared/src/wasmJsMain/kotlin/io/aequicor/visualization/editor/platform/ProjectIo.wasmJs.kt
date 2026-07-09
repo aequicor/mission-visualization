@@ -29,26 +29,59 @@ private fun ensureProjectIoInstalled() {
             return cleaned || fallback || "document.layout.md";
           }
 
-          function parseSourcesJson(sourcesJson) {
-            var parsed = JSON.parse(sourcesJson || "{}");
-            var files = Array.isArray(parsed.files) ? parsed.files : [];
-            return files
-              .filter(function (file) { return file && typeof file.fileName === "string" && typeof file.content === "string"; })
-              .map(function (file, index) {
-                return {
-                  fileName: safeName(file.fileName, "screen-" + (index + 1) + ".layout.md"),
-                  content: file.content
-                };
-              });
+          function safeProjectName(name, fallback) {
+            var cleaned = String(name || fallback || "Mission Visualization")
+              .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, "-")
+              .replace(/^\.+/, "")
+              .trim();
+            return cleaned || fallback || "Mission Visualization";
           }
 
-          function persistSources(files) {
+          function projectNameFromArchive(name) {
+            var raw = String(name || "").split("/").pop().split("\\").pop().replace(/\.zip$/i, "");
+            return safeProjectName(raw, "Mission Visualization");
+          }
+
+          function projectNameFromPickedFiles(files) {
+            for (var i = 0; i < files.length; i++) {
+              var rel = files[i].webkitRelativePath || "";
+              var root = rel.split("/")[0];
+              if (root) return safeProjectName(root, "Mission Visualization");
+            }
+            return "Mission Visualization";
+          }
+
+          function parseProjectJson(sourcesJson) {
+            var parsed = JSON.parse(sourcesJson || "{}");
+            var files = Array.isArray(parsed.files) ? parsed.files : [];
+            return {
+              projectName: safeProjectName(parsed.projectName, "Mission Visualization"),
+              files: files
+                .filter(function (file) { return file && typeof file.fileName === "string" && typeof file.content === "string"; })
+                .map(function (file, index) {
+                  return {
+                    fileName: safeName(file.fileName, "screen-" + (index + 1) + ".layout.md"),
+                    content: file.content
+                  };
+                })
+            };
+          }
+
+          function parseSourcesJson(sourcesJson) {
+            return parseProjectJson(sourcesJson).files;
+          }
+
+          function persistSources(files, projectName) {
             if (!files || files.length === 0) {
               window.alert("В выбранном проекте не найдены .layout.md файлы.");
               return;
             }
             files.sort(function (a, b) { return a.fileName.localeCompare(b.fileName); });
-            window.localStorage.setItem(draftKey, JSON.stringify({ schemaVersion: 1, files: files }));
+            window.localStorage.setItem(draftKey, JSON.stringify({
+              schemaVersion: 1,
+              projectName: safeProjectName(projectName, "Mission Visualization"),
+              files: files
+            }));
             window.location.reload();
           }
 
@@ -147,7 +180,7 @@ private fun ensureProjectIoInstalled() {
           async function openZip() {
             var file = await chooseFile(".zip,application/zip,application/x-zip-compressed");
             if (!file) return;
-            persistSources(await unzipSources(await file.arrayBuffer()));
+            persistSources(await unzipSources(await file.arrayBuffer()), projectNameFromArchive(file.name));
           }
 
           async function walkDirectory(handle, prefix, out) {
@@ -178,7 +211,7 @@ private fun ensureProjectIoInstalled() {
           async function openFolderViaInput() {
             var files = await chooseDirectoryFiles();
             if (!files.length) return;
-            persistSources(await readPickedSources(files));
+            persistSources(await readPickedSources(files), projectNameFromPickedFiles(files));
           }
 
           async function openFolder() {
@@ -189,7 +222,7 @@ private fun ensureProjectIoInstalled() {
             var handle = await window.showDirectoryPicker({ mode: "read" });
             var files = [];
             await walkDirectory(handle, "", files);
-            persistSources(files);
+            persistSources(files, handle.name);
           }
 
           function crc32(bytes) {
@@ -298,8 +331,8 @@ private fun ensureProjectIoInstalled() {
           }
 
           function saveZip(sourcesJson) {
-            var files = parseSourcesJson(sourcesJson);
-            downloadBlob(makeZip(files), "mission-visualization-project.zip");
+            var project = parseProjectJson(sourcesJson);
+            downloadBlob(makeZip(project.files), safeName(project.projectName + ".zip", "mission-visualization-project.zip"));
           }
 
           function collectCanvases(root, out) {

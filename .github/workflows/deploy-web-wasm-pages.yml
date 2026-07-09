@@ -38,7 +38,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Build optimized Web Wasm distribution
-        run: ./gradlew :webApp:packWasmDist
+        run: ./gradlew :webApp:packWasmDist -PmvAppVersion=0.1.${{ github.run_number }}
 
       - name: Disable Jekyll processing
         run: touch webApp/build/dist/wasmJs/productionExecutable/.nojekyll

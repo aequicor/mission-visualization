@@ -69,6 +69,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.aequicor.visualization.AppBuildInfo
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
 import io.aequicor.visualization.editor.platform.CanvasExportCrop
@@ -160,6 +161,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 modifier = Modifier.size(30.dp),
             )
             EditorDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                ProjectMenuTitleBar(projectName = state.displayProjectName, version = AppBuildInfo.VERSION)
                 when (menuPane) {
                     ProjectMenuPane.Root -> {
                         EditorDropdownMenuItem("Открыть") { menuPane = ProjectMenuPane.Open }
@@ -189,11 +191,11 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                         }
                         EditorDropdownMenuItem("Сохранить в папку на ПК") {
                             closeMenu()
-                            platformSaveProjectFolder(encodeProjectSourcesJson(state.designState.sources))
+                            platformSaveProjectFolder(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources))
                         }
                         EditorDropdownMenuItem("Сохранить ZIP архивом") {
                             closeMenu()
-                            platformDownloadProjectZip(encodeProjectSourcesJson(state.designState.sources))
+                            platformDownloadProjectZip(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources))
                         }
                     }
                     ProjectMenuPane.Export -> {
@@ -227,6 +229,33 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
 }
 
 private enum class ProjectMenuPane { Root, Open, Save, Export }
+
+@Composable
+private fun ProjectMenuTitleBar(projectName: String, version: String) {
+    val colors = LocalEditorColors.current
+    Column(Modifier.fillMaxWidth().background(colors.raisedSurface)) {
+        Text(
+            projectName,
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 16.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.ink,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "v$version",
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 2.dp, end = 16.dp, bottom = 10.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.mutedInk,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Box(Modifier.fillMaxWidth().height(1.dp).background(colors.softStroke))
+    }
+}
 
 private fun exportCurrentScreenPng(state: MissionEditorStateHolder) {
     val pageName = state.designState.document

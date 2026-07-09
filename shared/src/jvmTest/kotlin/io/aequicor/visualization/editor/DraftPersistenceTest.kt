@@ -42,7 +42,28 @@ class DraftPersistenceTest {
     fun saveThenRestoreRoundTripsSources() = runBlocking {
         val repo = repository(FakeKeyValueStore())
         SaveDraftUseCase(repo)(sample)
-        assertEquals(sample, RestoreDraftSourcesUseCase(repo)())
+        assertEquals(sample, RestoreDraftSourcesUseCase(repo)()?.files)
+    }
+
+    @Test
+    fun saveThenRestoreRoundTripsProjectName() = runBlocking {
+        val repo = repository(FakeKeyValueStore())
+        SaveDraftUseCase(repo)(sample, projectName = "Orbit Console")
+        val restored = RestoreDraftSourcesUseCase(repo)()
+        assertEquals(sample, restored?.files)
+        assertEquals("Orbit Console", restored?.projectName)
+    }
+
+    @Test
+    fun restoreSupportsLegacyDraftWithoutProjectName() = runBlocking {
+        val store = FakeKeyValueStore()
+        store.putString(
+            DraftStorageKey,
+            """{"schemaVersion":$DraftSchemaVersion,"files":[{"fileName":"legacy.layout.md","content":"# Legacy"}]}""",
+        )
+        val restored = RestoreDraftSourcesUseCase(repository(store))()
+        assertEquals(listOf(MissionDocumentSource("legacy.layout.md", "# Legacy")), restored?.files)
+        assertEquals("", restored?.projectName)
     }
 
     @Test
@@ -88,8 +109,8 @@ class DraftPersistenceTest {
         )
         SaveDraftUseCase(repo)(defaults.sources)
         val restored = RestoreDraftSourcesUseCase(repo)()
-        assertEquals(defaults.sources, restored)
-        val recompiled = compileMissionDocuments(restored!!)
+        assertEquals(defaults.sources, restored?.files)
+        val recompiled = compileMissionDocuments(restored!!.files)
         assertTrue(recompiled.document != null, "restored sources compile to a document")
     }
 }
