@@ -146,7 +146,7 @@ object WorkspaceLimits {
     const val MaxZoom: Float = 16f
 
     /** Exponential response of wheel/trackpad zoom: `factor = exp(clamp(scroll) * sensitivity)`. */
-    const val ZoomWheelSensitivity: Float = 0.1f
+    const val ZoomWheelSensitivity: Float = 0.025f
 
     /** Upper bound on a single scroll event's magnitude, taming outlier pixel-mode deltas. */
     const val MaxZoomScrollStep: Float = 12f

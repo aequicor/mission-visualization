@@ -66,9 +66,12 @@ import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -85,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.time.TimeSource
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.presentation.AncestorRotation
 import io.aequicor.visualization.editor.presentation.BoundsBox
 import io.aequicor.visualization.editor.presentation.CanvasOperation
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
@@ -106,8 +110,11 @@ import io.aequicor.visualization.editor.presentation.SelectableBounds
 import io.aequicor.visualization.editor.presentation.ResizeHandle
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.ZOrderMove
+import io.aequicor.visualization.editor.presentation.ancestorRotationDegrees
 import io.aequicor.visualization.editor.presentation.angleFromCenterDegrees
 import io.aequicor.visualization.editor.presentation.axisAlignedBounds
+import io.aequicor.visualization.editor.presentation.effectiveTransform
+import io.aequicor.visualization.editor.presentation.EffectiveTransform
 import io.aequicor.visualization.editor.presentation.LineSegment
 import io.aequicor.visualization.editor.presentation.computeResize
 import io.aequicor.visualization.editor.presentation.toMovingEdges
@@ -327,17 +334,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         val multiSelectionBox = if (design.selectedNodeIds.size > 1) selectionHandleBounds(layout, design.selectedNodeIds) else null
 
         // Primary (single) selection geometry — the only case that gets rotated handles,
-        // a rotate affordance and center lines; multi-selection keeps its plain bbox.
+        // a rotate affordance and center lines; multi-selection keeps its plain bbox. Every
+        // box/rotation here is the node's *effective* on-screen transform, so the overlay
+        // follows a rotated ancestor (e.g. the root frame) exactly as the renderer does.
         val primarySelectionId = design.selectedNodeId.takeIf { design.selectedNodeIds.size == 1 && it.isNotBlank() }
-        val primarySelectionLayoutBox = primarySelectionId?.let { layout?.findBySourceId(it) }
-        val primarySelectionBox = primarySelectionLayoutBox?.toBoundsBox()
-        val primarySelectionRotation = primarySelectionLayoutBox?.node?.rotation ?: 0.0
+        val primarySelectionTransform = primarySelectionId?.let { layout?.effectiveTransformFor(it) }
+        val primarySelectionBox = primarySelectionTransform?.box
+        val primarySelectionRotation = primarySelectionTransform?.rotation ?: 0.0
         val primarySelectionLocked = primarySelectionId?.let { document?.nodeById(it)?.locked == true } ?: false
         val primarySelectionInVectorEdit = primarySelectionId != null && primarySelectionId == ws.vectorEditNodeId
         val parentOfPrimarySelection = primarySelectionId
             ?.let { document?.parentNodeOf(it)?.id }
-            ?.let { layout?.findBySourceId(it) }
-            ?.let { it.toBoundsBox().visualBounds(it.node.rotation) }
+            ?.let { layout?.effectiveTransformFor(it) }
+            ?.let { it.box.visualBounds(it.rotation) }
 
         // Transient gesture visuals.
         var marquee by remember { mutableStateOf<Rect?>(null) }
@@ -474,7 +483,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     .pointerInput(pageId, ws.tool, design.selectedNodeId, design.selectedNodeIds, spaceHeld) {
                         val slop = viewConfiguration.touchSlop
                         awaitEachGesture {
-                            val down = awaitFirstDown()
+                            val gestureStart = awaitCanvasGestureStart()
+                            val down = gestureStart.change
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
                             // The pointerInput coroutine can outlive document/layout recompositions
@@ -489,25 +499,45 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 ?.firstOrNull()
                                 ?.id
                                 .orEmpty()
-                            val forcePan = currentEvent.buttons.isTertiaryPressed || spaceHeld
-                            val primaryBox = pressDesign.selectedNodeId.takeIf { it.isNotBlank() }?.let { pressLayout?.findBySourceId(it) }
+                            val panFromTertiaryButton = gestureStart.tertiaryButton || currentEvent.buttons.isTertiaryPressed
+                            val forcePan = panFromTertiaryButton || spaceHeld
+                            if (forcePan) down.consume()
+                            // Root→selection path (single selection) resolves the node's own layout box,
+                            // its effective on-screen transform (with rotated ancestors) and the net
+                            // ancestor rotation, all from one tree walk.
+                            val primaryPath = pressDesign.selectedNodeId.takeIf { it.isNotBlank() }
+                                ?.let { pressLayout?.pathToSourceId(it) }
+                            val primaryBox = primaryPath?.last()
+                            val primaryTransform = primaryPath?.let {
+                                effectiveTransform(it.last().toBoundsBox(), it.last().node.rotation, ancestorRotationsOf(it))
+                            }
                             // A locked selection exposes no resize handles (design-book §7).
                             val selectionLocked = pressDesign.selectedNodeIds.any { id -> pressDocument.nodeById(id)?.locked == true }
                             val isSingleSelection = pressDesign.selectedNodeIds.size == 1
                             val inVectorEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.vectorEditNodeId
-                            val selectedResizeBox = if (pressDesign.selectedNodeIds.size > 1) {
+                            val multiSelectionUnion = if (pressDesign.selectedNodeIds.size > 1) {
                                 selectionHandleBounds(pressLayout, pressDesign.selectedNodeIds)
                             } else {
-                                primaryBox?.toBoundsBox()
+                                null
                             }
+                            // Resize baseline is the node's *own* root-local box (size + position live
+                            // in the shared root-local frame); the multi-selection group uses its union.
+                            val selectedResizeBox = multiSelectionUnion ?: primaryBox?.toBoundsBox()
+                            // Own rotation drives the rotate-gesture baseline and the resize position
+                            // shift (root-local); the ancestor rotation is undone separately for moves.
                             val selectionRotation = if (isSingleSelection) primaryBox?.node?.rotation ?: 0.0 else 0.0
+                            val ancestorRotation = if (isSingleSelection) primaryPath?.let { ancestorRotationDegrees(ancestorRotationsOf(it)) } ?: 0.0 else 0.0
+                            // Handle geometry (where handles/affordance are drawn and grabbed) uses the
+                            // *effective* box + rotation, so a rotated ancestor is followed on screen.
+                            val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
+                            val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
                             val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit
-                            val handle = selectedResizeBox?.takeIf { handlesActive }
-                                ?.let { box -> rotatedHandleAt(box, selectionRotation, viewport, start) }
+                            val handle = handleGeometryBox?.takeIf { handlesActive }
+                                ?.let { box -> rotatedHandleAt(box, handleRotation, viewport, start) }
                             val rotateHit = handle == null && isSingleSelection &&
-                                selectedResizeBox?.takeIf { handlesActive }?.let { box ->
+                                handleGeometryBox?.takeIf { handlesActive }?.let { box ->
                                     val offsetDoc = (RotateHandleScreenOffsetPx / zoomPx).toDouble()
-                                    val point = rotateAffordancePoint(box, selectionRotation, offsetDoc)
+                                    val point = rotateAffordancePoint(box, handleRotation, offsetDoc)
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
                             val hitId = hitNode(pressLayout, pressDocument, viewport, start)
@@ -563,13 +593,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // anchor against — the immediate parent frame plus its unrotated ancestors
                             // up to the root, so a nested node can still find the outer/root container's
                             // center, edges, golden and proportion lines. Disabled when the parent frame
-                            // is rotated (snapping assumes an axis-aligned container coordinate space).
+                            // is rotated — by its own rotation or an inherited ancestor (e.g. the root)
+                            // rotation — since snapping assumes an axis-aligned container coordinate space.
                             val snapBaseline = if (mode == CanvasOperation.Move && reorderBaseline == null) {
                                 val ids = state.designState.selectedNodeIds
                                 val boxes = ids.mapNotNull { id -> pressLayout?.findBySourceId(id) }
                                 val parentBox = pressDocument.parentNodeOf(state.designState.selectedNodeId)?.id
                                     ?.let { pressLayout?.findBySourceId(it) }
-                                if (boxes.isEmpty() || parentBox == null || parentBox.node.rotation != 0.0) {
+                                // Net rotation of the parent's coordinate frame relative to the document
+                                // (its own rotation plus every ancestor up to the root).
+                                val parentFrameRotation = parentBox
+                                    ?.let { pressLayout?.pathToSourceId(it.node.sourceId)?.sumOf { box -> box.node.rotation } }
+                                    ?: 0.0
+                                if (boxes.isEmpty() || parentBox == null || parentFrameRotation != 0.0) {
                                     null
                                 } else {
                                     val corners = boxes.flatMap { box ->
@@ -589,7 +625,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 if (!isSingleSelection || selectionLocked || selectionRotation != 0.0) return@let null
                                 val parentId = pressDocument.parentNodeOf(id)?.id ?: return@let null
                                 val parentBox = pressLayout?.findBySourceId(parentId) ?: return@let null
-                                if (parentBox.node.rotation != 0.0) return@let null
+                                // Bail under any inherited rotation (parent's own + every ancestor) so the
+                                // snapped resize runs in an axis-aligned frame — this keeps handleRotation == 0
+                                // in the apply/commit path, where snapped deltas assume the document frame.
+                                val parentFrameRotation = pressLayout?.pathToSourceId(parentBox.node.sourceId)?.sumOf { it.node.rotation } ?: 0.0
+                                if (parentFrameRotation != 0.0) return@let null
                                 collectSnapContext(pressDocument, pressLayout, parentBox, setOf(id))
                             }
 
@@ -602,8 +642,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val resizeTargets = (mode as? CanvasOperation.Resize)?.let {
                                 resizeTargets(pressDocument, pressLayout, state.designState.selectedNodeIds)
                             }.orEmpty()
-                            val rotateBaseline = if (mode == CanvasOperation.Rotate && selectedResizeBox != null && pressDesign.selectedNodeId.isNotBlank()) {
-                                val center = GeoPoint(selectedResizeBox.centerX, selectedResizeBox.centerY)
+                            val rotateBaseline = if (mode == CanvasOperation.Rotate && handleGeometryBox != null && pressDesign.selectedNodeId.isNotBlank()) {
+                                // Pivot about the *visual* center (effective, so it sits under a rotated
+                                // ancestor correctly); the gesture still edits only the node's own
+                                // rotation, so the baseline keeps the own rotation.
+                                val center = GeoPoint(handleGeometryBox.centerX, handleGeometryBox.centerY)
                                 // Sibling rotations feed the rotation magnet so the box can line up with a neighbour.
                                 val neighborRotations = pressDocument.parentNodeOf(pressDesign.selectedNodeId)?.id
                                     ?.let { pressLayout?.findBySourceId(it) }
@@ -636,6 +679,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             while (true) {
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull() ?: break
+                                if (mode == CanvasOperation.Pan && panFromTertiaryButton && !event.buttons.isTertiaryPressed) break
                                 // Escape (routed through the key handler) aborts a live drag; check
                                 // before the up-test so an Escape-then-release still cancels.
                                 if (state.consumeCancelDrag()) { canceled = true; break }
@@ -699,10 +743,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         moveSnapState = snap?.state ?: MoveSnapState.None
                                         val totalDx = dragDx + (snap?.dx ?: 0.0)
                                         val totalDy = dragDy + (snap?.dy ?: 0.0)
+                                        // The drag is measured in the document (screen) frame, but a node's
+                                        // position lives in the shared root-local frame; under a rotated
+                                        // ancestor undo that rotation so the node tracks the pointer. Snapping
+                                        // is gated to ancestorRotation == 0, so when it runs this is identity.
+                                        val local = if (ancestorRotation != 0.0) rotateVector(totalDx, totalDy, -ancestorRotation) else GeoPoint(totalDx, totalDy)
                                         // Read the live selection: a new node may have been selected on press.
-                                        state.dispatch(DesignEditorIntent.MoveNodes(state.designState.selectedNodeIds, totalDx - appliedDx, totalDy - appliedDy))
-                                        appliedDx = totalDx
-                                        appliedDy = totalDy
+                                        state.dispatch(DesignEditorIntent.MoveNodes(state.designState.selectedNodeIds, local.x - appliedDx, local.y - appliedDy))
+                                        appliedDx = local.x
+                                        appliedDy = local.y
                                         snapGuides = snap?.guides ?: emptyList()
                                         spacingBars = snap?.spacing ?: emptyList()
                                         snappedAxes = SnappedAxes(x = snap?.snappedX == true, y = snap?.snappedY == true)
@@ -732,15 +781,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 applyResize(
                                                     state, target.nodeId, resizeBaseline, target.originPosition, mode.handle,
                                                     snap.docDx, snap.docDy, lockRatio,
-                                                    // The rotation compensation must match the rotation the
-                                                    // handle/baseline were resolved against at press time
-                                                    // (0 for a multi-selection's axis-aligned group box), not
-                                                    // the individual target's own rotation — otherwise a
-                                                    // selection that collapses to one top-level resize target
-                                                    // (e.g. a rotated frame plus one of its own children) would
-                                                    // apply rotation compensation the on-screen unrotated
-                                                    // handle never accounted for.
-                                                    rotationDegrees = selectionRotation,
+                                                    // De-rotate the drag by the *effective* handle rotation the
+                                                    // on-screen handle was grabbed at (own + inherited ancestor
+                                                    // rotation; 0 for a multi-selection's axis-aligned group box).
+                                                    // Resize snap is gated to ancestorRotation == 0, so a snapped
+                                                    // resize only ever runs with handleRotation == selectionRotation.
+                                                    rotationDegrees = handleRotation,
+                                                    // ...and re-express the position shift with only the node's
+                                                    // own rotation (position lives in the shared root-local frame).
+                                                    positionDegrees = selectionRotation,
                                                 )
                                                 snapGuides = snap.output?.guides ?: emptyList()
                                                 resizeMatched = snap.output?.match?.let { it.widthMatched || it.heightMatched } == true
@@ -855,15 +904,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                     docDx = snap.docDx,
                                                     docDy = snap.docDy,
                                                     lockRatio = lockRatio,
-                                                    // The rotation compensation must match the rotation the
-                                                    // handle/baseline were resolved against at press time
-                                                    // (0 for a multi-selection's axis-aligned group box), not
-                                                    // the individual target's own rotation — otherwise a
-                                                    // selection that collapses to one top-level resize target
-                                                    // (e.g. a rotated frame plus one of its own children) would
-                                                    // apply rotation compensation the on-screen unrotated
-                                                    // handle never accounted for.
-                                                    rotationDegrees = selectionRotation,
+                                                    // De-rotate the drag by the effective handle rotation the
+                                                    // on-screen handle was grabbed at (own + inherited ancestor
+                                                    // rotation; 0 for a multi-selection's axis-aligned group box).
+                                                    rotationDegrees = handleRotation,
+                                                    // ...and re-express the position shift with only the node's
+                                                    // own rotation (position is stored in the root-local frame).
+                                                    positionDegrees = selectionRotation,
                                                 )
                                             }
                                         }
@@ -922,8 +969,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             val project: (Double, Double) -> Offset = { docX, docY -> viewport.toScreen(docX, docY) }
             val guideStyle = colors.guideStyle()
             if (ws.hoveredNodeId.isNotBlank() && ws.hoveredNodeId !in design.selectedNodeIds && !altHeld) {
-                layout?.findBySourceId(ws.hoveredNodeId)?.let { box ->
-                    drawRotatedOutline(box.toBoundsBox(), box.node.rotation, viewport, colors.accent.copy(alpha = 0.85f), width = 1.5f)
+                layout?.effectiveTransformFor(ws.hoveredNodeId)?.let { t ->
+                    drawRotatedOutline(t.box, t.rotation, viewport, colors.accent.copy(alpha = 0.85f), width = 1.5f)
                 }
             }
 
@@ -1672,6 +1719,36 @@ private fun LayoutBox.toBoundsBox(): BoundsBox =
 private fun BoundsBox.visualBounds(rotationDegrees: Double): BoundsBox =
     if (rotationDegrees == 0.0) this else axisAlignedBounds(rotatedCorners(this, rotationDegrees))
 
+/**
+ * Path of layout boxes from this (root) box down to the node with [sourceId], inclusive, or null
+ * when absent — the chain whose rotated ancestors a nested node's overlay/gesture geometry must
+ * follow.
+ */
+private fun LayoutBox.pathToSourceId(sourceId: String): List<LayoutBox>? {
+    if (node.sourceId == sourceId) return listOf(this)
+    children.forEach { child -> child.pathToSourceId(sourceId)?.let { return listOf(this) + it } }
+    return null
+}
+
+/** The rotated ancestors of the node ending [path], nearest-first (immediate parent → root), skipping unrotated ones. */
+private fun ancestorRotationsOf(path: List<LayoutBox>): List<AncestorRotation> =
+    path.dropLast(1).asReversed().mapNotNull { box ->
+        box.node.rotation.takeIf { it != 0.0 }?.let {
+            AncestorRotation(GeoPoint(box.x + box.width / 2.0, box.y + box.height / 2.0), it)
+        }
+    }
+
+/**
+ * The node [sourceId]'s on-screen [EffectiveTransform] within this (root) layout, composing every
+ * rotated ancestor — so selection outline, handles and the rotate affordance follow the same
+ * transform the renderer nests, instead of floating in the node's pre-rotation layout position.
+ */
+private fun LayoutBox.effectiveTransformFor(sourceId: String): EffectiveTransform? {
+    val path = pathToSourceId(sourceId) ?: return null
+    val target = path.last()
+    return effectiveTransform(target.toBoundsBox(), target.node.rotation, ancestorRotationsOf(path))
+}
+
 private const val HandleHitRadiusPx = 11f
 
 /** Screen-space radius within which a free-move drag magnetically *catches* an alignment line. */
@@ -1710,6 +1787,31 @@ private const val WheelZoomFollowRate = 18f
  */
 private const val WheelZoomConvergeFraction = 1e-3f
 
+private data class CanvasGestureStart(
+    val change: PointerInputChange,
+    val tertiaryButton: Boolean,
+)
+
+/**
+ * Compose Desktop keeps [awaitFirstDown] primary-button-only for mouse input. The canvas also
+ * uses the middle button for panning, so wait for that explicitly while preserving the normal
+ * primary mouse/touch path used by selection, marquee, resize and object creation.
+ */
+private suspend fun AwaitPointerEventScope.awaitCanvasGestureStart(): CanvasGestureStart {
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull() ?: continue
+        if (!change.isConsumed && event.buttons.isTertiaryPressed) {
+            return CanvasGestureStart(change, tertiaryButton = true)
+        }
+        val allMouse = event.changes.all { it.type == PointerType.Mouse }
+        val regularDown = event.changes.all { it.changedToDown() }
+        if (regularDown && (!allMouse || event.buttons.isPrimaryPressed)) {
+            return CanvasGestureStart(change, tertiaryButton = false)
+        }
+    }
+}
+
 /** Nearest resize handle to [pos], accounting for the component's own [rotationDegrees]. */
 private fun rotatedHandleAt(box: BoundsBox, rotationDegrees: Double, viewport: CanvasViewport, pos: Offset): ResizeHandle? {
     val points = rotatedHandlePoints(box, rotationDegrees)
@@ -1747,10 +1849,9 @@ private fun resolveHandleCursor(
     // Point-edit mode replaces object handles with path anchors; no resize cursor there.
     if (id == vectorEditNodeId) return null
     if (document.nodeById(id)?.locked == true) return null
-    val box = layout?.findBySourceId(id) ?: return null
-    val rotation = box.node.rotation
-    val handle = rotatedHandleAt(box.toBoundsBox(), rotation, viewport, pos) ?: return null
-    return cursorForResizeKind(resizeCursorKindForHandle(handle, rotation))
+    val transform = layout?.effectiveTransformFor(id) ?: return null
+    val handle = rotatedHandleAt(transform.box, transform.rotation, viewport, pos) ?: return null
+    return cursorForResizeKind(resizeCursorKindForHandle(handle, transform.rotation))
 }
 
 private fun cursorForResizeKind(kind: ResizeCursorKind): PointerIcon = when (kind) {
@@ -1882,7 +1983,7 @@ private fun altMeasurementTarget(
 ): AltTarget? {
     val hoveredId = ws.hoveredNodeId
     if (hoveredId.isNotBlank() && hoveredId != selectedId && hoveredId !in design.selectedNodeIds) {
-        layout?.findBySourceId(hoveredId)?.let { box -> return AltTarget(box.toBoundsBox(), box.node.rotation) }
+        layout?.effectiveTransformFor(hoveredId)?.let { t -> return AltTarget(t.box, t.rotation) }
     }
     return parentBox?.let { AltTarget(it, 0.0) }
 }
@@ -2007,12 +2108,17 @@ private fun io.aequicor.visualization.editor.ui.theme.EditorColors.guideStyle():
  *
  * When the target is rotated, [rotationDegrees] inverse-rotates the drag delta into the
  * component's own (pre-rotation) axes first, so dragging a visually rotated handle grows the
- * component along the edge the user is actually looking at; [computeResize] then runs
- * entirely in that de-rotated frame. Its `dx`/`dy` (the shift of the authored top-left) come
- * back in that same de-rotated frame too, so — since position is stored in the single shared
- * document frame, not a per-node rotated one — they must be rotated forward again by
- * [rotationDegrees] before being added to the authored position; skipping that final rotation
- * would add a de-rotated-frame vector directly to a document-frame point.
+ * component along the edge the user is actually looking at; [computeResize] then runs entirely
+ * in that de-rotated frame. [rotationDegrees] is the *effective* on-screen rotation — the node's
+ * own rotation plus any inherited from rotated ancestors — since that is what tilts the handle
+ * the user grabs.
+ *
+ * Its `dx`/`dy` (the shift of the authored top-left) come back in that de-rotated frame too, so
+ * they must be rotated forward before being added to the authored position. Position is stored in
+ * the shared root-local frame, which differs from the box's own de-rotated frame by only the
+ * node's *own* rotation — so the forward rotation uses [positionDegrees] (the own rotation), not
+ * the full effective [rotationDegrees]. They coincide (and this collapses to the classic
+ * single-rotation case) whenever no ancestor is rotated.
  */
 private fun computeRotatedResize(
     baseline: BoundsBox,
@@ -2021,6 +2127,7 @@ private fun computeRotatedResize(
     docDy: Float,
     lockRatio: Boolean,
     rotationDegrees: Double,
+    positionDegrees: Double = rotationDegrees,
 ): io.aequicor.visualization.editor.presentation.ResizeResult {
     val local = if (rotationDegrees != 0.0) rotateVector(docDx.toDouble(), docDy.toDouble(), -rotationDegrees) else GeoPoint(docDx.toDouble(), docDy.toDouble())
     val result = computeResize(
@@ -2031,8 +2138,8 @@ private fun computeRotatedResize(
         docDy = local.y,
         lockRatio = lockRatio,
     )
-    if (rotationDegrees == 0.0 || (result.dx == 0.0 && result.dy == 0.0)) return result
-    val positionDelta = rotateVector(result.dx, result.dy, rotationDegrees)
+    if (positionDegrees == 0.0 || (result.dx == 0.0 && result.dy == 0.0)) return result
+    val positionDelta = rotateVector(result.dx, result.dy, positionDegrees)
     return result.copy(dx = positionDelta.x, dy = positionDelta.y)
 }
 
@@ -2046,8 +2153,9 @@ private fun applyResize(
     docDy: Float,
     lockRatio: Boolean,
     rotationDegrees: Double = 0.0,
+    positionDegrees: Double = rotationDegrees,
 ) {
-    val result = computeRotatedResize(baseline, handle, docDx, docDy, lockRatio, rotationDegrees)
+    val result = computeRotatedResize(baseline, handle, docDx, docDy, lockRatio, rotationDegrees, positionDegrees)
     // Position is parent-relative; the parent doesn't move during a resize, so the change
     // in absolute origin equals the change in authored position.
     if (originPos != null && (result.dx != 0.0 || result.dy != 0.0)) {
@@ -2092,8 +2200,9 @@ private fun commitResizeWriteBack(
     docDy: Float,
     lockRatio: Boolean,
     rotationDegrees: Double = 0.0,
+    positionDegrees: Double = rotationDegrees,
 ) {
-    val result = computeRotatedResize(baseline, handle, docDx, docDy, lockRatio, rotationDegrees)
+    val result = computeRotatedResize(baseline, handle, docDx, docDy, lockRatio, rotationDegrees, positionDegrees)
     if (originPos != null && (result.dx != 0.0 || result.dy != 0.0)) {
         state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = originPos.x + result.dx, y = originPos.y + result.dy))
     }
@@ -2292,7 +2401,9 @@ private data class FitRect(val x: Double, val y: Double, val w: Double, val h: D
 
 private fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): BoundsBox? {
     layout ?: return null
-    val boxes = ids.mapNotNull { layout.findBySourceId(it)?.toBoundsBox() }
+    // Union each node's *visual* bounds (own rotation + inherited ancestor rotation), so the
+    // multi-selection bbox covers the real on-screen extent under a rotated ancestor too.
+    val boxes = ids.mapNotNull { id -> layout.effectiveTransformFor(id)?.let { it.box.visualBounds(it.rotation) } }
     if (boxes.isEmpty()) return null
     val minX = boxes.minOf { it.x }
     val minY = boxes.minOf { it.y }

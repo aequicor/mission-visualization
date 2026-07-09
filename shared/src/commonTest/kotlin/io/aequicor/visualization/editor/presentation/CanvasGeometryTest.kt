@@ -86,6 +86,87 @@ class CanvasGeometryTest {
         assertClose(10.0, normalizeAngleDegrees(370.0))
     }
 
+    // --- Inherited (ancestor) rotation -------------------------------------------
+
+    @Test
+    fun effectiveTransformWithoutAncestorsIsTheBoxItself() {
+        val box = BoundsBox(x = 10.0, y = 20.0, width = 40.0, height = 30.0)
+        val t = effectiveTransform(box, ownRotation = 25.0, ancestors = emptyList())
+        assertEquals(box, t.box)
+        assertClose(25.0, t.rotation)
+        assertClose(25.0, t.ownRotation)
+    }
+
+    @Test
+    fun rotatedRootCarriesAnUnrotatedChildToItsVisualCenter() {
+        // Root rotated 90° clockwise about its own center; the child's own rotation is 0.
+        val rootCenter = GeoPoint(500.0, 400.0)
+        val child = BoundsBox(x = 600.0, y = 380.0, width = 40.0, height = 40.0) // center (620, 400)
+        val t = effectiveTransform(child, ownRotation = 0.0, ancestors = listOf(AncestorRotation(rootCenter, 90.0)))
+        // A 90° cw rotation about (500,400) maps (620,400) → (500, 400 + 120) = (500, 520).
+        assertClose(500.0, t.box.centerX)
+        assertClose(520.0, t.box.centerY)
+        assertClose(90.0, t.rotation)   // inherited from the root
+        assertClose(0.0, t.ownRotation) // the child itself is unrotated
+        // Size is preserved (only relocated + rotated).
+        assertClose(40.0, t.box.width)
+        assertClose(40.0, t.box.height)
+    }
+
+    @Test
+    fun effectiveTransformReproducesTheRenderersNestedRotationQuad() {
+        // The renderer draws a child as R_root(R_child(corner)) about each box's own center.
+        // The effective transform must yield the identical visual quad via rotatedCorners.
+        val rootCenter = GeoPoint(300.0, 200.0)
+        val rootRotation = 37.0
+        val child = BoundsBox(x = 340.0, y = 150.0, width = 80.0, height = 60.0)
+        val childRotation = 20.0
+        val childCenter = GeoPoint(child.centerX, child.centerY)
+
+        val expected = rotatedCorners(child, childRotation).map { corner ->
+            rotatePointAroundCenter(corner, rootCenter, rootRotation)
+        }
+
+        val t = effectiveTransform(child, ownRotation = childRotation, ancestors = listOf(AncestorRotation(rootCenter, rootRotation)))
+        val actual = rotatedCorners(t.box, t.rotation)
+
+        expected.zip(actual).forEach { (e, a) ->
+            assertClose(e.x, a.x)
+            assertClose(e.y, a.y)
+        }
+    }
+
+    @Test
+    fun ancestorsComposeNearestFirstMatchingNestedRotatePivots() {
+        // Two rotated ancestors: immediate parent first, root last (as the renderer nests them).
+        val parentCenter = GeoPoint(150.0, 150.0)
+        val rootCenter = GeoPoint(0.0, 0.0)
+        val node = BoundsBox(x = 190.0, y = 140.0, width = 20.0, height = 20.0) // center (200,150)
+        val ancestors = listOf(
+            AncestorRotation(parentCenter, 30.0), // nearest (immediate parent) — applied first
+            AncestorRotation(rootCenter, 45.0),   // root — applied last
+        )
+        val expectedCenter = rotatePointAroundCenter(
+            rotatePointAroundCenter(GeoPoint(200.0, 150.0), parentCenter, 30.0),
+            rootCenter, 45.0,
+        )
+        val t = effectiveTransform(node, ownRotation = 10.0, ancestors = ancestors)
+        assertClose(expectedCenter.x, t.box.centerX)
+        assertClose(expectedCenter.y, t.box.centerY)
+        assertClose(10.0 + 30.0 + 45.0, t.rotation)
+        assertClose(85.0, ancestorRotationDegrees(ancestors) + 10.0)
+    }
+
+    @Test
+    fun ancestorRotationDegreesSumsOnlyTheAncestors() {
+        val ancestors = listOf(
+            AncestorRotation(GeoPoint(0.0, 0.0), 30.0),
+            AncestorRotation(GeoPoint(1.0, 1.0), -12.5),
+        )
+        assertClose(17.5, ancestorRotationDegrees(ancestors))
+        assertClose(0.0, ancestorRotationDegrees(emptyList()))
+    }
+
     // --- Resize cursor orientation -----------------------------------------------
 
     @Test

@@ -10,13 +10,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build Web Wasm
-    runs-on: ubuntu-latest
+  deploy:
+    name: Build and Deploy Web Wasm
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -30,8 +37,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Build Web Wasm distribution
-        run: ./gradlew :webApp:wasmJsBrowserDistribution
+      - name: Build optimized Web Wasm distribution
+        run: ./gradlew :webApp:packWasmDist
 
       - name: Disable Jekyll processing
         run: touch webApp/build/dist/wasmJs/productionExecutable/.nojekyll
@@ -43,19 +50,8 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: webApp/build/dist/wasmJs/productionExecutable
+          include-hidden-files: true
 
-  deploy:
-    name: Deploy GitHub Pages
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5

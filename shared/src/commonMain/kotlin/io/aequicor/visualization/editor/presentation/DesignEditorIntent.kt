@@ -139,6 +139,11 @@ sealed interface DesignEditorIntent {
     /** Creates a new screen (top-level frame + its own page). */
     data class CreateScreen(val preset: ScreenPreset, val title: String) : DesignEditorIntent
 
+    // --- Source ------------------------------------------------------------
+
+    /** Replaces one authored SLM source file and recompiles it for the live preview. */
+    data class EditSource(val sourceIndex: Int, val content: String) : DesignEditorIntent
+
     // --- Layout container --------------------------------------------------
 
     data class SetLayoutMode(val nodeId: String, val mode: EditorLayoutMode) : DesignEditorIntent
