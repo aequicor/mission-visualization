@@ -43,6 +43,33 @@ Compose-превью с оверлеями (выделение, инспекто
 - Тесты движка: `./gradlew :engine:ir:jvmTest` / `./gradlew :engine:frontend:jvmTest`
 - Compile-check desktop: `./gradlew :desktopApp:compileKotlin`
 
+## ИИ-тестирование в браузере (webApp/Wasm)
+Продукт делается **wasm-first**: браузер (`:webApp`, Compose/WasmJs) — **основная** поверхность
+проверки UI, а не desktop-демо. Поэтому UI-правки агент проверяет **сам** в браузере и показывает
+результат — не перекладывает ручную проверку на пользователя.
+
+**Порт — не фиксированный, особенно в worktree.** Основной чекаут (или соседний worktree) уже
+держит dev-сервер на 8080; параллельно занимать тот же порт нельзя. Правило: поднимать wasm на
+**свободном (случайном) порту** и драйвить **фактический** порт webpack, а не «ожидаемый».
+`preview_start` берёт свободный порт для прокси (`autoPort: true` в `.claude/launch.json`, name
+`webApp`), но webpack всё равно биндится на свой порт и каскадит 8080→8081→8082… — истинный порт
+смотреть в `preview_logs`. Готовность: `curl -s -o /dev/null -w '%{http_code}' http://localhost:<port>/`
+→ 200. Первая сборка ~30с+ — не навигировать раньше готовности (иначе таб застрянет на
+`chrome-error`); осиротевшие webpack-серверы (каскад 808x) — убить и стартовать заново одним чистым
+`preview_start`. Dev-сервер — блокирующая continuous-задача: только в фоне (`preview_start` либо
+`./gradlew :webApp:wasmJsBrowserDevelopmentRun` через background-bash), не синхронно.
+
+**Взаимодействие — на выбор:**
+- **Внутренний браузер** (`preview_*`): скриншоты, логи, консоль, сеть, ресайз (в т.ч. dark mode).
+- **chrome-plugin** (`claude-in-chrome` MCP; тулы деференные — грузить через ToolSearch; нужен
+  подключённый Chrome с расширением): навигировать на реальный `http://localhost:<port>/`.
+
+**Гочи Compose-canvas (для обоих путей):** весь редактор — один canvas в shadow-root, DOM-инспекта
+текста нет — только скриншоты + синтетические жесты. Кликать цепочкой PointerEvent
+`pointermove→pointerdown→pointerup` по canvas; координаты skiko — backing-пиксели
+(`clientX = cssX * devicePixelRatio`); `Modifier.clickable` требует быстрый тап (down→up ~70мс в
+ОДНОМ вызове), иначе Compose трактует как long-press и onClick не срабатывает.
+
 ## Архитектура (целевая Clean Architecture)
 Зависимости направлены внутрь к `domain`: `ui → presentation → domain ← data`. `domain` и `data` —
 чистый Kotlin без Compose; Compose только в `presentation`/`ui`. Слоение закреплено границами
@@ -96,7 +123,8 @@ dispatcher'ов, `StateFlow`, `runTest`), Compose (stateless + hoisting, `Modifi
 - Авторинг SLM-документов — по спецификации `design-book/semantic-layout-markdown-i18n.md`.
 - Новый код — сразу по целевым правилам (repositories/use cases, токены темы, stateless-composable).
 - Менять поведение — прогонять `./gradlew :shared:jvmTest` (движок — `:engine:ir:jvmTest`,
-  `:engine:frontend:jvmTest`); UI-изменения — проверять в desktop/web демо.
+  `:engine:frontend:jvmTest`); UI-изменения — проверять в первую очередь в web/wasm (продукт
+  wasm-first, см. «ИИ-тестирование в браузере»), desktop-демо — по необходимости.
 - Держать этот файл и `.claude/rules/*` в актуальном состоянии при смене конвенций.
 
 ## Код-конвенции (на основе best-practices)
