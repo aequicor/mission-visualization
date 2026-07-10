@@ -3,6 +3,8 @@ package io.aequicor.visualization.editor.presentation
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignTransition
 import io.aequicor.visualization.engine.ir.model.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HandleMirror
@@ -118,8 +120,20 @@ sealed interface DesignEditorIntent {
     /** Steps a node within its sibling list; z-order = paint order (later = front). */
     data class ReorderNode(val nodeId: String, val move: ZOrderMove) : DesignEditorIntent
 
-    /** Drag/drop in Layers: place [nodeId] under [newParentId] at [index] (-1 appends). */
-    data class ReparentNode(val nodeId: String, val newParentId: String, val index: Int = -1) : DesignEditorIntent
+    /**
+     * Places [nodeId] under [newParentId] at [index] (-1 appends). Canvas drag-out may
+     * additionally provide target-parent-relative [position], fixed visual [size], and
+     * compensated [rotation]; those geometry changes are committed in the same structural
+     * source transaction.
+     */
+    data class ReparentNode(
+        val nodeId: String,
+        val newParentId: String,
+        val index: Int = -1,
+        val position: DesignPoint? = null,
+        val size: DesignSize? = null,
+        val rotation: Double? = null,
+    ) : DesignEditorIntent
 
     /** Bakes a component instance into an editable Frame subtree (Figma "Detach instance"). */
     data class DetachInstance(val nodeId: String) : DesignEditorIntent

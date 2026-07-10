@@ -7,11 +7,17 @@ import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.NewObjectKind
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
+import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.engine.ir.model.DesignSize
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -403,6 +409,49 @@ class StructuralWriteBackTest {
         )
         next.assertWroteBack(before)
         assertEquals(listOf(before.sources), next.previousSources, "source undo captured the pre-edit sources")
+    }
+
+    @Test
+    fun positionedReparentWritesStructureAndVisualGeometryAtomically() {
+        val before = freshState()
+        val position = DesignPoint(123.0, 45.0)
+        val size = DesignSize(321.0, 99.0)
+
+        val next = reduceDesignEditor(
+            before,
+            DesignEditorIntent.ReparentNode(
+                nodeId = "overview_hero",
+                newParentId = "overview_tiles",
+                position = position,
+                size = size,
+                rotation = 27.0,
+            ),
+        )
+
+        val working = assertNotNull(next.document?.nodeById("overview_hero"))
+        assertEquals("overview_tiles", next.document?.parentNodeOf("overview_hero")?.id)
+        assertEquals(position, working.position)
+        assertEquals(size, working.size)
+        assertEquals(27.0, working.rotation)
+        assertTrue(working.layoutChild.absolute)
+        assertEquals(HorizontalConstraint.Left, working.constraints.horizontal)
+        assertEquals(VerticalConstraint.Top, working.constraints.vertical)
+        assertEquals(SizingMode.Fixed, working.sizing?.horizontal)
+        assertEquals(SizingMode.Fixed, working.sizing?.vertical)
+
+        val recompiled = assertNotNull(next.compiledDocumentOf(owningFile))
+        val persisted = assertNotNull(recompiled.nodeById("overview_hero"))
+        assertEquals("overview_tiles", recompiled.parentNodeOf("overview_hero")?.id)
+        assertEquals(position, persisted.position)
+        assertEquals(size, persisted.size)
+        assertEquals(27.0, persisted.rotation)
+        assertTrue(persisted.layoutChild.absolute)
+        assertEquals(HorizontalConstraint.Left, persisted.constraints.horizontal)
+        assertEquals(VerticalConstraint.Top, persisted.constraints.vertical)
+        assertEquals(SizingMode.Fixed, persisted.sizing?.horizontal)
+        assertEquals(SizingMode.Fixed, persisted.sizing?.vertical)
+        next.assertWroteBack(before)
+        assertEquals(listOf(before.sources), next.previousSources, "one source transaction captured")
     }
 
     @Test

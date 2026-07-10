@@ -54,9 +54,11 @@ import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.bindable
@@ -608,7 +610,16 @@ private fun DesignEditorState.reorderNodeWriteBack(intent: DesignEditorIntent.Re
 private fun DesignEditorState.reparentNodeWriteBack(intent: DesignEditorIntent.ReparentNode): DesignEditorState {
     val document = document ?: return this
     val moving = document.nodeById(intent.nodeId) ?: return this
-    val inMemory = editDocument { it.reparent(intent.nodeId, intent.newParentId, intent.index) }
+    val inMemory = editDocument {
+        it.reparent(
+            nodeId = intent.nodeId,
+            newParentId = intent.newParentId,
+            index = intent.index,
+            position = intent.position,
+            size = intent.size,
+            rotation = intent.rotation,
+        )
+    }
     // No-op (cycle, missing end, or unchanged tree): don't touch sources.
     if (inMemory === this) return inMemory
 
@@ -637,9 +648,37 @@ private fun DesignEditorState.reparentNodeWriteBack(intent: DesignEditorIntent.R
     }
 
     val expected = compiledResults[movingOwner].document?.pageTreeIds() ?: return inMemory
-    val edit = MoveSection(intent.nodeId, intent.newParentId, afterSiblingId)
-    return withStructuralSource(intent.nodeId, listOf(edit), inMemory, expected) { recompiled ->
-        recompiled.parentNodeOf(intent.nodeId)?.id == intent.newParentId
+    val edits = buildList {
+        add(MoveSection(intent.nodeId, intent.newParentId, afterSiblingId))
+        intent.position?.let {
+            add(SetNodePosition(intent.nodeId, it.x, it.y))
+            add(SetNodeConstraints(intent.nodeId, HorizontalConstraint.Left, VerticalConstraint.Top))
+        }
+        intent.size?.let { size ->
+            add(
+                SetSizing(
+                    nodeId = intent.nodeId,
+                    width = SizingSpec(SizingMode.Fixed, size.width),
+                    height = SizingSpec(SizingMode.Fixed, size.height),
+                ),
+            )
+        }
+        intent.rotation?.let { add(SetNodeRotation(intent.nodeId, it)) }
+    }
+    return withStructuralSource(intent.nodeId, edits, inMemory, expected) { recompiled ->
+        val node = recompiled.nodeById(intent.nodeId)
+        recompiled.parentNodeOf(intent.nodeId)?.id == intent.newParentId &&
+            (intent.position == null || (node?.position == intent.position &&
+                node.layoutChild.absolute &&
+                node.constraints.horizontal == HorizontalConstraint.Left &&
+                node.constraints.vertical == VerticalConstraint.Top)) &&
+            (intent.size == null || node?.let {
+                it.size == intent.size &&
+                    it.sizing?.let { sizing ->
+                        sizing.horizontal == SizingMode.Fixed && sizing.vertical == SizingMode.Fixed
+                    } == true
+            } == true) &&
+            (intent.rotation == null || node?.rotation == intent.rotation)
     }
 }
 
@@ -1048,7 +1087,10 @@ private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.Res
 
 private fun DesignEditorState.positionNodeWriteBack(intent: DesignEditorIntent.PositionNode): DesignEditorState =
     writeBackEdits(intent.nodeId, listOf(SetNodePosition(intent.nodeId, intent.x, intent.y))) { node ->
-        node.copy(position = DesignPoint(intent.x, intent.y))
+        node.copy(
+            position = DesignPoint(intent.x, intent.y),
+            layoutChild = node.layoutChild.copy(absolute = true),
+        )
     }
 
 private fun DesignEditorState.rotationNodeWriteBack(intent: DesignEditorIntent.RotateNode): DesignEditorState =

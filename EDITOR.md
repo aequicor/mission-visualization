@@ -89,6 +89,8 @@ drags the selection instead of re-selecting the nested/behind object under the c
 (`pressHitBelongsToSelection`; design-book §10 "drag moves object"). An unrelated object
 stacked on top is not part of the selection, so it still wins the press (§10 "topmost
 selectable layer gets priority"); a nested object is reached by double-click.
+Overflow children remain hit-testable outside an unclipped parent; a clipped parent prunes
+the same subtree for rendering and pointer hits.
 
 **Position (ch. 12)** — inspector X/Y/W/H editing (parent-relative), arrow-key nudge and
 Shift+arrow big-nudge, aspect-ratio lock, rotation field, flip, z-order via
@@ -136,12 +138,12 @@ arbitrary position (the layout engine ignores its `position`), so a Move drag on
 previews a reorder within its flow parent: a live insertion-line indicator
 (`flowInsertionIndex`/`flowInsertionLine` in `CanvasGeometry.kt`) tracks the pointer along the
 parent's main axis, and release dispatches `ReparentNode` at the resolved index (one undo
-entry). Detaching a flow child into free positioning is a separate, explicit action — the
-inspector's Position section shows an "Absolute position inside frame" button for any
-non-coordinate-positioned selection, dispatching `SetAbsolutePosition` (sets
-`layoutChild.absolute = true` and captures the child's current resolved position so it doesn't
-jump). Both behaviors match design-book §18's "Auto layout boundary" note; grid-mode auto
-layout parents are out of scope for the reorder preview (1D flow only).
+entry). If the dragged node's visual center leaves its parent, release promotes it to the nearest
+containing ancestor (capped at the screen root), preserves its visual position/rotation/size,
+and makes it absolute; Layers immediately reflects the shallower hierarchy. The inspector's
+"Absolute position inside frame" button remains the explicit way to detach a flow child without
+changing its parent. Grid-mode parents have no within-grid reorder preview, but nested flow
+children still use the same drag-out promotion rule.
 
 **Appearance / Fill / Stroke (ch. 13–15)** — layer opacity + blend mode + corner radius;
 effects stack (drop/inner shadow, layer/background blur) with per-effect visibility

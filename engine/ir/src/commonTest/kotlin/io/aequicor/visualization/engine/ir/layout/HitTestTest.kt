@@ -6,6 +6,7 @@ import io.aequicor.visualization.engine.ir.geometry.RectD
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
+import io.aequicor.visualization.engine.ir.resolve.ResolvedAutoLayout
 import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -81,5 +82,84 @@ class HitTestTest {
         )
         assertEquals(box, box.hitTest(50.0, 10.0)) // on the centerline
         assertNull(box.hitTest(50.0, 19.0)) // far from the stroke
+    }
+
+    @Test
+    fun overflowingChildCanBeHitOutsideUnclippedParent() {
+        val child = shapeBox(DesignNodeKind.Shape(ShapeType.Rectangle), width = 20.0, height = 20.0)
+            .copy(x = 120.0, y = 10.0)
+        val parent = LayoutBox(
+            node = ResolvedNode(
+                id = "parent",
+                sourceId = "parent",
+                type = "frame",
+                name = "parent",
+                layout = ResolvedAutoLayout(clipsContent = false),
+            ),
+            x = 0.0,
+            y = 0.0,
+            width = 100.0,
+            height = 100.0,
+            children = listOf(child),
+        )
+
+        assertEquals(child, parent.hitTest(125.0, 15.0))
+    }
+
+    @Test
+    fun clippedParentBlocksOverflowingChildHit() {
+        val child = shapeBox(DesignNodeKind.Shape(ShapeType.Rectangle), width = 20.0, height = 20.0)
+            .copy(x = 120.0, y = 10.0)
+        val parent = LayoutBox(
+            node = ResolvedNode(
+                id = "parent",
+                sourceId = "parent",
+                type = "frame",
+                name = "parent",
+                layout = ResolvedAutoLayout(clipsContent = true),
+            ),
+            x = 0.0,
+            y = 0.0,
+            width = 100.0,
+            height = 100.0,
+            children = listOf(child),
+        )
+
+        assertNull(parent.hitTest(125.0, 15.0))
+    }
+
+    @Test
+    fun clippedAncestorBlocksOverflowThroughUnclippedIntermediate() {
+        val child = shapeBox(DesignNodeKind.Shape(ShapeType.Rectangle), width = 20.0, height = 20.0)
+            .copy(x = 120.0, y = 10.0)
+        val intermediate = LayoutBox(
+            node = ResolvedNode(
+                id = "intermediate",
+                sourceId = "intermediate",
+                type = "frame",
+                name = "intermediate",
+            ),
+            x = 0.0,
+            y = 0.0,
+            width = 80.0,
+            height = 80.0,
+            children = listOf(child),
+        )
+        val root = LayoutBox(
+            node = ResolvedNode(
+                id = "root",
+                sourceId = "root",
+                type = "frame",
+                name = "root",
+                layout = ResolvedAutoLayout(clipsContent = true),
+            ),
+            x = 0.0,
+            y = 0.0,
+            width = 100.0,
+            height = 100.0,
+            children = listOf(intermediate),
+        )
+
+        assertNull(root.hitTest(125.0, 15.0))
     }
 }
