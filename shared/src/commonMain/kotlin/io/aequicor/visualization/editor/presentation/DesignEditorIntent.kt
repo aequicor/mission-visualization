@@ -22,6 +22,9 @@ import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
+import io.aequicor.visualization.subsystems.annotations.AnnotationImage
+import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 
 /**
  * Every user action against the design document flows through one of these commands
@@ -413,6 +416,110 @@ sealed interface DesignEditorIntent {
 
     /** Mutates the node's motion clip via [op] and writes the `motion:` block back to SLM. */
     data class MotionCommand(val nodeId: String, val op: MotionOp) : DesignEditorIntent
+
+    // --- Annotations (review layer; write back to the sidecar source) ------
+
+    /**
+     * Creates an annotation of [kind] at [anchor] on the screen owned by
+     * [screenFileName] (`*.layout.md`). The reducer mints a stable id and writes the
+     * new section into the `*.annotations.md` sidecar, creating that source on the
+     * screen's first annotation.
+     */
+    data class AddAnnotation(
+        val screenFileName: String,
+        val anchor: AnnotationAnchor,
+        val kind: AnnotationKind,
+    ) : DesignEditorIntent
+
+    /** Replaces the plain-text body of the annotation. */
+    data class SetAnnotationText(
+        val screenFileName: String,
+        val annotationId: String,
+        val text: String,
+    ) : DesignEditorIntent
+
+    /** Switches the annotation between note and issue (visual + export participation). */
+    data class SetAnnotationKind(
+        val screenFileName: String,
+        val annotationId: String,
+        val kind: AnnotationKind,
+    ) : DesignEditorIntent
+
+    /** Attaches (or replaces) the annotation's embedded image. */
+    data class AttachAnnotationImage(
+        val screenFileName: String,
+        val annotationId: String,
+        val image: AnnotationImage,
+    ) : DesignEditorIntent
+
+    /** Removes the annotation's embedded image. */
+    data class DetachAnnotationImage(
+        val screenFileName: String,
+        val annotationId: String,
+    ) : DesignEditorIntent
+
+    /**
+     * Moves the annotation: a node-anchored one gets ([x], [y]) as its new offset from
+     * the node's top-center, a free-point one as its new absolute point.
+     */
+    data class MoveAnnotation(
+        val screenFileName: String,
+        val annotationId: String,
+        val x: Double,
+        val y: Double,
+    ) : DesignEditorIntent
+
+    /** Re-pins the annotation to [nodeId] with the given offset from its top-center. */
+    data class AttachAnnotationToNode(
+        val screenFileName: String,
+        val annotationId: String,
+        val nodeId: String,
+        val offsetX: Double = 0.0,
+        val offsetY: Double = 0.0,
+    ) : DesignEditorIntent
+
+    /**
+     * Detaches a node-anchored annotation into a free point at ([x], [y]) — the badge
+     * position the caller resolved from the current node bounds, so it stays visually
+     * in place. A free-point annotation is left unchanged.
+     */
+    data class DetachAnnotationAnchor(
+        val screenFileName: String,
+        val annotationId: String,
+        val x: Double,
+        val y: Double,
+    ) : DesignEditorIntent
+
+    /** Adds an extra node reference to the annotation (deduped). */
+    data class AddAnnotationReference(
+        val screenFileName: String,
+        val annotationId: String,
+        val nodeId: String,
+    ) : DesignEditorIntent
+
+    /** Removes an extra node reference from the annotation. */
+    data class RemoveAnnotationReference(
+        val screenFileName: String,
+        val annotationId: String,
+        val nodeId: String,
+    ) : DesignEditorIntent
+
+    /** Deletes the annotation (its sidecar section is dropped surgically). */
+    data class DeleteAnnotation(
+        val screenFileName: String,
+        val annotationId: String,
+    ) : DesignEditorIntent
+
+    // --- Annotations (view; handled by reduceAnnotationWorkspace) ----------
+
+    /** Collapses/expands the annotation card. View state, never the document. */
+    data class ToggleAnnotationExpanded(val annotationId: String) : DesignEditorIntent
+
+    /** Selects an annotation for the inspector; blank clears (like [SelectNode]). */
+    data class SelectAnnotation(val annotationId: String) : DesignEditorIntent
+
+    /** Activates ([AnnotationTool.Note]/[AnnotationTool.Issue]) or leaves annotation mode. */
+    data class SetAnnotationTool(val tool: AnnotationTool) : DesignEditorIntent
 
     // --- History -----------------------------------------------------------
 

@@ -1,0 +1,102 @@
+package io.aequicor.visualization.subsystems.annotations
+
+/**
+ * Pure layer operations, in the spirit of `reduceDesignEditor`: every operation is
+ * `(AnnotationLayer, args) -> AnnotationLayer`, no side effects. Operations targeting
+ * an unknown annotation id return the layer unchanged.
+ */
+
+/** Adds [annotation]; if an annotation with the same id exists it is replaced in place. */
+public fun AnnotationLayer.addAnnotation(annotation: Annotation): AnnotationLayer {
+    val index = annotations.indexOfFirst { it.id == annotation.id }
+    val updated = if (index >= 0) {
+        annotations.toMutableList().apply { this[index] = annotation }
+    } else {
+        annotations + annotation
+    }
+    return copy(annotations = updated)
+}
+
+/** Replaces the plain-text body of the annotation with [id]. */
+public fun AnnotationLayer.updateAnnotationText(id: String, text: String): AnnotationLayer =
+    mapAnnotation(id) { it.copy(body = AnnotationBody(text)) }
+
+/** Switches the annotation between note and issue. */
+public fun AnnotationLayer.setAnnotationKind(id: String, kind: AnnotationKind): AnnotationLayer =
+    mapAnnotation(id) { it.copy(kind = kind) }
+
+/** Attaches (or replaces) the embedded image of the annotation. */
+public fun AnnotationLayer.attachAnnotationImage(id: String, image: AnnotationImage): AnnotationLayer =
+    mapAnnotation(id) { it.copy(image = image) }
+
+/** Removes the embedded image of the annotation. */
+public fun AnnotationLayer.detachAnnotationImage(id: String): AnnotationLayer =
+    mapAnnotation(id) { it.copy(image = null) }
+
+/**
+ * Moves the annotation: for a [AnnotationAnchor.NodeAnchor] the pair becomes the new
+ * offset from the node's top-center; for a [AnnotationAnchor.FreePoint] it becomes the
+ * new absolute point.
+ */
+public fun AnnotationLayer.moveAnnotation(id: String, x: Double, y: Double): AnnotationLayer =
+    mapAnnotation(id) { annotation ->
+        val moved = when (val anchor = annotation.anchor) {
+            is AnnotationAnchor.NodeAnchor -> anchor.copy(offsetX = x, offsetY = y)
+            is AnnotationAnchor.FreePoint -> AnnotationAnchor.FreePoint(x, y)
+        }
+        annotation.copy(anchor = moved)
+    }
+
+/** Re-pins the annotation to [nodeId] with the given offset from the node's top-center. */
+public fun AnnotationLayer.attachAnnotationToNode(
+    id: String,
+    nodeId: String,
+    offsetX: Double = 0.0,
+    offsetY: Double = 0.0,
+): AnnotationLayer =
+    mapAnnotation(id) { it.copy(anchor = AnnotationAnchor.NodeAnchor(nodeId, offsetX, offsetY)) }
+
+/**
+ * Detaches a node-anchored annotation into a free point at [resolvedPosition] — the
+ * badge position the caller resolved from the current node bounds, so the annotation
+ * stays visually in place. A free-point annotation is returned unchanged.
+ */
+public fun AnnotationLayer.detachAnnotationAnchor(
+    id: String,
+    resolvedPosition: AnnotationPoint,
+): AnnotationLayer =
+    mapAnnotation(id) { annotation ->
+        when (annotation.anchor) {
+            is AnnotationAnchor.NodeAnchor ->
+                annotation.copy(anchor = AnnotationAnchor.FreePoint(resolvedPosition.x, resolvedPosition.y))
+            is AnnotationAnchor.FreePoint -> annotation
+        }
+    }
+
+/** Adds an extra node reference; duplicates are ignored. */
+public fun AnnotationLayer.addAnnotationReference(id: String, nodeId: String): AnnotationLayer =
+    mapAnnotation(id) { annotation ->
+        if (nodeId in annotation.references) annotation
+        else annotation.copy(references = annotation.references + nodeId)
+    }
+
+/** Removes an extra node reference; absent references are ignored. */
+public fun AnnotationLayer.removeAnnotationReference(id: String, nodeId: String): AnnotationLayer =
+    mapAnnotation(id) { it.copy(references = it.references - nodeId) }
+
+/** Deletes the annotation with [id]. */
+public fun AnnotationLayer.deleteAnnotation(id: String): AnnotationLayer {
+    val remaining = annotations.filterNot { it.id == id }
+    return if (remaining.size == annotations.size) this else copy(annotations = remaining)
+}
+
+private inline fun AnnotationLayer.mapAnnotation(
+    id: String,
+    transform: (Annotation) -> Annotation,
+): AnnotationLayer {
+    val index = annotations.indexOfFirst { it.id == id }
+    if (index < 0) return this
+    val transformed = transform(annotations[index])
+    if (transformed == annotations[index]) return this
+    return copy(annotations = annotations.toMutableList().apply { this[index] = transformed })
+}

@@ -2,6 +2,7 @@ package io.aequicor.visualization.editor.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,8 +15,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -74,6 +77,15 @@ import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.StrokeOp
 import io.aequicor.visualization.editor.presentation.TextRangeEditing
 import io.aequicor.visualization.editor.presentation.TypographyPatch
+import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
+import io.aequicor.visualization.subsystems.annotations.Annotation
+import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
+import io.aequicor.visualization.subsystems.annotations.AnnotationImage
+import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
+import io.aequicor.visualization.subsystems.annotations.AnnotationRect
+import io.aequicor.visualization.subsystems.annotations.annotationBadgePosition
+import io.aequicor.visualization.subsystems.annotations.compose.rememberAnnotationImage
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.AlignItems
@@ -141,7 +153,7 @@ fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Mo
                 when (state.workspace.inspectorTab) {
                     InspectorTab.Design -> InspectorDesign(state)
                     InspectorTab.Prototype -> InspectorPrototype(state)
-                    InspectorTab.Comments -> EmptyInspector("No comments yet.")
+                    InspectorTab.Comments -> InspectorComments(state)
                 }
             }
         }
@@ -3090,3 +3102,322 @@ private fun StrokeAlign.strokeLabel() = when (this) { StrokeAlign.Inside -> "Ins
 private fun TextAutoResize.autoResizeLabel() = when (this) { TextAutoResize.WidthAndHeight -> "Auto W"; TextAutoResize.Height -> "Auto H"; TextAutoResize.None -> "Fixed" }
 private fun HorizontalConstraint.hLabel() = when (this) { HorizontalConstraint.Left -> "Left"; HorizontalConstraint.Right -> "Right"; HorizontalConstraint.Center -> "Center"; HorizontalConstraint.LeftRight -> "Left & Right"; HorizontalConstraint.Scale -> "Scale" }
 private fun VerticalConstraint.vLabel() = when (this) { VerticalConstraint.Top -> "Top"; VerticalConstraint.Bottom -> "Bottom"; VerticalConstraint.Center -> "Center"; VerticalConstraint.TopBottom -> "Top & Bottom"; VerticalConstraint.Scale -> "Scale" }
+
+// --- Comments / annotations ---------------------------------------------------
+
+/**
+ * Comments inspector tab: the current screen's annotation list plus the editing
+ * section for the selected annotation (kind switch, text, image, anchor, references,
+ * delete). Selection is global across screens, so a badge picked on another screen
+ * still gets its editor here.
+ */
+@Composable
+private fun InspectorComments(state: MissionEditorStateHolder) {
+    val design = state.designState
+    val screenFileName = remember(design.compiledResults, design.sources, design.selectedPageId) {
+        design.screenFileNamesByPageId()[design.selectedPageId]
+    }
+    val layer = screenFileName?.let { design.annotationLayers[it] }
+    val selectedId = state.workspace.selectedAnnotationId
+    val selection = selectedId.takeIf { it.isNotBlank() }?.let { id ->
+        design.annotationLayers.values.firstNotNullOfOrNull { candidate ->
+            candidate.annotations.firstOrNull { it.id == id }?.let { candidate.screenFileName to it }
+        }
+    }
+    if (layer == null && selection == null) {
+        EmptyInspector("No annotations yet — drop a note or issue with the comment tool.")
+        return
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        if (layer != null) AnnotationListSection(state, layer)
+        if (selection != null) {
+            val (ownerScreen, annotation) = selection
+            AnnotationSection(state, ownerScreen, annotation)
+        } else {
+            Box(Modifier.padding(18.dp)) {
+                MutedNote("Select an annotation badge on the canvas or in the list to edit it.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnnotationListSection(state: MissionEditorStateHolder, layer: AnnotationLayer) {
+    val colors = LocalEditorColors.current
+    StandaloneSection(EditorIcon.Comments, CompactLabel("Annotations", "Annots", "Ann")) {
+        if (layer.annotations.isEmpty()) {
+            MutedNote("No annotations on this screen. Use the comment tool on the canvas.")
+            return@StandaloneSection
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            layer.annotations.forEach { annotation ->
+                val selected = annotation.id == state.workspace.selectedAnnotationId
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (selected) colors.selectionFill else Color.Transparent)
+                        .clickable { state.dispatch(DesignEditorIntent.SelectAnnotation(annotation.id)) }
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AnnotationKindPreview(annotation.kind, Modifier.size(16.dp))
+                    Text(
+                        annotation.body.text.ifBlank { "(no text)" },
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (annotation.body.text.isBlank()) colors.mutedInk else colors.ink,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        annotationKindLabel(annotation.kind),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (annotation.kind == AnnotationKind.Issue) colors.statusWarning else colors.mutedInk,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnnotationSection(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
+    val design = state.designState
+    StandaloneSection(EditorIcon.Design, CompactLabel("Annotation", "Annot", "Ann")) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Kind switch: note vs issue, rows with their tinted droplet previews.
+            Column {
+                InspectorSubLabel("Kind")
+                SelectField(
+                    value = annotationKindLabel(annotation.kind),
+                    options = AnnotationKind.entries.map { annotationKindLabel(it) },
+                    onSelect = { label ->
+                        annotationKindForLabel(label)?.let { kind ->
+                            if (kind != annotation.kind) {
+                                state.dispatch(DesignEditorIntent.SetAnnotationKind(screenFileName, annotation.id, kind))
+                            }
+                        }
+                    },
+                    modifier = Modifier.widthIn(max = InspectorCompactSelectMaxWidth).fillMaxWidth(),
+                    leadingContent = { AnnotationKindPreview(annotation.kind, Modifier.size(16.dp)) },
+                    optionLeadingContent = { label ->
+                        annotationKindForLabel(label)?.let { AnnotationKindPreview(it, Modifier.size(16.dp)) }
+                    },
+                )
+            }
+
+            Column {
+                InspectorSubLabel("Text")
+                AnnotationTextField(
+                    value = annotation.body.text,
+                    resetKey = "annotation-text-${annotation.id}",
+                ) { text ->
+                    state.dispatch(DesignEditorIntent.SetAnnotationText(screenFileName, annotation.id, text))
+                }
+            }
+
+            Column {
+                InspectorSubLabel("Image")
+                AnnotationImageControls(state, screenFileName, annotation)
+            }
+
+            Column {
+                InspectorSubLabel("Anchor")
+                AnnotationAnchorInfo(state, screenFileName, annotation)
+            }
+
+            Column {
+                InspectorSubLabel("References")
+                AnnotationReferences(state, screenFileName, annotation)
+            }
+
+            AnnotationDangerButton("Delete annotation") {
+                state.dispatch(DesignEditorIntent.DeleteAnnotation(screenFileName, annotation.id))
+            }
+        }
+    }
+}
+
+/**
+ * Multiline annotation body editor; commits [onCommit] on focus loss only (Enter is a
+ * newline here) so every keystroke does not hit the sidecar write-back.
+ */
+@Composable
+private fun AnnotationTextField(value: String, resetKey: String, onCommit: (String) -> Unit) {
+    val colors = LocalEditorColors.current
+    var draft by remember(resetKey, value) { mutableStateOf(value) }
+    var hadFocus by remember(resetKey) { mutableStateOf(false) }
+    var focused by remember(resetKey) { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
+        shape = RoundedCornerShape(5.dp),
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, if (focused) colors.accent else colors.controlStroke),
+    ) {
+        Box(Modifier.padding(8.dp), contentAlignment = Alignment.TopStart) {
+            if (draft.isEmpty()) {
+                Text("Annotation text…", style = MaterialTheme.typography.bodySmall, color = colors.mutedInk)
+            }
+            BasicTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focus ->
+                        focused = focus.isFocused
+                        if (focus.isFocused) {
+                            hadFocus = true
+                        } else if (hadFocus) {
+                            hadFocus = false
+                            if (draft != value) onCommit(draft)
+                        }
+                    },
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.ink),
+            )
+        }
+    }
+}
+
+/**
+ * v1 image affordance: preview + detach for an attached image, and a paste-a-data-URI
+ * field to attach one (no platform file picker exists in the editor yet).
+ */
+@Composable
+private fun AnnotationImageControls(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
+    val image = annotation.image
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (image != null) {
+            AnnotationImagePreview(image)
+            TinyButton("Detach image") {
+                state.dispatch(DesignEditorIntent.DetachAnnotationImage(screenFileName, annotation.id))
+            }
+        } else {
+            CompactTextField(
+                value = "",
+                resetKey = "annotation-image-${annotation.id}",
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = "Paste a data:image/… URI to attach",
+            ) { source ->
+                if (source.isNotBlank()) {
+                    state.dispatch(
+                        DesignEditorIntent.AttachAnnotationImage(
+                            screenFileName = screenFileName,
+                            annotationId = annotation.id,
+                            image = AnnotationImage(source = source.trim(), width = 0.0, height = 0.0),
+                        ),
+                    )
+                }
+            }
+            MutedNote("Shown inside the expanded annotation card.")
+        }
+    }
+}
+
+@Composable
+private fun AnnotationImagePreview(image: AnnotationImage) {
+    val colors = LocalEditorColors.current
+    val bitmap = rememberAnnotationImage(image.source)
+    if (bitmap == null) {
+        MutedNote("Attached image is not previewable (not a base64 data URI).")
+        return
+    }
+    val sized = if (image.width > 0.0 && image.height > 0.0) {
+        Modifier.fillMaxWidth().aspectRatio((image.width / image.height).toFloat())
+    } else {
+        Modifier.fillMaxWidth()
+    }
+    Image(
+        bitmap = bitmap,
+        contentDescription = "Annotation image",
+        modifier = sized
+            .clip(RoundedCornerShape(4.dp))
+            .border(1.dp, colors.panelStroke, RoundedCornerShape(4.dp)),
+        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+    )
+}
+
+/** Anchor summary: pinned node (with dangling marker) + «Открепить», or the free point. */
+@Composable
+private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
+    val design = state.designState
+    when (val anchor = annotation.anchor) {
+        is AnnotationAnchor.NodeAnchor -> {
+            val node = design.document?.nodeById(anchor.nodeId)
+            val label = node?.name?.ifBlank { anchor.nodeId } ?: "${anchor.nodeId} (deleted)"
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                MutedNote("Pinned to $label")
+                TinyButton("Открепить") {
+                    // Freeze the badge where it currently renders so detaching is visually a no-op.
+                    val bounds = state.artboardLayout?.findBySourceId(anchor.nodeId)?.let { box ->
+                        AnnotationRect.fromSize(box.x, box.y, box.width, box.height)
+                    }
+                    val point = annotationBadgePosition(anchor, bounds)
+                    state.dispatch(
+                        DesignEditorIntent.DetachAnnotationAnchor(screenFileName, annotation.id, point.x, point.y),
+                    )
+                }
+            }
+        }
+        is AnnotationAnchor.FreePoint ->
+            MutedNote("Free point at ${anchor.x.formatPx()}, ${anchor.y.formatPx()}")
+    }
+}
+
+/** Extra node references: removable rows plus attach-the-current-selection. */
+@Composable
+private fun AnnotationReferences(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
+    val colors = LocalEditorColors.current
+    val design = state.designState
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (annotation.references.isEmpty()) {
+            MutedNote("No extra node references.")
+        }
+        annotation.references.forEach { nodeId ->
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                EditorSvgIcon(EditorIcon.Component, contentDescription = null, modifier = Modifier.size(14.dp), tint = colors.controlInk)
+                Text(
+                    design.document?.nodeById(nodeId)?.name?.ifBlank { nodeId } ?: "$nodeId (deleted)",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.ink,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                RemoveButton {
+                    state.dispatch(DesignEditorIntent.RemoveAnnotationReference(screenFileName, annotation.id, nodeId))
+                }
+            }
+        }
+        val selectedNodeId = design.selectedNodeId
+        val canAdd = selectedNodeId.isNotBlank() && selectedNodeId !in annotation.references
+        TinyButton("Add selected node", enabled = canAdd) {
+            state.dispatch(DesignEditorIntent.AddAnnotationReference(screenFileName, annotation.id, selectedNodeId))
+        }
+    }
+}
+
+/** Destructive action styled with the `statusDanger` token (warm accent, used sparingly). */
+@Composable
+private fun AnnotationDangerButton(label: String, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(5.dp)
+    Surface(
+        modifier = Modifier.height(24.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.statusDanger.copy(alpha = 0.55f)),
+    ) {
+        Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = colors.statusDanger)
+        }
+    }
+}

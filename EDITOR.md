@@ -231,6 +231,49 @@ into inline vector paths; Outline stroke turns a stroke into a filled path via
 (`replaceNodeStructural`),
 falling back to in-memory when the structural veto trips.
 
+**Annotations (review layer)** — reviewer comments over the design, built as
+`:subsystems:annotations` (pure model/ops/export) + `:subsystems:annotations-compose`
+(badge/card/overlay) + `:subsystems:annotations-slm` (sidecar parse/write/patch); spec:
+`design-book/annotations-sidecar-format.md`. Two kinds: a neutral **note** and an
+**issue** highlighted with the `statusWarning` (yellow) token. Each annotation renders
+either **collapsed** — a droplet badge (`AnnotationBadge`) at its anchor point — or
+**expanded** — a card (`AnnotationCard`) with the plain-text body and an optional
+embedded image (data-URI, decoded per platform); a click toggles expansion. Expansion,
+selection and the active annotation tool are **view state**
+(`EditorWorkspaceState.expandedAnnotationIds` / `selectedAnnotationId` /
+`annotationTool`, reduced by `reduceAnnotationWorkspace`); the model only carries an
+authored `defaultExpanded` hint. Anchoring is dual: a press on a node pins a
+`NodeAnchor(nodeId, offset)` — the badge follows the node's top-center plus the offset,
+so it moves with the node — while a press on empty canvas (or an explicit detach in the
+inspector) yields a `FreePoint(x, y)`. Deleting the anchored node makes the annotation
+**dangling**, never lost: `annotationBadgePosition` falls back to a deterministic point
+(the raw offset as absolute coordinates), the inspector shows a dangling marker, and the
+prompt exporter reports "node deleted or unresolved".
+
+*Persistence:* annotations live in a **sidecar** `<screen>.annotations.md` next to the
+screen's `*.layout.md` (never mixed into design SLM). Every document-side annotation
+intent (add / text / kind / image attach-detach / move / attach-to-node / detach /
+references / delete) funnels through `writeBackAnnotations`, which applies a pure core
+op to the screen's `AnnotationLayer` and mirrors it into the sidecar via **surgical**
+`AnnotationSlmPatcher` splices (untouched sections stay byte-identical); the first
+annotation on a screen creates the sidecar source. Sidecars ride in the same
+`MissionDocumentSource` list as SLM screens — drafts/autosave/Save/Reset/restore work
+for free — but are routed to the tolerant `AnnotationSlmParser` instead of the SLM
+compiler (placeholder compile entry keeps the lists index-aligned). Editing the sidecar
+text directly in the Source pane re-parses the layer tolerantly. Ids are stable via an
+explicit `{id=...}` marker (same invariant as structural SLM edits).
+
+*Issues prompt export:* `ExportIssuesPromptUseCase` builds an AI-agent prompt from the
+**issue** annotations only (notes never export) over one of three scopes — selected
+annotations / current screen / whole document — with per-issue node context (id, label,
+type, screen, bounds) resolved from the layout, dangling anchors flagged, attached
+images marked. The toolbar export action shows a scope menu and copies the prompt to the
+clipboard.
+
+*v1 limitations:* no freehand-ink drawing (only an embedded image); the body is plain
+text (`AnnotationBody` keeps the door open for RichText); references and anchors are
+per-screen node ids — no cross-screen references.
+
 ## Tests
 
 `shared/src/commonTest/.../editor`:
@@ -248,6 +291,10 @@ falling back to in-memory when the structural veto trips.
   overflow reparent, instance duplicate, id-preservation veto).
 - `CreateScreenSourceTest` — a new screen appends its own `*.layout.md`, others byte-identical.
 - `VectorPathEditingTest` — SVG anchor parse + translate.
+- `AnnotationReducerWriteBackTest` / `AnnotationDraftRoundTripTest` /
+  `AnnotationAnchorForPressTest` — annotation intents with surgical sidecar write-back,
+  draft round-trip of `*.annotations.md` sources, node-vs-free anchor resolution for a
+  canvas press (subsystem internals are covered in `:subsystems:annotations*` commonTest).
 - `CanvasGeometryTest` — rotated corner/handle geometry, rotation-aware resize cursor
   bucketing, move-drag center anchor lines, Alt-measurement gap math, and beautiful-anchor
   snapping (golden ratio, thirds/quarters, equal spacing / equal margin / match gap, priority
@@ -289,6 +336,10 @@ Run: `./gradlew :shared:jvmTest` (engine: `:engine:ir:jvmTest`, `:engine:fronten
   (icon/SVG refs resolve to nothing until a real provider is wired). New parity fields
   (`arcStart`/`arcSweep`, vertex `radius`, region `fills`) round-trip through YAML but
   **not** the CNL authoring format.
+- **Annotations v1.** No freehand-ink drawing (embedded image only); plain-text body
+  (RichText is a reserved follow-up via `AnnotationBody`); no cross-screen node
+  references; annotation edits record no document undo entry (they never touch the
+  design document — only the source history, like other write-backs).
 - **Export image.** Not implemented (was the last planned slice; not an acceptance item).
 - **Scale tool.** Resize is implemented; a separate proportional Scale tool is a
   follow-up (design-book notes them as distinct modes).

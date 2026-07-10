@@ -33,5 +33,8 @@ internal expect fun platformFinishPdfExport(fileName: String)
 
 internal expect fun platformToggleFullscreen()
 
+/** Copies plain text to the platform clipboard (best-effort; no-op where unavailable). */
+internal expect fun platformCopyTextToClipboard(text: String)
+
 /** Opens an external URL in the platform browser (best-effort; no-op where unavailable). */
 internal expect fun platformOpenUrl(url: String)

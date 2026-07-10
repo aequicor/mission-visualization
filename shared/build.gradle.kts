@@ -110,6 +110,12 @@ kotlin {
                 api(projects.subsystems.anchoring)
                 implementation(projects.subsystems.anchoringCompose)
 
+                // Annotations subsystem: pure model / ops / prompt export + sidecar SLM format (api —
+                // their types cross editor state/intents) + Compose overlay renderer (implementation).
+                api(projects.subsystems.annotations)
+                api(projects.subsystems.annotationsSlm)
+                implementation(projects.subsystems.annotationsCompose)
+
                 // Figures subsystem: pure geometry / vector-network model + editing ops (api — its
                 // types cross into editor state/intents) + Compose overlay & previews (implementation).
                 api(projects.subsystems.figures)

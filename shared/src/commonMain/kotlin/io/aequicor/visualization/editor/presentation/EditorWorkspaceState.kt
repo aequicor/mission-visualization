@@ -59,6 +59,16 @@ data class EditorWorkspaceState(
     val recentColors: List<DesignColor> = emptyList(),
     /** Active caret/selection while editing text on the canvas; null when not editing text. */
     val textSelection: TextSelection? = null,
+    /**
+     * Annotation ids currently expanded to cards. View state, never the document: the
+     * sidecar only carries the authored `defaultExpanded` hint, runtime expansion is a
+     * personal view preference (design-book document/workspace split).
+     */
+    val expandedAnnotationIds: Set<String> = emptySet(),
+    /** Selected annotation (inspector target), or "" when none. */
+    val selectedAnnotationId: String = "",
+    /** Active annotation authoring tool; a canvas press then creates that kind. */
+    val annotationTool: AnnotationTool = AnnotationTool.None,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -126,6 +136,14 @@ enum class EditorTool(val label: String, val creates: NewObjectKind?) {
         get() = this == Rectangle || this == Ellipse || this == Polygon ||
             this == Star || this == Line || this == Arrow
 }
+
+/**
+ * Annotation authoring tool (the comment toolbar flyout): `None` = not annotating,
+ * otherwise the [io.aequicor.visualization.subsystems.annotations.AnnotationKind] a
+ * canvas press creates. Modeled next to [EditorTool] but as its own axis — annotating
+ * overlays the review layer and never creates design objects.
+ */
+enum class AnnotationTool { None, Note, Issue }
 
 enum class SourceTab(val label: CompactLabel) {
     Markdown(CompactLabel("Semantic Layout Markdown", "Markdown", "SLM")),

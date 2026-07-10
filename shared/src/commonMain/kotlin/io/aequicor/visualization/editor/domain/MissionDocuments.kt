@@ -32,11 +32,17 @@ data class MissionDocuments(
 /**
  * Compiles each per-page SLM [sources] entry as a standalone document and merges them
  * into one multi-page [MissionDocuments]. Shared by the initial bundled load and by
- * draft restore (which recompiles the persisted SLM text).
+ * draft restore (which recompiles the persisted SLM text). Annotation sidecars
+ * (`*.annotations.md`) are never compiled as SLM: they get a placeholder compile entry
+ * (null document, skipped by the merge) that keeps the two lists index-aligned.
  */
 fun compileMissionDocuments(sources: List<MissionDocumentSource>): MissionDocuments {
     val compiled = sources.map { source ->
-        compileSlm(source.content, SlmCompileOptions(fileName = source.fileName))
+        if (isAnnotationSidecarFileName(source.fileName)) {
+            annotationSidecarCompileResult(source.content)
+        } else {
+            compileSlm(source.content, SlmCompileOptions(fileName = source.fileName))
+        }
     }
     return mergeMissionDocuments(sources, compiled)
 }

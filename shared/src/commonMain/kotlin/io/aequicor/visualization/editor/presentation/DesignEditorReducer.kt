@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
+import io.aequicor.visualization.editor.domain.isAnnotationSidecarFileName
 import io.aequicor.visualization.editor.domain.mergeMissionDocuments
 import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
@@ -101,6 +102,17 @@ import io.aequicor.visualization.subsystems.figures.toSvgPathData
 import io.aequicor.visualization.subsystems.figures.translateSvgPoint
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
+import io.aequicor.visualization.subsystems.annotations.addAnnotationReference
+import io.aequicor.visualization.subsystems.annotations.attachAnnotationImage
+import io.aequicor.visualization.subsystems.annotations.attachAnnotationToNode
+import io.aequicor.visualization.subsystems.annotations.deleteAnnotation
+import io.aequicor.visualization.subsystems.annotations.detachAnnotationAnchor
+import io.aequicor.visualization.subsystems.annotations.detachAnnotationImage
+import io.aequicor.visualization.subsystems.annotations.moveAnnotation
+import io.aequicor.visualization.subsystems.annotations.removeAnnotationReference
+import io.aequicor.visualization.subsystems.annotations.setAnnotationKind
+import io.aequicor.visualization.subsystems.annotations.updateAnnotationText
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -407,6 +419,46 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             state.commitVectorNetwork(intent.nodeId) { it.closePath() }
         is DesignEditorIntent.CommitVectorNetwork ->
             state.commitVectorNetwork(intent.nodeId) { it }
+
+        // --- Annotations (review layer; sidecar write-back via writeBackAnnotations) ---
+        is DesignEditorIntent.AddAnnotation -> state.addAnnotationWriteBack(intent)
+        is DesignEditorIntent.SetAnnotationText -> state.writeBackAnnotations(intent.screenFileName) {
+            it.updateAnnotationText(intent.annotationId, intent.text)
+        }
+        is DesignEditorIntent.SetAnnotationKind -> state.writeBackAnnotations(intent.screenFileName) {
+            it.setAnnotationKind(intent.annotationId, intent.kind)
+        }
+        is DesignEditorIntent.AttachAnnotationImage -> state.writeBackAnnotations(intent.screenFileName) {
+            it.attachAnnotationImage(intent.annotationId, intent.image)
+        }
+        is DesignEditorIntent.DetachAnnotationImage -> state.writeBackAnnotations(intent.screenFileName) {
+            it.detachAnnotationImage(intent.annotationId)
+        }
+        is DesignEditorIntent.MoveAnnotation -> state.writeBackAnnotations(intent.screenFileName) {
+            it.moveAnnotation(intent.annotationId, intent.x, intent.y)
+        }
+        is DesignEditorIntent.AttachAnnotationToNode -> state.writeBackAnnotations(intent.screenFileName) {
+            it.attachAnnotationToNode(intent.annotationId, intent.nodeId, intent.offsetX, intent.offsetY)
+        }
+        is DesignEditorIntent.DetachAnnotationAnchor -> state.writeBackAnnotations(intent.screenFileName) {
+            it.detachAnnotationAnchor(intent.annotationId, AnnotationPoint(intent.x, intent.y))
+        }
+        is DesignEditorIntent.AddAnnotationReference -> state.writeBackAnnotations(intent.screenFileName) {
+            it.addAnnotationReference(intent.annotationId, intent.nodeId)
+        }
+        is DesignEditorIntent.RemoveAnnotationReference -> state.writeBackAnnotations(intent.screenFileName) {
+            it.removeAnnotationReference(intent.annotationId, intent.nodeId)
+        }
+        is DesignEditorIntent.DeleteAnnotation -> state.writeBackAnnotations(intent.screenFileName) {
+            it.deleteAnnotation(intent.annotationId)
+        }
+
+        // --- Annotations (view; the document state is untouched) ---
+        // Handled by reduceAnnotationWorkspace against EditorWorkspaceState.
+        is DesignEditorIntent.ToggleAnnotationExpanded,
+        is DesignEditorIntent.SelectAnnotation,
+        is DesignEditorIntent.SetAnnotationTool,
+        -> state
 
         // --- Interaction checkpoints ---
         DesignEditorIntent.BeginInteraction -> state.beginInteraction()
@@ -921,6 +973,8 @@ private fun DesignEditorState.editSource(intent: DesignEditorIntent.EditSource):
     if (index !in sources.indices) return this
     val source = sources[index]
     if (source.content == intent.content) return this
+    // Annotation sidecars are not SLM: re-parse the review layer instead of compiling.
+    if (isAnnotationSidecarFileName(source.fileName)) return editAnnotationSidecarSource(index, intent.content)
 
     val nextSources = sources.toMutableList().apply {
         this[index] = source.copy(content = intent.content)
@@ -1648,7 +1702,6 @@ private fun DesignNode.applyStrokeOp(op: StrokeOp): DesignNode = when (op) {
             is StrokeOp.SetJoin -> strokes.copy(join = op.join)
             is StrokeOp.SetDashed -> strokes.copy(dashPattern = if (op.dashed) listOf(6.0, 4.0) else emptyList())
             is StrokeOp.SetPerSide -> strokes.copy(weightPerSide = strokes.weightPerSide.mergePerSide(op))
-            else -> strokes
         }
         copy(strokes = next, strokeStyleId = "")
     }

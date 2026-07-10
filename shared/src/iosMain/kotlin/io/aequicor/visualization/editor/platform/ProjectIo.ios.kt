@@ -18,6 +18,10 @@ internal actual fun platformFinishPdfExport(fileName: String) = Unit
 
 internal actual fun platformToggleFullscreen() = Unit
 
+internal actual fun platformCopyTextToClipboard(text: String) {
+    platform.UIKit.UIPasteboard.generalPasteboard.string = text
+}
+
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 internal actual fun platformOpenUrl(url: String) {
     platform.Foundation.NSURL.URLWithString(url)?.let { nsUrl ->
