@@ -1,5 +1,11 @@
 package io.aequicor.visualization.engine.ir.model
 
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorPath
+
 /**
  * Everything is a node in the tree — page frame, text, icon, component instance —
  * sharing one base contract discriminated by [type]. Order in [children] is paint
@@ -103,7 +109,15 @@ sealed interface DesignNodeKind {
     data class Shape(
         val shape: ShapeType,
         val pointCount: Int? = null,
+        /**
+         * Star: valley radius as a fraction of the outer (0.05..1). Ellipse: donut-hole radius as a
+         * fraction of the outer (0..1); ignored for other kinds.
+         */
         val innerRadius: Double? = null,
+        /** Ellipse arc start angle in degrees (0° = 3 o'clock). Null = full ellipse. */
+        val arcStartDeg: Double? = null,
+        /** Ellipse arc sweep in degrees, positive clockwise (screen y-down). Null/±360 = full. */
+        val arcSweepDeg: Double? = null,
         val paths: List<VectorPath> = emptyList(),
         /** Design-system icon reference, e.g. "ds/Icon/Alert". */
         val iconRef: String = "",
@@ -112,6 +126,12 @@ sealed interface DesignNodeKind {
         val viewBox: DesignViewBox? = null,
         /** Editable structural geometry; when non-empty it is the shape's geometry source. */
         val network: VectorNetwork? = null,
+        /**
+         * Per-region fills for a vector network, keyed by region index (Figma's region paint). A
+         * region with an entry paints with those fills instead of the object [DesignNode.fills];
+         * regions without an entry inherit the object fills.
+         */
+        val regionFills: Map<Int, List<DesignPaint>> = emptyMap(),
     ) : DesignNodeKind
 
     data class Instance(
@@ -143,22 +163,6 @@ sealed interface DesignNodeKind {
     /** Forward compatibility: unknown node types render as a fallback, never fail. */
     data class Unknown(val rawType: String) : DesignNodeKind
 }
-
-enum class ShapeType { Rectangle, Ellipse, Polygon, Star, Line, Arrow, Vector }
-
-data class DesignViewBox(
-    val x: Double = 0.0,
-    val y: Double = 0.0,
-    val width: Double = 0.0,
-    val height: Double = 0.0,
-)
-
-data class VectorPath(
-    val windingRule: String = "nonzero",
-    val d: String,
-)
-
-enum class BooleanOperationKind { Union, Subtract, Intersect, Exclude }
 
 /** Value passed into a component property slot. */
 sealed interface PropValue {

@@ -2,12 +2,12 @@ package io.aequicor.visualization.engine.frontend.blocks.readers
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
 import io.aequicor.visualization.engine.ir.model.EasingKind
 import io.aequicor.visualization.engine.ir.model.ExportFormat
 import io.aequicor.visualization.engine.ir.model.GradientKind
-import io.aequicor.visualization.engine.ir.model.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleMirror
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
@@ -22,7 +22,7 @@ import io.aequicor.visualization.engine.ir.model.OverflowMode
 import io.aequicor.visualization.engine.ir.model.OverlayPosition
 import io.aequicor.visualization.engine.ir.model.ResponsiveDimension
 import io.aequicor.visualization.engine.ir.model.ScrollOverflow
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.LeadingTrim

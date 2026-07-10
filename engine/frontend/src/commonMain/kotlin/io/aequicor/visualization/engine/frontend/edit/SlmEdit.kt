@@ -1,7 +1,7 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignInteraction
@@ -10,10 +10,10 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 
 /**
@@ -211,6 +211,8 @@ data class SetViewBox(
 data class SetVectorNetwork(
     override val nodeId: String,
     val network: VectorNetwork,
+    /** Per-region fills keyed by region index, emitted inside each region mapping. */
+    val regionFills: Map<Int, List<DesignPaint>> = emptyMap(),
 ) : SlmEdit
 
 /** Writes `vector.boolean: { op, children }` for a boolean-operation node. */

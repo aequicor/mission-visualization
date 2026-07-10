@@ -216,11 +216,20 @@ document's `DesignStyle.Text` entries and renders nothing when there are none.
 - **Instance per-range overrides authoring UI** (engine model `InstanceOverride.styleRanges/links`
   exists) and **CNL for the remaining typography fields** (italic/decoration done).
 
-**Vector (ch. 11)** — Rectangle/Ellipse/Line/Arrow shape tools; a vector-edit mode
-(double-click a vector shape) that renders the path's on-path anchors and lets you
-select and drag them (`MoveVectorPoint` over absolute `M/L/C/Q` commands). The model
-and reducer are structured so lasso/bend/cut/paint/pen can be added as new tools
-without rewriting the path layer.
+**Vector / figures (ch. 11)** — the figure geometry, model and editing ops live in
+`:subsystems:figures` (pure) + `:subsystems:figures-compose` (Compose adapter). The
+toolbar exposes a shape-tool flyout (Rectangle/Ellipse/Polygon/Star/Line/Arrow) plus a
+Pen tool that creates an editable vector node; a vector-edit mode (double-click a vector
+shape) renders network vertices + bezier handles and lets you drag them. Inspector: shape
+type, sides, star inner radius, **ellipse arc** (start/sweep/donut ratio), vector
+icon/path/viewBox, **fill rule** (nonzero/even-odd), **per-vertex** mirror/corner/radius,
+**region fills**, stroke **join**, and **Flatten** / **Outline stroke** actions
+(shortcuts `Cmd/Ctrl+E` / `Shift+Cmd/Ctrl+O`). Flatten runs the real boolean engine
+(`PathBoolean.pathBooleanFold`, union/subtract/intersect/exclude) to bake a boolean node
+into inline vector paths; Outline stroke turns a stroke into a filled path via
+`strokeOutline` (real joins/caps + align). Both persist via section re-emit
+(`replaceNodeStructural`),
+falling back to in-memory when the structural veto trips.
 
 ## Tests
 
@@ -269,8 +278,17 @@ Run: `./gradlew :shared:jvmTest` (engine: `:engine:ir:jvmTest`, `:engine:fronten
   per-row up/down; tree drag-and-drop with an insertion line is not wired.
 - **Image fill.** Creates a placeholder `Image` paint; no asset picker / decoding
   (the renderer draws image fills as placeholders by design).
-- **Vector advanced.** Pen, lasso, bend (bezier handles), cut, boolean ops and region
-  paint are not implemented; only anchor move over simple absolute paths.
+- **Vector advanced.** Pen (create + add/close vertices), bend (bezier handles),
+  network editing, ellipse arcs, per-vertex corner radius, region paint, stroke join,
+  fill rule, and the real boolean engine (`PathBoolean`) behind Flatten / Outline stroke
+  are implemented (`:subsystems:figures`). v1 simplifications: the boolean/Flatten result
+  is emitted as **polyline** geometry (curves flattened to segments — winding is exact,
+  bezier smoothness is lost); Outline stroke offsets to a filled path via `strokeOutline`;
+  region-fill UI edits a single **solid** colour per region (no gradient/image region
+  fills); lasso and cut are still unimplemented; the asset provider is `NoVectorAssets`
+  (icon/SVG refs resolve to nothing until a real provider is wired). New parity fields
+  (`arcStart`/`arcSweep`, vertex `radius`, region `fills`) round-trip through YAML but
+  **not** the CNL authoring format.
 - **Export image.** Not implemented (was the last planned slice; not an acceptance item).
 - **Scale tool.** Resize is implemented; a separate proportional Scale tool is a
   follow-up (design-book notes them as distinct modes).

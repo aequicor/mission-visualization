@@ -110,6 +110,10 @@ kotlin {
                 api(projects.subsystems.anchoring)
                 implementation(projects.subsystems.anchoringCompose)
 
+                // Figures subsystem: pure geometry / vector-network model + editing ops (api — its
+                // types cross into editor state/intents) + Compose overlay & previews (implementation).
+                api(projects.subsystems.figures)
+                implementation(projects.subsystems.figuresCompose)
                 // Typography subsystem: pure span algebra / selection contracts (api — reducer and
                 // intents expose its types) + Compose selection geometry and font provider.
                 api(projects.subsystems.typography)

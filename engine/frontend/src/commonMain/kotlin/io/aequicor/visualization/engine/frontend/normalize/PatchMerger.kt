@@ -45,7 +45,7 @@ import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.MaskType
 import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.ResponsiveVariant
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.SourceLocation
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
@@ -539,6 +539,8 @@ class PatchMerger(
                 shape = patch.kind ?: kind.shape,
                 pointCount = patch.pointCount ?: kind.pointCount,
                 innerRadius = patch.innerRadius ?: kind.innerRadius,
+                arcStartDeg = patch.arcStartDeg ?: kind.arcStartDeg,
+                arcSweepDeg = patch.arcSweepDeg ?: kind.arcSweepDeg,
             ),
             size = mergeSize(node.size, patch.width, patch.height) ?: node.size,
         )
@@ -568,6 +570,7 @@ class PatchMerger(
                 viewBox = patch.viewBox ?: kind.viewBox,
                 paths = patch.paths ?: kind.paths,
                 network = patch.network ?: kind.network,
+                regionFills = patch.regionFills ?: kind.regionFills,
             ),
         )
     }
@@ -657,6 +660,7 @@ internal fun patchFields(patch: TypedPatch): Map<String, Any?> = when (patch) {
     is ShapePatch -> mapOf(
         "kind" to patch.kind, "width" to patch.width, "height" to patch.height,
         "pointCount" to patch.pointCount, "innerRadius" to patch.innerRadius,
+        "arcStart" to patch.arcStartDeg, "arcSweep" to patch.arcSweepDeg,
     )
     is ComponentPatch -> mapOf(
         "ref" to patch.ref, "libraryRef" to patch.libraryRef, "variant" to patch.variant,

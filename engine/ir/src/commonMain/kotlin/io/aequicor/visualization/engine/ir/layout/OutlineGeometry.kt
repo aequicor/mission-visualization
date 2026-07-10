@@ -1,17 +1,18 @@
 package io.aequicor.visualization.engine.ir.layout
 
-import io.aequicor.visualization.engine.ir.geometry.PathGeometry
-import io.aequicor.visualization.engine.ir.geometry.RectD
-import io.aequicor.visualization.engine.ir.geometry.arrowGeometry
-import io.aequicor.visualization.engine.ir.geometry.contains
-import io.aequicor.visualization.engine.ir.geometry.distanceToOutline
-import io.aequicor.visualization.engine.ir.geometry.ellipseGeometry
-import io.aequicor.visualization.engine.ir.geometry.lineGeometry
-import io.aequicor.visualization.engine.ir.geometry.meetFit
-import io.aequicor.visualization.engine.ir.geometry.regularPolygonGeometry
-import io.aequicor.visualization.engine.ir.geometry.roundedRectGeometry
-import io.aequicor.visualization.engine.ir.geometry.starGeometry
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.PathGeometry
+import io.aequicor.visualization.subsystems.figures.RectD
+import io.aequicor.visualization.subsystems.figures.arrowGeometry
+import io.aequicor.visualization.subsystems.figures.contains
+import io.aequicor.visualization.subsystems.figures.distanceToOutline
+import io.aequicor.visualization.subsystems.figures.ellipseArcGeometry
+import io.aequicor.visualization.subsystems.figures.ellipseGeometry
+import io.aequicor.visualization.subsystems.figures.lineGeometry
+import io.aequicor.visualization.subsystems.figures.meetFit
+import io.aequicor.visualization.subsystems.figures.regularPolygonGeometry
+import io.aequicor.visualization.subsystems.figures.roundedRectGeometry
+import io.aequicor.visualization.subsystems.figures.starGeometry
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 
 /** Extra click tolerance (document units) around open shapes' stroked outline. */
@@ -29,7 +30,15 @@ internal fun ResolvedNode.outlineGeometry(rect: RectD): PathGeometry? {
     geometry?.let { return it }
     val shape = shape ?: return null
     return when (shape.shape) {
-        ShapeType.Ellipse -> ellipseGeometry(rect)
+        ShapeType.Ellipse -> {
+            val sweep = shape.arcSweepDeg
+            val inner = shape.innerRadius ?: 0.0
+            if ((sweep != null && kotlin.math.abs(sweep) < 360.0) || inner > 0.0) {
+                ellipseArcGeometry(rect, shape.arcStartDeg ?: 0.0, sweep ?: 360.0, inner)
+            } else {
+                ellipseGeometry(rect)
+            }
+        }
         ShapeType.Polygon -> regularPolygonGeometry(rect, shape.pointCount ?: 3)
         ShapeType.Star -> starGeometry(rect, shape.pointCount ?: 5, shape.innerRadius ?: 0.4)
         ShapeType.Line -> lineGeometry(rect)

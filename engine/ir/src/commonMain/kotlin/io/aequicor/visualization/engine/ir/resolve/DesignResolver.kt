@@ -18,6 +18,7 @@ import io.aequicor.visualization.engine.ir.model.DesignMask
 import io.aequicor.visualization.engine.ir.model.DesignMedia
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.subsystems.figures.networkRegionGeometry
 import io.aequicor.visualization.engine.ir.model.DesignNodePatch
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignPaint
@@ -303,6 +304,7 @@ class DesignResolver(
             text = (node.kind as? DesignNodeKind.Text)?.let { resolveText(it, override, scope) },
             shape = node.kind as? DesignNodeKind.Shape,
             geometry = (node.kind as? DesignNodeKind.Shape)?.let { lowerShapeGeometry(it) },
+            regionPaints = resolveRegionPaints(node.kind as? DesignNodeKind.Shape, scope),
             booleanOp = (node.kind as? DesignNodeKind.BooleanOperation)?.operation,
             scroll = node.scroll,
             role = node.role,
@@ -752,6 +754,16 @@ class DesignResolver(
             ?: (document.styles[node.fillStyleId] as? DesignStyle.Paint)?.value
             ?: emptyList()
         return paints.mapNotNull { resolvePaint(it, scope) }
+    }
+
+    /** Lowers each explicitly-filled region of a vector network into geometry + resolved paints. */
+    private fun resolveRegionPaints(shape: DesignNodeKind.Shape?, scope: Scope): List<ResolvedRegionPaint> {
+        if (shape == null || shape.regionFills.isEmpty()) return emptyList()
+        val network = shape.network?.takeIf { it.isNotEmpty() } ?: return emptyList()
+        return shape.regionFills.entries.sortedBy { it.key }.mapNotNull { (index, fills) ->
+            val geometry = networkRegionGeometry(network, index, shape.viewBox) ?: return@mapNotNull null
+            ResolvedRegionPaint(geometry, fills.mapNotNull { resolvePaint(it, scope) })
+        }
     }
 
     private fun resolveStrokes(node: DesignNode, override: InstanceOverride?, scope: Scope): ResolvedStrokes? {

@@ -2,10 +2,10 @@ package io.aequicor.visualization.engine.ir.validate
 
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
-import io.aequicor.visualization.engine.ir.model.HandleMirror
-import io.aequicor.visualization.engine.ir.model.HandleOffset
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
 import io.aequicor.visualization.engine.ir.model.SourceLocation
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -17,6 +17,10 @@ import kotlin.math.sqrt
  * - IR-ASSET-010 (warning): degenerate network (fewer than 2 vertices, or no segments).
  * - IR-ASSET-011 (warning): a vertex declares a handle mirror mode its stored handles violate.
  * - IR-ASSET-012 (warning): a shape carries both a network and inline paths/pathRef (ambiguous source).
+ * - IR-ASSET-013 (warning): ellipse arc start/sweep angle out of the [-360, 360]° range.
+ * - IR-ASSET-014 (warning): shape innerRadius (star valley / ellipse donut ratio) outside [0, 1].
+ * - IR-ASSET-015 (warning): a vertex declares a negative corner radius.
+ * - IR-ASSET-016 (warning): a region fill references a region index the network does not have.
  */
 internal object VectorNetworkChecks {
 
@@ -26,8 +30,38 @@ internal object VectorNetworkChecks {
         ctx.entries.forEach { entry ->
             val node = entry.node
             val shape = node.kind as? DesignNodeKind.Shape ?: return@forEach
-            val network = shape.network ?: return@forEach
             val location = ctx.location(node)
+
+            // Parametric range checks apply to every shape (arc/donut ellipse has no network).
+            shape.arcStartDeg?.let {
+                if (abs(it) > 360.0) {
+                    add(validationWarning("IR-ASSET-013", "Shape '${node.id}' arcStart ${it}° is outside [-360, 360]", location))
+                }
+            }
+            shape.arcSweepDeg?.let {
+                if (abs(it) > 360.0) {
+                    add(validationWarning("IR-ASSET-013", "Shape '${node.id}' arcSweep ${it}° is outside [-360, 360]", location))
+                }
+            }
+            shape.innerRadius?.let {
+                if (it < 0.0 || it > 1.0) {
+                    add(validationWarning("IR-ASSET-014", "Shape '${node.id}' innerRadius $it is outside [0, 1]", location))
+                }
+            }
+            shape.regionFills.keys.forEach { regionIndex ->
+                val regionCount = shape.network?.regions?.size ?: 0
+                if (regionIndex < 0 || regionIndex >= regionCount) {
+                    add(validationWarning("IR-ASSET-016", "Shape '${node.id}' has a fill for region $regionIndex but the network has $regionCount region(s)", location))
+                }
+            }
+
+            val network = shape.network ?: return@forEach
+
+            network.vertices.forEachIndexed { index, vertex ->
+                if (vertex.cornerRadius < 0.0) {
+                    add(validationWarning("IR-ASSET-015", "Vector network of '${node.id}' vertex $index has a negative corner radius", location))
+                }
+            }
 
             if (network.vertices.size < 2 || network.segments.isEmpty()) {
                 add(

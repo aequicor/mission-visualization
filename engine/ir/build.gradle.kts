@@ -34,6 +34,10 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            // Figures subsystem: pure geometry + vector-network model (api — its types are
+            // embedded in the IR node model's public surface, e.g. DesignNodeKind.Shape).
+            api(projects.subsystems.figures)
+
             implementation(libs.kotlinx.serialization.json)
         }
         commonTest.dependencies {

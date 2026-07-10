@@ -101,6 +101,7 @@ internal object CnlVocabulary {
         "media" to CnlPropertyKind.Media,
         "points" to CnlPropertyKind.ShapePoints,
         "inner" to CnlPropertyKind.ShapeInner,
+        "arc" to CnlPropertyKind.ShapeArc,
         "viewbox" to CnlPropertyKind.ViewBox,
         "icon" to CnlPropertyKind.IconRef,
         "svg" to CnlPropertyKind.PathRef,

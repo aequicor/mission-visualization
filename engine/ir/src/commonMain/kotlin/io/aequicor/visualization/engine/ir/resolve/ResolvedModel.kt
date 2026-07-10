@@ -1,9 +1,9 @@
 package io.aequicor.visualization.engine.ir.resolve
 
-import io.aequicor.visualization.engine.ir.geometry.PathGeometry
+import io.aequicor.visualization.subsystems.figures.PathGeometry
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -80,6 +80,8 @@ data class ResolvedNode(
      * view-box space, or null when geometry is built draw-time from the laid-out box).
      */
     val geometry: PathGeometry? = null,
+    /** Per-region fills (Figma region paint): each region's own lowered geometry + resolved paints. */
+    val regionPaints: List<ResolvedRegionPaint> = emptyList(),
     /** Populated for boolean-operation nodes; drives path combination at render time. */
     val booleanOp: BooleanOperationKind? = null,
     val scroll: DesignScroll = DesignScroll(),
@@ -199,6 +201,12 @@ sealed interface ResolvedPaint {
 data class ResolvedGradientStop(
     val position: Double,
     val color: DesignColor,
+)
+
+/** One region of a vector network with its own lowered outline and resolved fills (region paint). */
+data class ResolvedRegionPaint(
+    val geometry: PathGeometry,
+    val paints: List<ResolvedPaint>,
 )
 
 data class ResolvedStrokes(

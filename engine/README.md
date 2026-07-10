@@ -81,6 +81,12 @@ authoring guide: `design-book/semantic-layout-markdown-i18n.md` and `SLM-SKILL.m
 
 ## Layering rules
 
+- `:subsystems:figures` sits **below** `:engine:ir` — it is a pure-Kotlin vector
+  subsystem (geometry IR, `VectorNetwork`, primitive builders, the `PathBoolean`
+  boolean engine, `strokeOutline`, `VectorAssetProvider`) and `:engine:ir` depends
+  on it via `api`, re-exporting its types. The Compose adapter
+  `:subsystems:figures-compose` (path conversion, cap/join, previews) is consumed by
+  `:engine:backend-compose` and `:shared`.
 - `:engine:ir` and `:engine:frontend` are pure Kotlin — no Compose, no platform
   APIs. Anything platform-specific is injected (e.g. `DesignTextMeasurer`).
 - Compose lives only in `:engine:backend-compose`; it depends on `:engine:ir`,

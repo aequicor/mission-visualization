@@ -38,6 +38,8 @@ kotlin {
             api(projects.engine.ir)
             api(projects.engine.scene)
 
+            // Figures Compose adapter (geometry IR → Compose Path, stroke/boolean mapping).
+            implementation(projects.subsystems.figuresCompose)
             // Typography subsystem: rich-text model/measure/paint. The renderer adapts
             // ResolvedText -> RichText at this boundary; :engine:ir stays dependency-free.
             api(projects.subsystems.typographyCompose)

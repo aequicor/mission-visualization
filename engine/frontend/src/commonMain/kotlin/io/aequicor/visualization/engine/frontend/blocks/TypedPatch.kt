@@ -3,7 +3,7 @@ package io.aequicor.visualization.engine.frontend.blocks
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
@@ -14,9 +14,9 @@ import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.ExportSetting
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.GridPlacement
 import io.aequicor.visualization.engine.ir.model.GridTrack
 import io.aequicor.visualization.engine.ir.model.GuideLine
@@ -33,13 +33,13 @@ import io.aequicor.visualization.engine.ir.model.PropValue
 import io.aequicor.visualization.engine.ir.model.PrototypeVariable
 import io.aequicor.visualization.engine.ir.model.ResponsiveDimension
 import io.aequicor.visualization.engine.ir.model.ScrollOverflow
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextTruncate
 import io.aequicor.visualization.engine.ir.model.VariableCollection
-import io.aequicor.visualization.engine.ir.model.VectorPath
+import io.aequicor.visualization.subsystems.figures.VectorPath
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.DesignGap
 
@@ -226,6 +226,8 @@ data class ShapePatch(
     val height: Double? = null,
     val pointCount: Int? = null,
     val innerRadius: Double? = null,
+    val arcStartDeg: Double? = null,
+    val arcSweepDeg: Double? = null,
 ) : TypedPatch
 
 /** `vector.boolean` — boolean operation over sibling nodes referenced by id. */
@@ -242,6 +244,8 @@ data class VectorPatch(
     val paths: List<VectorPath>? = null,
     val network: VectorNetwork? = null,
     val boolean: BooleanOpPatch? = null,
+    /** Per-region fills keyed by region index (from `network.regions[i].fills`). */
+    val regionFills: Map<Int, List<DesignPaint>>? = null,
 ) : TypedPatch
 
 /** `mask:` block. [source] names the mask node; empty = the anchor node itself. */

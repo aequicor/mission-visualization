@@ -1,10 +1,10 @@
 package io.aequicor.visualization.engine.ir.layout
 
-import io.aequicor.visualization.engine.ir.geometry.PathCommand
-import io.aequicor.visualization.engine.ir.geometry.PathGeometry
-import io.aequicor.visualization.engine.ir.geometry.RectD
+import io.aequicor.visualization.subsystems.figures.PathCommand
+import io.aequicor.visualization.subsystems.figures.PathGeometry
+import io.aequicor.visualization.subsystems.figures.RectD
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import io.aequicor.visualization.engine.ir.resolve.ResolvedAutoLayout
 import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes

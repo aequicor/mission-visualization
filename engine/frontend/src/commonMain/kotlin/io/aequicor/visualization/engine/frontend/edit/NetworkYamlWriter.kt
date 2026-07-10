@@ -1,11 +1,12 @@
 package io.aequicor.visualization.engine.frontend.edit
 
-import io.aequicor.visualization.engine.ir.model.HandleMirror
-import io.aequicor.visualization.engine.ir.model.HandleOffset
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.VectorRegion
-import io.aequicor.visualization.engine.ir.model.VectorSegment
-import io.aequicor.visualization.engine.ir.model.VectorVertex
+import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorRegion
+import io.aequicor.visualization.subsystems.figures.VectorSegment
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 
 /**
  * Renders a [VectorNetwork] into a `network:` [YamlPayload] for write-back. Shared by the
@@ -16,12 +17,20 @@ import io.aequicor.visualization.engine.ir.model.VectorVertex
  */
 internal object NetworkYamlWriter {
 
-    fun network(network: VectorNetwork): YamlPayload.Mapping = YamlPayload.Mapping(
+    fun network(
+        network: VectorNetwork,
+        regionFills: Map<Int, List<DesignPaint>> = emptyMap(),
+    ): YamlPayload.Mapping = YamlPayload.Mapping(
         buildList {
             add("vertices" to YamlPayload.Sequence(network.vertices.map(::vertex), replaceWhole = true))
             add("segments" to YamlPayload.Sequence(network.segments.map(::segment), replaceWhole = true))
             if (network.regions.isNotEmpty()) {
-                add("regions" to YamlPayload.Sequence(network.regions.map(::region), replaceWhole = true))
+                add(
+                    "regions" to YamlPayload.Sequence(
+                        network.regions.mapIndexed { index, r -> region(r, regionFills[index]) },
+                        replaceWhole = true,
+                    ),
+                )
             }
         },
     )
@@ -34,6 +43,7 @@ internal object NetworkYamlWriter {
             vertex.outHandle?.let { add("out" to offset(it)) }
             if (vertex.mirror != HandleMirror.None) add("mirror" to str(mirrorToken(vertex.mirror)))
             if (vertex.corner) add("corner" to bool(true))
+            if (vertex.cornerRadius > 0.0) add("radius" to num(vertex.cornerRadius))
         },
     )
 
@@ -43,7 +53,7 @@ internal object NetworkYamlWriter {
     private fun segment(segment: VectorSegment): YamlPayload =
         YamlPayload.Sequence(listOf(num(segment.from.toDouble()), num(segment.to.toDouble())), replaceWhole = true)
 
-    private fun region(region: VectorRegion): YamlPayload = YamlPayload.Mapping(
+    private fun region(region: VectorRegion, fills: List<DesignPaint>?): YamlPayload = YamlPayload.Mapping(
         buildList {
             if (region.windingRule != "nonzero") add("windingRule" to str(region.windingRule))
             add(
@@ -54,6 +64,7 @@ internal object NetworkYamlWriter {
                     replaceWhole = true,
                 ),
             )
+            if (fills != null && fills.isNotEmpty()) add("fills" to StyleYamlWriter.fills(fills))
         },
     )
 

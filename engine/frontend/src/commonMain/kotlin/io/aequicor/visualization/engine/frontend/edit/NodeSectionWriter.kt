@@ -2,18 +2,18 @@ package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSizing
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
-import io.aequicor.visualization.engine.ir.model.VectorPath
+import io.aequicor.visualization.subsystems.figures.VectorPath
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 
 /**
@@ -151,6 +151,8 @@ internal object NodeSectionWriter {
                 add("kind" to str(shapeToken(shape.shape)))
                 shape.pointCount?.let { add("pointCount" to num(it.toDouble())) }
                 shape.innerRadius?.let { add("innerRadius" to num(it)) }
+                shape.arcStartDeg?.let { add("arcStart" to num(it)) }
+                shape.arcSweepDeg?.let { add("arcSweep" to num(it)) }
             },
         )
     }
@@ -183,7 +185,7 @@ internal object NodeSectionWriter {
             shape.viewBox?.let { add("viewBox" to viewBoxPayload(it)) }
             val network = shape.network
             if (network != null && network.isNotEmpty()) {
-                add("network" to NetworkYamlWriter.network(network))
+                add("network" to NetworkYamlWriter.network(network, shape.regionFills))
             } else if (shape.paths.isNotEmpty()) {
                 add("paths" to pathsPayload(shape.paths))
             }

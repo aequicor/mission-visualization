@@ -37,11 +37,11 @@ import io.aequicor.visualization.engine.frontend.edit.SlmEdit
 import io.aequicor.visualization.engine.frontend.edit.StyleProp
 import io.aequicor.visualization.engine.frontend.edit.YamlScalarValue
 import io.aequicor.visualization.engine.frontend.edit.applySlmEdits
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignGap
@@ -53,6 +53,7 @@ import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
+import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignUnit
@@ -62,11 +63,42 @@ import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.UnitValue
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.appendVertex
+import io.aequicor.visualization.subsystems.figures.closePath
+import io.aequicor.visualization.subsystems.figures.insertVertexOnSegment
+import io.aequicor.visualization.subsystems.figures.moveHandle
+import io.aequicor.visualization.subsystems.figures.moveVertex
+import io.aequicor.visualization.subsystems.figures.removeVertex
+import io.aequicor.visualization.subsystems.figures.setMirror
+import io.aequicor.visualization.subsystems.figures.setVertexCornerRadius
+import io.aequicor.visualization.subsystems.figures.toggleCorner
+import io.aequicor.visualization.subsystems.figures.withWindingRule
+import io.aequicor.visualization.subsystems.figures.PathFillRule
+import io.aequicor.visualization.subsystems.figures.PathGeometry
+import io.aequicor.visualization.subsystems.figures.RectD
+import io.aequicor.visualization.subsystems.figures.VectorPath
+import io.aequicor.visualization.subsystems.figures.arrowGeometry
+import io.aequicor.visualization.subsystems.figures.bounds
+import io.aequicor.visualization.subsystems.figures.ellipseArcGeometry
+import io.aequicor.visualization.subsystems.figures.ellipseGeometry
+import io.aequicor.visualization.subsystems.figures.fittedInto
+import io.aequicor.visualization.subsystems.figures.lineGeometry
+import io.aequicor.visualization.subsystems.figures.networkToGeometry
+import io.aequicor.visualization.subsystems.figures.parseSvgPathToGeometry
+import io.aequicor.visualization.subsystems.figures.regularPolygonGeometry
+import io.aequicor.visualization.subsystems.figures.roundedRectGeometry
+import io.aequicor.visualization.subsystems.figures.starGeometry
+import io.aequicor.visualization.subsystems.figures.PathBooleanOp
+import io.aequicor.visualization.subsystems.figures.pathBooleanFold
+import io.aequicor.visualization.subsystems.figures.refitCurves
+import io.aequicor.visualization.subsystems.figures.strokeOutline
+import io.aequicor.visualization.subsystems.figures.toSvgPathData
+import io.aequicor.visualization.subsystems.figures.translateSvgPoint
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.math.cos
@@ -295,6 +327,27 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
             node.copy(kind = shape.copy(innerRadius = intent.ratio))
         }
+        is DesignEditorIntent.SetArcStart -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Shape, listOf("arcStart"), YamlScalarValue.Num(intent.degrees))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(arcStartDeg = intent.degrees))
+        }
+        is DesignEditorIntent.SetArcSweep -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Shape, listOf("arcSweep"), YamlScalarValue.Num(intent.degrees))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(arcSweepDeg = intent.degrees))
+        }
+        is DesignEditorIntent.SetArcRatio -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Shape, listOf("innerRadius"), YamlScalarValue.Num(intent.ratio))),
+        ) patch@{ node ->
+            val shape = node.kind as? DesignNodeKind.Shape ?: return@patch node
+            node.copy(kind = shape.copy(innerRadius = intent.ratio))
+        }
         is DesignEditorIntent.SetIconRef -> state.writeBackEdits(
             intent.nodeId,
             listOf(SetTypedBlockScalar(intent.nodeId, TypedBlockKind.Vector, listOf("iconRef"), YamlScalarValue.Str(intent.ref))),
@@ -323,7 +376,15 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             if (node.kind !is DesignNodeKind.BooleanOperation) return@patch node
             node.copy(kind = DesignNodeKind.BooleanOperation(intent.op))
         }
+        is DesignEditorIntent.SetWindingRule ->
+            state.commitVectorNetwork(intent.nodeId) { it.withWindingRule(intent.rule) }
+        is DesignEditorIntent.SetVertexCornerRadius ->
+            state.commitVectorNetwork(intent.nodeId) { it.setVertexCornerRadius(intent.vertexIndex, intent.radius) }
+        is DesignEditorIntent.SetRegionFill -> state.setRegionFill(intent.nodeId, intent.regionIndex, intent.fills)
+        is DesignEditorIntent.RegionFillCommand -> state.regionFillCommand(intent.nodeId, intent.regionIndex, intent.op)
         is DesignEditorIntent.ConvertToEditableVector -> state.convertToEditableVector(intent.nodeId)
+        is DesignEditorIntent.FlattenNode -> state.flattenNode(intent.nodeId)
+        is DesignEditorIntent.OutlineStroke -> state.outlineStrokeNode(intent.nodeId)
         is DesignEditorIntent.MoveVectorVertex -> state.editUnlockedNode(intent.nodeId) patch@{ node ->
             val network = networkOf(node) ?: return@patch node
             node.withNetwork(network.moveVertex(intent.vertexIndex, intent.dx, intent.dy))
@@ -338,6 +399,8 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             state.commitVectorNetwork(intent.nodeId) { it.toggleCorner(intent.vertexIndex) }
         is DesignEditorIntent.AddVectorVertex ->
             state.commitVectorNetwork(intent.nodeId) { it.insertVertexOnSegment(intent.segmentIndex, intent.x, intent.y) }
+        is DesignEditorIntent.AppendVectorVertex ->
+            state.commitVectorNetwork(intent.nodeId) { it.appendVertex(intent.x, intent.y) }
         is DesignEditorIntent.DeleteVectorVertex ->
             state.commitVectorNetwork(intent.nodeId) { it.removeVertex(intent.vertexIndex) }
         is DesignEditorIntent.CloseVectorNetwork ->
@@ -1379,7 +1442,8 @@ private fun DesignNode.identityFingerprint(): List<Any?> = listOf(
 private fun kindFingerprint(kind: DesignNodeKind): Any? = when (kind) {
     DesignNodeKind.Frame -> "frame"
     is DesignNodeKind.Text -> listOf("text", kind.content?.defaultText ?: kind.characters.literalOrNull())
-    is DesignNodeKind.Shape -> listOf("shape", kind.shape.name, kind.pointCount, kind.innerRadius)
+    is DesignNodeKind.Shape ->
+        listOf("shape", kind.shape.name, kind.pointCount, kind.innerRadius, kind.paths.map { it.windingRule to it.d })
     is DesignNodeKind.Instance -> listOf("instance", kind.componentId.literalOrNull())
     else -> kind::class.simpleName
 }
@@ -1396,7 +1460,12 @@ private fun DesignNode.isStructurallyExpressible(): Boolean {
     val kindOk = when (val nodeKind = kind) {
         DesignNodeKind.Frame -> true
         is DesignNodeKind.Text -> true
-        is DesignNodeKind.Shape -> nodeKind.paths.isEmpty() && nodeKind.iconRef.isEmpty() && nodeKind.pathRef.isEmpty()
+        is DesignNodeKind.Shape ->
+            // A parametric primitive, or a Vector shape whose geometry is inline `paths` — both of
+            // which `NodeSectionWriter.vectorPayload` re-emits faithfully (this is what Flatten and
+            // Outline Stroke produce). Asset refs and structural networks stay in-memory-only.
+            (nodeKind.paths.isEmpty() && nodeKind.iconRef.isEmpty() && nodeKind.pathRef.isEmpty()) ||
+                (nodeKind.shape == ShapeType.Vector && nodeKind.iconRef.isEmpty() && nodeKind.pathRef.isEmpty() && nodeKind.network == null)
         else -> false
     }
     // A node carrying an interaction the SLM writer can't round-trip (CubicBezier easing, unknown
@@ -1449,8 +1518,12 @@ private val DefaultFillColor: DesignColor = DesignColor.fromHex("#B9C4D2") ?: De
 private val DefaultStrokeColor: DesignColor = DesignColor.fromHex("#1E88FF") ?: DesignColor(0xFF1E88FF)
 private val DefaultShadowColor: DesignColor = DesignColor(0x40000000)
 
-private fun DesignNode.applyFillOp(op: FillOp): DesignNode {
-    val fills = fills.orEmpty().toMutableList()
+private fun DesignNode.applyFillOp(op: FillOp): DesignNode =
+    copy(fills = applyFillOp(fills.orEmpty(), op), fillStyleId = "")
+
+/** Pure paint-list transformation shared by node fills and vector-network region fills. */
+private fun applyFillOp(current: List<DesignPaint>, op: FillOp): List<DesignPaint> {
+    val fills = current.toMutableList()
     when (op) {
         FillOp.Add -> fills.add(DesignPaint.Solid(DefaultFillColor.bindable()))
         is FillOp.RemoveAt -> if (op.index in fills.indices) fills.removeAt(op.index)
@@ -1513,7 +1586,7 @@ private fun DesignNode.applyFillOp(op: FillOp): DesignNode {
             }
         }
     }
-    return copy(fills = fills.toList(), fillStyleId = "")
+    return fills.toList()
 }
 
 private fun convertFill(paint: DesignPaint, type: FillKind): DesignPaint {
@@ -1572,6 +1645,7 @@ private fun DesignNode.applyStrokeOp(op: StrokeOp): DesignNode = when (op) {
             is StrokeOp.SetWeight -> strokes.copy(weight = op.weight.coerceAtLeast(0.0).bindable())
             is StrokeOp.SetAlign -> strokes.copy(align = op.align)
             is StrokeOp.SetCap -> strokes.copy(cap = op.cap)
+            is StrokeOp.SetJoin -> strokes.copy(join = op.join)
             is StrokeOp.SetDashed -> strokes.copy(dashPattern = if (op.dashed) listOf(6.0, 4.0) else emptyList())
             is StrokeOp.SetPerSide -> strokes.copy(weightPerSide = strokes.weightPerSide.mergePerSide(op))
             else -> strokes
@@ -1774,9 +1848,50 @@ private fun DesignEditorState.commitVectorNetwork(
     transform: (VectorNetwork) -> VectorNetwork,
 ): DesignEditorState {
     val node = document?.nodeById(nodeId) ?: return this
-    val network = networkOf(node) ?: return this
+    val shape = node.kind as? DesignNodeKind.Shape ?: return this
+    val network = shape.network ?: return this
     val newNetwork = transform(network)
-    return writeBackEdits(nodeId, listOf(SetVectorNetwork(nodeId, newNetwork))) { it.withNetwork(newNetwork) }
+    // Preserve region fills across geometry edits (they are keyed by surviving region indices).
+    val regionFills = if (newNetwork.regions.isEmpty()) emptyMap() else shape.regionFills
+    return writeBackEdits(nodeId, listOf(SetVectorNetwork(nodeId, newNetwork, regionFills))) {
+        it.withNetwork(newNetwork).let { n ->
+            val s = n.kind as? DesignNodeKind.Shape ?: return@let n
+            n.copy(kind = s.copy(regionFills = regionFills))
+        }
+    }
+}
+
+/** Sets or clears one region's fills, committing the network with the updated per-region map. */
+private fun DesignEditorState.setRegionFill(
+    nodeId: String,
+    regionIndex: Int,
+    fills: List<DesignPaint>,
+): DesignEditorState {
+    val node = document?.nodeById(nodeId) ?: return this
+    val shape = node.kind as? DesignNodeKind.Shape ?: return this
+    val network = shape.network ?: return this
+    if (regionIndex !in network.regions.indices) return this
+    val newFills = shape.regionFills.toMutableMap().apply {
+        if (fills.isEmpty()) remove(regionIndex) else put(regionIndex, fills)
+    }
+    return writeBackEdits(nodeId, listOf(SetVectorNetwork(nodeId, network, newFills))) {
+        val s = it.kind as? DesignNodeKind.Shape ?: return@writeBackEdits it
+        it.copy(kind = s.copy(regionFills = newFills))
+    }
+}
+
+/** Applies a [FillOp] to one region's current paint list and commits via [setRegionFill]. */
+private fun DesignEditorState.regionFillCommand(
+    nodeId: String,
+    regionIndex: Int,
+    op: FillOp,
+): DesignEditorState {
+    val node = document?.nodeById(nodeId) ?: return this
+    val shape = node.kind as? DesignNodeKind.Shape ?: return this
+    val network = shape.network ?: return this
+    if (regionIndex !in network.regions.indices) return this
+    val updated = applyFillOp(shape.regionFills[regionIndex].orEmpty(), op)
+    return setRegionFill(nodeId, regionIndex, updated)
 }
 
 /**
@@ -1799,6 +1914,151 @@ private fun DesignEditorState.convertToEditableVector(nodeId: String): DesignEdi
     ) patch@{ target ->
         val targetShape = target.kind as? DesignNodeKind.Shape ?: return@patch target
         target.copy(kind = targetShape.copy(shape = ShapeType.Vector, network = net, viewBox = viewBox))
+    }
+}
+
+/** A shape's outline geometry placed into [rect] (primitives built directly; vectors fit from view box). */
+private fun shapeGeometryInRect(node: DesignNode, rect: RectD): PathGeometry? {
+    val shape = node.kind as? DesignNodeKind.Shape ?: return null
+    shape.network?.takeIf { it.isNotEmpty() }?.let { net ->
+        return networkToGeometry(net, shape.viewBox)?.fittedInto(rect)
+    }
+    if (shape.paths.isNotEmpty()) {
+        val fillRule = if (shape.paths.first().windingRule == "evenodd") PathFillRule.EvenOdd else PathFillRule.NonZero
+        val commands = shape.paths.flatMap { parseSvgPathToGeometry(it.d).commands }
+        val geom = PathGeometry(commands, fillRule)
+        val vb = shape.viewBox?.let { RectD(it.x, it.y, it.x + it.width, it.y + it.height) } ?: geom.bounds()
+        return geom.copy(sourceViewBox = vb).fittedInto(rect)
+    }
+    val weight = node.strokes?.weight?.literalOrNull() ?: 1.0
+    return when (shape.shape) {
+        ShapeType.Ellipse -> {
+            val sweep = shape.arcSweepDeg
+            val inner = shape.innerRadius ?: 0.0
+            if ((sweep != null && kotlin.math.abs(sweep) < 360.0) || inner > 0.0) {
+                ellipseArcGeometry(rect, shape.arcStartDeg ?: 0.0, sweep ?: 360.0, inner)
+            } else {
+                ellipseGeometry(rect)
+            }
+        }
+        ShapeType.Polygon -> regularPolygonGeometry(rect, shape.pointCount ?: 3)
+        ShapeType.Star -> starGeometry(rect, shape.pointCount ?: 5, shape.innerRadius ?: 0.5)
+        ShapeType.Line -> lineGeometry(rect)
+        ShapeType.Arrow -> arrowGeometry(rect, weight)
+        ShapeType.Rectangle -> roundedRectGeometry(rect, 0.0, 0.0, 0.0, 0.0)
+        ShapeType.Vector -> null
+    }
+}
+
+/**
+ * Flattens a node into a single vector shape. A parametric shape delegates to
+ * [convertToEditableVector]; a boolean-operation node folds its children's geometry through the
+ * pure polygon boolean engine ([pathBooleanFold]) into ONE clean vector path — exact for all four
+ * ops including Intersect. Output is polyline geometry (curves are flattened; accepted v1 tradeoff).
+ */
+private fun DesignEditorState.flattenNode(nodeId: String): DesignEditorState {
+    val doc = document ?: return this
+    val node = doc.nodeById(nodeId) ?: return this
+    if (node.locked) return this
+    when (node.kind) {
+        is DesignNodeKind.Shape -> return convertToEditableVector(nodeId)
+        is DesignNodeKind.BooleanOperation -> Unit
+        else -> return this
+    }
+    val op = (node.kind as DesignNodeKind.BooleanOperation).operation
+    val w = node.size.width ?: return this
+    val h = node.size.height ?: return this
+    val childGeoms = node.children.mapNotNull { child ->
+        val cx = child.position?.x ?: 0.0
+        val cy = child.position?.y ?: 0.0
+        val cw = child.size.width ?: return@mapNotNull null
+        val ch = child.size.height ?: return@mapNotNull null
+        shapeGeometryInRect(child, RectD(cx, cy, cx + cw, cy + ch))
+    }
+    if (childGeoms.isEmpty()) return this
+    val combined = pathBooleanFold(childGeoms, op.toBooleanOp())
+    if (combined.commands.isEmpty()) return this
+    val paths = listOf(VectorPath(windingRule = "nonzero", d = combined.refitCurves().toSvgPathData()))
+    val flattened = node.copy(
+        type = "vector",
+        kind = DesignNodeKind.Shape(shape = ShapeType.Vector, paths = paths, viewBox = DesignViewBox(0.0, 0.0, w, h)),
+        children = emptyList(),
+    )
+    val removed = node.children.flatMap { c -> listOf(c.id) + c.allDescendants().map { it.id } }.toSet()
+    return replaceNodeStructural(nodeId, flattened, removed)
+}
+
+private fun BooleanOperationKind.toBooleanOp(): PathBooleanOp = when (this) {
+    BooleanOperationKind.Union -> PathBooleanOp.Union
+    BooleanOperationKind.Subtract -> PathBooleanOp.Subtract
+    BooleanOperationKind.Intersect -> PathBooleanOp.Intersect
+    BooleanOperationKind.Exclude -> PathBooleanOp.Exclude
+}
+
+/**
+ * Converts a shape's stroke into a filled vector outline ([strokeOutline]); the stroke paint
+ * becomes the fill and the stroke is cleared. Requires a shape with a positive-weight stroke.
+ */
+private fun DesignEditorState.outlineStrokeNode(nodeId: String): DesignEditorState {
+    val doc = document ?: return this
+    val node = doc.nodeById(nodeId) ?: return this
+    if (node.locked) return this
+    node.kind as? DesignNodeKind.Shape ?: return this
+    val strokes = node.strokes ?: return this
+    val weight = strokes.weight.literalOrNull() ?: return this
+    if (weight <= 0.0) return this
+    val w = node.size.width ?: return this
+    val h = node.size.height ?: return this
+    val geometry = shapeGeometryInRect(node, RectD(0.0, 0.0, w, h)) ?: return this
+    val align = when (strokes.align) {
+        StrokeAlign.Inside -> "inside"
+        StrokeAlign.Center -> "center"
+        StrokeAlign.Outside -> "outside"
+    }
+    val outlined = strokeOutline(geometry, weight, cap = strokes.cap, join = strokes.join, align = align)
+    if (outlined.commands.isEmpty()) return this
+    val outlinedNode = node.copy(
+        type = "vector",
+        kind = DesignNodeKind.Shape(
+            shape = ShapeType.Vector,
+            paths = listOf(VectorPath("nonzero", outlined.refitCurves().toSvgPathData())),
+            viewBox = DesignViewBox(0.0, 0.0, w, h),
+        ),
+        fills = strokes.paints,
+        strokes = null,
+    )
+    return replaceNodeStructural(nodeId, outlinedNode, emptySet())
+}
+
+/**
+ * Replaces [oldId] with [newNode] in the working document (authority + fallback) and mirrors it to
+ * the owning SLM source by deleting the old section (+ any nested children) and inserting the fresh
+ * node. Any veto in [withStructuralSource] keeps the in-memory replace with sources byte-identical.
+ */
+private fun DesignEditorState.replaceNodeStructural(
+    oldId: String,
+    newNode: DesignNode,
+    removedIds: Set<String>,
+): DesignEditorState {
+    val document = document ?: return this
+    val inMemory = editNode(oldId) { newNode }
+    if (inMemory === this) return this
+    if (!newNode.isStructurallyExpressible()) return inMemory
+    val parentId = document.parentNodeOf(oldId)?.id ?: document.topLevelOwnerPage(oldId)?.id ?: return inMemory
+    val siblings = document.siblingsOf(oldId)
+    val idx = siblings.indexOfFirst { it.id == oldId }
+    val prevSiblingId = if (idx > 0) siblings[idx - 1].id else null
+    val owner = owningSourceIndex(oldId) ?: return inMemory
+    val ownerIds = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
+    val expected = ownerIds - removedIds
+    val edits = listOf(
+        DeleteSection(oldId),
+        InsertChildSubtree(parentId, newNode, afterSiblingId = prevSiblingId),
+    )
+    val expectedPaths = (newNode.kind as? DesignNodeKind.Shape)?.paths?.size
+    return withStructuralSource(oldId, edits, inMemory, expected) { recompiled ->
+        val k = recompiled.nodeById(oldId)?.kind as? DesignNodeKind.Shape
+        k?.shape == ShapeType.Vector && (expectedPaths == null || k.paths.size == expectedPaths)
     }
 }
 

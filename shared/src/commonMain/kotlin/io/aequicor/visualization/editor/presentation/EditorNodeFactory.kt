@@ -12,13 +12,16 @@ import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.bindable
 
 /** The object kinds the toolbar can create on the canvas. */
-enum class NewObjectKind { Frame, Rectangle, Ellipse, Line, Arrow, Text }
+enum class NewObjectKind { Frame, Rectangle, Ellipse, Polygon, Star, Line, Arrow, Vector, Text }
 
 /** A device/frame preset offered by the "new screen" flow. */
 enum class ScreenPreset(val displayName: String, val width: Double, val height: Double) {
@@ -105,7 +108,7 @@ object EditorNodeFactory {
             fills = listOf(DesignPaint.Solid(frameWhite.bindable())),
             layout = DesignAutoLayout(mode = LayoutMode.None),
         )
-        NewObjectKind.Rectangle, NewObjectKind.Ellipse -> node.copy(
+        NewObjectKind.Rectangle, NewObjectKind.Ellipse, NewObjectKind.Polygon, NewObjectKind.Star -> node.copy(
             fills = listOf(DesignPaint.Solid(fillGrey.bindable())),
         )
         NewObjectKind.Line, NewObjectKind.Arrow -> node.copy(
@@ -114,6 +117,13 @@ object EditorNodeFactory {
                 paints = listOf(DesignPaint.Solid(strokeBlue.bindable())),
                 weight = 2.0.bindable(),
                 cap = if (kind == NewObjectKind.Arrow) "arrow" else "round",
+            ),
+        )
+        NewObjectKind.Vector -> node.copy(
+            fills = null,
+            strokes = DesignStrokes(
+                paints = listOf(DesignPaint.Solid(strokeBlue.bindable())),
+                weight = 2.0.bindable(),
             ),
         )
         NewObjectKind.Text -> node.copy(
@@ -125,8 +135,21 @@ object EditorNodeFactory {
         NewObjectKind.Frame -> DesignNodeKind.Frame
         NewObjectKind.Rectangle -> DesignNodeKind.Shape(ShapeType.Rectangle)
         NewObjectKind.Ellipse -> DesignNodeKind.Shape(ShapeType.Ellipse)
+        NewObjectKind.Polygon -> DesignNodeKind.Shape(ShapeType.Polygon, pointCount = 3)
+        NewObjectKind.Star -> DesignNodeKind.Shape(ShapeType.Star, pointCount = 5, innerRadius = 0.5)
         NewObjectKind.Line -> DesignNodeKind.Shape(ShapeType.Line)
         NewObjectKind.Arrow -> DesignNodeKind.Shape(ShapeType.Arrow)
+        NewObjectKind.Vector -> DesignNodeKind.Shape(
+            shape = ShapeType.Vector,
+            // Pen click-to-place seed: a single vertex at the view-box centre (the first click),
+            // which subsequent clicks extend via AppendVectorVertex. Authored in a 0..100 view box
+            // matching the default 100x100 box, so a click maps 1:1 into network space.
+            network = VectorNetwork(
+                vertices = listOf(VectorVertex(50.0, 50.0)),
+                segments = emptyList(),
+            ),
+            viewBox = DesignViewBox(0.0, 0.0, 100.0, 100.0),
+        )
         NewObjectKind.Text -> DesignNodeKind.Text(
             characters = "Text".bindable(),
             autoResize = if (fixedWidthText) TextAutoResize.Height else TextAutoResize.WidthAndHeight,
@@ -152,8 +175,11 @@ object EditorNodeFactory {
         NewObjectKind.Frame -> "frame"
         NewObjectKind.Rectangle -> "rect"
         NewObjectKind.Ellipse -> "ellipse"
+        NewObjectKind.Polygon -> "poly"
+        NewObjectKind.Star -> "star"
         NewObjectKind.Line -> "line"
         NewObjectKind.Arrow -> "arrow"
+        NewObjectKind.Vector -> "vector"
         NewObjectKind.Text -> "text"
     }
 
@@ -161,16 +187,21 @@ object EditorNodeFactory {
         NewObjectKind.Frame -> "Frame"
         NewObjectKind.Rectangle -> "Rectangle"
         NewObjectKind.Ellipse -> "Ellipse"
+        NewObjectKind.Polygon -> "Polygon"
+        NewObjectKind.Star -> "Star"
         NewObjectKind.Line -> "Line"
         NewObjectKind.Arrow -> "Arrow"
+        NewObjectKind.Vector -> "Vector"
         NewObjectKind.Text -> "Text"
     }
 
     /** Default creation size for a click (no drag) with the given tool. */
     fun defaultSizeFor(kind: NewObjectKind): DesignSize = when (kind) {
         NewObjectKind.Frame -> DesignSize(240.0, 160.0)
-        NewObjectKind.Rectangle, NewObjectKind.Ellipse -> DesignSize(120.0, 120.0)
+        NewObjectKind.Rectangle, NewObjectKind.Ellipse, NewObjectKind.Polygon, NewObjectKind.Star ->
+            DesignSize(120.0, 120.0)
         NewObjectKind.Line, NewObjectKind.Arrow -> DesignSize(160.0, 0.0)
+        NewObjectKind.Vector -> DesignSize(100.0, 100.0)
         NewObjectKind.Text -> DesignSize(120.0, 28.0)
     }
 }

@@ -101,11 +101,14 @@ class CnlEmitterRoundTripTest {
         if (shapeA != null || shapeB != null) {
             assertEquals(shapeA?.pointCount, shapeB?.pointCount, "pointCount")
             assertEquals(shapeA?.innerRadius, shapeB?.innerRadius, "innerRadius")
+            assertEquals(shapeA?.arcStartDeg, shapeB?.arcStartDeg, "arcStart")
+            assertEquals(shapeA?.arcSweepDeg, shapeB?.arcSweepDeg, "arcSweep")
             assertEquals(shapeA?.viewBox, shapeB?.viewBox, "viewBox")
             assertEquals(shapeA?.iconRef, shapeB?.iconRef, "iconRef")
             assertEquals(shapeA?.pathRef, shapeB?.pathRef, "pathRef")
             assertEquals(shapeA?.paths, shapeB?.paths, "paths")
             assertEquals(shapeA?.network, shapeB?.network, "network")
+            assertEquals(shapeA?.regionFills, shapeB?.regionFills, "regionFills")
         }
         val mediaA = (a.kind as? DesignNodeKind.Media)?.media
         val mediaB = (b.kind as? DesignNodeKind.Media)?.media
@@ -445,6 +448,32 @@ class CnlEmitterRoundTripTest {
     fun vectorNetwork() =
         assertLeafRoundTrips(
             "Vector network (vertex (0 0 corner) vertex (24 0) vertex (24 24 in (-8 0) out (8 0) mirror angle) segment (0 1) segment (1 2) segment (2 0) region evenodd loops (0 1 2))",
+        ) { it is DesignNodeKind.Shape }
+
+    @Test
+    fun ellipseArcPie() =
+        assertLeafRoundTrips("Ellipse 40 by 40 color #2563EB arc (-90 270)") { it is DesignNodeKind.Shape }
+
+    @Test
+    fun ellipseArcDonut() =
+        assertLeafRoundTrips("Ellipse 80 by 80 color #F59E0B inner 0.5 arc (0 180)") { it is DesignNodeKind.Shape }
+
+    @Test
+    fun vectorNetworkVertexCornerRadius() =
+        assertLeafRoundTrips(
+            "Vector network (vertex (0 0 corner radius 6) vertex (24 0) vertex (24 24) segment (0 1) segment (1 2) segment (2 0))",
+        ) { it is DesignNodeKind.Shape }
+
+    @Test
+    fun vectorNetworkRegionSolidFill() =
+        assertLeafRoundTrips(
+            "Vector network (vertex (0 0) vertex (24 0) vertex (24 24) segment (0 1) segment (1 2) segment (2 0) region loops (0 1 2) fill #22C55E)",
+        ) { it is DesignNodeKind.Shape }
+
+    @Test
+    fun vectorNetworkRegionTokenFill() =
+        assertLeafRoundTrips(
+            "Vector network (vertex (0 0) vertex (24 0) vertex (24 24) segment (0 1) segment (1 2) segment (2 0) region evenodd loops (0 1 2) fill \$color.accent)",
         ) { it is DesignNodeKind.Shape }
 
     @Test
