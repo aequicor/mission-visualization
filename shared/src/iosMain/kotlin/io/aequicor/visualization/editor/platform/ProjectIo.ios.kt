@@ -17,3 +17,10 @@ internal actual fun platformAppendCanvasPdfPage(title: String, crop: CanvasExpor
 internal actual fun platformFinishPdfExport(fileName: String) = Unit
 
 internal actual fun platformToggleFullscreen() = Unit
+
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+internal actual fun platformOpenUrl(url: String) {
+    platform.Foundation.NSURL.URLWithString(url)?.let { nsUrl ->
+        platform.UIKit.UIApplication.sharedApplication.openURL(nsUrl)
+    }
+}

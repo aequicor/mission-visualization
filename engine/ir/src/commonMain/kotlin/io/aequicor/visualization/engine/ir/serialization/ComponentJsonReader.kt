@@ -134,6 +134,10 @@ internal fun DesignDocumentReader.readOverride(element: JsonElement, pointer: St
         visible = set["visible"]?.let { readBindableBoolean(it, true) },
         characters = set["characters"]?.let { readBindableString(it, "") },
         textStyle = (set["textStyle"] as? JsonObject)?.let { readTextStyle(it, "$pointer/set/textStyle") },
+        styleRanges = (set["styleRanges"] as? JsonArray)?.mapIndexed { index, range ->
+            readStyleRange(range, "$pointer/set/styleRanges/$index")
+        },
+        links = (set["links"] as? JsonArray)?.map { readTextLink(it) },
         cornerRadius = set["cornerRadius"]?.let { readCornerRadius(it, 0.0) },
         variant = (set["variant"] as? JsonObject)?.mapValues { (_, value) -> value.asStringOrEmpty() },
         props = (set["props"] as? JsonObject)?.mapNotNull { (name, value) ->

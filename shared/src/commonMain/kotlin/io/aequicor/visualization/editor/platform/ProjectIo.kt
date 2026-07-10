@@ -32,3 +32,6 @@ internal expect fun platformAppendCanvasPdfPage(title: String, crop: CanvasExpor
 internal expect fun platformFinishPdfExport(fileName: String)
 
 internal expect fun platformToggleFullscreen()
+
+/** Opens an external URL in the platform browser (best-effort; no-op where unavailable). */
+internal expect fun platformOpenUrl(url: String)

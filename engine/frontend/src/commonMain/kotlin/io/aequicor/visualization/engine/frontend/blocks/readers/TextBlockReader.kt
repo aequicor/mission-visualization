@@ -6,12 +6,15 @@ import io.aequicor.visualization.engine.frontend.yaml.YamlList
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.TextTruncate
 import io.aequicor.visualization.engine.ir.model.UnitValue
+import io.aequicor.visualization.engine.ir.model.bindable
 
 private val knownKeys = setOf(
     "key", "defaultText", "style", "typography", "resizing", "maxLines", "overflow",
@@ -19,9 +22,11 @@ private val knownKeys = setOf(
 )
 
 private val typographyKeys = setOf(
-    "fontFamily", "fontWeight", "fontSize", "lineHeight", "letterSpacing",
-    "paragraphSpacing", "horizontalAlign", "verticalAlign", "decoration", "case",
-    "openType", "variableFont",
+    "fontFamily", "fontWeight", "italic", "fontSize", "lineHeight", "letterSpacing",
+    "paragraphSpacing", "paragraphIndent", "horizontalAlign", "verticalAlign",
+    "decoration", "decorationStyle", "decorationColor", "decorationThickness",
+    "decorationSkipInk", "case", "position", "leadingTrim", "hangingPunctuation",
+    "hangingList", "openType", "variableFont",
 )
 
 /** `text:` block — i18n content plus text-layer behavior. */
@@ -58,23 +63,47 @@ internal fun readTextBlock(value: YamlValue, reading: BlockReading): TextPatch? 
 
 private fun readTypography(map: YamlMap, reading: BlockReading): DesignTextStyle? {
     val typography = map.mapValue("typography", reading) ?: return null
+    return readTypographyMap(typography, reading)
+}
+
+/** Reads a `typography:` map's fields into a partial [DesignTextStyle]; reused by spans. */
+internal fun readTypographyMap(typography: YamlMap, reading: BlockReading): DesignTextStyle {
     typography.warnUnknownKeys(typographyKeys, reading)
     val openType = typography.mapValue("openType", reading)
     val variableFont = typography.mapValue("variableFont", reading)
     return DesignTextStyle(
         fontFamily = typography.string("fontFamily", reading),
         fontWeight = typography.bindableDouble("fontWeight", reading),
+        italic = typography.boolean("italic", reading),
         fontSize = typography.bindableDouble("fontSize", reading),
         lineHeight = typography.unitValue("lineHeight", reading),
         letterSpacing = typography.unitValue("letterSpacing", reading),
         paragraphSpacing = typography.double("paragraphSpacing", reading),
+        paragraphIndent = typography.double("paragraphIndent", reading),
         textAlignHorizontal = typography.enum("horizontalAlign", ReaderEnums.textAlignHorizontal, reading),
         textAlignVertical = typography.enum("verticalAlign", ReaderEnums.textAlignVertical, reading),
         textCase = typography.enum("case", ReaderEnums.textCase, reading),
         textDecoration = typography.enum("decoration", ReaderEnums.textDecoration, reading),
+        decorationStyle = typography.enum("decorationStyle", ReaderEnums.textDecorationStyle, reading),
+        decorationColor = typography.color("decorationColor", reading),
+        decorationThickness = typography.unitValue("decorationThickness", reading),
+        decorationSkipInk = typography.boolean("decorationSkipInk", reading),
+        textPosition = typography.enum("position", ReaderEnums.textScriptPosition, reading),
+        leadingTrim = typography.enum("leadingTrim", ReaderEnums.leadingTrim, reading),
+        hangingPunctuation = typography.boolean("hangingPunctuation", reading),
+        hangingList = typography.boolean("hangingList", reading),
         fontFeatures = openType?.booleanEntries(reading) ?: emptyMap(),
         variableAxes = variableFont?.axisEntries(reading) ?: emptyMap(),
     )
+}
+
+/** Hex color scalar (`#RRGGBB` / `#RRGGBBAA`); unknown values warn and drop. */
+private fun YamlMap.color(key: String, reading: BlockReading): DesignColor? {
+    val text = string(key, reading) ?: return null
+    return DesignColor.fromHex(text) ?: run {
+        reading.warning("`$key` must be a hex color like #RRGGBB", entries[key] ?: this)
+        null
+    }
 }
 
 /** Numbers are px; `{ unit: percent, value: 135 }` maps stay explicit. */
@@ -141,7 +170,7 @@ private fun readSpan(item: YamlValue, defaultText: String?, reading: BlockReadin
         reading.warning("`spans` items must be maps", item)
         return null
     }
-    span.warnUnknownKeys(setOf("range", "text", "style", "link"), reading)
+    span.warnUnknownKeys(setOf("range", "text", "style", "typography", "fills", "link"), reading)
     val range = readRange(span, defaultText, reading) ?: return null
     val link = span.mapValue("link", reading)
     var linkUrl: String? = null
@@ -153,10 +182,13 @@ private fun readSpan(item: YamlValue, defaultText: String?, reading: BlockReadin
             else -> reading.warning("Unknown span link type \"$type\"", link)
         }
     }
+    val inlineStyle = span.mapValue("typography", reading)?.let { readTypographyMap(it, reading) }
     return TextSpanPatch(
         start = range.first,
         end = range.second,
         styleRef = span.string("style", reading),
+        style = inlineStyle,
+        fills = readPaints(span, "fills", reading),
         linkUrl = linkUrl,
         linkNodeTarget = linkNodeTarget,
     )

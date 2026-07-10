@@ -425,6 +425,8 @@ class DesignLayoutEngine(
     private fun textBaseline(text: ResolvedText, width: Double, align: BaselineAlign): Double {
         val first = textMeasurer.firstBaseline(text, width)
         if (align == BaselineAlign.Last) {
+            // Prefer real per-line metrics (mixed-size ranges break the uniform formula).
+            textMeasurer.measure(text, width).lastBaseline?.let { return it }
             val lineHeight = if (text.style.lineHeight > 0.0) text.style.lineHeight else text.style.fontSize * 1.25
             if (lineHeight > 0.0) {
                 val lineCount = (textMeasurer.measure(text, width).height / lineHeight).toInt().coerceAtLeast(1)

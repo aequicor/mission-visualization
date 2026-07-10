@@ -337,7 +337,29 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
 
     is SetTextStyle -> PayloadOutcome.Ok(
         TypedBlockKind.Text,
-        YamlPayload.Mapping(listOf("typography" to TypographyYamlWriter.typography(edit.style))),
+        YamlPayload.Mapping(
+            listOf(
+                "typography" to YamlPayload.Mapping(
+                    TypographyYamlWriter.typography(edit.style).entries +
+                        edit.clearKeys.map { it to YamlPayload.Remove },
+                ),
+            ),
+        ),
+    )
+
+    is SetTextSpans -> PayloadOutcome.Ok(
+        TypedBlockKind.Text,
+        YamlPayload.Mapping(listOf("spans" to TextSpansYamlWriter.spans(edit.styleRanges, edit.links))),
+    )
+
+    is SetTextAutoResize -> PayloadOutcome.Ok(
+        TypedBlockKind.Text,
+        YamlPayload.Mapping(listOf("resizing" to textResizingPayload(edit.mode))),
+    )
+
+    is SetTextTruncate -> PayloadOutcome.Ok(
+        TypedBlockKind.Text,
+        textTruncatePayload(edit.truncate),
     )
 
     is SetViewBox -> PayloadOutcome.Ok(
@@ -376,6 +398,33 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
     is SetInteractions, is SetMotion ->
         PayloadOutcome.Invalid("Interaction/motion edits are dispatched via typedBlockSetPlan")
 }
+
+private fun textResizingPayload(mode: io.aequicor.visualization.engine.ir.model.TextAutoResize): YamlPayload {
+    val (width, height) = when (mode) {
+        io.aequicor.visualization.engine.ir.model.TextAutoResize.WidthAndHeight -> "hug" to "hug"
+        io.aequicor.visualization.engine.ir.model.TextAutoResize.Height -> "fixed" to "hug"
+        io.aequicor.visualization.engine.ir.model.TextAutoResize.None -> "fixed" to "fixed"
+    }
+    return YamlPayload.Mapping(
+        listOf(
+            "width" to scalar(YamlScalarValue.Str(width)),
+            "height" to scalar(YamlScalarValue.Str(height)),
+        ),
+    )
+}
+
+private fun textTruncatePayload(truncate: io.aequicor.visualization.engine.ir.model.TextTruncate?): YamlPayload =
+    if (truncate == null) {
+        // Drop authored truncation so the node recompiles to truncate == null.
+        YamlPayload.Mapping(listOf("maxLines" to YamlPayload.Remove, "overflow" to YamlPayload.Remove))
+    } else {
+        YamlPayload.Mapping(
+            listOf(
+                "maxLines" to scalar(YamlScalarValue.Num(truncate.maxLines.toDouble())),
+                "overflow" to scalar(YamlScalarValue.Str(if (truncate.ellipsis) "truncate" else "visible")),
+            ),
+        )
+    }
 
 private fun viewBoxPayload(viewBox: DesignViewBox): YamlPayload =
     YamlPayload.Sequence(

@@ -22,6 +22,9 @@ import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.FontProvider
+import io.aequicor.visualization.subsystems.typography.compose.NoFonts
 
 /**
  * Document→screen transform for the canvas: `screen = doc * zoom + pan`. When passed
@@ -86,7 +89,11 @@ fun DesignArtboard(
     overlayOptions: DesignOverlayOptions = DesignOverlayOptions(),
     /** Dereferences `pathRef`/`iconRef` shapes to drawable geometry; app-supplied. */
     vectorAssets: VectorAssetProvider = NoVectorAssets,
+    /** Resolves document font families; app-supplied (defaults to no bundled fonts). */
+    fontProvider: FontProvider = NoFonts,
     onInteraction: ((ResolvedInteraction, LayoutBox) -> Unit)? = null,
+    /** Invoked when a tap lands on a hyperlink range of a text node (takes tap precedence). */
+    onLinkClick: ((io.aequicor.visualization.engine.ir.model.TextLink) -> Unit)? = null,
     onSelectNode: (String) -> Unit = {},
     onLayoutComputed: (LayoutBox?) -> Unit = {},
 ) {
@@ -98,22 +105,28 @@ fun DesignArtboard(
     val resolved = remember(document, rootNode) {
         rootNode?.let { DesignResolver(document).resolveNodeTree(it) }
     }
-    val engine = remember(textMeasurer, density) {
-        DesignLayoutEngine(ComposeDesignTextMeasurer(textMeasurer, density))
+    // One measurer/cache is shared by the layout engine and the draw path; a font
+    // arriving (generation bump) invalidates the cache and re-lays-out with real metrics.
+    val typographyMeasurer = remember(textMeasurer, density, fontProvider) {
+        ComposeTypographyMeasurer(textMeasurer, density, fontProvider)
     }
-    val layoutBox = remember(resolved, engine, deviceWidth, deviceHeight) {
+    val engine = remember(typographyMeasurer) {
+        DesignLayoutEngine(ComposeDesignTextMeasurer(typographyMeasurer))
+    }
+    val layoutBox = remember(resolved, engine, deviceWidth, deviceHeight, fontProvider.generation) {
         resolved?.let { engine.layout(it, deviceWidth, deviceHeight).withRootDocumentOrigin() }
     }
     val currentOnSelectNode = rememberUpdatedState(onSelectNode)
     val currentOnInteraction = rememberUpdatedState(onInteraction)
+    val currentOnLinkClick = rememberUpdatedState(onLinkClick)
     val currentOnLayoutComputed = rememberUpdatedState(onLayoutComputed)
     LaunchedEffect(layoutBox) {
         currentOnLayoutComputed.value(layoutBox)
     }
     if (layoutBox == null) return
 
-    val drawDesignContext = remember(textMeasurer, density, vectorAssets) {
-        DesignDrawContext(textMeasurer, density, vectorAssets)
+    val drawDesignContext = remember(textMeasurer, density, vectorAssets, typographyMeasurer) {
+        DesignDrawContext(textMeasurer, density, vectorAssets, typographyMeasurer)
     }
 
     val allSelected = if (selectedNodeId.isNotBlank()) selectedNodeIds + selectedNodeId else selectedNodeIds
@@ -128,6 +141,13 @@ fun DesignArtboard(
                 val docX = ((offset.x - panX) / zoom).toDouble()
                 val docY = ((offset.y - panY) / zoom).toDouble()
                 val hit = layoutBox.hitTest(docX, docY) ?: layoutBox
+                // A hyperlink hit takes precedence over selection/interaction.
+                currentOnLinkClick.value?.let { onLink ->
+                    linkAtPoint(hit, docX, docY, typographyMeasurer)?.let { link ->
+                        onLink(link)
+                        return@detectTapGestures
+                    }
+                }
                 val interactionCallback = currentOnInteraction.value
                 if (interactionCallback != null) {
                     val clickable = clickableInteractionAt(layoutBox, hit)

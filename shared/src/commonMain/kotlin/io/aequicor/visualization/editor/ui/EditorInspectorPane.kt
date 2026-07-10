@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -49,6 +50,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -63,11 +66,13 @@ import io.aequicor.visualization.editor.presentation.FillKind
 import io.aequicor.visualization.editor.presentation.FillOp
 import io.aequicor.visualization.editor.presentation.InspectorSection
 import io.aequicor.visualization.editor.presentation.InspectorTab
+import io.aequicor.visualization.editor.presentation.LineHeightPatch
 import io.aequicor.visualization.editor.presentation.PaddingSide
 import io.aequicor.visualization.editor.presentation.isCoordinatePositioned
 import io.aequicor.visualization.editor.presentation.isNodeLocked
 import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.StrokeOp
+import io.aequicor.visualization.editor.presentation.TextRangeEditing
 import io.aequicor.visualization.editor.presentation.TypographyPatch
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
@@ -81,17 +86,30 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.engine.ir.model.DesignStyle
+import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.LeadingTrim
 import io.aequicor.visualization.engine.ir.model.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
+import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
+import io.aequicor.visualization.engine.ir.model.TextCase
+import io.aequicor.visualization.engine.ir.model.TextDecorationKind
+import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
+import io.aequicor.visualization.engine.ir.model.TextListType
+import io.aequicor.visualization.engine.ir.model.TextScriptPosition
+import io.aequicor.visualization.engine.ir.model.TextTruncate
 import io.aequicor.visualization.engine.ir.model.VariableValue
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.subsystems.typography.FontStyles
+import io.aequicor.visualization.subsystems.typography.compose.FontFamilyInfo
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.roundToInt
@@ -1134,52 +1152,610 @@ private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
 private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode) {
     val nodeId = node.id
     val kind = node.kind as? DesignNodeKind.Text ?: return
-    val style = kind.textStyle
-    val size = style?.fontSize?.literalOrNull() ?: 16.0
-    val weight = style?.fontWeight?.literalOrNull() ?: 400.0
-    val lineHeight = style?.lineHeight?.value ?: 120.0
-    val letter = style?.letterSpacing?.value ?: 0.0
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val fieldWidth = inspectorPairFieldWidth(maxWidth, minWidth = 88.dp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactNumberField("Size", size.formatPx(), "type-size-$nodeId", Modifier.width(fieldWidth)) {
-                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontSize = it)))
-            }
-            CompactNumberField("Wt", weight.formatPx(), "type-weight-$nodeId", Modifier.width(fieldWidth)) {
-                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontWeight = it)))
-            }
+    val fontProvider = rememberBundledFontProvider()
+    val families = fontProvider.families
+
+    // Per-range vs node-level editing: a live non-collapsed text selection edits that range;
+    // otherwise the whole node's style is edited (design-book "mixed" text styling).
+    val sel = state.workspace.textSelection
+    val rangeActive = sel != null && sel.nodeId == nodeId && !sel.isCollapsed
+    val nodeStyle = kind.textStyle ?: DesignTextStyle()
+    val editableLength = (
+        kind.content?.defaultText?.takeIf { it.isNotEmpty() } ?: kind.characters.literalOrNull() ?: ""
+    ).length
+    val runs = if (sel != null && rangeActive) {
+        TextRangeEditing.runsInRange(nodeStyle, kind.styleRanges, editableLength, sel.min, sel.max)
+    } else {
+        listOf(nodeStyle to null)
+    }
+    val styles = runs.map { it.first }
+    val cur = styles.first()
+    fun mixed(selector: (DesignTextStyle) -> Any?): Boolean = styles.map(selector).distinct().size > 1
+    val resetKey = "type-$nodeId-${if (sel != null && rangeActive) "${sel.min}-${sel.max}" else "node"}"
+
+    fun applyPatch(patch: TypographyPatch) {
+        if (sel != null && rangeActive) {
+            state.dispatch(DesignEditorIntent.UpdateTypographyRange(nodeId, sel.min, sel.max, patch))
+        } else {
+            state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, patch))
         }
     }
-    Spacer(Modifier.height(8.dp))
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val fieldWidth = inspectorPairFieldWidth(maxWidth, minWidth = 88.dp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactNumberField("Line", lineHeight.formatPx(), "type-line-$nodeId", Modifier.width(fieldWidth), suffix = "%") {
-                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(lineHeightPercent = it)))
-            }
-            CompactNumberField("Ltr", letter.formatPx(), "type-letter-$nodeId", Modifier.width(fieldWidth), suffix = "px") {
-                state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(letterSpacing = it)))
-            }
-        }
-    }
-    Spacer(Modifier.height(8.dp))
-    SegmentedControl(
-        options = listOf(TextAlignHorizontal.Left, TextAlignHorizontal.Center, TextAlignHorizontal.Right, TextAlignHorizontal.Justified),
-        selected = style?.textAlignHorizontal ?: TextAlignHorizontal.Left,
-        label = { it.alignLabel() },
-        onSelect = { state.dispatch(DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(alignHorizontal = it))) },
+
+    // Row 1 — font family, full width, each row rendered in its own typeface.
+    val family = cur.fontFamily ?: ""
+    val familyPreview = families.firstOrNull { it.family == family }?.preview
+    FontFamilyField(
+        families = families,
+        selected = family,
+        mixed = mixed { it.fontFamily },
         modifier = Modifier.fillMaxWidth(),
+        onSelect = { applyPatch(TypographyPatch(fontFamily = it)) },
     )
     Spacer(Modifier.height(8.dp))
-    LabeledField("Resize") {
-        SegmentedControl(
-            options = listOf(TextAutoResize.WidthAndHeight, TextAutoResize.Height, TextAutoResize.None),
-            selected = kind.autoResize,
-            label = { it.autoResizeLabel() },
-            onSelect = { state.dispatch(DesignEditorIntent.SetTextAutoResize(nodeId, it)) },
+
+    // Shared document text styles — apply one to the active range (or the whole node).
+    val textStyleIds = state.designState.document?.styles.orEmpty()
+        .filterValues { it is DesignStyle.Text }
+        .keys.toList()
+    if (textStyleIds.isNotEmpty()) {
+        val styleColors = LocalEditorColors.current
+        CompactLabeledSelectField(
+            label = "Text style",
+            value = "Apply style",
+            options = textStyleIds,
             modifier = Modifier.fillMaxWidth(),
+            leadingContent = { DropdownMenuIcon(EditorIcon.Typography, modifier = Modifier.size(13.dp), tint = styleColors.ink) },
+            optionLeadingContent = { DropdownMenuIcon(EditorIcon.Typography, modifier = Modifier.size(16.dp)) },
+            onSelect = { styleId ->
+                if (sel != null && rangeActive) {
+                    state.dispatch(DesignEditorIntent.SetTextRangeStyleRef(nodeId, sel.min, sel.max, styleId))
+                } else {
+                    state.dispatch(DesignEditorIntent.SetTextRangeStyleRef(nodeId, 0, editableLength, styleId))
+                }
+            },
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+
+    // Row 2 — named style (weight + italic) · italic quick-toggle · size with presets.
+    val weight = cur.fontWeight?.literalOrNull() ?: 400.0
+    val italic = cur.italic ?: false
+    val mixedStyle = mixed { it.fontWeight?.literalOrNull() } || mixed { it.italic }
+    val size = cur.fontSize?.literalOrNull() ?: 16.0
+    val mixedSize = mixed { it.fontSize?.literalOrNull() }
+    val styleOptions = (
+        families.firstOrNull { it.family == family }?.styles?.takeIf { it.isNotEmpty() } ?: FontStyles.STANDARD
+    ).map { it.name }
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CompactSelectField(
+            value = if (mixedStyle) "Mixed" else FontStyles.nameFor(weight.roundToInt(), italic),
+            options = styleOptions,
+            onSelect = { name ->
+                val parsed = FontStyles.parse(name)
+                applyPatch(TypographyPatch(fontWeight = parsed.weight.toDouble(), italic = parsed.italic))
+            },
+            modifier = Modifier.weight(1f),
+            leadingContent = { FontStyleGlyph(weight.roundToInt(), italic, familyPreview) },
+            optionLeadingContent = { name ->
+                val parsed = FontStyles.parse(name)
+                FontStyleGlyph(parsed.weight, parsed.italic, familyPreview)
+            },
+        )
+        IconButtonStrip(
+            items = listOf(
+                IconStripItem(EditorIcon.FormatItalic, "Italic", active = !mixedStyle && italic) {
+                    applyPatch(TypographyPatch(italic = !italic))
+                },
+            ),
+            modifier = Modifier.width(30.dp),
+        )
+        FontSizeField(
+            value = if (mixedSize) "" else size.formatPx(),
+            placeholder = if (mixedSize) "Mixed" else "",
+            resetKey = "size-$resetKey",
+            modifier = Modifier.width(96.dp),
+            onCommit = { applyPatch(TypographyPatch(fontSize = it)) },
         )
     }
+    Spacer(Modifier.height(8.dp))
+
+    // Row 3 — line height (Auto | %) · letter spacing (%).
+    val lineHeightUnit = cur.lineHeight
+    val isAuto = lineHeightUnit == null
+    val mixedLine = mixed { it.lineHeight }
+    val letter = cur.letterSpacing?.value ?: 0.0
+    val mixedLetter = mixed { it.letterSpacing?.value }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth, minWidth = 96.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LineHeightField(
+                isAuto = isAuto && !mixedLine,
+                value = if (mixedLine || isAuto) "" else lineHeightUnit.value.formatPx(),
+                placeholder = if (mixedLine) "Mixed" else if (isAuto) "Auto" else "",
+                resetKey = "line-$resetKey",
+                modifier = Modifier.width(fieldWidth),
+                onToggleAuto = { toAuto ->
+                    applyPatch(
+                        TypographyPatch(
+                            lineHeight = if (toAuto) LineHeightPatch(auto = true) else LineHeightPatch(percent = 120.0),
+                        ),
+                    )
+                },
+                onValue = { applyPatch(TypographyPatch(lineHeight = LineHeightPatch(percent = it))) },
+            )
+            CompactNumberField(
+                label = "",
+                value = if (mixedLetter) "" else letter.formatPx(),
+                resetKey = "letter-$resetKey",
+                modifier = Modifier.width(fieldWidth),
+                suffix = "%",
+                placeholder = if (mixedLetter) "Mixed" else "",
+                onCommit = { applyPatch(TypographyPatch(letterSpacingPercent = it)) },
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+
+    // Row 4 — horizontal align · vertical align · advanced-settings toggle.
+    val alignH = cur.textAlignHorizontal ?: TextAlignHorizontal.Left
+    val alignV = cur.textAlignVertical ?: TextAlignVertical.Top
+    var advanced by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        IconButtonStrip(
+            items = listOf(
+                IconStripItem(EditorIcon.AlignHorizontalLeft, "Align left", active = alignH == TextAlignHorizontal.Left) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Left)) },
+                IconStripItem(EditorIcon.AlignHorizontalCenter, "Align center", active = alignH == TextAlignHorizontal.Center) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Center)) },
+                IconStripItem(EditorIcon.AlignHorizontalRight, "Align right", active = alignH == TextAlignHorizontal.Right) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Right)) },
+                IconStripItem(EditorIcon.FormatAlignJustify, "Justify", active = alignH == TextAlignHorizontal.Justified) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Justified)) },
+            ),
+            modifier = Modifier.weight(4f),
+        )
+        IconButtonStrip(
+            items = listOf(
+                IconStripItem(EditorIcon.VerticalAlignTop, "Align top", active = alignV == TextAlignVertical.Top) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Top)) },
+                IconStripItem(EditorIcon.VerticalAlignCenter, "Align middle", active = alignV == TextAlignVertical.Center) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Center)) },
+                IconStripItem(EditorIcon.VerticalAlignBottom, "Align bottom", active = alignV == TextAlignVertical.Bottom) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Bottom)) },
+            ),
+            modifier = Modifier.weight(3f),
+        )
+        IconButtonStrip(
+            items = listOf(
+                IconStripItem(EditorIcon.Tune, "Type settings", active = advanced) { advanced = !advanced },
+            ),
+            modifier = Modifier.weight(1f),
+        )
+    }
+
+    if (advanced) {
+        Spacer(Modifier.height(12.dp))
+        TypographyAdvanced(
+            state = state,
+            nodeId = nodeId,
+            kind = kind,
+            styles = styles,
+            resetKey = resetKey,
+            onPatch = { applyPatch(it) },
+        )
+    }
+}
+
+/** The collapsible advanced text controls revealed by the "tune" toggle in [TypographySection]. */
+@Composable
+private fun TypographyAdvanced(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    kind: DesignNodeKind.Text,
+    styles: List<DesignTextStyle>,
+    resetKey: String,
+    onPatch: (TypographyPatch) -> Unit,
+) {
+    fun mixed(selector: (DesignTextStyle) -> Any?): Boolean = styles.map(selector).distinct().size > 1
+    val s = styles.first()
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Resize (node-level).
+        LabeledField("Resize") {
+            SegmentedControl(
+                options = listOf(TextAutoResize.WidthAndHeight, TextAutoResize.Height, TextAutoResize.None),
+                selected = kind.autoResize,
+                label = { it.autoResizeLabel() },
+                onSelect = { state.dispatch(DesignEditorIntent.SetTextAutoResize(nodeId, it)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        // Truncate (node-level): toggle + max-lines.
+        val truncate = kind.truncate
+        LabeledField("Truncate") {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                TypoToggleChip(label = "...", active = truncate != null, modifier = Modifier.width(38.dp)) {
+                    state.dispatch(
+                        DesignEditorIntent.SetTextTruncate(
+                            nodeId,
+                            if (truncate != null) null else TextTruncate(maxLines = 1),
+                        ),
+                    )
+                }
+                CompactNumberField(
+                    label = "Lines",
+                    value = (truncate?.maxLines ?: 1).toDouble().formatPx(),
+                    resetKey = "trunc-$resetKey",
+                    modifier = Modifier.weight(1f),
+                    enabled = truncate != null,
+                    onCommit = { state.dispatch(DesignEditorIntent.SetTextTruncate(nodeId, TextTruncate(maxLines = it.roundToInt().coerceAtLeast(1)))) },
+                )
+            }
+        }
+        // Decoration + style + skip-ink.
+        val decoration = s.textDecoration ?: TextDecorationKind.None
+        val mixedDecoration = mixed { it.textDecoration }
+        LabeledField("Decor") {
+            IconButtonStrip(
+                items = listOf(
+                    IconStripItem(EditorIcon.Text, "No decoration", active = !mixedDecoration && decoration == TextDecorationKind.None) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.None)) },
+                    IconStripItem(EditorIcon.FormatUnderlined, "Underline", active = !mixedDecoration && decoration == TextDecorationKind.Underline) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.Underline)) },
+                    IconStripItem(EditorIcon.FormatStrikethrough, "Strikethrough", active = !mixedDecoration && decoration == TextDecorationKind.Strikethrough) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.Strikethrough)) },
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (decoration != TextDecorationKind.None) {
+            LabeledField("Line") {
+                SegmentedControl(
+                    options = listOf(TextDecorationStyle.Solid, TextDecorationStyle.Dashed, TextDecorationStyle.Dotted, TextDecorationStyle.Wavy),
+                    selected = s.decorationStyle ?: TextDecorationStyle.Solid,
+                    label = { it.decorationStyleLabel() },
+                    onSelect = { onPatch(TypographyPatch(decorationStyle = it)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            CheckRow("Skip ink", s.decorationSkipInk == true) { onPatch(TypographyPatch(decorationSkipInk = it)) }
+        }
+        // Case.
+        LabeledField("Case") {
+            SegmentedControl(
+                options = listOf(TextCase.None, TextCase.Upper, TextCase.Lower, TextCase.Title, TextCase.SmallCaps),
+                selected = s.textCase ?: TextCase.None,
+                label = { it.caseLabel() },
+                onSelect = { onPatch(TypographyPatch(textCase = it)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        // Position (super / sub).
+        val position = s.textPosition ?: TextScriptPosition.None
+        LabeledField("Position") {
+            IconButtonStrip(
+                items = listOf(
+                    IconStripItem(EditorIcon.Text, "Baseline", active = position == TextScriptPosition.None) { onPatch(TypographyPatch(textPosition = TextScriptPosition.None)) },
+                    IconStripItem(EditorIcon.Superscript, "Superscript", active = position == TextScriptPosition.Superscript) { onPatch(TypographyPatch(textPosition = TextScriptPosition.Superscript)) },
+                    IconStripItem(EditorIcon.Subscript, "Subscript", active = position == TextScriptPosition.Subscript) { onPatch(TypographyPatch(textPosition = TextScriptPosition.Subscript)) },
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        // List (node-level) + indent.
+        val list = kind.list
+        LabeledField("List") {
+            IconButtonStrip(
+                items = listOf(
+                    IconStripItem(EditorIcon.Text, "No list", active = list.type == TextListType.None) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.None))) },
+                    IconStripItem(EditorIcon.FormatListBulleted, "Bulleted", active = list.type == TextListType.Bullet) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.Bullet))) },
+                    IconStripItem(EditorIcon.FormatListNumbered, "Numbered", active = list.type == TextListType.Ordered) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.Ordered))) },
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (list.type != TextListType.None) {
+            LabeledField("Indent") {
+                CompactNumberField(
+                    label = "",
+                    value = list.indent.toDouble().formatPx(),
+                    resetKey = "list-indent-$resetKey",
+                    modifier = Modifier.width(96.dp),
+                    onCommit = { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(indent = it.roundToInt().coerceAtLeast(0)))) },
+                )
+            }
+        }
+        // Paragraph spacing + first-line indent.
+        LabeledField("Para space") {
+            CompactNumberField(
+                label = "",
+                value = if (mixed { it.paragraphSpacing }) "" else (s.paragraphSpacing ?: 0.0).formatPx(),
+                resetKey = "para-space-$resetKey",
+                modifier = Modifier.width(120.dp),
+                suffix = "px",
+                placeholder = if (mixed { it.paragraphSpacing }) "Mixed" else "",
+                onCommit = { onPatch(TypographyPatch(paragraphSpacing = it)) },
+            )
+        }
+        LabeledField("Para indent") {
+            CompactNumberField(
+                label = "",
+                value = if (mixed { it.paragraphIndent }) "" else (s.paragraphIndent ?: 0.0).formatPx(),
+                resetKey = "para-indent-$resetKey",
+                modifier = Modifier.width(120.dp),
+                suffix = "px",
+                placeholder = if (mixed { it.paragraphIndent }) "Mixed" else "",
+                onCommit = { onPatch(TypographyPatch(paragraphIndent = it)) },
+            )
+        }
+        // Leading trim.
+        LabeledField("Trim") {
+            SegmentedControl(
+                options = listOf(LeadingTrim.None, LeadingTrim.CapHeight),
+                selected = s.leadingTrim ?: LeadingTrim.None,
+                label = { it.trimLabel() },
+                onSelect = { onPatch(TypographyPatch(leadingTrim = it)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        CheckRow("Hanging punctuation", s.hangingPunctuation == true) { onPatch(TypographyPatch(hangingPunctuation = it)) }
+        // Common OpenType feature toggles.
+        InspectorSubLabel("OpenType")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("liga", "tnum", "frac", "smcp").forEach { feature ->
+                val on = s.fontFeatures[feature] == true
+                TypoToggleChip(label = feature, active = on, modifier = Modifier.weight(1f)) {
+                    onPatch(TypographyPatch(fontFeatures = mapOf(feature to !on)))
+                }
+            }
+        }
+        // Variable-font axes: a number field per registered axis; empty leaves it unset.
+        InspectorSubLabel("Variable axes")
+        VariableAxes(kind.textStyle?.variableAxes.orEmpty(), resetKey) { axis, value ->
+            onPatch(TypographyPatch(variableAxes = mapOf(axis to value)))
+        }
+    }
+}
+
+private val VariableAxisRanges = listOf(
+    Triple("wght", "Weight", 100.0..900.0),
+    Triple("opsz", "Optical", 8.0..144.0),
+    Triple("wdth", "Width", 25.0..200.0),
+    Triple("slnt", "Slant", -15.0..0.0),
+)
+
+@Composable
+private fun VariableAxes(axes: Map<String, Double>, resetKey: String, onAxis: (String, Double) -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        VariableAxisRanges.chunked(2).forEach { pair ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pair.forEach { (tag, label, range) ->
+                    CompactNumberField(
+                        label = label,
+                        value = axes[tag]?.formatPx() ?: "",
+                        resetKey = "axis-$tag-$resetKey",
+                        modifier = Modifier.weight(1f),
+                        placeholder = "—",
+                    ) { onAxis(tag, it.coerceIn(range.start, range.endInclusive)) }
+                }
+            }
+        }
+    }
+}
+
+/** Full-width font-family picker; the field and every row render in that family's own typeface. */
+@Composable
+private fun FontFamilyField(
+    families: List<FontFamilyInfo>,
+    selected: String,
+    mixed: Boolean,
+    modifier: Modifier = Modifier,
+    onSelect: (String) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    var expanded by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(5.dp)
+    val currentPreview = families.firstOrNull { it.family == selected }?.preview
+    Box(modifier) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(26.dp).clip(shape).clickable { expanded = true },
+            shape = shape,
+            color = colors.controlSurface,
+            border = BorderStroke(1.dp, if (expanded) colors.accent else colors.controlStroke),
+        ) {
+            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                DropdownLeadingBox(size = 16.dp) {
+                    FontFamilyGlyph(if (mixed) null else currentPreview, colors.ink)
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (mixed) "Mixed" else selected.ifBlank { "Default" },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (mixed) colors.mutedInk else colors.ink,
+                    fontFamily = if (mixed) null else currentPreview,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Choose font", modifier = Modifier.size(11.dp), tint = colors.controlInk)
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (families.isEmpty()) {
+                EditorDropdownMenuItem(
+                    text = "No fonts available",
+                    leadingContent = { DropdownMenuIcon(EditorIcon.Typography, modifier = Modifier.size(16.dp)) },
+                    onClick = { expanded = false },
+                )
+            }
+            families.forEach { info ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            info.family,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.ink,
+                            fontFamily = info.preview,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = { expanded = false; onSelect(info.family) },
+                    leadingIcon = {
+                        DropdownLeadingBox(size = 18.dp) {
+                            FontFamilyGlyph(info.preview, colors.ink)
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** "Ag" preview rendered in [preview]'s typeface (custom dropdown visual for a font family). */
+@Composable
+private fun FontFamilyGlyph(preview: FontFamily?, tint: Color, modifier: Modifier = Modifier) {
+    Text(
+        "Ag",
+        modifier = modifier,
+        style = MaterialTheme.typography.labelSmall,
+        color = tint,
+        fontFamily = preview,
+        maxLines = 1,
+        softWrap = false,
+    )
+}
+
+/** "A" preview at a given weight/italic — the leading visual of the named-style dropdown. */
+@Composable
+private fun FontStyleGlyph(weight: Int, italic: Boolean, preview: FontFamily?, modifier: Modifier = Modifier) {
+    Text(
+        "A",
+        modifier = modifier,
+        style = MaterialTheme.typography.labelMedium,
+        color = LocalEditorColors.current.ink,
+        fontFamily = preview,
+        fontWeight = FontWeight(weight.coerceIn(1, 1000)),
+        fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
+        maxLines = 1,
+        softWrap = false,
+    )
+}
+
+/** Numeric font-size field with a chevron that opens the standard size presets. */
+@Composable
+private fun FontSizeField(
+    value: String,
+    placeholder: String,
+    resetKey: String,
+    modifier: Modifier = Modifier,
+    onCommit: (Double) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    var expanded by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(5.dp)
+    Box(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            CompactNumberField(
+                label = "",
+                value = value,
+                resetKey = resetKey,
+                modifier = Modifier.weight(1f),
+                placeholder = placeholder,
+                onCommit = onCommit,
+            )
+            Surface(
+                modifier = Modifier.size(26.dp).clip(shape).clickable { expanded = true },
+                shape = shape,
+                color = colors.controlSurface,
+                border = BorderStroke(1.dp, colors.controlStroke),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Size presets", modifier = Modifier.size(11.dp), tint = colors.controlInk)
+                }
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            listOf(12, 14, 16, 24, 32, 48, 64).forEach { preset ->
+                EditorDropdownMenuItem(
+                    text = "$preset",
+                    leadingContent = { DropdownMenuIcon(EditorIcon.Typography, modifier = Modifier.size(16.dp)) },
+                    onClick = { expanded = false; onCommit(preset.toDouble()) },
+                )
+            }
+        }
+    }
+}
+
+/** Line-height control: an "Auto" toggle segment followed by the % value entry. */
+@Composable
+private fun LineHeightField(
+    isAuto: Boolean,
+    value: String,
+    placeholder: String,
+    resetKey: String,
+    modifier: Modifier = Modifier,
+    onToggleAuto: (Boolean) -> Unit,
+    onValue: (Double) -> Unit,
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        IconButtonStrip(
+            items = listOf(
+                IconStripItem(EditorIcon.FormatLineSpacing, "Auto line height", active = isAuto) { onToggleAuto(!isAuto) },
+            ),
+            modifier = Modifier.width(30.dp),
+        )
+        CompactNumberField(
+            label = "",
+            value = value,
+            resetKey = resetKey,
+            modifier = Modifier.weight(1f),
+            enabled = !isAuto,
+            suffix = "%",
+            placeholder = placeholder,
+            onCommit = onValue,
+        )
+    }
+}
+
+/** Small pill toggle for boolean text options (skip-ink, OpenType features, truncation). */
+@Composable
+private fun TypoToggleChip(label: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(5.dp)
+    Surface(
+        modifier = modifier.height(26.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = if (active) colors.selectionFill else colors.controlSurface,
+        border = BorderStroke(1.dp, if (active) colors.accent else colors.controlStroke),
+    ) {
+        Box(Modifier.padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (active) colors.accent else colors.ink,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun TextDecorationStyle.decorationStyleLabel() = when (this) {
+    TextDecorationStyle.Solid -> "Solid"
+    TextDecorationStyle.Dashed -> "Dash"
+    TextDecorationStyle.Dotted -> "Dot"
+    TextDecorationStyle.Wavy -> "Wave"
+}
+
+private fun TextCase.caseLabel() = when (this) {
+    TextCase.None -> "—"
+    TextCase.Upper -> "AG"
+    TextCase.Lower -> "ag"
+    TextCase.Title -> "Ag"
+    TextCase.SmallCaps -> "SC"
+    TextCase.SmallCapsForced -> "SC!"
+}
+
+private fun LeadingTrim.trimLabel() = when (this) {
+    LeadingTrim.None -> "None"
+    LeadingTrim.CapHeight -> "Cap"
 }
 
 // --- Figma-like inspector controls ------------------------------------------
@@ -2274,7 +2850,6 @@ private fun JustifyContent.justifyLabel() = when (this) {
 private fun SizingMode.sizingLabel() = when (this) { SizingMode.Fixed -> "Fixed"; SizingMode.Hug -> "Hug"; SizingMode.Fill -> "Fill" }
 private fun sizingFromLabel(label: String) = when (label) { "Hug" -> SizingMode.Hug; "Fill" -> SizingMode.Fill; else -> SizingMode.Fixed }
 private fun StrokeAlign.strokeLabel() = when (this) { StrokeAlign.Inside -> "Inside"; StrokeAlign.Center -> "Center"; StrokeAlign.Outside -> "Outside" }
-private fun TextAlignHorizontal.alignLabel() = when (this) { TextAlignHorizontal.Left -> "L"; TextAlignHorizontal.Center -> "C"; TextAlignHorizontal.Right -> "R"; TextAlignHorizontal.Justified -> "J" }
 private fun TextAutoResize.autoResizeLabel() = when (this) { TextAutoResize.WidthAndHeight -> "Auto W"; TextAutoResize.Height -> "Auto H"; TextAutoResize.None -> "Fixed" }
 private fun HorizontalConstraint.hLabel() = when (this) { HorizontalConstraint.Left -> "Left"; HorizontalConstraint.Right -> "Right"; HorizontalConstraint.Center -> "Center"; HorizontalConstraint.LeftRight -> "Left & Right"; HorizontalConstraint.Scale -> "Scale" }
 private fun VerticalConstraint.vLabel() = when (this) { VerticalConstraint.Top -> "Top"; VerticalConstraint.Bottom -> "Bottom"; VerticalConstraint.Center -> "Center"; VerticalConstraint.TopBottom -> "Top & Bottom"; VerticalConstraint.Scale -> "Scale" }

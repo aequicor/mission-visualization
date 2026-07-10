@@ -17,3 +17,12 @@ internal actual fun platformAppendCanvasPdfPage(title: String, crop: CanvasExpor
 internal actual fun platformFinishPdfExport(fileName: String) = Unit
 
 internal actual fun platformToggleFullscreen() = Unit
+
+internal actual fun platformOpenUrl(url: String) {
+    runCatching {
+        val desktop = java.awt.Desktop.getDesktop()
+        if (java.awt.Desktop.isDesktopSupported() && desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
+            desktop.browse(java.net.URI(url))
+        }
+    }
+}

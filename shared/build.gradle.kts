@@ -110,6 +110,11 @@ kotlin {
                 api(projects.subsystems.anchoring)
                 implementation(projects.subsystems.anchoringCompose)
 
+                // Typography subsystem: pure span algebra / selection contracts (api — reducer and
+                // intents expose its types) + Compose selection geometry and font provider.
+                api(projects.subsystems.typography)
+                implementation(projects.subsystems.typographyCompose)
+
                 // Local draft persistence: coroutines for autosave flow, serialization for the envelope.
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)

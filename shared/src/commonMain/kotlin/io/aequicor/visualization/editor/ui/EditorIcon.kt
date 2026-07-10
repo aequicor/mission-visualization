@@ -84,6 +84,20 @@ internal enum class EditorIcon(resourceName: String) {
     DeviceDesktop("desktop_windows"),
     DeviceMobile("smartphone"),
     DeviceTablet("tablet_mac"),
+    FormatItalic("format_italic"),
+    FormatUnderlined("format_underlined"),
+    FormatStrikethrough("format_strikethrough"),
+    FormatListBulleted("format_list_bulleted"),
+    FormatListNumbered("format_list_numbered"),
+    FormatAlignJustify("format_align_justify"),
+    VerticalAlignTop("vertical_align_top"),
+    VerticalAlignCenter("vertical_align_center"),
+    VerticalAlignBottom("vertical_align_bottom"),
+    FormatLineSpacing("format_line_spacing"),
+    Tune("tune"),
+    Superscript("superscript"),
+    Subscript("subscript"),
+    MatchCase("match_case"),
     ;
 
     val resourcePath: String = "files/editor-icons/$resourceName.svg"

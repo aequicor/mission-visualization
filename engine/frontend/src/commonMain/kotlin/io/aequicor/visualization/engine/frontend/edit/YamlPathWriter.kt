@@ -22,6 +22,22 @@ internal sealed interface YamlPayload {
      * fills/strokes/effects write-back, where the working document owns the full list.
      */
     data class Sequence(val items: List<YamlPayload>, val replaceWhole: Boolean = false) : YamlPayload
+
+    /**
+     * Deletes the targeted key when present (a no-op when absent). Supported for a scalar
+     * entry on its own line (e.g. clearing an authored `maxLines` / `decorationColor`).
+     */
+    data object Remove : YamlPayload
+}
+
+/** Strips [YamlPayload.Remove] leaves; returns null when nothing creatable remains. */
+private fun creatablePayload(payload: YamlPayload): YamlPayload? = when (payload) {
+    is YamlPayload.Remove -> null
+    is YamlPayload.Mapping -> {
+        val kept = payload.entries.mapNotNull { (k, v) -> creatablePayload(v)?.let { k to it } }
+        if (kept.isEmpty()) null else YamlPayload.Mapping(kept)
+    }
+    else -> payload
 }
 
 /** Wraps [leaf] into nested single-key mappings along [path]. */
@@ -59,7 +75,11 @@ internal class YamlPathWriter(
 ) {
     fun plan(target: EditTarget, blockKind: TypedBlockKind, payload: YamlPayload): WritePlan {
         val entry = target.boundGroups.flatMap { it.entries }.lastOrNull { it.kind == blockKind }
-            ?: return newBlockPlan(target, blockKind.key, payload)
+            ?: run {
+                // Removing keys from a block that doesn't exist is a no-op.
+                val creatable = creatablePayload(payload) ?: return WritePlan.Ops(emptyList())
+                return newBlockPlan(target, blockKind.key, creatable)
+            }
         val ops = mutableListOf<TextOp>()
         val failure = merge(entry.value, payload, ops)
         return if (failure != null) WritePlan.Failed(failure.message, failure.line) else WritePlan.Ops(ops)
@@ -91,7 +111,17 @@ internal class YamlPathWriter(
             is YamlPayload.Scalar -> mergeScalar(existing, payload, ops)
             is YamlPayload.Mapping -> mergeMapping(existing, payload, ops)
             is YamlPayload.Sequence -> mergeSequence(existing, payload, ops)
+            is YamlPayload.Remove -> removeEntry(existing, ops)
         }
+
+    /** Deletes the whole line of a scalar entry (key + value + newline); fails for nested. */
+    private fun removeEntry(existing: YamlValue, ops: MutableList<TextOp>): Failure? {
+        if (existing is YamlScalar) {
+            ops += TextOp(lineIndex.lineStartOffset(existing.line), lineIndex.lineStartOffset(existing.line + 1), "")
+            return null
+        }
+        return Failure("Cannot remove a nested map/list key in place", existing.line)
+    }
 
     private fun mergeScalar(
         existing: YamlValue,
@@ -142,7 +172,7 @@ internal class YamlPathWriter(
         payload.entries.forEach { (key, child) ->
             val current = map.entries[key]
             if (current == null) {
-                missing += key to child
+                if (child != YamlPayload.Remove) missing += key to child // removing an absent key is a no-op
             } else {
                 merge(current, child, ops)?.let { return it }
             }
@@ -165,7 +195,7 @@ internal class YamlPathWriter(
         payload.entries.forEach { (key, child) ->
             val current = map.entries[key]
             if (current == null) {
-                missing += key to child
+                if (child != YamlPayload.Remove) missing += key to child // removing an absent key is a no-op
             } else {
                 merge(current, child, ops)?.let { return it }
             }
