@@ -38,6 +38,10 @@ kotlin {
             api(projects.engine.ir)
             api(projects.engine.scene)
 
+            // Typography subsystem: rich-text model/measure/paint. The renderer adapts
+            // ResolvedText -> RichText at this boundary; :engine:ir stays dependency-free.
+            api(projects.subsystems.typographyCompose)
+
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
             implementation(libs.compose.ui)

@@ -46,6 +46,8 @@ import io.aequicor.visualization.engine.ir.resolve.ResolvedMedia
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.drawRichText
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -53,6 +55,9 @@ internal class DesignDrawContext(
     val textMeasurer: TextMeasurer,
     val density: Density,
     val vectorAssets: VectorAssetProvider = NoVectorAssets,
+    /** Shared rich-text measurer/cache for the text draw path. */
+    val typography: ComposeTypographyMeasurer =
+        ComposeTypographyMeasurer(textMeasurer, density),
 )
 
 private val PlaceholderImageColor = Color(0xFFD9E1EA)
@@ -138,21 +143,18 @@ private fun DrawScope.drawDesignBoxContent(
     node.media?.let { media -> drawMediaPlaceholder(box, media, outline, context) }
 
     node.text?.let { text ->
-        val color = node.fills.firstSolidColor() ?: Color.Black
-        val layout = measureResolvedText(
-            measurer = context.textMeasurer,
-            density = context.density,
-            text = text,
-            color = color,
+        val laidOut = context.typography.layout(
+            rich = text.toRichText(),
             maxWidth = box.width,
+            fill = node.fills.toRichTextFill(),
             exactWidth = true,
         )
         val yOffset = when (text.style.textAlignVertical) {
             TextAlignVertical.Top -> 0.0
-            TextAlignVertical.Center -> (box.height - layout.size.height) / 2.0
-            TextAlignVertical.Bottom -> box.height - layout.size.height
+            TextAlignVertical.Center -> (box.height - laidOut.measured.height) / 2.0
+            TextAlignVertical.Bottom -> box.height - laidOut.measured.height
         }
-        drawText(layout, topLeft = Offset(box.x.toFloat(), (box.y + yOffset).toFloat()))
+        drawRichText(laidOut, topLeft = Offset(box.x.toFloat(), (box.y + yOffset).toFloat()))
     }
 
     if (box.children.isNotEmpty()) {

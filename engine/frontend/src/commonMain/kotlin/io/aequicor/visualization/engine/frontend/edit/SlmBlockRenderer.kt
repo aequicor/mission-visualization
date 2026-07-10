@@ -26,6 +26,8 @@ internal object SlmBlockRenderer {
                 add("$pad$key:")
                 addAll(sequenceLines(payload, indent + 2))
             }
+            // A removal marker never reaches rendering (stripped before creating a fresh block).
+            is YamlPayload.Remove -> emptyList()
         }
     }
 
@@ -51,6 +53,7 @@ internal object SlmBlockRenderer {
                 val entryLines = mappingLines(item, indent + 2)
                 listOf("$pad- ${entryLines.first().trimStart()}") + entryLines.drop(1)
             }
+            is YamlPayload.Remove -> emptyList()
         }
     }
 
@@ -59,5 +62,6 @@ internal object SlmBlockRenderer {
         is YamlPayload.Mapping ->
             "{ " + payload.entries.joinToString(", ") { (k, v) -> "$k: ${inline(v)}" } + " }"
         is YamlPayload.Sequence -> "[" + payload.items.joinToString(", ") { inline(it) } + "]"
+        is YamlPayload.Remove -> ""
     }
 }

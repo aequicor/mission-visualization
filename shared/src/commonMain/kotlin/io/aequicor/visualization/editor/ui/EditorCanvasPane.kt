@@ -85,13 +85,26 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.aequicor.visualization.editor.presentation.TextSelection
+import io.aequicor.visualization.subsystems.typography.FontDescriptor
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.FontProvider
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
+import io.aequicor.visualization.engine.backend.compose.textEditGeometry
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.runtime.CompositionLocalProvider
 import kotlin.time.TimeSource
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.AncestorRotation
@@ -252,6 +265,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
     val pageId = design.selectedPageId
     val rootNode = document?.pageById(pageId)?.children?.firstOrNull()
     val textMeasurer = rememberTextMeasurer()
+    // Bundled Google Fonts so document text renders in its authored family (skiko ships no
+    // system fonts on wasm); shared with the inline text-edit overlay for aligned metrics.
+    val fontProvider = rememberBundledFontProvider()
 
     BoxWithConstraints(
         Modifier
@@ -1113,6 +1129,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     viewport = viewport,
                     interactive = false,
                     showSelection = false,
+                    fontProvider = fontProvider,
                     onLayoutComputed = state::onArtboardLayout,
                 )
             }
@@ -1230,7 +1247,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             VectorEditOverlay(state, layout, viewport, zoomPx)
 
             // Inline text editing overlay for a double-clicked text node.
-            TextEditOverlay(state, layout, viewport)
+            TextEditOverlay(state, layout, viewport, fontProvider)
         }
         CanvasScrollbars(state, scrollbars)
     }
@@ -1366,42 +1383,137 @@ private fun CanvasScrollbar(
 // --- Text editing overlay ----------------------------------------------------
 
 @Composable
-private fun TextEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox?, viewport: CanvasViewport) {
+private fun TextEditOverlay(
+    state: MissionEditorStateHolder,
+    layout: LayoutBox?,
+    viewport: CanvasViewport,
+    fontProvider: FontProvider,
+) {
     val colors = LocalEditorColors.current
     val editingId = state.designState.editingTextNodeId
+    // Always-run effect: leaving edit mode clears the caret/selection so the inspector
+    // reverts to node-level styling. Keyed on editingId so it fires on every transition.
+    LaunchedEffect(editingId) {
+        if (editingId.isBlank()) state.updateWorkspace { it.copy(textSelection = null) }
+    }
     if (editingId.isBlank()) return
     val node = state.designState.document?.nodeById(editingId) ?: return
     val kind = node.kind as? DesignNodeKind.Text ?: return
     val box = layout?.findBySourceId(editingId) ?: return
-    val density = LocalDensity.current.density
+    val densityObj = LocalDensity.current
+    val density = densityObj.density
     val tl = viewport.toScreen(box.x, box.y)
     val initial = kind.characters.literalOrNull()?.takeIf { it.isNotBlank() } ?: kind.content?.defaultText.orEmpty()
-    var draft by remember(editingId) { mutableStateOf(initial) }
+    var field by remember(editingId) {
+        mutableStateOf(TextFieldValue(initial, selection = TextRange(0, initial.length)))
+    }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(editingId) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(editingId) {
+        runCatching { focus.requestFocus() }
+        // Whole-string selection to start, so an immediate inspector edit restyles everything.
+        state.updateWorkspace { it.copy(textSelection = TextSelection(editingId, 0, initial.length)) }
+    }
     val wDp = (box.width * viewport.zoom / density).coerceAtLeast(40.0)
     val hDp = (box.height * viewport.zoom / density).coerceAtLeast(20.0)
+
+    // Native caret + selection are drawn from the node's REAL text layout (the same geometry
+    // the artboard paints), so they follow wrapping, mixed sizes, alignment and per-range
+    // styling exactly, mapped document -> screen through the shared viewport. The transparent
+    // field below still owns text input / IME / selection, but its own caret and selection
+    // highlight are hidden so only these geometry-accurate ones show.
+    val textMeasurer = rememberTextMeasurer()
+    val measurer = remember(textMeasurer, densityObj, fontProvider) {
+        ComposeTypographyMeasurer(textMeasurer, densityObj, fontProvider)
+    }
+    val geometry = remember(box, measurer) { textEditGeometry(box, measurer) }
+    var caretVisible by remember(editingId) { mutableStateOf(true) }
+    LaunchedEffect(editingId, field.selection) {
+        caretVisible = true
+        while (true) {
+            kotlinx.coroutines.delay(530)
+            caretVisible = !caretVisible
+        }
+    }
+    Canvas(Modifier.fillMaxSize()) {
+        val geo = geometry ?: return@Canvas
+        val laid = geo.laid
+        val transformed = laid.transformed
+        val len = field.text.length
+        fun screen(localX: Double, localY: Double): Offset =
+            viewport.toScreen(box.x + localX, box.y + geo.yOffset + localY)
+        val selMin = field.selection.min.coerceIn(0, len)
+        val selMax = field.selection.max.coerceIn(0, len)
+        if (selMax > selMin) {
+            laid.selectionRects(transformed.toTransformed(selMin), transformed.toTransformed(selMax)).forEach { r ->
+                val a = screen(r.left, r.top)
+                val b = screen(r.right, r.bottom)
+                drawRect(color = colors.selectionFill, topLeft = a, size = Size(b.x - a.x, b.y - a.y))
+            }
+        }
+        if (caretVisible) {
+            val caret = laid.caretRect(transformed.toTransformed(field.selection.end.coerceIn(0, len)))
+            drawLine(
+                color = colors.accent,
+                start = screen(caret.left, caret.top),
+                end = screen(caret.left, caret.bottom),
+                strokeWidth = 1.75f * density,
+            )
+        }
+    }
+
+    // The overlay field is transparent and metric-matched to the node, so the artboard's
+    // real styled glyphs show through beneath while this field owns input + IME.
+    val base = kind.textStyle
+    val editStyle = TextStyle(
+        color = Color.Transparent,
+        fontSize = ((base?.fontSize?.literalOrNull() ?: 16.0) * viewport.zoom).sp,
+        fontWeight = FontWeight((base?.fontWeight?.literalOrNull()?.toInt() ?: 400).coerceIn(1, 1000)),
+        fontStyle = if (base?.italic == true) FontStyle.Italic else FontStyle.Normal,
+        fontFamily = fontProvider.resolve(
+            FontDescriptor(
+                family = base?.fontFamily.orEmpty(),
+                weight = base?.fontWeight?.literalOrNull()?.toInt() ?: 400,
+                italic = base?.italic ?: false,
+            ),
+        ),
+    )
     Box(
         modifier = Modifier
             .offset { androidx.compose.ui.unit.IntOffset(tl.x.roundToInt(), tl.y.roundToInt()) }
             .size(wDp.dp, hDp.dp)
-            .background(Color.White.copy(alpha = 0.9f))
-            .border(1.dp, colors.accent),
+            .border(1.dp, colors.accent.copy(alpha = 0.6f)),
     ) {
-        androidx.compose.foundation.text.BasicTextField(
-            value = draft,
-            onValueChange = { draft = it; state.dispatch(DesignEditorIntent.SetTextCharacters(editingId, it)) },
-            modifier = Modifier.fillMaxSize().padding(4.dp)
-                .focusRequester(focus)
-                .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
-                        state.dispatch(DesignEditorIntent.SetEditingText("")); true
-                    } else {
-                        false
+        CompositionLocalProvider(
+            LocalTextSelectionColors provides TextSelectionColors(
+                handleColor = Color.Transparent,
+                backgroundColor = Color.Transparent,
+            ),
+        ) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = field,
+                onValueChange = { next ->
+                    val textChanged = next.text != field.text
+                    field = next
+                    if (textChanged) state.dispatch(DesignEditorIntent.SetTextCharacters(editingId, next.text))
+                    // Report the caret/selection so the inspector styles the selected range.
+                    state.updateWorkspace {
+                        it.copy(textSelection = TextSelection(editingId, next.selection.start, next.selection.end))
                     }
                 },
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.ink),
-        )
+                // Our geometry-accurate caret is drawn above; hide the field's own.
+                cursorBrush = SolidColor(Color.Transparent),
+                modifier = Modifier.fillMaxSize()
+                    .focusRequester(focus)
+                    .onPreviewKeyEvent { e ->
+                        if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
+                            state.dispatch(DesignEditorIntent.SetEditingText("")); true
+                        } else {
+                            false
+                        }
+                    },
+                textStyle = editStyle,
+            )
+        }
     }
 }
 

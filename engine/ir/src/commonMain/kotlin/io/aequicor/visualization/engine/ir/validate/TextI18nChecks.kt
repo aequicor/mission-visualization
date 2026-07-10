@@ -30,6 +30,8 @@ import io.aequicor.visualization.engine.ir.resolve.IcuLiteFormatter
  *   truncate or autoResize — long translations will clip silently.
  * - IR-I18N-009 (error/warning): invalid typography values (fontSize <= 0 is an
  *   error; fontWeight outside 1..1000 a warning).
+ * - IR-I18N-010 (warning): negative decorationThickness on the node style or any
+ *   inline style range.
  */
 internal object TextI18nChecks {
 
@@ -229,23 +231,35 @@ internal object TextI18nChecks {
         node: DesignNode,
         text: DesignNodeKind.Text,
     ) {
-        val style = text.textStyle ?: return
-        (style.fontSize as? Bindable.Value)?.value?.let { fontSize ->
-            if (fontSize <= 0.0) {
-                sink += validationError(
-                    "IR-I18N-009",
-                    "Text '${node.id}' has non-positive fontSize $fontSize",
-                    ctx.location(node),
-                )
+        text.textStyle?.let { style ->
+            (style.fontSize as? Bindable.Value)?.value?.let { fontSize ->
+                if (fontSize <= 0.0) {
+                    sink += validationError(
+                        "IR-I18N-009",
+                        "Text '${node.id}' has non-positive fontSize $fontSize",
+                        ctx.location(node),
+                    )
+                }
+            }
+            (style.fontWeight as? Bindable.Value)?.value?.let { weight ->
+                if (weight < 1.0 || weight > 1000.0) {
+                    sink += validationWarning(
+                        "IR-I18N-009",
+                        "Text '${node.id}' has fontWeight $weight outside 1..1000",
+                        ctx.location(node),
+                    )
+                }
             }
         }
-        (style.fontWeight as? Bindable.Value)?.value?.let { weight ->
-            if (weight < 1.0 || weight > 1000.0) {
-                sink += validationWarning(
-                    "IR-I18N-009",
-                    "Text '${node.id}' has fontWeight $weight outside 1..1000",
-                    ctx.location(node),
-                )
+        (listOfNotNull(text.textStyle) + text.styleRanges.map { it.style }).forEach { style ->
+            style.decorationThickness?.value?.let { thickness ->
+                if (thickness < 0.0) {
+                    sink += validationWarning(
+                        "IR-I18N-010",
+                        "Text '${node.id}' has negative decorationThickness $thickness",
+                        ctx.location(node),
+                    )
+                }
             }
         }
     }

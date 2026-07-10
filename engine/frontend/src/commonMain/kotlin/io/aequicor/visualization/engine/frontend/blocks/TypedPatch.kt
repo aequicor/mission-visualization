@@ -136,6 +136,10 @@ data class TextSpanPatch(
     val start: Int,
     val end: Int,
     val styleRef: String? = null,
+    /** Inline per-range typography (`spans[].typography:`), merged over any [styleRef]. */
+    val style: DesignTextStyle? = null,
+    /** Inline per-range glyph fills (`spans[].fills:`). */
+    val fills: List<DesignPaint>? = null,
     val linkUrl: String? = null,
     val linkNodeTarget: String? = null,
 )

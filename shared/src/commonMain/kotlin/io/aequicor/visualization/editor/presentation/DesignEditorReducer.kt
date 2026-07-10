@@ -25,6 +25,9 @@ import io.aequicor.visualization.engine.frontend.edit.SetNodeRotation
 import io.aequicor.visualization.engine.frontend.edit.SetStyleProperty
 import io.aequicor.visualization.engine.frontend.edit.SetText as SetTextEdit
 import io.aequicor.visualization.engine.frontend.edit.SetTextStyle
+import io.aequicor.visualization.engine.frontend.edit.SetTextSpans as SetTextSpansEdit
+import io.aequicor.visualization.engine.frontend.edit.SetTextAutoResize as SetTextAutoResizeEdit
+import io.aequicor.visualization.engine.frontend.edit.SetTextTruncate as SetTextTruncateEdit
 import io.aequicor.visualization.engine.frontend.edit.SetTypedBlockScalar
 import io.aequicor.visualization.engine.frontend.edit.SetVectorNetwork
 import io.aequicor.visualization.engine.frontend.edit.SetViewBox
@@ -51,7 +54,10 @@ import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
+import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignUnit
+import io.aequicor.visualization.engine.ir.model.TextLink
+import io.aequicor.visualization.engine.ir.model.TextStyleRange
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
@@ -240,16 +246,22 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
 
         // --- Typography ---
         is DesignEditorIntent.UpdateTypography -> state.typographyWriteBack(intent)
-        is DesignEditorIntent.SetTextCharacters -> state.writeBackEdits(
+        is DesignEditorIntent.UpdateTypographyRange -> state.typographyRangeWriteBack(intent)
+        is DesignEditorIntent.SetTextRangeFills -> state.textRangeFillsWriteBack(intent)
+        is DesignEditorIntent.SetTextRangeStyleRef -> state.textRangeStyleRefWriteBack(intent)
+        is DesignEditorIntent.SetTextLink -> state.textLinkWriteBack(intent)
+        is DesignEditorIntent.SetTextCharacters -> state.setTextCharactersWriteBack(intent)
+        is DesignEditorIntent.SetTextAutoResize -> state.textAutoResizeWriteBack(intent)
+        is DesignEditorIntent.SetTextTruncate -> state.writeBackEdits(
             intent.nodeId,
-            listOf(SetTextEdit(intent.nodeId, intent.text)),
+            listOf(SetTextTruncateEdit(intent.nodeId, intent.truncate)),
         ) patch@{ node ->
             val kind = node.kind as? DesignNodeKind.Text ?: return@patch node
-            node.copy(kind = kind.copy(characters = intent.text.bindable(), content = null))
+            node.copy(kind = kind.copy(truncate = intent.truncate))
         }
-        is DesignEditorIntent.SetTextAutoResize -> state.editUnlockedNode(intent.nodeId) { node ->
-            val kind = node.kind as? DesignNodeKind.Text ?: return@editUnlockedNode node
-            node.copy(kind = kind.copy(autoResize = intent.mode))
+        is DesignEditorIntent.SetTextList -> state.editUnlockedNode(intent.nodeId) patch@{ node ->
+            val kind = node.kind as? DesignNodeKind.Text ?: return@patch node
+            node.copy(kind = kind.copy(list = intent.list))
         }
 
         // --- Prototype behavior (interactions + motion) ---
@@ -1063,8 +1075,121 @@ private fun DesignEditorState.typographyWriteBack(intent: DesignEditorIntent.Upd
     val node = document?.nodeById(intent.nodeId) ?: return this
     if (node.kind !is DesignNodeKind.Text) return this
     val style = (node.applyTypography(intent.patch).kind as DesignNodeKind.Text).textStyle ?: return this
-    return writeBackEdits(intent.nodeId, listOf(SetTextStyle(intent.nodeId, style))) { it.applyTypography(intent.patch) }
+    // A cleared decoration color must delete the authored `decorationColor` key, not just omit it.
+    val clearKeys = if (intent.patch.clearDecorationColor) setOf("decorationColor") else emptySet()
+    return writeBackEdits(
+        intent.nodeId,
+        listOf(SetTextStyle(intent.nodeId, style, clearKeys = clearKeys)),
+    ) { it.applyTypography(intent.patch) }
 }
+
+/**
+ * Per-range typography: splits/merges the node's style ranges and writes them back as
+ * `text.spans`. An empty selection routes to the whole-node [typographyWriteBack]. Span
+ * write-back is gated to nodes whose rendered string equals the authored one (no ICU
+ * params) so `[start, end)` offsets line up with the authored `defaultText`; otherwise
+ * the edit stays in-memory (canvas reflects it, source is untouched).
+ */
+private fun DesignEditorState.typographyRangeWriteBack(intent: DesignEditorIntent.UpdateTypographyRange): DesignEditorState {
+    if (intent.end <= intent.start) {
+        return typographyWriteBack(DesignEditorIntent.UpdateTypography(intent.nodeId, intent.patch))
+    }
+    return applyTextSpanEdit(intent.nodeId) { kind ->
+        kind.copy(
+            styleRanges = TextRangeEditing.applyRange(
+                ranges = kind.styleRanges,
+                length = kind.editableLength(),
+                start = intent.start,
+                end = intent.end,
+                override = intent.patch.toRangeOverride(),
+            ),
+        )
+    }
+}
+
+private fun DesignEditorState.textRangeFillsWriteBack(intent: DesignEditorIntent.SetTextRangeFills): DesignEditorState =
+    applyTextSpanEdit(intent.nodeId) { kind ->
+        kind.copy(
+            styleRanges = TextRangeEditing.applyRange(
+                ranges = kind.styleRanges,
+                length = kind.editableLength(),
+                start = intent.start,
+                end = intent.end,
+                override = DesignTextStyle(),
+                fillsChange = TextRangeEditing.FillsChange.Set(intent.fills),
+            ),
+        )
+    }
+
+private fun DesignEditorState.textRangeStyleRefWriteBack(intent: DesignEditorIntent.SetTextRangeStyleRef): DesignEditorState =
+    applyTextSpanEdit(intent.nodeId) { kind ->
+        kind.copy(
+            styleRanges = TextRangeEditing.applyStyleRef(
+                ranges = kind.styleRanges,
+                length = kind.editableLength(),
+                start = intent.start,
+                end = intent.end,
+                ref = intent.ref.ifBlank { null },
+            ),
+        )
+    }
+
+private fun DesignEditorState.textLinkWriteBack(intent: DesignEditorIntent.SetTextLink): DesignEditorState =
+    applyTextSpanEdit(intent.nodeId) { kind ->
+        val cleared = kind.links.filterNot { it.start == intent.start && it.end == intent.end }
+        val links = if (intent.url.isBlank() && intent.nodeTarget.isBlank()) {
+            cleared
+        } else {
+            cleared + TextLink(intent.start, intent.end, intent.url, intent.nodeTarget)
+        }
+        kind.copy(links = links)
+    }
+
+/** Shared span write-back: applies [transform] to the text kind and mirrors + persists as `text.spans`. */
+private fun DesignEditorState.applyTextSpanEdit(
+    nodeId: String,
+    transform: (DesignNodeKind.Text) -> DesignNodeKind.Text,
+): DesignEditorState {
+    val node = document?.nodeById(nodeId) ?: return this
+    val kind = node.kind as? DesignNodeKind.Text ?: return this
+    if (isNodeLocked(nodeId)) return this
+    val newKind = transform(kind)
+    val patch: (DesignNode) -> DesignNode = { n ->
+        (n.kind as? DesignNodeKind.Text)?.let { n.copy(kind = transform(it)) } ?: n
+    }
+    // Spans address the authored string; skip SLM write-back when ICU params could shift offsets.
+    return if (kind.content?.params.isNullOrEmpty()) {
+        writeBackEdits(nodeId, listOf(SetTextSpansEdit(nodeId, newKind.styleRanges, newKind.links)), patchNode = patch)
+    } else {
+        editUnlockedNode(nodeId, patch)
+    }
+}
+
+/** Content edits heal existing span/link offsets and re-persist spans alongside the text. */
+private fun DesignEditorState.setTextCharactersWriteBack(intent: DesignEditorIntent.SetTextCharacters): DesignEditorState {
+    val node = document?.nodeById(intent.nodeId) ?: return this
+    val kind = node.kind as? DesignNodeKind.Text ?: return this
+    val oldText = kind.editableString()
+    val healed = healSpansForTextChange(kind, oldText, intent.text)
+    val patch: (DesignNode) -> DesignNode = { n ->
+        (n.kind as? DesignNodeKind.Text)?.let {
+            n.copy(kind = it.copy(characters = intent.text.bindable(), content = null, styleRanges = healed.first, links = healed.second))
+        } ?: n
+    }
+    val edits = buildList {
+        add(SetTextEdit(intent.nodeId, intent.text))
+        if (kind.content?.params.isNullOrEmpty() && (healed.first != kind.styleRanges || healed.second != kind.links)) {
+            add(SetTextSpansEdit(intent.nodeId, healed.first, healed.second))
+        }
+    }
+    return writeBackEdits(intent.nodeId, edits, patchNode = patch)
+}
+
+private fun DesignEditorState.textAutoResizeWriteBack(intent: DesignEditorIntent.SetTextAutoResize): DesignEditorState =
+    writeBackEdits(intent.nodeId, listOf(SetTextAutoResizeEdit(intent.nodeId, intent.mode))) patch@{ node ->
+        val kind = node.kind as? DesignNodeKind.Text ?: return@patch node
+        node.copy(kind = kind.copy(autoResize = intent.mode))
+    }
 
 private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.ResizeNode): DesignEditorState {
     if (intent.width == null && intent.height == null) return this
@@ -1516,17 +1641,96 @@ private fun updateShadow(effect: DesignEffect, op: EffectOp.UpdateShadow): Desig
 private fun DesignNode.applyTypography(patch: TypographyPatch): DesignNode {
     val kind = kind as? DesignNodeKind.Text ?: return this
     val base = kind.textStyle ?: DesignTextStyle()
-    val merged = base.copy(
-        fontFamily = patch.fontFamily ?: base.fontFamily,
-        fontSize = patch.fontSize?.coerceAtLeast(1.0)?.bindable() ?: base.fontSize,
-        fontWeight = patch.fontWeight?.bindable() ?: base.fontWeight,
-        lineHeight = patch.lineHeightPercent?.let { UnitValue(DesignUnit.Percent, it) } ?: base.lineHeight,
-        letterSpacing = patch.letterSpacing?.let { UnitValue(DesignUnit.Px, it) } ?: base.letterSpacing,
-        textAlignHorizontal = patch.alignHorizontal ?: base.textAlignHorizontal,
-        textAlignVertical = patch.alignVertical ?: base.textAlignVertical,
-    )
-    return copy(kind = kind.copy(textStyle = merged))
+    return copy(kind = kind.copy(textStyle = base.applyTypographyPatch(patch)))
 }
+
+/** Applies a [TypographyPatch] over a [DesignTextStyle] (node-level, honoring Auto/clear sentinels). */
+internal fun DesignTextStyle.applyTypographyPatch(patch: TypographyPatch): DesignTextStyle = copy(
+    fontFamily = patch.fontFamily ?: fontFamily,
+    fontSize = patch.fontSize?.coerceAtLeast(1.0)?.bindable() ?: fontSize,
+    fontWeight = patch.fontWeight?.bindable() ?: fontWeight,
+    italic = patch.italic ?: italic,
+    lineHeight = when {
+        patch.lineHeight?.auto == true -> null
+        patch.lineHeight?.px != null -> UnitValue(DesignUnit.Px, patch.lineHeight.px)
+        patch.lineHeight?.percent != null -> UnitValue(DesignUnit.Percent, patch.lineHeight.percent)
+        patch.lineHeightPercent != null -> UnitValue(DesignUnit.Percent, patch.lineHeightPercent)
+        else -> lineHeight
+    },
+    letterSpacing = patch.letterSpacingUnit() ?: letterSpacing,
+    paragraphSpacing = patch.paragraphSpacing ?: paragraphSpacing,
+    paragraphIndent = patch.paragraphIndent ?: paragraphIndent,
+    textAlignHorizontal = patch.alignHorizontal ?: textAlignHorizontal,
+    textAlignVertical = patch.alignVertical ?: textAlignVertical,
+    textCase = patch.textCase ?: textCase,
+    textDecoration = patch.textDecoration ?: textDecoration,
+    decorationStyle = patch.decorationStyle ?: decorationStyle,
+    decorationColor = if (patch.clearDecorationColor) null else patch.decorationColor ?: decorationColor,
+    decorationThickness = patch.decorationThickness ?: decorationThickness,
+    decorationSkipInk = patch.decorationSkipInk ?: decorationSkipInk,
+    textPosition = patch.textPosition ?: textPosition,
+    leadingTrim = patch.leadingTrim ?: leadingTrim,
+    hangingPunctuation = patch.hangingPunctuation ?: hangingPunctuation,
+    hangingList = patch.hangingList ?: hangingList,
+    fontFeatures = fontFeatures + patch.fontFeatures,
+    variableAxes = variableAxes + patch.variableAxes,
+)
+
+private fun TypographyPatch.letterSpacingUnit(): UnitValue? = when {
+    letterSpacingPercent != null -> UnitValue(DesignUnit.Percent, letterSpacingPercent)
+    letterSpacing != null -> UnitValue(DesignUnit.Px, letterSpacing)
+    else -> null
+}
+
+/**
+ * Builds a partial [DesignTextStyle] from the patch for per-range merging: only the
+ * fields the patch touches are set. Range styles are pure overrides, so Auto/clear
+ * sentinels (which mean "inherit") don't apply here.
+ */
+internal fun TypographyPatch.toRangeOverride(): DesignTextStyle = DesignTextStyle(
+    fontFamily = fontFamily,
+    fontWeight = fontWeight?.bindable(),
+    italic = italic,
+    fontSize = fontSize?.coerceAtLeast(1.0)?.bindable(),
+    lineHeight = when {
+        lineHeight?.px != null -> UnitValue(DesignUnit.Px, lineHeight.px)
+        lineHeight?.percent != null -> UnitValue(DesignUnit.Percent, lineHeight.percent)
+        lineHeightPercent != null -> UnitValue(DesignUnit.Percent, lineHeightPercent)
+        else -> null
+    },
+    letterSpacing = letterSpacingUnit(),
+    paragraphSpacing = paragraphSpacing,
+    paragraphIndent = paragraphIndent,
+    textAlignHorizontal = alignHorizontal,
+    textAlignVertical = alignVertical,
+    textCase = textCase,
+    textDecoration = textDecoration,
+    decorationStyle = decorationStyle,
+    decorationColor = decorationColor,
+    decorationThickness = decorationThickness,
+    decorationSkipInk = decorationSkipInk,
+    textPosition = textPosition,
+    leadingTrim = leadingTrim,
+    hangingPunctuation = hangingPunctuation,
+    hangingList = hangingList,
+    fontFeatures = fontFeatures,
+    variableAxes = variableAxes,
+)
+
+/** The authored (source-locale) string of a text node: content default text, else raw characters. */
+internal fun DesignNodeKind.Text.editableString(): String {
+    val default = content?.defaultText
+    return if (!default.isNullOrEmpty()) default else (characters as? Bindable.Value)?.value ?: ""
+}
+
+internal fun DesignNodeKind.Text.editableLength(): Int = editableString().length
+
+private fun healSpansForTextChange(
+    kind: DesignNodeKind.Text,
+    oldText: String,
+    newText: String,
+): Pair<List<TextStyleRange>, List<TextLink>> =
+    TextRangeEditing.healForTextChange(kind.styleRanges, kind.links, oldText, newText)
 
 private fun DesignNode.moveVectorPoint(intent: DesignEditorIntent.MoveVectorPoint): DesignNode {
     val kind = kind as? DesignNodeKind.Shape ?: return this

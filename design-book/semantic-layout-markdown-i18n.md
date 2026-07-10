@@ -1062,14 +1062,24 @@ text:
   typography:
     fontFamily: Inter
     fontWeight: 700
+    italic: false
     fontSize: 24
-    lineHeight: 32
+    lineHeight: 32            # bare number = px; {unit: percent, value: 135} = %; omit = Auto
     letterSpacing: 0
     paragraphSpacing: 0
+    paragraphIndent: 0
     horizontalAlign: start
     verticalAlign: center
-    decoration: none
-    case: none
+    decoration: none          # none | underline | strikethrough
+    decorationStyle: solid    # solid | dashed | dotted | wavy
+    decorationColor: "#3366FF"  # omit = follows the glyph color
+    decorationThickness: 1    # px number, or {unit: percent, value}; omit = auto
+    decorationSkipInk: false
+    case: none                # none | upper | lower | title | smallCaps | smallCapsForced
+    position: none            # none | superscript | subscript
+    leadingTrim: none         # none | capHeight
+    hangingPunctuation: false
+    hangingList: false
     openType:
       liga: true
       tnum: true
@@ -1083,7 +1093,9 @@ text:
   overflow: truncate
 ```
 
-Rich text spans:
+Rich text spans — each span carries a `range: [start, end]` (or `text:` substring matched
+against `defaultText`) plus any of a shared `style:` ref, an inline `typography:` map, inline
+`fills:`, and a `link:`. Offsets index the source-locale `defaultText`.
 
 ```md
 text:
@@ -1091,7 +1103,11 @@ text:
   defaultText: "Проверьте SLA перед запуском миссии."
   spans:
     - range: [0, 10]
-      style: typography.body.strong
+      typography:
+        fontWeight: 700
+        italic: true
+      fills:
+        - "#FF3366"
     - text: SLA
       link:
         type: url

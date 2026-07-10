@@ -157,10 +157,64 @@ common case in the bundled samples) to the token's actual default-mode value —
 alias chains — instead of a flat black/blue placeholder, so the inspector swatch matches
 what the canvas renders via `DesignResolver`.
 
-**Typography (ch. 16)** — Text tool: click creates auto-width text, drag creates a
-fixed-width box; double-click enters an inline editing overlay (Esc exits); inspector
-controls for size, weight, line-height, letter-spacing and horizontal alignment; text
-fill drives glyph color (it is the node's fill list, not a background).
+**Typography (ch. 16 + typography subsystem)** — the whole text stack lives in
+`:subsystems:typography` (pure model/algebra/measure) + `:subsystems:typography-compose`
+(render/fonts); the editor consumes both. Text tool: click creates auto-width text, drag
+a fixed-width box; double-click enters an inline editing overlay: a transparent,
+metric-matched `BasicTextField` owns text input/IME/selection (its own caret and selection
+highlight are hidden), while the **caret and selection are drawn from the node's real text
+layout** (`textEditGeometry` → `LaidOutRichText.caretRect`/`selectionRects`, mapped
+document→screen through the viewport), so they follow wrapping, mixed sizes, alignment and
+per-range styling exactly. The overlay reports its caret/selection into
+`EditorWorkspaceState.textSelection`.
+The inspector Typography panel mirrors Figma: font family (rows previewed in their own
+face), style (weight + italic, "Mixed" across a selection), size, line-height (Auto/px/%),
+letter-spacing, H+V alignment, and a "type settings" popover for decoration
+(kind/style/color/thickness/skip-ink), case (incl. small caps), super/subscript, lists,
+paragraph spacing/indent, leading trim, hanging punctuation and OpenType/variable-axis
+toggles. **Per-range styling (изменение стиля части строки):** with a non-collapsed
+selection the same controls dispatch `UpdateTypographyRange`/`SetTextRangeFills`/`SetTextLink`
+instead of the node-level `UpdateTypography`; the reducer splits/merges the node's
+`styleRanges` via `TextRangeEditing` (the IR-native sibling of the subsystem's `SpanAlgebra`)
+and `OffsetHealing` keeps offsets sane across content edits. Text fill drives glyph color
+(node fill list, incl. gradient text via a brush).
+
+**Typography write-back** — node-level typography → `text.typography` (`SetTextStyle`);
+character ranges → `text.spans` (`SetTextSpans`, range/typography/fills/link/shared-style-ref);
+auto-resize → `text.resizing`; truncation → `text.maxLines`/`overflow`. Span write-back is gated
+to nodes whose rendered string equals the authored `defaultText` (no ICU params), so `[start,end)`
+offsets line up; otherwise the edit stays **in-memory** (canvas reflects it, source untouched).
+`YamlPathWriter` now supports **key removal** (`YamlPayload.Remove`), so clearing truncation drops
+the authored `maxLines`/`overflow` and clearing a decoration color drops `decorationColor` (both
+persist to source instead of falling back in-memory). Known render best-effort: skip-ink
+approximates descender boxes (no glyph intercepts); hanging punctuation uses a negative first-line
+indent; per-range line-height is paragraph-granular (Compose can't vary it per span within one
+line — the tallest overlapping run wins); small caps needs a font with `smcp` (the bundled
+families qualify).
+
+**Runtime hyperlinks** — a tap on a text node's link range takes precedence over selection/
+interaction: the subsystem's `LaidOutRichText.linkRects()`/`linkAt()` hit-test the point,
+`backend-compose.linkAtPoint` adapts it for a `LayoutBox`, and `DesignArtboard`/`SceneRenderer`
+expose `onLinkClick`. The Scene stage opens an external `url` via `platformOpenUrl` (expect/actual
+across jvm/js/wasmJs/ios; Android is a no-op — no Context is wired) and navigates an internal
+`nodeTarget` via `SceneEntry.Screen`. Shared text-style refs on a range now resolve
+(`TextStyleRange.styleRef`, base < shared-ref < inline) and instances can override a target's
+spans/links (`InstanceOverride.styleRanges`/`links`). The inspector's Typography section carries a
+**"Text style" dropdown** (`SetTextRangeStyleRef` → `TextRangeEditing.applyStyleRef` → `text.spans`)
+that applies a document text style to the active selection (or the whole node); it lists the
+document's `DesignStyle.Text` entries and renders nothing when there are none.
+
+**Deferred typography follow-ups** — genuine tensions, not just unbuilt UI:
+- **Debounced SLM recompile while typing** (currently per-keystroke). It *conflicts* with the
+  geometry-drawn caret, which needs the in-memory document to update every keystroke (else the caret
+  lags the text), and a correct debounce must source-sync span offsets (live in-memory span healing
+  desyncs from the still-stale source spans) or it corrupts authored spans. Autosave already debounces
+  the expensive localStorage writes; only the (cheap, for these docs) recompile runs per keystroke.
+- **Lazy per-family font loading.** Compose-resource `Font()` is composable-only and fetches lazily
+  *when a family is first rendered*; the eager +3.8 MB comes from the picker previews, so targeting it
+  safely needs browser network profiling rather than a blind edit.
+- **Instance per-range overrides authoring UI** (engine model `InstanceOverride.styleRanges/links`
+  exists) and **CNL for the remaining typography fields** (italic/decoration done).
 
 **Vector (ch. 11)** — Rectangle/Ellipse/Line/Arrow shape tools; a vector-edit mode
 (double-click a vector shape) that renders the path's on-path anchors and lets you

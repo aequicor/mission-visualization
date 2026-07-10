@@ -212,9 +212,62 @@ sealed interface DesignEditorIntent {
 
     data class UpdateTypography(val nodeId: String, val patch: TypographyPatch) : DesignEditorIntent
 
+    /**
+     * Applies [patch] to the character range `[start, end)` of the node's text (Figma's
+     * per-range styling). When the range is empty it behaves like [UpdateTypography]. The
+     * reducer splits/merges the node's style ranges (via the typography subsystem) and
+     * writes them back as `text.spans`.
+     */
+    data class UpdateTypographyRange(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val patch: TypographyPatch,
+    ) : DesignEditorIntent
+
+    /** Sets the glyph fills of the character range `[start, end)` (mixed text color). */
+    data class SetTextRangeFills(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val fills: List<io.aequicor.visualization.engine.ir.model.DesignPaint>,
+    ) : DesignEditorIntent
+
+    /**
+     * Applies the shared document text style [ref] to the character range `[start, end)`
+     * (resolver precedence base < ref < inline). A blank [ref] clears the range's style
+     * reference. The reducer splits/merges the node's style ranges and persists them as
+     * `text.spans`.
+     */
+    data class SetTextRangeStyleRef(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val ref: String,
+    ) : DesignEditorIntent
+
+    /** Adds/updates a hyperlink over `[start, end)`; a blank url and node both clear it. */
+    data class SetTextLink(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val url: String = "",
+        val nodeTarget: String = "",
+    ) : DesignEditorIntent
+
     data class SetTextCharacters(val nodeId: String, val text: String) : DesignEditorIntent
 
     data class SetTextAutoResize(val nodeId: String, val mode: TextAutoResize) : DesignEditorIntent
+
+    data class SetTextTruncate(
+        val nodeId: String,
+        val truncate: io.aequicor.visualization.engine.ir.model.TextTruncate?,
+    ) : DesignEditorIntent
+
+    data class SetTextList(
+        val nodeId: String,
+        val list: io.aequicor.visualization.engine.ir.model.TextListSettings,
+    ) : DesignEditorIntent
 
     // --- Vector ------------------------------------------------------------
 
@@ -496,13 +549,46 @@ enum class EffectType(val displayName: String) {
     BackgroundBlur("Background blur"),
 }
 
-/** Partial typography override; only non-null fields are applied. */
+/**
+ * Line-height override: [auto] takes precedence (native metrics); otherwise [percent]
+ * or [px] sets the value. All null = leave unchanged.
+ */
+data class LineHeightPatch(
+    val auto: Boolean = false,
+    val percent: Double? = null,
+    val px: Double? = null,
+)
+
+/** Partial typography override; only non-null fields are applied. Covers the Figma text panel. */
 data class TypographyPatch(
     val fontFamily: String? = null,
     val fontSize: Double? = null,
     val fontWeight: Double? = null,
+    val italic: Boolean? = null,
     val lineHeightPercent: Double? = null,
+    /** Richer line-height control (Auto / px / %); takes precedence over [lineHeightPercent]. */
+    val lineHeight: LineHeightPatch? = null,
     val letterSpacing: Double? = null,
+    /** Letter spacing expressed as percent of font size; takes precedence over [letterSpacing]. */
+    val letterSpacingPercent: Double? = null,
+    val paragraphSpacing: Double? = null,
+    val paragraphIndent: Double? = null,
     val alignHorizontal: TextAlignHorizontal? = null,
     val alignVertical: TextAlignVertical? = null,
+    val textCase: io.aequicor.visualization.engine.ir.model.TextCase? = null,
+    val textDecoration: io.aequicor.visualization.engine.ir.model.TextDecorationKind? = null,
+    val decorationStyle: io.aequicor.visualization.engine.ir.model.TextDecorationStyle? = null,
+    val decorationColor: io.aequicor.visualization.engine.ir.model.DesignColor? = null,
+    /** Sentinel to clear the decoration color back to "auto" (follows glyph fill). */
+    val clearDecorationColor: Boolean = false,
+    val decorationThickness: io.aequicor.visualization.engine.ir.model.UnitValue? = null,
+    val decorationSkipInk: Boolean? = null,
+    val textPosition: io.aequicor.visualization.engine.ir.model.TextScriptPosition? = null,
+    val leadingTrim: io.aequicor.visualization.engine.ir.model.LeadingTrim? = null,
+    val hangingPunctuation: Boolean? = null,
+    val hangingList: Boolean? = null,
+    /** OpenType feature toggles to set/override (merged over existing). */
+    val fontFeatures: Map<String, Boolean> = emptyMap(),
+    /** Variable-font axis values to set/override. */
+    val variableAxes: Map<String, Double> = emptyMap(),
 )

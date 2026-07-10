@@ -47,6 +47,8 @@ data class EditorWorkspaceState(
     val pendingZoomTo: Float? = null,
     /** Recently committed colors (most-recent first), surfaced by the color picker. */
     val recentColors: List<DesignColor> = emptyList(),
+    /** Active caret/selection while editing text on the canvas; null when not editing text. */
+    val textSelection: TextSelection? = null,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -58,6 +60,17 @@ data class EditorWorkspaceState(
 
     /** Whether the tool creates an object on canvas press. */
     val isCreationTool: Boolean get() = tool.creates != null
+}
+
+/**
+ * Text-edit caret/selection in the *rendered* string's offset space. A collapsed
+ * selection ([start] == [end]) is a caret; otherwise the ordered range covers
+ * `[min, max)`. Lives in workspace state — it is a view concern, never in the document.
+ */
+data class TextSelection(val nodeId: String, val start: Int, val end: Int) {
+    val min: Int get() = minOf(start, end)
+    val max: Int get() = maxOf(start, end)
+    val isCollapsed: Boolean get() = start == end
 }
 
 /** Reference to a single editable vector anchor. */

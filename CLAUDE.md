@@ -30,6 +30,19 @@ Compose-превью с оверлеями (выделение, инспекто
   (не выразимо одним источником): cross-page reparent, reparent глубже ATX-6, узлы без
   heading-якоря (`ir`-splice/prose), instance/media/vector-path субдеревья, multi-page delete.
   Scope и gaps — в `EDITOR.md`.
+- `:subsystems:*` — извлечённые переиспользуемые подсистемы редактора, каждая парой модулей
+  «чистое ядро + `-compose` рендерер» (layering как у anchoring, `engine/README.md`):
+  - `:subsystems:anchoring` / `:subsystems:anchoring-compose` — снаппинг/магнит (см. `EDITOR.md`).
+  - `:subsystems:typography` / `:subsystems:typography-compose` — вся типографика: чистое ядро
+    (`RichText`/`TypographyStyle` — полный Figma-набор: italic, decoration style/color/thickness/
+    skip-ink, small caps, super/subscript, leading trim, hanging punctuation, lists, OpenType,
+    variable axes; `SpanAlgebra` — **стилизация части строки**; `OffsetHealing`, `CaseTransform`,
+    `TypographyMeasurer` c per-line-метриками + selection-geometry) и compose-рендерер
+    (`RichTextComposer`/`ComposeTypographyMeasurer` с кэшем / `RichTextPainter` / `FontProvider` +
+    `BundledFontProvider` — забандленные Google Fonts: Inter / Source Serif 4 / Roboto /
+    JetBrains Mono). `:engine:backend-compose` потребляет `-compose` (адаптер
+    `ResolvedText`→`RichText`), редактор (`:shared`) — оба (span-алгебра в редьюсере
+    `TextRangeEditing`, шрифты в артборде).
 - `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — тонкие обёртки над shared UI.
 
 Документация конвейера — `engine/README.md`; спецификация SLM —
