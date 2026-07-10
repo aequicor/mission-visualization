@@ -20,11 +20,14 @@ data class CnlNoun(val nodeType: String, val shapeKind: String? = null, val role
 /** The property kinds the CNL grammar recognizes. */
 enum class CnlPropertyKind {
     Size, Width, Height,
+    Visible, Locked, VariableModes,
     Fill, Stroke, Radius, Opacity, Rotation,
     Padding, Gap, Direction, AlignParent, Position,
     FontSize, FontWeight,
     /** Explicit node id — authored only by the structural writer for id-stable inserts. */
     Id,
+    /** Explicit non-visible layer name; visible text remains the sentence text literal. */
+    NodeName,
     /** A `( … )`-group fill (gradient/image/video/solid-with-props) whose value is a ready YAML fragment. */
     FillComplex,
     /** Corner smoothing scalar (`smoothing N`). */
@@ -41,15 +44,16 @@ enum class CnlPropertyKind {
     FontFamily, LineHeight, Tracking, ParagraphSpacing,
     TextAlign, TextValign, TextCase, TextDecoration,
     Features, Axes,
-    AutoSize, Truncate, MaxLines, TextKey, TextStyleRef, ListSettings,
+    AutoSize, Truncate, MaxLines, TextKey, TextStyleRef, ListSettings, Characters,
     /** A `link ( … )` rich-text span, pre-lowered to a `text.spans[]` item. */
     Link,
     // Layout-deep.
     Wrap, Clip, Absolute, Distribute, Anchor, Constraints, ContainerAlign,
     // Layout-deep P4b: grid tracks + placement + guides + grid overlays + overflow + scroll.
     Overflow, Scroll, Columns, Rows, Place, Guides, Grids,
-    // Components (instance side): ref/library/variant/props records + detach/reset flags + slot/nested overrides.
+    // Components: instance side plus definition-side name/set/axes/property declarations.
     ComponentRef, LibraryRef, Variant, Props, Detach, ResetOverrides, SlotOverride, NestedOverride,
+    ComponentName, ComponentSet, ComponentAxis, ComponentPropDefinition,
     // P6: media record / shape point+inner / vector viewBox·iconRef·pathRef·paths·network / boolean op / mask block.
     Media, ShapePoints, ShapeInner, ViewBox, IconRef, PathRef, VectorPaths, VectorNetwork, BooleanOp, Mask,
     // P7: interaction triggers (one per trigger phrase) + motion attachment.

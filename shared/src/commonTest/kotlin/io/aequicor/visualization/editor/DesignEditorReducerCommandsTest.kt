@@ -387,10 +387,10 @@ class DesignEditorReducerCommandsTest {
         assertEquals(24.0, kind?.textStyle?.fontSize?.literalOrNull())
         assertEquals(700.0, kind?.textStyle?.fontWeight?.literalOrNull())
 
-        // The merged text style is serialized into the node's `text.typography` block in the owning
-        // source (others byte-identical).
+        // The merged text style is serialized into the node's CNL sentence in the owning source
+        // (others byte-identical).
         state.assertWroteBackToOneSource(before)
-        assertTrue(state.sources.any { "fontSize: 24" in it.content }, "fontSize written to a source")
+        assertTrue(state.sources.any { "size 24" in it.content }, "font size written to a CNL source")
     }
 
     // --- Undo / redo ---

@@ -2,6 +2,7 @@ package io.aequicor.visualization.engine.frontend.cnl
 
 import io.aequicor.visualization.engine.frontend.blocks.readers.slm
 import io.aequicor.visualization.engine.frontend.compileSlm
+import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
@@ -9,6 +10,7 @@ import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -44,10 +46,17 @@ class CnlEmitterRoundTripTest {
         compileBody(sentence).allDescendants().first { kind(it.kind) }
 
     private fun assertSameFields(a: DesignNode, b: DesignNode) {
+        assertEquals(a.visible, b.visible, "visible")
+        assertEquals(a.locked, b.locked, "locked")
         assertEquals(a.fills, b.fills, "fills")
         assertEquals(a.strokes, b.strokes, "strokes")
         assertEquals(a.cornerRadius, b.cornerRadius, "cornerRadius")
         assertEquals(a.opacity, b.opacity, "opacity")
+        assertEquals(a.variableModes, b.variableModes, "variableModes")
+        assertEquals(a.fillStyleId, b.fillStyleId, "fillStyleId")
+        assertEquals(a.strokeStyleId, b.strokeStyleId, "strokeStyleId")
+        assertEquals(a.effectStyleId, b.effectStyleId, "effectStyleId")
+        assertEquals(a.gridStyleId, b.gridStyleId, "gridStyleId")
         assertEquals(a.rotation, b.rotation, "rotation")
         assertEquals(a.size, b.size, "size")
         assertEquals(a.sizing, b.sizing, "sizing")
@@ -89,6 +98,8 @@ class CnlEmitterRoundTripTest {
         val textB = b.kind as? DesignNodeKind.Text
         if (textA != null || textB != null) {
             assertEquals(textA?.textStyle, textB?.textStyle, "textStyle")
+            assertEquals(textA?.content?.key, textB?.content?.key, "textKey")
+            assertEquals(textA?.characters, textB?.characters, "characters")
             assertEquals(CnlGrammar.textLiteral(a), CnlGrammar.textLiteral(b), "text")
             assertEquals(textA?.autoResize, textB?.autoResize, "autoResize")
             assertEquals(textA?.truncate, textB?.truncate, "truncate")
@@ -232,7 +243,7 @@ class CnlEmitterRoundTripTest {
 
     @Test
     fun sharedStyleRefs() =
-        assertLeafRoundTrips("Frame styles (fill card.primary effect shadow.card grid layout.12col)") {
+        assertLeafRoundTrips("Frame styles (fill card.primary stroke border.primary effect shadow.card grid layout.12col)") {
             it is DesignNodeKind.Frame
         }
 
@@ -275,6 +286,12 @@ class CnlEmitterRoundTripTest {
         ) { it is DesignNodeKind.Text }
 
     @Test
+    fun textFixedBoxSizeAndFontSize() =
+        assertLeafRoundTrips("Text «Save» 74 by 40 size 14 text-align center text-valign center") {
+            it is DesignNodeKind.Text
+        }
+
+    @Test
     fun typographyPercentAndMaxLines() =
         assertLeafRoundTrips(
             "Text «Caption» line-height 20 tracking 1% decoration strikethrough case title text-align justified maxLines 3 text-style \$body",
@@ -285,12 +302,22 @@ class CnlEmitterRoundTripTest {
         assertLeafRoundTrips("Rectangle width (fill min 320 max 520) height hug") { it is DesignNodeKind.Shape }
 
     @Test
+    fun sizingModesWithPreferredValues() =
+        assertLeafRoundTrips("Frame width (fill 416) height (hug 150)") { it is DesignNodeKind.Frame }
+
+    @Test
     fun sizingFixedWithMin() =
         assertLeafRoundTrips("Rectangle width (fixed 200 min 100) height (fill max 400)") { it is DesignNodeKind.Shape }
 
     @Test
     fun containerAlignDistributeWrapClip() =
         assertLeafRoundTrips("Frame column align (inline stretch) distribute space-between wrap clip") {
+            it is DesignNodeKind.Frame
+        }
+
+    @Test
+    fun frameWithTokenGapPaddingAndRadius() =
+        assertLeafRoundTrips("Frame column gap \$space padding \$padV \$padH radius \$radius") {
             it is DesignNodeKind.Frame
         }
 
@@ -329,6 +356,16 @@ class CnlEmitterRoundTripTest {
         assertLeafRoundTrips("Frame grid columns (count 3 track 2fr) rows (count 2 track 1fr)") { it is DesignNodeKind.Frame }
 
     @Test
+    fun gridHeterogeneousColumnsAndImplicitHugRows() =
+        assertLeafRoundTrips("Frame grid columns (tracks (1fr 2fr hug)) rows (auto track hug min 96)") {
+            it is DesignNodeKind.Frame
+        }
+
+    @Test
+    fun gridHeterogeneousRows() =
+        assertLeafRoundTrips("Frame grid rows (tracks (hug 2fr 96))") { it is DesignNodeKind.Frame }
+
+    @Test
     fun gridChildPlacement() =
         assertLeafRoundTrips("Rectangle place (column 1 row 1 columnSpan 8 rowSpan 2)") { it is DesignNodeKind.Shape }
 
@@ -355,6 +392,26 @@ class CnlEmitterRoundTripTest {
     @Test
     fun textWithSizeWeightColor() =
         assertLeafRoundTrips("Text «Active missions» size 20 bold color #F8FAFC") { it is DesignNodeKind.Text }
+
+    @Test
+    fun textKeyAndArbitraryWeight() =
+        assertLeafRoundTrips("Text «Nominal» key mission.status weight 500 color #F8FAFC") {
+            it is DesignNodeKind.Text
+        }
+
+    @Test
+    fun explicitNodeNameRoundTrips() {
+        val node1 = leaf("Text id status «Nominal» name «Status Label» key mission.status", { it is DesignNodeKind.Text })
+        val cnl = CnlEmitter.emitSentence(node1, includeId = true)
+        val node2 = leaf(cnl, { it is DesignNodeKind.Text })
+
+        assertEquals("Status Label", node2.name)
+        assertEquals(cnl, CnlEmitter.emitSentence(node2, includeId = true), "emit is idempotent")
+    }
+
+    @Test
+    fun propBoundCharacters() =
+        assertLeafRoundTrips("Text characters \$prop.title size 14") { it is DesignNodeKind.Text }
 
     @Test
     fun buttonWithText() =
@@ -407,6 +464,27 @@ class CnlEmitterRoundTripTest {
         assertSameFields(card1, card2)
         assertEquals(card1.children.size, card2.children.size, "child count")
         card1.children.zip(card2.children).forEach { (childA, childB) -> assertSameFields(childA, childB) }
+    }
+
+    @Test
+    fun typedContainerHeadingRoundTrips() {
+        val doc = """
+            ## Frame: Card id card column gap 12 padding 24 color #111827 radius 16
+
+            Rectangle id rule name «Rule» 100 by 8 color #22C55E
+        """.trimIndent()
+        val card1 = compileBody(doc).children.first()
+        assertEquals("frame", card1.type)
+        assertEquals("Card", card1.name)
+
+        val emitted = CnlEmitter.emitSubtree(card1, level = 2, includeId = true).joinToString("\n")
+        val card2 = compileBody(emitted).children.first()
+
+        assertEquals(card1.type, card2.type)
+        assertEquals(card1.id, card2.id)
+        assertEquals(card1.name, card2.name)
+        assertSameFields(card1, card2)
+        assertEquals("Rule", card2.children.single().name)
     }
 
     @Test
@@ -491,6 +569,12 @@ class CnlEmitterRoundTripTest {
         }
 
     @Test
+    fun refLessMotionKeyframes() =
+        assertLeafRoundTrips("Vector motion duration 800 loop frames (0 opacity 0) (1 opacity 1)") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
     fun interactionOpenLink() =
         assertLeafRoundTrips("Text «Docs» onClick openLink (https://example.com/docs)") { it is DesignNodeKind.Text }
 
@@ -533,6 +617,16 @@ class CnlEmitterRoundTripTest {
         assertLeafRoundTrips("Rectangle 120 by 40 color #FFFFFF opacity \$anim.fade") { it is DesignNodeKind.Shape }
 
     @Test
+    fun nodeVisibilityLockAndModes() =
+        assertLeafRoundTrips("Frame visible no locked yes modes (theme dark density compact)") {
+            it is DesignNodeKind.Frame
+        }
+
+    @Test
+    fun nodePropBoundVisibility() =
+        assertLeafRoundTrips("Frame visible \$prop.showTail") { it is DesignNodeKind.Frame }
+
+    @Test
     fun responsiveLayoutVariant() =
         assertLeafRoundTrips("Frame column gap 12 when (breakpoint sm) column gap 8") { it is DesignNodeKind.Frame }
 
@@ -570,5 +664,23 @@ class CnlEmitterRoundTripTest {
                 "measure (from title to cta inline value 16) code (framework «Compose» component «MissionCard»)",
         ) { it is DesignNodeKind.Shape }
         assertTrue(node.kind is DesignNodeKind.Shape)
+    }
+
+    @Test
+    fun genericShapeHeadingKeepsIconWordsInTitle() {
+        val diagnostics = DiagnosticCollector("test.layout.md")
+
+        assertNull(CnlParser.parseHeading("Shape: Layer Icon 0", lineNumber = 1, baseColumn = 1, diagnostics))
+        assertTrue(diagnostics.diagnostics.isEmpty(), diagnostics.diagnostics.joinToString { it.message })
+    }
+
+    @Test
+    fun typedFrameHeadingStillAcceptsCompatibleSuffix() {
+        val diagnostics = DiagnosticCollector("test.layout.md")
+        val split = assertNotNull(CnlParser.parseHeading("Frame: Card id card column gap 12", lineNumber = 1, baseColumn = 1, diagnostics))
+
+        assertEquals("Frame: Card", split.name)
+        assertTrue(split.element.properties.isNotEmpty())
+        assertTrue(diagnostics.diagnostics.isEmpty(), diagnostics.diagnostics.joinToString { it.message })
     }
 }

@@ -11,7 +11,12 @@ import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignTextStyle
+import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
+import io.aequicor.visualization.engine.ir.model.TextAlignVertical
+import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 
 /**
@@ -25,7 +30,7 @@ internal object CnlWriter {
     fun plan(source: String, sentenceSpan: SlmSourceSpan, edit: SlmEdit, lineIndex: LineIndex): WritePlan {
         val line = sentenceSpan.startLine
         val text = lineIndex.lineText(line)
-        val element = CnlParser.parseElement(text, line, baseColumn = 1, DiagnosticCollector())
+        val element = parseCnlElement(text, line)
             ?: return failed(line)
         return when (edit) {
             is SetFills -> fillPlan(element, edit.fills, lineIndex, line)
@@ -42,11 +47,31 @@ internal object CnlWriter {
             is SetSizing -> sizingPlan(element, edit, lineIndex, line)
             is SetNodePosition -> positionPlan(element, edit, lineIndex, line)
             is SetText -> textPlan(element, edit.defaultText, lineIndex, line)
+            is SetTextStyle -> textStylePlan(element, edit.style, lineIndex, line)
             else -> failed(line)
         }
     }
 
     // --- per-edit plans ---
+
+    private fun parseCnlElement(text: String, line: Int): CnlElement? {
+        val heading = headingMatch(text)
+        if (heading != null) {
+            val (_, contentStart) = heading
+            val content = text.substring(contentStart).trimEnd()
+            return CnlParser.parseHeading(content, line, contentStart + 1, DiagnosticCollector())?.element
+        }
+        return CnlParser.parseElement(text, line, baseColumn = 1, DiagnosticCollector())
+    }
+
+    private fun headingMatch(text: String): Pair<Int, Int>? {
+        val level = text.takeWhile { it == '#' }.length
+        if (level == 0 || level > 6) return null
+        if (level >= text.length || text[level] != ' ') return null
+        var contentStart = level
+        while (contentStart < text.length && text[contentStart] == ' ') contentStart++
+        return level to contentStart
+    }
 
     private fun fillPlan(element: CnlElement, fills: List<DesignPaint>, lineIndex: LineIndex, line: Int): WritePlan {
         val color = (fills.singleOrNull() as? DesignPaint.Solid)?.let(::colorLiteral) ?: return failed(line)
@@ -129,6 +154,53 @@ internal object CnlWriter {
         return replace(literal.span, defaultText, lineIndex)
     }
 
+    private fun textStylePlan(element: CnlElement, style: DesignTextStyle, lineIndex: LineIndex, line: Int): WritePlan {
+        val ops = mutableListOf<TextOp>()
+        val appendPhrases = mutableListOf<String>()
+
+        fun addValue(kind: CnlPropertyKind, keyword: String, value: String, appendValue: String = value) {
+            val property = element.property(kind)
+            if (property != null) {
+                ops += op(property.values.first().span, value, lineIndex)
+            } else {
+                appendPhrases += "$keyword $appendValue"
+            }
+        }
+
+        fun addPhrase(kind: CnlPropertyKind, phrase: String) {
+            val property = element.property(kind)
+            if (property != null) {
+                ops += op(property.phraseSpan, phrase, lineIndex)
+            } else {
+                appendPhrases += phrase
+            }
+        }
+
+        style.fontFamily?.takeIf { it.isNotEmpty() }?.let {
+            if ('»' in it || '\n' in it || '\r' in it) return failed(line)
+            addValue(CnlPropertyKind.FontFamily, "font", it, "«$it»")
+        }
+        style.fontSize?.literalOrNull()?.let { addValue(CnlPropertyKind.FontSize, "size", formatNumber(it)) }
+        style.fontWeight?.literalOrNull()?.let { addPhrase(CnlPropertyKind.FontWeight, fontWeightPhrase(it)) }
+        style.lineHeight?.let { addValue(CnlPropertyKind.LineHeight, "line-height", unitText(it)) }
+        style.letterSpacing?.let { addValue(CnlPropertyKind.Tracking, "tracking", unitText(it)) }
+        style.paragraphSpacing?.let {
+            addValue(CnlPropertyKind.ParagraphSpacing, "paragraph-spacing", formatNumber(it))
+        }
+        style.textAlignHorizontal?.let {
+            addValue(CnlPropertyKind.TextAlign, "text-align", horizontalAlignWord(it))
+        }
+        style.textAlignVertical?.let {
+            addValue(CnlPropertyKind.TextValign, "text-valign", verticalAlignWord(it))
+        }
+
+        if (appendPhrases.isNotEmpty()) {
+            val end = lineIndex.offsetOf(line, lineIndex.lineText(line).length + 1)
+            ops += TextOp(end, end, " ${appendPhrases.joinToString(" ")}")
+        }
+        return WritePlan.Ops(ops)
+    }
+
     // --- helpers ---
 
     private fun CnlElement.property(kind: CnlPropertyKind): CnlProperty? =
@@ -165,6 +237,31 @@ internal object CnlWriter {
         fun byte(v: Int) = v.toString(16).uppercase().padStart(2, '0')
         val base = "#${byte(color.red)}${byte(color.green)}${byte(color.blue)}"
         return if (color.alpha == 255) base else base + byte(color.alpha)
+    }
+
+    private fun unitText(value: UnitValue): String = when (value.unit) {
+        DesignUnit.Px -> formatNumber(value.value)
+        DesignUnit.Percent -> "${formatNumber(value.value)}%"
+    }
+
+    private fun fontWeightPhrase(weight: Double): String = when (weight) {
+        700.0 -> "bold"
+        600.0 -> "semibold"
+        300.0 -> "thin"
+        else -> "weight ${formatNumber(weight)}"
+    }
+
+    private fun horizontalAlignWord(value: TextAlignHorizontal): String = when (value) {
+        TextAlignHorizontal.Left -> "left"
+        TextAlignHorizontal.Center -> "center"
+        TextAlignHorizontal.Right -> "right"
+        TextAlignHorizontal.Justified -> "justified"
+    }
+
+    private fun verticalAlignWord(value: TextAlignVertical): String = when (value) {
+        TextAlignVertical.Top -> "top"
+        TextAlignVertical.Center -> "center"
+        TextAlignVertical.Bottom -> "bottom"
     }
 
     private fun formatNumber(value: Double): String =

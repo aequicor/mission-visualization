@@ -18,6 +18,8 @@ data class SemanticScreen(
     /** H1 heading; screen metadata + title resource, never a visible node. */
     val title: SemanticText? = null,
     val root: SemanticNode,
+    /** Document-scoped CNL sections lowered to typed patches; never visible nodes. */
+    val documentPatches: List<TypedEntry> = emptyList(),
     /** `Component:`-marked subtrees, lifted out of the visible tree. */
     val componentDefs: List<SemanticNode> = emptyList(),
     /** Mode values contributed by extraction rules (e.g. `density` -> `compact`). */

@@ -22,10 +22,10 @@ import kotlin.test.assertTrue
 
 /**
  * Typography write-back through the reducer: [DesignEditorIntent.UpdateTypography] merges
- * the patch into the node's `text.typography` block in the owning SLM source and mirrors
+ * the patch into the node's CNL typography phrases in the owning SLM source and mirrors
  * onto the working document, leaving every other source byte-identical. `badge_text` is a
- * heading-anchored text node in mission-telemetry.layout.md authored with a `typography:`
- * block (fontFamily/fontSize/fontWeight), so every field below is addressable there.
+ * heading-anchored text node in mission-telemetry.layout.md authored with CNL typography
+ * phrases (`font`, `size`, `bold`), so every field below is addressable there.
  */
 class TypographyWriteBackReducerTest {
 
@@ -61,7 +61,7 @@ class TypographyWriteBackReducerTest {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontSize = 20.0)))
         assertEquals(20.0, next.textStyle().fontSize?.literalOrNull())
-        assertTrue("fontSize: 20" in next.sourceOf(owningFile), "fontSize written into typography")
+        assertTrue("size 20" in next.sourceOf(owningFile), "font size written as CNL")
         next.assertWroteBack(before)
     }
 
@@ -71,8 +71,7 @@ class TypographyWriteBackReducerTest {
         val next = reduceDesignEditor(before, DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(lineHeightPercent = 140.0)))
         assertEquals(UnitValue(DesignUnit.Percent, 140.0), next.textStyle().lineHeight)
         val source = next.sourceOf(owningFile)
-        assertTrue("unit: percent" in source, "percent line height written as a unit map: $source")
-        assertTrue("value: 140" in source)
+        assertTrue("line-height 140%" in source, "percent line height written as CNL: $source")
         next.assertWroteBack(before)
     }
 
@@ -90,8 +89,8 @@ class TypographyWriteBackReducerTest {
         assertEquals(UnitValue(DesignUnit.Px, 1.5), style.letterSpacing)
         assertEquals(TextAlignHorizontal.Center, style.textAlignHorizontal)
         val source = next.sourceOf(owningFile)
-        assertTrue("letterSpacing: 1.5" in source, "px letter spacing written bare: $source")
-        assertTrue("horizontalAlign: center" in source)
+        assertTrue("tracking 1.5" in source, "px letter spacing written as CNL: $source")
+        assertTrue("text-align center" in source)
         next.assertWroteBack(before)
     }
 
@@ -102,7 +101,7 @@ class TypographyWriteBackReducerTest {
         // Field-by-field merge: the authored fontFamily/fontWeight the editor never touched survive.
         assertEquals("Inter", next.textStyle().fontFamily)
         assertEquals(700.0, next.textStyle().fontWeight?.literalOrNull())
-        assertTrue("fontFamily: Inter" in next.sourceOf(owningFile))
+        assertTrue("font «Inter»" in next.sourceOf(owningFile))
         next.assertWroteBack(before)
     }
 

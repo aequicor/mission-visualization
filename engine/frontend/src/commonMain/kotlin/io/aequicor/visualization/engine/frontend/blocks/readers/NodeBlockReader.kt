@@ -8,7 +8,7 @@ import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 
 private val knownKeys = setOf(
-    "type", "id", "name", "role", "visible", "locked", "order", "position", "constraints",
+    "type", "id", "name", "role", "visible", "locked", "order", "variableModes", "position", "constraints",
 )
 
 internal val positionModes: Map<String, NodePositionMode> = mapOf(
@@ -50,6 +50,7 @@ internal fun readNodeBlock(value: YamlValue, reading: BlockReading): NodePatch? 
         visible = map.bindableBoolean("visible", reading),
         locked = map.boolean("locked", reading),
         order = map.int("order", reading),
+        variableModes = map.mapValue("variableModes", reading)?.stringEntries(reading),
         positionMode = position?.enum("mode", positionModes, reading),
         x = position?.double("x", reading) ?: positionArray?.numberAt(0),
         y = position?.double("y", reading) ?: positionArray?.numberAt(1),

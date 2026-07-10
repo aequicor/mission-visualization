@@ -61,6 +61,7 @@ internal fun readLayoutBlock(value: YamlValue, reading: BlockReading): LayoutPat
         overflowX = overflow?.enum("x", ReaderEnums.overflow, reading),
         overflowY = overflow?.enum("y", ReaderEnums.overflow, reading),
         scrollDirection = scroll?.enum("direction", ReaderEnums.scrollDirection, reading),
+        scrollSticky = scroll?.boolean("sticky", reading),
         scrollFixedChildren = scroll?.stringList("fixedChildren", reading),
         ignoreAutoLayout = map.boolean("ignoreAutoLayout", reading),
         positionMode = position?.map?.enum("mode", positionModes, reading),
@@ -242,13 +243,15 @@ private class TrackAxis(
 
 private fun readTrackAxis(map: YamlMap, key: String, reading: BlockReading): TrackAxis? {
     val axis = map.mapValue(key, reading) ?: return null
-    axis.warnUnknownKeys(setOf("count", "track", "gap", "auto", "min"), reading)
+    axis.warnUnknownKeys(setOf("count", "track", "tracks", "gap", "auto", "min"), reading)
     val count = axis.int("count", reading)
     val track = axis.value("track")?.let { readTrack(it, reading) }
+    val trackList = axis.listValue("tracks", reading)?.items?.mapNotNull { readTrack(it, reading) }
     val auto = axis.boolean("auto", reading) ?: false
     val tracks = when {
+        trackList != null -> trackList
         count != null && count > 0 -> List(count) { track ?: GridTrack.Flex(1.0) }
-        track != null -> listOf(track)
+        track != null && !auto -> listOf(track)
         else -> null
     }
     return TrackAxis(

@@ -11,6 +11,7 @@ import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignHandoff
 import io.aequicor.visualization.engine.ir.model.DesignMotion
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
@@ -62,6 +63,7 @@ data class NodePatch(
     val visible: Bindable<Boolean>? = null,
     val locked: Boolean? = null,
     val order: Int? = null,
+    val variableModes: Map<String, String>? = null,
     val positionMode: NodePositionMode? = null,
     val x: Double? = null,
     val y: Double? = null,
@@ -99,6 +101,7 @@ data class LayoutPatch(
     val overflowX: OverflowMode? = null,
     val overflowY: OverflowMode? = null,
     val scrollDirection: ScrollOverflow? = null,
+    val scrollSticky: Boolean? = null,
     val scrollFixedChildren: List<String>? = null,
     val ignoreAutoLayout: Boolean? = null,
     val positionMode: NodePositionMode? = null,
@@ -126,6 +129,7 @@ data class StylePatch(
     val strokes: DesignStrokes? = null,
     val effects: List<DesignEffect>? = null,
     val fillStyle: String? = null,
+    val strokeStyle: String? = null,
     val textStyle: String? = null,
     val effectStyle: String? = null,
     val gridStyle: String? = null,
@@ -144,6 +148,7 @@ data class TextSpanPatch(
 data class TextPatch(
     val key: String? = null,
     val defaultText: String? = null,
+    val characters: Bindable<String>? = null,
     val styleRef: String? = null,
     val typography: DesignTextStyle? = null,
     val resizingWidth: SizingMode? = null,
@@ -284,6 +289,11 @@ data class VariablesPatch(
     /** collection id -> collection (modes + typed per-mode values). */
     val collections: Map<String, VariableCollection>? = null,
     val prototype: Map<String, PrototypeVariable>? = null,
+) : TypedPatch
+
+/** `styles:` block — document-scoped shared paint/text/effect/grid styles. */
+data class StylesPatch(
+    val styles: Map<String, DesignStyle>,
 ) : TypedPatch
 
 /** `handoff:` block — annotations, measurements, code hints. */

@@ -18,7 +18,7 @@ import io.aequicor.visualization.engine.ir.model.bindable
 
 private val knownKeys = setOf(
     "opacity", "blendMode", "radius", "cornerSmoothing", "fill", "fills", "stroke", "strokes",
-    "effects", "fillStyle", "textStyle", "effectStyle", "gridStyle",
+    "effects", "fillStyle", "strokeStyle", "textStyle", "effectStyle", "gridStyle",
 )
 
 /** `style:` block — opacity/blend, radius, fills, strokes, effects, shared style refs. */
@@ -37,6 +37,7 @@ internal fun readStyleBlock(value: YamlValue, reading: BlockReading): StylePatch
         strokes = readStrokes(map, reading),
         effects = effects?.effects,
         fillStyle = map.string("fillStyle", reading),
+        strokeStyle = map.string("strokeStyle", reading),
         textStyle = map.string("textStyle", reading),
         effectStyle = map.string("effectStyle", reading) ?: effects?.styleRef,
         gridStyle = map.string("gridStyle", reading),

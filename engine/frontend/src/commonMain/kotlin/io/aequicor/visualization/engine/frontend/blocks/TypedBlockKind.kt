@@ -23,6 +23,7 @@ enum class TypedBlockKind(val key: String) {
     Motion("motion"),
     Responsive("responsive"),
     Variables("variables"),
+    Styles("styles"),
     Handoff("handoff"),
     Export("export"),
     ;

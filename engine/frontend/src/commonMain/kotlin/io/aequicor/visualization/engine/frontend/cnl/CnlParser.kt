@@ -20,6 +20,9 @@ internal object CnlParser {
 
     private fun isNumber(text: String): Boolean = numberRegex.matches(text)
 
+    private fun isNumberLike(text: String): Boolean =
+        isNumber(text) || text.startsWith("$") || isBinding(text)
+
     private fun isColor(text: String): Boolean =
         text.startsWith("#") || text.startsWith("$")
 
@@ -69,16 +72,60 @@ internal object CnlParser {
         diagnostics: DiagnosticCollector,
     ): HeadingSplit? {
         val tokens = tokenize(content, lineNumber, baseColumn)
+        val allowedKinds = headingPrefixAllowedKinds(tokens.firstOrNull()?.text)
         // Name must be non-empty (s >= 1); the property suffix must be non-empty and fully clean.
         for (split in 1 until tokens.size) {
             val probe = DiagnosticCollector(diagnostics.fileName)
             val element = parseFrom(tokens, startIndex = split, noun = null, lineNumber = lineNumber, diagnostics = probe)
-            if (element.properties.isNotEmpty() && probe.diagnostics.isEmpty()) {
+            val entries = if (element.properties.isNotEmpty() && probe.diagnostics.isEmpty()) {
+                desugar(element, lineNumber, probe)
+            } else {
+                emptyList()
+            }
+            if (element.properties.isNotEmpty() && probe.diagnostics.isEmpty() && entriesAllowed(entries, allowedKinds)) {
                 val name = content.substring(0, tokens[split].span.startColumn - baseColumn).trimEnd()
                 return HeadingSplit(name, element)
             }
         }
         return null
+    }
+
+    private fun entriesAllowed(entries: List<TypedEntry>, allowedKinds: Set<TypedBlockKind>?): Boolean =
+        allowedKinds == null || entries.all { it.kind in allowedKinds }
+
+    private fun headingPrefixAllowedKinds(firstToken: String?): Set<TypedBlockKind>? {
+        val prefix = firstToken
+            ?.takeIf { it.endsWith(":") }
+            ?.dropLast(1)
+            ?.takeIf { it.isNotBlank() && it.none(Char::isWhitespace) }
+            ?.lowercase()
+            ?: return null
+        val structural = setOf(
+            TypedBlockKind.Node,
+            TypedBlockKind.Layout,
+            TypedBlockKind.Style,
+            TypedBlockKind.Interaction,
+            TypedBlockKind.Action,
+            TypedBlockKind.Motion,
+            TypedBlockKind.Responsive,
+            TypedBlockKind.Export,
+            TypedBlockKind.Handoff,
+        )
+        if (prefix == "component") {
+            return structural + setOf(TypedBlockKind.Component)
+        }
+        if (prefix == "shape") {
+            return structural + setOf(TypedBlockKind.Shape, TypedBlockKind.Mask)
+        }
+        val noun = CnlVocabulary.nouns[prefix] ?: return null
+        return when (noun.nodeType) {
+            "shape" -> structural + setOf(TypedBlockKind.Shape, TypedBlockKind.Mask)
+            "vector" -> structural + setOf(TypedBlockKind.Vector, TypedBlockKind.Mask)
+            "media" -> structural + setOf(TypedBlockKind.Media)
+            "text" -> structural + setOf(TypedBlockKind.Text)
+            "instance" -> structural + setOf(TypedBlockKind.Component, TypedBlockKind.Props, TypedBlockKind.Overrides)
+            else -> structural
+        }
     }
 
     // --- tokenizer ---
@@ -305,10 +352,13 @@ internal object CnlParser {
             CnlPropertyKind.Radius -> consumeRadius(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.StyleRefs -> consumeStyleRefs(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.Blend -> consumeToken(CnlPropertyKind.Blend, tokens, valueStart, ::add, lineNumber, diagnostics)
+            CnlPropertyKind.Visible -> consumeBindableBoolean(CnlPropertyKind.Visible, tokens, valueStart, ::add, lineNumber, diagnostics)
+            CnlPropertyKind.Locked -> consumeBoolean(CnlPropertyKind.Locked, tokens, valueStart, ::add, lineNumber, diagnostics)
+            CnlPropertyKind.VariableModes -> consumePairMap(kind, tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.FontFamily, CnlPropertyKind.LineHeight, CnlPropertyKind.Tracking,
             CnlPropertyKind.TextAlign, CnlPropertyKind.TextValign, CnlPropertyKind.TextCase,
             CnlPropertyKind.TextDecoration, CnlPropertyKind.TextKey, CnlPropertyKind.TextStyleRef,
-            CnlPropertyKind.AutoSize,
+            CnlPropertyKind.AutoSize, CnlPropertyKind.Characters,
             -> consumeToken(kind, tokens, valueStart, ::add, lineNumber, diagnostics)
             CnlPropertyKind.Features, CnlPropertyKind.Axes ->
                 consumeTypographyMap(kind, tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
@@ -342,8 +392,16 @@ internal object CnlParser {
             CnlPropertyKind.Props -> consumeProps(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.SlotOverride -> consumeSlot(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.NestedOverride -> consumeNested(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
+            CnlPropertyKind.ComponentName ->
+                consumeToken(CnlPropertyKind.ComponentName, tokens, valueStart, ::add, lineNumber, diagnostics)
+            CnlPropertyKind.ComponentSet ->
+                consumeToken(CnlPropertyKind.ComponentSet, tokens, valueStart, ::add, lineNumber, diagnostics)
+            CnlPropertyKind.ComponentAxis ->
+                consumeComponentAxis(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
+            CnlPropertyKind.ComponentPropDefinition ->
+                consumeComponentPropDefinition(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.Smoothing, CnlPropertyKind.ParagraphSpacing,
-            CnlPropertyKind.MaxLines, CnlPropertyKind.Truncate,
+            CnlPropertyKind.MaxLines, CnlPropertyKind.Truncate, CnlPropertyKind.FontWeight,
             -> consumeNumber(kind, tokens, valueStart, ::add, lineNumber, diagnostics)
             CnlPropertyKind.Opacity ->
                 consumeBindableNumber(CnlPropertyKind.Opacity, tokens, valueStart, ::add, lineNumber, diagnostics)
@@ -357,7 +415,8 @@ internal object CnlParser {
                     consumeDirection(tokens, valueStart, ::add, lineNumber, diagnostics)
                 }
             CnlPropertyKind.Size -> consumeSize(tokens, valueStart, ::add, lineNumber, diagnostics)
-            CnlPropertyKind.Id -> consumeToken(CnlPropertyKind.Id, tokens, valueStart, ::add, lineNumber, diagnostics)
+            CnlPropertyKind.Id, CnlPropertyKind.NodeName ->
+                consumeToken(kind, tokens, valueStart, ::add, lineNumber, diagnostics)
             CnlPropertyKind.Media -> consumeMedia(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.ShapePoints, CnlPropertyKind.ShapeInner ->
                 consumeNumber(kind, tokens, valueStart, ::add, lineNumber, diagnostics)
@@ -376,7 +435,7 @@ internal object CnlParser {
             CnlPropertyKind.Annotation -> consumeHandoffNote(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.Measurement -> consumeHandoffMeasure(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.CodeHint -> consumeHandoffCode(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
-            else -> valueStart // Direction/FontWeight never reach here (no keyword+value).
+            else -> valueStart // Direction never reaches here (no keyword+value).
         }.let { consumed -> if (consumed < 0) keywordStart + 1 else consumed }
     }
 
@@ -396,6 +455,77 @@ internal object CnlParser {
         }
         add(kind, listOf(CnlValue(value.text, value.span)), start)
         return start + 1
+    }
+
+    private fun consumeBoolean(
+        kind: CnlPropertyKind,
+        tokens: List<Token>,
+        start: Int,
+        add: (CnlPropertyKind, List<CnlValue>, Int) -> Unit,
+        lineNumber: Int,
+        diagnostics: DiagnosticCollector,
+    ): Int {
+        val value = tokens.getOrNull(start)
+        if (value == null) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "No value given")
+            return start
+        }
+        val flag = CnlVocabulary.booleans[value.text.lowercase()]
+        if (flag == null) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.UnknownKeyword, lineNumber, "\"${value.text}\" is not a boolean")
+            return start
+        }
+        add(kind, listOf(CnlValue(flag.toString(), value.span)), start)
+        return start + 1
+    }
+
+    private fun consumeBindableBoolean(
+        kind: CnlPropertyKind,
+        tokens: List<Token>,
+        start: Int,
+        add: (CnlPropertyKind, List<CnlValue>, Int) -> Unit,
+        lineNumber: Int,
+        diagnostics: DiagnosticCollector,
+    ): Int {
+        val value = tokens.getOrNull(start)
+        if (value == null) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "No value given")
+            return start
+        }
+        val raw = CnlVocabulary.booleans[value.text.lowercase()]?.toString()
+            ?: value.text.takeIf { it.startsWith("$") || isBinding(it) }
+        if (raw == null) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.UnknownKeyword, lineNumber, "\"${value.text}\" is not a boolean or binding")
+            return start
+        }
+        add(kind, listOf(CnlValue(raw, value.span)), start)
+        return start + 1
+    }
+
+    private fun consumePairMap(
+        kind: CnlPropertyKind,
+        tokens: List<Token>,
+        valueStart: Int,
+        keywordSpan: CnlSpan,
+        properties: MutableList<CnlProperty>,
+        lineNumber: Int,
+        diagnostics: DiagnosticCollector,
+    ): Int {
+        if (tokens.getOrNull(valueStart)?.text != "(") {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "Expected a ( … ) group")
+            return valueStart
+        }
+        val (group, after) = parseGroup(tokens, valueStart)
+        val leaves = group.children.mapNotNull { it.leafText() }
+        val parts = mutableListOf<String>()
+        var i = 0
+        while (i + 1 < leaves.size) {
+            parts += "${leaves[i]}: ${leaves[i + 1]}"
+            i += 2
+        }
+        val span = joinSpan(keywordSpan, tokens[after - 1].span)
+        properties += CnlProperty(kind, listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)), keywordSpan, span)
+        return after
     }
 
     /**
@@ -625,7 +755,7 @@ internal object CnlParser {
         val next = tokens.getOrNull(valueStart)
         if (next?.text == "(") {
             val (group, after) = parseGroup(tokens, valueStart)
-            val nums = group.children.mapNotNull { it.leafText() }.filter { isNumber(it) }
+            val nums = group.children.mapNotNull { it.leafText() }.filter { isNumberLike(it) }
             if (nums.size < 4) {
                 CnlDiagnostics.warn(diagnostics, CnlRule.BadNumber, lineNumber, "Per-corner radius needs 4 numbers (tl tr br bl)")
                 return after
@@ -635,7 +765,7 @@ internal object CnlParser {
             properties += CnlProperty(CnlPropertyKind.Radius, listOf(CnlValue(fragment, span)), keywordSpan, joinSpan(keywordSpan, span))
             return after
         }
-        if (next == null || !isNumber(next.text)) {
+        if (next == null || !isNumberLike(next.text)) {
             CnlDiagnostics.warn(diagnostics, CnlRule.BadNumber, lineNumber, "Radius needs a number")
             return valueStart
         }
@@ -678,7 +808,8 @@ internal object CnlParser {
     }
 
     private val styleRefKeys = mapOf(
-        "fill" to "fillStyle", "text" to "textStyle", "effect" to "effectStyle", "grid" to "gridStyle",
+        "fill" to "fillStyle", "stroke" to "strokeStyle", "text" to "textStyle",
+        "effect" to "effectStyle", "grid" to "gridStyle",
     )
 
     /** `features (liga on) (tnum off)` or `axes (wght 620) (opsz 28)` → a `{ key: value, … }` map. */
@@ -826,7 +957,7 @@ internal object CnlParser {
             }
             return add("{ ${entries.joinToString(", ")} }", joinSpan(tokens[valueStart].span, tokens[after - 1].span), after)
         }
-        if (next == null || !isNumber(next.text)) {
+        if (next == null || !isNumberLike(next.text)) {
             CnlDiagnostics.warn(diagnostics, CnlRule.BadNumber, lineNumber, "Gap needs a number, `auto` or a ( row/column ) record")
             return valueStart
         }
@@ -1014,6 +1145,7 @@ internal object CnlParser {
         val children = group.children
         var direction: String? = null
         var fixed: String? = null
+        var sticky = false
         var i = 0
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
@@ -1023,12 +1155,14 @@ internal object CnlParser {
                     fixed = ids?.joinToString(", ")?.let { "[ $it ]" }
                     i += 2
                 }
+                "sticky" -> { sticky = true; i += 1 }
                 else -> i += 1
             }
         }
         val parts = buildList {
             direction?.let { add("direction: $it") }
             fixed?.let { add("fixedChildren: $it") }
+            if (sticky) add("sticky: true")
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(CnlPropertyKind.Scroll, listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)), keywordSpan, span)
@@ -1060,6 +1194,7 @@ internal object CnlParser {
         val children = group.children
         var count: String? = null
         var track: String? = null
+        var tracks: String? = null
         var gap: String? = null
         var min: String? = null
         var auto = false
@@ -1068,6 +1203,11 @@ internal object CnlParser {
             when (children[i].leafText()?.lowercase()) {
                 "count" -> { count = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "track" -> { track = children.getOrNull(i + 1)?.leafText(); i += 2 }
+                "tracks" -> {
+                    val values = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }
+                    tracks = values?.joinToString(", ")?.let { "[ $it ]" }
+                    i += 2
+                }
                 "gap" -> { gap = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "min" -> { min = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "auto" -> { auto = true; i += 1 }
@@ -1077,6 +1217,7 @@ internal object CnlParser {
         val parts = buildList {
             count?.let { add("count: $it") }
             track?.let { add("track: $it") }
+            tracks?.let { add("tracks: $it") }
             if (auto) add("auto: true")
             min?.let { add("min: $it") }
             gap?.let { add("gap: $it") }
@@ -1618,6 +1759,147 @@ internal object CnlParser {
         return after
     }
 
+    /** `axis <name> (<value> …)` → one component definition variant axis. */
+    private fun consumeComponentAxis(
+        tokens: List<Token>,
+        valueStart: Int,
+        keywordSpan: CnlSpan,
+        properties: MutableList<CnlProperty>,
+        lineNumber: Int,
+        diagnostics: DiagnosticCollector,
+    ): Int {
+        val axis = tokens.getOrNull(valueStart)
+        if (axis == null || axis.text == "(") {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"axis\" needs a name and a ( … ) values group")
+            return valueStart
+        }
+        val groupStart = valueStart + 1
+        if (tokens.getOrNull(groupStart)?.text != "(") {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "Axis \"${axis.text}\" needs a ( … ) values group")
+            return groupStart
+        }
+        val (group, after) = parseGroup(tokens, groupStart)
+        val values = group.children.mapNotNull { it.leafText() }
+        if (values.isEmpty()) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "Axis \"${axis.text}\" needs at least one value")
+            return after
+        }
+        val span = joinSpan(keywordSpan, tokens[after - 1].span)
+        properties += CnlProperty(
+            CnlPropertyKind.ComponentAxis,
+            listOf(CnlValue("${axis.text}: { values: [ ${values.joinToString(", ") { plainScalar(it) }} ] }", span)),
+            keywordSpan,
+            span,
+        )
+        return after
+    }
+
+    /** `prop <name> (<type> default … min N max N preferred (…) allow (…))` → one property definition. */
+    private fun consumeComponentPropDefinition(
+        tokens: List<Token>,
+        valueStart: Int,
+        keywordSpan: CnlSpan,
+        properties: MutableList<CnlProperty>,
+        lineNumber: Int,
+        diagnostics: DiagnosticCollector,
+    ): Int {
+        val name = tokens.getOrNull(valueStart)
+        if (name == null || name.text == "(") {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"prop\" needs a name and a ( … ) definition group")
+            return valueStart
+        }
+        val groupStart = valueStart + 1
+        if (tokens.getOrNull(groupStart)?.text != "(") {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "Prop \"${name.text}\" needs a ( … ) definition group")
+            return groupStart
+        }
+        val (group, after) = parseGroup(tokens, groupStart)
+        val parts = componentPropDefinitionParts(name.text, group, lineNumber, diagnostics) ?: return after
+        val span = joinSpan(keywordSpan, tokens[after - 1].span)
+        properties += CnlProperty(
+            CnlPropertyKind.ComponentPropDefinition,
+            listOf(CnlValue("${name.text}: { ${parts.joinToString(", ")} }", span)),
+            keywordSpan,
+            span,
+        )
+        return after
+    }
+
+    private fun componentPropDefinitionParts(
+        name: String,
+        group: GGroup,
+        lineNumber: Int,
+        diagnostics: DiagnosticCollector,
+    ): List<String>? {
+        val children = group.children
+        val typeWord = children.firstOrNull()?.leafText()?.lowercase()
+        val type = componentPropertyType(typeWord)
+        if (type == null) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.UnknownKeyword, lineNumber, "Prop \"$name\" needs a component property type")
+            return null
+        }
+        val parts = mutableListOf("type: $type")
+        var i = 1
+        while (i < children.size) {
+            when (children[i].leafText()?.lowercase()) {
+                "default" -> {
+                    children.getOrNull(i + 1)?.let { value ->
+                        parts += "default: ${componentDefaultValue(type, value)}"
+                    }
+                    i += 2
+                }
+                "preferred", "preferredvalues" -> {
+                    val values = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }.orEmpty()
+                    if (values.isNotEmpty()) {
+                        parts += "preferredValues: [ ${values.joinToString(", ") { plainScalar(it) }} ]"
+                    }
+                    i += 2
+                }
+                "min", "minitems" -> {
+                    children.getOrNull(i + 1)?.leafText()?.let { parts += "minItems: $it" }
+                    i += 2
+                }
+                "max", "maxitems" -> {
+                    children.getOrNull(i + 1)?.leafText()?.let { parts += "maxItems: $it" }
+                    i += 2
+                }
+                "allow", "allowed", "allowedcontent" -> {
+                    val values = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }.orEmpty()
+                    if (values.isNotEmpty()) {
+                        parts += "allowedContent: [ ${values.joinToString(", ") { plainScalar(it) }} ]"
+                    }
+                    i += 2
+                }
+                else -> i += 1
+            }
+        }
+        return parts
+    }
+
+    private fun componentPropertyType(word: String?): String? = when (word) {
+        "text" -> "text"
+        "boolean", "bool" -> "boolean"
+        "instance", "swap", "instanceswap" -> "instanceSwap"
+        "variant" -> "variant"
+        "slot" -> "slot"
+        "number" -> "number"
+        "string" -> "string"
+        "data", "databinding" -> "dataBinding"
+        else -> null
+    }
+
+    private fun componentDefaultValue(type: String, value: GNode): String {
+        val leaf = value.leaf()
+        val text = leaf?.token?.text.orEmpty()
+        return when (type) {
+            "boolean" -> CnlVocabulary.booleans[text.lowercase()]?.toString() ?: "false"
+            "number" -> if (isNumber(text)) text else "0"
+            "instanceSwap", "variant" -> "{ type: $type, value: ${plainScalar(text)} }"
+            "dataBinding" -> "{ type: dataBinding, value: ${yamlString(text)} }"
+            else -> if (leaf?.token?.isText == true) yamlString(text) else yamlString(text)
+        }
+    }
+
     /** A slot fill group `( <instanceRef> [variant (…)] [props (…)] )` → `{ instance:…, variant:…, props:… }`. */
     private fun slotFillFragment(group: GGroup): String {
         val children = group.children
@@ -1955,7 +2237,7 @@ internal object CnlParser {
         val values = mutableListOf<CnlValue>()
         var next = start
         while (values.size < 4) {
-            val token = tokens.getOrNull(next)?.takeIf { isNumber(it.text) } ?: break
+            val token = tokens.getOrNull(next)?.takeIf { isNumberLike(it.text) } ?: break
             values += CnlValue(token.text, token.span)
             next++
         }
@@ -2335,10 +2617,6 @@ internal object CnlParser {
         } else {
             ""
         }
-        if (ref.isEmpty()) {
-            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"motion\" needs a (ref) group")
-            return i
-        }
         var duration: String? = null
         var loop = false
         val frames = mutableListOf<String>()
@@ -2366,8 +2644,12 @@ internal object CnlParser {
             if (loop) add("loop: true")
             if (frames.isNotEmpty()) add("frames: [ ${frames.joinToString(", ")} ]")
         }
+        if (ref.isEmpty() && fallbackParts.isEmpty()) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"motion\" needs a (ref) group or fallback")
+            return i
+        }
         val motionParts = buildList {
-            add("ref: ${yamlString(ref)}")
+            if (ref.isNotEmpty()) add("ref: ${yamlString(ref)}")
             if (fallbackParts.isNotEmpty()) add("fallback: { ${fallbackParts.joinToString(", ")} }")
         }
         val span = joinSpan(keywordSpan, tokens[(i - 1).coerceIn(0, tokens.size - 1)].span)
@@ -2663,6 +2945,9 @@ internal object CnlParser {
             CnlPropertyKind.Blend -> builder.style("blendMode" to values[0])
             CnlPropertyKind.StyleRefs -> values.forEach { builder.styleRaw(it) }
             CnlPropertyKind.Opacity -> builder.style("opacity" to bindingLiteral(values[0]))
+            CnlPropertyKind.Visible -> builder.node("visible" to bindingLiteral(values[0]))
+            CnlPropertyKind.Locked -> builder.node("locked" to values[0])
+            CnlPropertyKind.VariableModes -> builder.node("variableModes" to values[0])
             CnlPropertyKind.Rotation -> builder.position("rotation" to values[0])
             CnlPropertyKind.Position -> {
                 builder.position("x" to values[0])
@@ -2682,6 +2967,7 @@ internal object CnlParser {
             CnlPropertyKind.FontSize -> builder.typography("fontSize" to values[0])
             CnlPropertyKind.FontWeight -> builder.typography("fontWeight" to values[0])
             CnlPropertyKind.Id -> builder.node("id" to values[0])
+            CnlPropertyKind.NodeName -> builder.node("name" to yamlString(values[0]))
             CnlPropertyKind.FontFamily -> builder.typography("fontFamily" to yamlString(values[0]))
             CnlPropertyKind.LineHeight -> builder.typography("lineHeight" to unitLiteral(values[0]))
             CnlPropertyKind.Tracking -> builder.typography("letterSpacing" to unitLiteral(values[0]))
@@ -2694,6 +2980,13 @@ internal object CnlParser {
             CnlPropertyKind.Axes -> builder.typography("variableFont" to values[0])
             CnlPropertyKind.TextKey -> builder.text("key" to yamlString(values[0]))
             CnlPropertyKind.TextStyleRef -> builder.text("style" to values[0].removePrefix("$"))
+            CnlPropertyKind.Characters -> {
+                if (isStringBinding(values[0])) {
+                    builder.text("characters" to bindableStringLiteral(values[0]))
+                } else {
+                    builder.text("defaultText" to yamlString(values[0]))
+                }
+            }
             CnlPropertyKind.MaxLines -> builder.text("maxLines" to values[0])
             CnlPropertyKind.ListSettings -> builder.text("list" to values[0])
             CnlPropertyKind.AutoSize ->
@@ -2725,6 +3018,10 @@ internal object CnlParser {
             CnlPropertyKind.ResetOverrides -> builder.component("resetOverrides: true")
             CnlPropertyKind.SlotOverride -> builder.overrideSlot(values[0])
             CnlPropertyKind.NestedOverride -> builder.overrideNested(values[0])
+            CnlPropertyKind.ComponentName -> builder.component("name: ${plainScalar(values[0])}")
+            CnlPropertyKind.ComponentSet -> builder.component("set: ${plainScalar(values[0])}")
+            CnlPropertyKind.ComponentAxis -> builder.componentAxis(values[0])
+            CnlPropertyKind.ComponentPropDefinition -> builder.componentProperty(values[0])
             CnlPropertyKind.Media -> builder.media(values[0])
             CnlPropertyKind.ShapePoints -> builder.shape("pointCount" to values[0])
             CnlPropertyKind.ShapeInner -> builder.shape("innerRadius" to values[0])
@@ -2753,9 +3050,24 @@ internal object CnlParser {
     private fun colorLiteral(color: String): String =
         if (color.startsWith("#") || color.startsWith("{{")) "\"$color\"" else color
 
-    /** Opacity/binding literal — quotes only `{{expr}}`; numbers and `$ref` pass through bare. */
+    /** Opacity/binding literal — quotes `{{expr}}`, turns `$prop.name` into an internal prop ref map. */
     private fun bindingLiteral(value: String): String =
-        if (value.startsWith("{{")) "\"$value\"" else value
+        propName(value)?.let { "{ prop: $it }" }
+            ?: if (value.startsWith("{{")) "\"$value\"" else value
+
+    private fun bindableStringLiteral(value: String): String =
+        propName(value)?.let { "{ prop: $it }" }
+            ?: if (value.startsWith("$")) value
+            else yamlString(value)
+
+    private fun isStringBinding(value: String): Boolean =
+        propName(value) != null || value.startsWith("$") || isBinding(value)
+
+    private fun propName(value: String): String? = when {
+        value.startsWith("\$prop.") -> value.removePrefix("\$prop.").takeIf { it.isNotEmpty() }
+        value.startsWith("\$prop:") -> value.removePrefix("\$prop:").takeIf { it.isNotEmpty() }
+        else -> null
+    }
 
     /** A `{{expr}}` data-binding token. Single-token only (multi-word exprs need a tokenizer rule). */
     private fun isBinding(text: String): Boolean = text.startsWith("{{") && text.endsWith("}}")
@@ -2791,6 +3103,8 @@ internal object CnlParser {
         private val constraintParts = mutableListOf<String>()
         private val layoutPositionParts = mutableListOf<String>()
         private val componentParts = mutableListOf<String>()
+        private val componentAxisParts = mutableListOf<String>()
+        private val componentPropertyParts = mutableListOf<String>()
         private val slotOverrideParts = mutableListOf<String>()
         private val nestedOverrideParts = mutableListOf<String>()
         private val mediaParts = mutableListOf<String>()
@@ -2830,6 +3144,10 @@ internal object CnlParser {
         fun layoutPosition(fragment: String) { layoutPositionParts += fragment }
         /** A `component:` block fragment (ref/libraryRef/variant/props/detach/resetOverrides). */
         fun component(fragment: String) { componentParts += fragment }
+        /** One definition-side `component.variants` axis entry. */
+        fun componentAxis(fragment: String) { componentAxisParts += fragment }
+        /** One definition-side `component.properties` entry. */
+        fun componentProperty(fragment: String) { componentPropertyParts += fragment }
         /** One `overrides.slots` entry `name: [ … ]`. */
         fun overrideSlot(fragment: String) { slotOverrideParts += fragment }
         /** One `overrides.nestedInstances` entry `target: { … }`. */
@@ -2913,6 +3231,11 @@ internal object CnlParser {
                 if (measurementParts.isNotEmpty()) add("measurements: [ ${measurementParts.joinToString(", ")} ]")
                 codeHintPart?.let { add("code: $it") }
             }
+            val component = buildList {
+                addAll(componentParts)
+                if (componentAxisParts.isNotEmpty()) add("variants: { ${componentAxisParts.joinToString(", ")} }")
+                if (componentPropertyParts.isNotEmpty()) add("properties: { ${componentPropertyParts.joinToString(", ")} }")
+            }
             return buildList {
                 entry("node", node, line, diagnostics)?.let { add(it) }
                 entry("shape", shapeParts, line, diagnostics)?.let { add(it) }
@@ -2927,7 +3250,7 @@ internal object CnlParser {
                 entry("handoff", handoff, line, diagnostics)?.let { add(it) }
                 interactionParts.forEach { part -> entry("interaction", listOf(part), line, diagnostics)?.let { add(it) } }
                 motionFragment?.let { fragment -> entry("motion", listOf(fragment), line, diagnostics)?.let { add(it) } }
-                entry("component", componentParts, line, diagnostics)?.let { add(it) }
+                entry("component", component, line, diagnostics)?.let { add(it) }
                 entry("overrides", overrides, line, diagnostics)?.let { add(it) }
             }
         }

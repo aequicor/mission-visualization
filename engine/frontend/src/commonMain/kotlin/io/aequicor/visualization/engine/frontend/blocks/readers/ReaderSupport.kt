@@ -151,11 +151,25 @@ internal fun varRefOf(value: YamlValue): String? = when (value) {
     else -> null
 }
 
+/** `$prop.name` / `{ prop: name }` -> `name`; kept separate from design-token `$name` refs. */
+internal fun propRefOf(value: YamlValue): String? = when (value) {
+    is YamlScalar -> (value.value as? String)?.let { text ->
+        when {
+            text.startsWith("\$prop.") -> text.removePrefix("\$prop.").takeIf { it.isNotEmpty() }
+            text.startsWith("\$prop:") -> text.removePrefix("\$prop:").takeIf { it.isNotEmpty() }
+            else -> null
+        }
+    }
+    is YamlMap -> value.value("prop")?.stringOrNull() ?: value.value("\$prop")?.stringOrNull()
+    else -> null
+}
+
 /**
  * A number-valued [Bindable]: literal number, `$token` / `{variable:|token:}` ref,
  * or `{{expr}}` data binding.
  */
 internal fun bindableDouble(value: YamlValue, key: String, reading: BlockReading): Bindable<Double>? {
+    propRefOf(value)?.let { return Bindable.PropRef(it) }
     varRefOf(value)?.let { return Bindable.VarRef(it) }
     val scalar = value as? YamlScalar
     when (val raw = scalar?.value) {
@@ -174,6 +188,7 @@ internal fun YamlMap.bindableDouble(key: String, reading: BlockReading): Bindabl
 
 internal fun YamlMap.bindableBoolean(key: String, reading: BlockReading): Bindable<Boolean>? {
     val value = entries[key] ?: return null
+    propRefOf(value)?.let { return Bindable.PropRef(it) }
     varRefOf(value)?.let { return Bindable.VarRef(it) }
     val scalar = value as? YamlScalar
     when (val raw = scalar?.value) {
@@ -218,6 +233,7 @@ internal fun YamlMap.bindableColor(key: String, reading: BlockReading): Bindable
 
 /** A string-valued [Bindable]; `{{expr}}` becomes a data ref. */
 internal fun bindableString(value: YamlValue, key: String, reading: BlockReading): Bindable<String>? {
+    propRefOf(value)?.let { return Bindable.PropRef(it) }
     varRefOf(value)?.let { return Bindable.VarRef(it) }
     val scalar = value as? YamlScalar ?: run {
         reading.warning("`$key` must be a string", value)

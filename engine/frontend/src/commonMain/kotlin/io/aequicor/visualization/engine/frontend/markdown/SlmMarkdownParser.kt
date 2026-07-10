@@ -148,6 +148,7 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
         val heading = HeadingBlock(
             level = level,
             inlines = inlineParser.parseLine(name, line.number, line.columnOffset + contentStart),
+            cnlElement = split?.element,
             span = SlmSourceSpan(line.number, line.number),
         )
         val typed = split?.let {

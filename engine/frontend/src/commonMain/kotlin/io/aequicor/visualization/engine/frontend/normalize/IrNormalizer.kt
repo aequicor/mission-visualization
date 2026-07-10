@@ -20,6 +20,7 @@ import io.aequicor.visualization.engine.frontend.blocks.PropsPatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
+import io.aequicor.visualization.engine.frontend.blocks.StylesPatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockReader
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
@@ -51,6 +52,7 @@ import io.aequicor.visualization.engine.ir.model.DesignRepeat
 import io.aequicor.visualization.engine.ir.model.DesignScreenMeta
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.DesignTable
 import io.aequicor.visualization.engine.ir.model.DesignVariables
 import io.aequicor.visualization.engine.ir.model.FramePreset
@@ -103,10 +105,12 @@ private class Normalization(
     private val irSpliceNodes = mutableSetOf<String>()
     private val variableCollections = LinkedHashMap<String, VariableCollection>()
     private val prototypeVariables = LinkedHashMap<String, PrototypeVariable>()
+    private val documentStyles = LinkedHashMap<String, DesignStyle>()
     private var handoff = DesignHandoff()
 
     fun run(): NormalizedScreen {
         val frontmatter = screen.frontmatter
+        liftDocumentPatches(readDocumentPatches())
         var root = checkNotNull(materialize(screen.root, isRoot = true)) {
             "The screen root is never an ir splice"
         }
@@ -140,6 +144,7 @@ private class Normalization(
             pages = listOf(page),
             components = lifter.components,
             componentSets = lifter.componentSets,
+            styles = documentStyles,
             variables = DesignVariables(collections = variableCollections),
             prototypeVariables = prototypeVariables,
             screen = DesignScreenMeta(
@@ -435,6 +440,9 @@ private class Normalization(
             }
         }
 
+    private fun readDocumentPatches(): List<TypedPatch> =
+        screen.documentPatches.mapNotNull { TypedBlockReader.read(it, diagnostics) }
+
     /** `variables`/`handoff` blocks contribute to the document, wherever anchored. */
     private fun liftDocumentPatches(patches: List<TypedPatch>) {
         patches.forEach { patch ->
@@ -447,6 +455,7 @@ private class Normalization(
                         prototypeVariables[name] = variable
                     }
                 }
+                is StylesPatch -> documentStyles.putAll(patch.styles)
                 is HandoffPatch -> handoff = DesignHandoff(
                     annotations = handoff.annotations + patch.handoff.annotations,
                     measurements = handoff.measurements + patch.handoff.measurements,
@@ -487,6 +496,7 @@ internal fun blockKeyOf(patch: TypedPatch): String = when (patch) {
     is MotionPatch -> "motion"
     is ResponsivePatch -> "responsive"
     is VariablesPatch -> "variables"
+    is StylesPatch -> "styles"
     is HandoffPatch -> "handoff"
     is ExportPatch -> "export"
 }

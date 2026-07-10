@@ -17,6 +17,7 @@ import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsiveVariantPatch
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
+import io.aequicor.visualization.engine.frontend.blocks.StylesPatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
 import io.aequicor.visualization.engine.frontend.blocks.VariablesPatch
@@ -184,7 +185,7 @@ class PatchMerger(
                 exportSettings = if (patch.enabled == false) emptyList() else patch.settings,
             )
             // Document-level patches are lifted by the normalizer, not applied to nodes.
-            is VariablesPatch, is HandoffPatch -> node
+            is VariablesPatch, is StylesPatch, is HandoffPatch -> node
         }
     }
 
@@ -205,6 +206,7 @@ class PatchMerger(
             visible = patch.visible ?: node.visible,
             locked = patch.locked ?: node.locked,
             order = patch.order ?: node.order,
+            variableModes = patch.variableModes?.let { node.variableModes + it } ?: node.variableModes,
             rotation = patch.rotation ?: node.rotation,
             position = position,
             constraints = DesignConstraints(
@@ -283,6 +285,7 @@ class PatchMerger(
         patch.overflowX?.let { scroll = scroll.copy(overflowX = it) }
         patch.overflowY?.let { scroll = scroll.copy(overflowY = it) }
         patch.scrollDirection?.let { scroll = scroll.copy(overflow = it) }
+        patch.scrollSticky?.let { scroll = scroll.copy(sticky = it) }
         patch.scrollFixedChildren?.let { scroll = scroll.copy(fixedChildren = it) }
 
         val absolute = patch.ignoreAutoLayout == true ||
@@ -362,6 +365,7 @@ class PatchMerger(
             strokes = patch.strokes ?: node.strokes,
             effects = patch.effects ?: node.effects,
             fillStyleId = patch.fillStyle ?: node.fillStyleId,
+            strokeStyleId = patch.strokeStyle ?: node.strokeStyleId,
             effectStyleId = patch.effectStyle ?: node.effectStyleId,
             gridStyleId = patch.gridStyle ?: node.gridStyleId,
         )
@@ -415,6 +419,7 @@ class PatchMerger(
         return node.copy(
             type = if (node.kind is DesignNodeKind.Text) node.type else "text",
             kind = kind.copy(
+                characters = patch.characters ?: kind.characters,
                 content = content,
                 textStyleId = patch.styleRef ?: kind.textStyleId,
                 textStyle = patch.typography

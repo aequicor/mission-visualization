@@ -9,6 +9,7 @@ import io.aequicor.visualization.engine.frontend.edit.SetFills
 import io.aequicor.visualization.engine.frontend.edit.SetLayoutProperty
 import io.aequicor.visualization.engine.frontend.edit.SetSizing
 import io.aequicor.visualization.engine.frontend.edit.SetText
+import io.aequicor.visualization.engine.frontend.edit.SetTextStyle
 import io.aequicor.visualization.engine.frontend.edit.SizingSpec
 import io.aequicor.visualization.engine.frontend.edit.YamlScalarValue
 import io.aequicor.visualization.engine.frontend.edit.applySlmEdit
@@ -16,7 +17,11 @@ import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignTextStyle
+import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
+import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.bindable
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -93,6 +98,34 @@ class CnlWriteBackTest {
         val next = assertNotNull(applySlmEdit(source, SetText(id, "Bye"), compiled).newSource)
         assertTrue("Text «Bye» size 20" in next, next)
         assertFalse("Hello" in next)
+    }
+
+    @Test
+    fun editTextStyleInHeadingCnlReplacesInPlace() {
+        val source = screen("## Text: id label characters «Hello» name «Hello» width hug height hug size 12 key demo.label bold font «Inter»")
+        val compiled = compileSlm(source)
+        val edit = SetTextStyle(
+            "label",
+            DesignTextStyle(
+                fontFamily = "Inter",
+                fontSize = 20.0.bindable(),
+                fontWeight = 700.0.bindable(),
+                lineHeight = UnitValue(DesignUnit.Percent, 140.0),
+                letterSpacing = UnitValue(DesignUnit.Px, 1.5),
+                textAlignHorizontal = TextAlignHorizontal.Center,
+            ),
+        )
+
+        val next = assertNotNull(applySlmEdit(source, edit, compiled).newSource)
+
+        assertTrue("size 20" in next, next)
+        assertTrue("line-height 140%" in next, next)
+        assertTrue("tracking 1.5" in next, next)
+        assertTrue("text-align center" in next, next)
+        assertTrue("font «Inter»" in next, next)
+        assertFalse("fontSize:" in next, next)
+        assertFalse("lineHeight:" in next, next)
+        assertFalse("letterSpacing:" in next, next)
     }
 
     @Test
