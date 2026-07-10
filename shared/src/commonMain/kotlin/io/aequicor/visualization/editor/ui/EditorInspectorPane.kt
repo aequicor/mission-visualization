@@ -73,18 +73,23 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.compose.FigureBooleanPreview
+import io.aequicor.visualization.subsystems.figures.compose.FigurePreviewStyle
+import io.aequicor.visualization.subsystems.figures.compose.FigureShapePreview
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.HandleMirror
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
@@ -596,18 +601,30 @@ private fun FillSection(state: MissionEditorStateHolder, node: DesignNode) {
         return
     }
     fills.forEachIndexed { index, paint ->
-        FillRow(state, nodeId, index, paint, enabled)
+        FillRow(state, nodeId, index, paint, enabled) { state.dispatch(DesignEditorIntent.FillCommand(nodeId, it)) }
         Spacer(Modifier.height(6.dp))
     }
 }
 
+/**
+ * One paint row of a fill list. Reused for node fills and vector-network region fills; the owning
+ * list decides how a [FillOp] is committed via [onOp] (so this stays list-agnostic). [keyPrefix]
+ * namespaces text-field remember keys so multiple lists on screen don't collide.
+ */
 @Composable
-private fun FillRow(state: MissionEditorStateHolder, nodeId: String, index: Int, paint: DesignPaint, enabled: Boolean) {
+private fun FillRow(
+    state: MissionEditorStateHolder,
+    keyPrefix: String,
+    index: Int,
+    paint: DesignPaint,
+    enabled: Boolean,
+    onOp: (FillOp) -> Unit,
+) {
     val kind = paint.fillKind()
     val visible = paint.visible.literalOrNull() ?: true
     val opacity = paint.opacity.literalOrNull() ?: 1.0
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        LayerToggle(visible) { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.ToggleAt(index))) }
+        LayerToggle(visible) { onOp(FillOp.ToggleAt(index)) }
         Box(Modifier.weight(1f)) {
             when (paint) {
                 is DesignPaint.Solid -> {
@@ -618,8 +635,8 @@ private fun FillRow(state: MissionEditorStateHolder, nodeId: String, index: Int,
                         opacity = opacity,
                         label = color.toHex(),
                         enabled = enabled,
-                        onColor = { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetColor(index, it))) },
-                        onOpacity = { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetOpacity(index, it))) },
+                        onColor = { onOp(FillOp.SetColor(index, it)) },
+                        onOpacity = { onOp(FillOp.SetOpacity(index, it)) },
                     )
                 }
                 is DesignPaint.Gradient -> GradientPreview(state, paint)
@@ -632,12 +649,12 @@ private fun FillRow(state: MissionEditorStateHolder, nodeId: String, index: Int,
             leadingContent = { FillKindPreview(kind) },
             optionLeadingContent = { label -> FillKind.entries.firstOrNull { it.displayName == label }?.let { FillKindPreview(it) } },
         ) { label ->
-            FillKind.entries.firstOrNull { it.displayName == label }?.let { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetType(index, it))) }
+            FillKind.entries.firstOrNull { it.displayName == label }?.let { onOp(FillOp.SetType(index, it)) }
         }
-        RemoveButton { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.RemoveAt(index))) }
+        RemoveButton { onOp(FillOp.RemoveAt(index)) }
     }
     if (paint is DesignPaint.Gradient) {
-        GradientStops(state, nodeId, index, paint, enabled)
+        GradientStops(state, keyPrefix, index, paint, enabled, onOp)
     }
 }
 
@@ -681,11 +698,18 @@ private fun FillTypeChip(text: String) {
 }
 
 @Composable
-private fun GradientStops(state: MissionEditorStateHolder, nodeId: String, index: Int, gradient: DesignPaint.Gradient, enabled: Boolean) {
+private fun GradientStops(
+    state: MissionEditorStateHolder,
+    keyPrefix: String,
+    index: Int,
+    gradient: DesignPaint.Gradient,
+    enabled: Boolean,
+    onOp: (FillOp) -> Unit,
+) {
     Column(Modifier.padding(start = 26.dp, top = 4.dp)) {
         // Direction angle (0° = left→right, 90° = top→bottom).
-        InspectorNumberField("Angle", gradientAngleDegrees(gradient).formatPx(), "°", "$nodeId-fill-$index-angle", enabled = enabled) {
-            state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetGradientAngle(index, it)))
+        InspectorNumberField("Angle", gradientAngleDegrees(gradient).formatPx(), "°", "$keyPrefix-fill-$index-angle", enabled = enabled) {
+            onOp(FillOp.SetGradientAngle(index, it))
         }
         Spacer(Modifier.height(6.dp))
         gradient.stops.forEachIndexed { stopIndex, stop ->
@@ -697,21 +721,21 @@ private fun GradientStops(state: MissionEditorStateHolder, nodeId: String, index
                         color = stopColor,
                         label = stopColor.toHex(),
                         enabled = enabled,
-                        onArgb = { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetGradientStopColor(index, stopIndex, it))) },
+                        onArgb = { onOp(FillOp.SetGradientStopColor(index, stopIndex, it)) },
                     )
                 }
                 Box(Modifier.width(78.dp)) {
-                    InspectorNumberField("", (stop.position * 100).formatPx(), "%", "$nodeId-fill-$index-stop-$stopIndex", enabled = enabled) {
-                        state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.SetGradientStopPosition(index, stopIndex, it / 100.0)))
+                    InspectorNumberField("", (stop.position * 100).formatPx(), "%", "$keyPrefix-fill-$index-stop-$stopIndex", enabled = enabled) {
+                        onOp(FillOp.SetGradientStopPosition(index, stopIndex, it / 100.0))
                     }
                 }
-                RemoveButton { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.RemoveGradientStop(index, stopIndex))) }
+                RemoveButton { onOp(FillOp.RemoveGradientStop(index, stopIndex)) }
             }
             Spacer(Modifier.height(4.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TinyButton("+ stop") { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.AddGradientStop(index))) }
-            TinyButton("reverse") { state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.ReverseGradient(index))) }
+            TinyButton("+ stop") { onOp(FillOp.AddGradientStop(index)) }
+            TinyButton("reverse") { onOp(FillOp.ReverseGradient(index)) }
         }
     }
 }
@@ -773,7 +797,7 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
     }
     if (node.kind is DesignNodeKind.Shape) {
         val shape = (node.kind as DesignNodeKind.Shape).shape
-        if (shape == io.aequicor.visualization.engine.ir.model.ShapeType.Line || shape == io.aequicor.visualization.engine.ir.model.ShapeType.Arrow) {
+        if (shape == ShapeType.Line || shape == ShapeType.Arrow) {
             Spacer(Modifier.height(6.dp))
             LabeledField("Ends") {
                 SelectField(
@@ -782,6 +806,18 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
                     onSelect = { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetCap(it))) },
                     leadingContent = { StrokeCapPreview(strokes.cap) },
                     optionLeadingContent = { StrokeCapPreview(it) },
+                )
+            }
+        } else {
+            // Corner join applies to shapes with corners (rect/polygon/star/vector), not 2-point lines.
+            Spacer(Modifier.height(6.dp))
+            LabeledField("Join") {
+                SelectField(
+                    value = strokes.join,
+                    options = listOf("miter", "round", "bevel"),
+                    onSelect = { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetJoin(it))) },
+                    leadingContent = { StrokeJoinPreview(strokes.join) },
+                    optionLeadingContent = { StrokeJoinPreview(it) },
                 )
             }
         }
@@ -808,6 +844,25 @@ private fun ShapeSection(state: MissionEditorStateHolder, node: DesignNode, visi
             is DesignNodeKind.Shape -> ShapeControls(state, nodeId, kind, locked)
             is DesignNodeKind.BooleanOperation -> BooleanOpControls(state, nodeId, kind, locked)
             else -> Unit
+        }
+        ShapeActions(state, node, locked)
+    }
+}
+
+/** Flatten / Outline-stroke actions available on shapes and boolean groups. */
+@Composable
+private fun ShapeActions(state: MissionEditorStateHolder, node: DesignNode, locked: Boolean) {
+    val nodeId = node.id
+    val canOutline = node.kind is DesignNodeKind.Shape && node.strokes != null
+    Spacer(Modifier.height(10.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TinyButton("Flatten", enabled = !locked) {
+            state.dispatch(DesignEditorIntent.FlattenNode(nodeId))
+        }
+        if (canOutline) {
+            TinyButton("Outline stroke", enabled = !locked) {
+                state.dispatch(DesignEditorIntent.OutlineStroke(nodeId))
+            }
         }
     }
 }
@@ -839,9 +894,120 @@ private fun ShapeControls(state: MissionEditorStateHolder, nodeId: String, shape
         Spacer(Modifier.height(8.dp))
         StarInnerRadiusControl(state, nodeId, shape.innerRadius, locked)
     }
+    if (shape.shape == ShapeType.Ellipse) {
+        Spacer(Modifier.height(8.dp))
+        ArcControls(state, nodeId, shape, locked)
+    }
     if (shape.shape == ShapeType.Vector) {
         Spacer(Modifier.height(8.dp))
         VectorControls(state, nodeId, shape, locked)
+        VertexControls(state, nodeId, shape, locked)
+    }
+}
+
+/** Per-vertex controls shown while editing a vector network and a vertex is selected. */
+@Composable
+private fun VertexControls(state: MissionEditorStateHolder, nodeId: String, shape: DesignNodeKind.Shape, locked: Boolean) {
+    val ws = state.workspace
+    if (ws.vectorEditNodeId != nodeId) return
+    val ref = ws.vectorSelectedVertex ?: return
+    val vertex = shape.network?.vertices?.getOrNull(ref.vertexIndex) ?: return
+    Spacer(Modifier.height(10.dp))
+    InspectorSubLabel("Point")
+    Spacer(Modifier.height(6.dp))
+    LabeledField("Mirror") {
+        SelectField(
+            value = mirrorLabel(vertex.mirror),
+            options = HandleMirror.entries.map { mirrorLabel(it) },
+            onSelect = { label ->
+                if (!locked) {
+                    HandleMirror.entries.firstOrNull { mirrorLabel(it) == label }
+                        ?.let { state.dispatch(DesignEditorIntent.SetVertexMirror(nodeId, ref.vertexIndex, it)) }
+                }
+            },
+            leadingContent = { MirrorPreview(vertex.mirror) },
+            optionLeadingContent = { label -> HandleMirror.entries.firstOrNull { mirrorLabel(it) == label }?.let { MirrorPreview(it) } },
+        )
+    }
+    Spacer(Modifier.height(6.dp))
+    CheckRow("Sharp corner", vertex.corner) {
+        if (!locked) state.dispatch(DesignEditorIntent.ToggleVertexCorner(nodeId, ref.vertexIndex))
+    }
+    Spacer(Modifier.height(6.dp))
+    CompactLabeledNumberField("Radius", vertex.cornerRadius.formatPx(), "vradius-$nodeId-${ref.vertexIndex}", enabled = !locked) {
+        state.dispatch(DesignEditorIntent.SetVertexCornerRadius(nodeId, ref.vertexIndex, it.coerceAtLeast(0.0)))
+    }
+}
+
+private fun mirrorLabel(mirror: HandleMirror): String = when (mirror) {
+    HandleMirror.None -> "No mirror"
+    HandleMirror.Angle -> "Mirror angle"
+    HandleMirror.AngleAndLength -> "Mirror angle & length"
+}
+
+@Composable
+private fun MirrorPreview(mirror: HandleMirror, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val c = Offset(size.width / 2f, size.height / 2f)
+        val ink = colors.controlInk
+        val accent = colors.accent
+        when (mirror) {
+            HandleMirror.None -> {
+                // Bent tangents (independent handles).
+                drawLine(accent, c, Offset(c.x - 6f, c.y - 2f), strokeWidth = 1.5.dp.toPx())
+                drawLine(accent, c, Offset(c.x + 5f, c.y + 5f), strokeWidth = 1.5.dp.toPx())
+            }
+            HandleMirror.Angle -> {
+                // Colinear, unequal length.
+                drawLine(accent, Offset(c.x - 6f, c.y - 4f), c, strokeWidth = 1.5.dp.toPx())
+                drawLine(accent, c, Offset(c.x + 4f, c.y + 2.7f), strokeWidth = 1.5.dp.toPx())
+            }
+            HandleMirror.AngleAndLength -> {
+                // Colinear, equal length.
+                drawLine(accent, Offset(c.x - 6f, c.y - 4f), Offset(c.x + 6f, c.y + 4f), strokeWidth = 1.5.dp.toPx())
+            }
+        }
+        drawCircle(ink, radius = 2.5f, center = c)
+    }
+}
+
+/** Ellipse arc (pie/donut) controls: start angle, sweep %, donut ratio %. */
+@Composable
+private fun ArcControls(state: MissionEditorStateHolder, nodeId: String, shape: DesignNodeKind.Shape, locked: Boolean) {
+    val colors = LocalEditorColors.current
+    CompactLabeledNumberField("Start", (shape.arcStartDeg ?: 0.0).formatPx(), "arc-start-$nodeId", enabled = !locked) {
+        state.dispatch(DesignEditorIntent.SetArcStart(nodeId, it))
+    }
+    Spacer(Modifier.height(8.dp))
+    val sweep = (shape.arcSweepDeg ?: 360.0).coerceIn(0.0, 360.0)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Sweep", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text("${(sweep / 360.0 * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+        UndoableSlider(
+            value = (sweep / 360.0 * 100).toFloat(),
+            valueRange = 0f..100f,
+            enabled = !locked,
+            onBegin = { state.dispatch(DesignEditorIntent.BeginInteraction) },
+            onChange = { v -> state.dispatch(DesignEditorIntent.SetArcSweep(nodeId, v / 100.0 * 360.0)) },
+            onEnd = { state.dispatch(DesignEditorIntent.EndInteraction) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+    val ratio = (shape.innerRadius ?: 0.0).coerceIn(0.0, 1.0)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Ratio", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text("${(ratio * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+        UndoableSlider(
+            value = (ratio * 100).toFloat(),
+            valueRange = 0f..100f,
+            enabled = !locked,
+            onBegin = { state.dispatch(DesignEditorIntent.BeginInteraction) },
+            onChange = { v -> state.dispatch(DesignEditorIntent.SetArcRatio(nodeId, v / 100.0)) },
+            onEnd = { state.dispatch(DesignEditorIntent.EndInteraction) },
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -898,7 +1064,30 @@ private fun VectorControls(state: MissionEditorStateHolder, nodeId: String, shap
             }
         }
     }
-    if (shape.network?.isNotEmpty() != true) {
+    if (shape.network?.isNotEmpty() == true) {
+        Spacer(Modifier.height(8.dp))
+        val rule = shape.network?.regions?.firstOrNull()?.windingRule ?: "nonzero"
+        LabeledField("Fill rule") {
+            SelectField(
+                value = fillRuleLabel(rule),
+                options = listOf(fillRuleLabel("nonzero"), fillRuleLabel("evenodd")),
+                onSelect = { label ->
+                    if (!locked) state.dispatch(DesignEditorIntent.SetWindingRule(nodeId, fillRuleValue(label)))
+                },
+                leadingContent = { FillRulePreview(rule) },
+                optionLeadingContent = { FillRulePreview(fillRuleValue(it)) },
+            )
+        }
+        val regions = shape.network?.regions ?: emptyList()
+        if (regions.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            InspectorSubLabel("Region fills")
+            PaintBucketToggle(state, nodeId, locked)
+            regions.indices.forEach { index ->
+                RegionFillGroup(state, nodeId, index, regions.size, shape.regionFills[index].orEmpty(), locked)
+            }
+        }
+    } else {
         Spacer(Modifier.height(8.dp))
         MutedNote("No editable geometry yet — convert to edit points on the canvas.")
         Spacer(Modifier.height(6.dp))
@@ -906,6 +1095,80 @@ private fun VectorControls(state: MissionEditorStateHolder, nodeId: String, shap
             state.dispatch(DesignEditorIntent.ConvertToEditableVector(nodeId))
         }
     }
+}
+
+private fun fillRuleLabel(rule: String): String = if (rule == "evenodd") "Even-odd" else "Nonzero"
+
+private fun fillRuleValue(label: String): String = if (label == "Even-odd") "evenodd" else "nonzero"
+
+/**
+ * Toggles the canvas paint-bucket sub-mode of vector edit: enabling it enters vector-edit for this
+ * node so a canvas press fills the clicked region with [swatch]; a color field picks that fill.
+ */
+@Composable
+private fun PaintBucketToggle(state: MissionEditorStateHolder, nodeId: String, locked: Boolean) {
+    val colors = LocalEditorColors.current
+    val active = state.workspace.vectorPaintBucket && state.workspace.vectorEditNodeId == nodeId
+    val bucketColor = state.workspace.vectorPaintBucketColor
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TinyButton(if (active) "Paint bucket: on" else "Paint bucket: off", enabled = !locked) {
+            state.updateWorkspace {
+                if (active) {
+                    it.copy(vectorPaintBucket = false)
+                } else {
+                    it.copy(vectorPaintBucket = true, vectorEditNodeId = nodeId)
+                }
+            }
+        }
+        Box(Modifier.weight(1f)) {
+            InspectorColorField(
+                state = state,
+                color = bucketColor,
+                opacity = 1.0,
+                label = bucketColor.toHex(),
+                enabled = !locked,
+                onColor = { picked -> state.updateWorkspace { it.copy(vectorPaintBucketColor = picked) } },
+                onOpacity = { },
+            )
+        }
+    }
+    if (active) {
+        Text(
+            "Click a region on the canvas to fill it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.mutedInk,
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+/**
+ * One vector-network region's full paint list: a "Region N" header with an add-fill affordance and
+ * a [FillRow] per paint (solid + gradient, opacity, swatch), each committing through
+ * [DesignEditorIntent.RegionFillCommand]. Rendered even for single-region networks so any closed
+ * shape can carry an explicit region fill.
+ */
+@Composable
+private fun RegionFillGroup(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    index: Int,
+    regionCount: Int,
+    fills: List<DesignPaint>,
+    locked: Boolean,
+) {
+    val label = if (regionCount > 1) "Region ${index + 1}" else "Region fill"
+    val onOp: (FillOp) -> Unit = { if (!locked) state.dispatch(DesignEditorIntent.RegionFillCommand(nodeId, index, it)) }
+    SectionHeaderAdd(label) { onOp(FillOp.Add) }
+    if (fills.isEmpty()) {
+        MutedNote("No fill. Add one with +.")
+    } else {
+        fills.forEachIndexed { paintIndex, paint ->
+            FillRow(state, "region-$nodeId-$index", paintIndex, paint, !locked, onOp)
+            Spacer(Modifier.height(6.dp))
+        }
+    }
+    Spacer(Modifier.height(8.dp))
 }
 
 @Composable
@@ -988,105 +1251,25 @@ private fun BooleanOperationKind.booleanOpLabel() = when (this) {
     BooleanOperationKind.Exclude -> "Exclude"
 }
 
+/** Theme bridge for the figures-compose figure previews (shape/boolean glyphs). */
 @Composable
-private fun ShapeTypePreview(shape: ShapeType, modifier: Modifier = Modifier.size(18.dp)) {
+private fun figurePreviewStyle(): FigurePreviewStyle {
     val colors = LocalEditorColors.current
-    Canvas(modifier) {
-        val stroke = Stroke(1.5.dp.toPx())
-        val ink = colors.controlInk
-        val fill = colors.selectionFill
-        when (shape) {
-            ShapeType.Rectangle -> {
-                val rect = Size(size.width - 5f, size.height - 7f)
-                drawRoundRect(fill, topLeft = Offset(2.5f, 3.5f), size = rect, cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()))
-                drawRoundRect(ink, topLeft = Offset(2.5f, 3.5f), size = rect, cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()), style = stroke)
-            }
-            ShapeType.Ellipse -> {
-                drawOval(fill, topLeft = Offset(2.5f, 3f), size = Size(size.width - 5f, size.height - 6f))
-                drawOval(ink, topLeft = Offset(2.5f, 3f), size = Size(size.width - 5f, size.height - 6f), style = stroke)
-            }
-            ShapeType.Polygon -> {
-                val path = Path().apply {
-                    moveTo(size.width / 2f, 2.5f)
-                    lineTo(size.width - 2.5f, size.height - 3f)
-                    lineTo(2.5f, size.height - 3f)
-                    close()
-                }
-                drawPath(path, fill)
-                drawPath(path, ink, style = stroke)
-            }
-            ShapeType.Star -> {
-                val path = Path().apply {
-                    moveTo(size.width / 2f, 2f)
-                    lineTo(size.width * 0.62f, size.height * 0.38f)
-                    lineTo(size.width - 2f, size.height * 0.38f)
-                    lineTo(size.width * 0.70f, size.height * 0.58f)
-                    lineTo(size.width * 0.82f, size.height - 2f)
-                    lineTo(size.width / 2f, size.height * 0.74f)
-                    lineTo(size.width * 0.18f, size.height - 2f)
-                    lineTo(size.width * 0.30f, size.height * 0.58f)
-                    lineTo(2f, size.height * 0.38f)
-                    lineTo(size.width * 0.38f, size.height * 0.38f)
-                    close()
-                }
-                drawPath(path, fill)
-                drawPath(path, ink, style = stroke)
-            }
-            ShapeType.Line -> {
-                drawLine(ink, Offset(3f, size.height - 4f), Offset(size.width - 3f, 4f), strokeWidth = 2.dp.toPx())
-            }
-            ShapeType.Arrow -> {
-                val start = Offset(3f, size.height - 4f)
-                val end = Offset(size.width - 3f, 4f)
-                drawLine(ink, start, end, strokeWidth = 2.dp.toPx())
-                drawLine(ink, end, Offset(end.x - 6f, end.y + 1f), strokeWidth = 2.dp.toPx())
-                drawLine(ink, end, Offset(end.x - 1f, end.y + 6f), strokeWidth = 2.dp.toPx())
-            }
-            ShapeType.Vector -> {
-                val path = Path().apply {
-                    moveTo(2.5f, size.height - 4f)
-                    cubicTo(size.width * 0.35f, 1f, size.width * 0.65f, size.height + 1f, size.width - 2.5f, 4f)
-                }
-                drawPath(path, ink, style = Stroke(1.8.dp.toPx()))
-            }
-        }
-    }
+    return FigurePreviewStyle(
+        ink = colors.controlInk,
+        fill = colors.selectionFill,
+        accent = colors.accent,
+        surface = colors.raisedSurface,
+    )
 }
 
 @Composable
-private fun BooleanOperationPreview(operation: BooleanOperationKind, modifier: Modifier = Modifier.size(18.dp)) {
-    val colors = LocalEditorColors.current
-    Canvas(modifier) {
-        val first = colors.controlInk.copy(alpha = 0.75f)
-        val second = colors.accent.copy(alpha = 0.42f)
-        val surface = colors.raisedSurface
-        val left = Offset(2f, 6f)
-        val right = Offset(6f, 2f)
-        val box = Size(10f, 10f)
-        val radius = CornerRadius(2f, 2f)
-        when (operation) {
-            BooleanOperationKind.Union -> {
-                drawRoundRect(first, left, box, radius)
-                drawRoundRect(second, right, box, radius)
-            }
-            BooleanOperationKind.Subtract -> {
-                drawRoundRect(first, left, box, radius)
-                drawRoundRect(surface, right, box, radius)
-                drawRoundRect(colors.controlInk, right, box, radius, style = Stroke(1.dp.toPx()))
-            }
-            BooleanOperationKind.Intersect -> {
-                drawRoundRect(first.copy(alpha = 0.18f), left, box, radius, style = Stroke(1.dp.toPx()))
-                drawRoundRect(second.copy(alpha = 0.18f), right, box, radius, style = Stroke(1.dp.toPx()))
-                drawRoundRect(colors.accent, Offset(6f, 6f), Size(6f, 6f), radius)
-            }
-            BooleanOperationKind.Exclude -> {
-                drawRoundRect(first, left, box, radius)
-                drawRoundRect(second, right, box, radius)
-                drawRoundRect(surface, Offset(6f, 6f), Size(6f, 6f), radius)
-            }
-        }
-    }
-}
+private fun ShapeTypePreview(shape: ShapeType, modifier: Modifier = Modifier.size(18.dp)) =
+    FigureShapePreview(shape, figurePreviewStyle(), modifier)
+
+@Composable
+private fun BooleanOperationPreview(operation: BooleanOperationKind, modifier: Modifier = Modifier.size(18.dp)) =
+    FigureBooleanPreview(operation, figurePreviewStyle(), modifier)
 
 // --- Effects -----------------------------------------------------------------
 
@@ -1638,6 +1821,60 @@ private fun StrokeCapPreview(cap: String, modifier: Modifier = Modifier.size(18.
             }
             else -> drawLine(colors.accent, Offset(end.x, end.y - 4f), Offset(end.x, end.y + 4f), strokeWidth = 2.dp.toPx())
         }
+    }
+}
+
+@Composable
+private fun StrokeJoinPreview(join: String, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val ink = colors.controlInk
+        val accent = colors.accent
+        val w = 2.5.dp.toPx()
+        // An "L" corner; the joint style is drawn in the accent colour at the elbow.
+        val corner = Offset(size.width * 0.35f, size.height * 0.3f)
+        val down = Offset(size.width * 0.35f, size.height - 3f)
+        val right = Offset(size.width - 3f, size.height * 0.3f)
+        drawLine(ink, corner, down, strokeWidth = w)
+        drawLine(ink, corner, right, strokeWidth = w)
+        when (join) {
+            "round" -> drawArc(
+                color = accent,
+                startAngle = 180f,
+                sweepAngle = 90f,
+                useCenter = false,
+                topLeft = Offset(corner.x - 4f, corner.y - 4f),
+                size = Size(8f, 8f),
+                style = Stroke(w),
+            )
+            "bevel" -> drawLine(accent, Offset(corner.x, corner.y + 4f), Offset(corner.x + 4f, corner.y), strokeWidth = w)
+            else -> { // miter: a sharp spike at the elbow
+                drawLine(accent, corner, Offset(corner.x - 3f, corner.y - 3f), strokeWidth = w)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FillRulePreview(rule: String, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val ink = colors.controlInk
+        val fill = colors.accent.copy(alpha = 0.5f)
+        val r = size.minDimension * 0.28f
+        val a = Offset(size.width * 0.4f, size.height * 0.42f)
+        val b = Offset(size.width * 0.6f, size.height * 0.58f)
+        if (rule == "evenodd") {
+            // Overlap punched out (hole).
+            drawCircle(fill, radius = r, center = a, style = Stroke(1.5f))
+            drawCircle(fill, radius = r, center = b, style = Stroke(1.5f))
+        } else {
+            // Overlap filled (nonzero).
+            drawCircle(fill, radius = r, center = a)
+            drawCircle(fill, radius = r, center = b)
+        }
+        drawCircle(ink, radius = r, center = a, style = Stroke(1f))
+        drawCircle(ink, radius = r, center = b, style = Stroke(1f))
     }
 }
 

@@ -38,6 +38,9 @@ kotlin {
             api(projects.engine.ir)
             api(projects.engine.scene)
 
+            // Figures Compose adapter (geometry IR → Compose Path, stroke/boolean mapping).
+            implementation(projects.subsystems.figuresCompose)
+
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
             implementation(libs.compose.ui)

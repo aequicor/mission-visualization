@@ -110,6 +110,11 @@ kotlin {
                 api(projects.subsystems.anchoring)
                 implementation(projects.subsystems.anchoringCompose)
 
+                // Figures subsystem: pure geometry / vector-network model + editing ops (api — its
+                // types cross into editor state/intents) + Compose overlay & previews (implementation).
+                api(projects.subsystems.figures)
+                implementation(projects.subsystems.figuresCompose)
+
                 // Local draft persistence: coroutines for autosave flow, serialization for the envelope.
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)

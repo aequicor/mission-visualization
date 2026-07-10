@@ -1,5 +1,7 @@
 package io.aequicor.visualization.engine.frontend.blocks.readers
 
+import io.aequicor.visualization.engine.ir.model.DesignPaint
+
 import io.aequicor.visualization.engine.frontend.blocks.BooleanOpPatch
 import io.aequicor.visualization.engine.frontend.blocks.MaskPatch
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
@@ -8,14 +10,14 @@ import io.aequicor.visualization.engine.frontend.yaml.YamlList
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
-import io.aequicor.visualization.engine.ir.model.HandleMirror
-import io.aequicor.visualization.engine.ir.model.HandleOffset
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.VectorPath
-import io.aequicor.visualization.engine.ir.model.VectorRegion
-import io.aequicor.visualization.engine.ir.model.VectorSegment
-import io.aequicor.visualization.engine.ir.model.VectorVertex
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorPath
+import io.aequicor.visualization.subsystems.figures.VectorRegion
+import io.aequicor.visualization.subsystems.figures.VectorSegment
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 
 /** `shape:` block — parametric primitive geometry. */
 internal fun readShapeBlock(value: YamlValue, reading: BlockReading): ShapePatch? {
@@ -23,13 +25,18 @@ internal fun readShapeBlock(value: YamlValue, reading: BlockReading): ShapePatch
         reading.error("`shape` must be a map", value)
         return null
     }
-    map.warnUnknownKeys(setOf("kind", "width", "height", "pointCount", "innerRadius"), reading)
+    map.warnUnknownKeys(
+        setOf("kind", "width", "height", "pointCount", "innerRadius", "arcStart", "arcSweep"),
+        reading,
+    )
     return ShapePatch(
         kind = map.enum("kind", ReaderEnums.shapeKind, reading),
         width = map.double("width", reading),
         height = map.double("height", reading),
         pointCount = map.int("pointCount", reading),
         innerRadius = map.double("innerRadius", reading),
+        arcStartDeg = map.double("arcStart", reading),
+        arcSweepDeg = map.double("arcSweep", reading),
     )
 }
 
@@ -40,14 +47,28 @@ internal fun readVectorBlock(value: YamlValue, reading: BlockReading): VectorPat
         return null
     }
     map.warnUnknownKeys(setOf("iconRef", "pathRef", "viewBox", "paths", "network", "boolean"), reading)
+    val networkMap = map.mapValue("network", reading)
+    val regionFills = networkMap?.let { readRegionFills(it, reading) }.orEmpty()
     return VectorPatch(
         iconRef = map.string("iconRef", reading),
         pathRef = map.string("pathRef", reading),
         viewBox = readViewBox(map.value("viewBox"), reading),
         paths = readVectorPaths(map, reading),
-        network = readNetwork(map.mapValue("network", reading), reading),
+        network = readNetwork(networkMap, reading),
         boolean = readBooleanOp(map, reading),
+        regionFills = regionFills.ifEmpty { null },
     )
+}
+
+/** Per-region `fills` from `network.regions[i]`, keyed by region index. */
+private fun readRegionFills(networkMap: YamlMap, reading: BlockReading): Map<Int, List<DesignPaint>> {
+    val list = networkMap.listValue("regions", reading) ?: return emptyMap()
+    val result = LinkedHashMap<Int, List<DesignPaint>>()
+    list.items.forEachIndexed { index, item ->
+        val region = item as? YamlMap ?: return@forEachIndexed
+        readPaints(region, "fills", reading)?.takeIf { it.isNotEmpty() }?.let { result[index] = it }
+    }
+    return result
 }
 
 /** `network:` sub-block — structural vector geometry (vertices with bezier handles, segments, regions). */
@@ -69,7 +90,7 @@ private fun readVertices(map: YamlMap, reading: BlockReading): List<VectorVertex
             reading.warning("`vertices` items must be maps", item)
             return@mapNotNull null
         }
-        vertex.warnUnknownKeys(setOf("x", "y", "in", "out", "mirror", "corner"), reading)
+        vertex.warnUnknownKeys(setOf("x", "y", "in", "out", "mirror", "corner", "radius"), reading)
         val x = vertex.double("x", reading) ?: run {
             reading.warning("Vertex needs `x`", vertex)
             return@mapNotNull null
@@ -85,6 +106,7 @@ private fun readVertices(map: YamlMap, reading: BlockReading): List<VectorVertex
             outHandle = readOffset(vertex.value("out"), reading),
             mirror = vertex.enum("mirror", ReaderEnums.handleMirror, reading) ?: HandleMirror.None,
             corner = vertex.boolean("corner", reading) ?: false,
+            cornerRadius = vertex.double("radius", reading) ?: 0.0,
         )
     }
 }
@@ -122,7 +144,7 @@ private fun readRegions(map: YamlMap, reading: BlockReading): List<VectorRegion>
             reading.warning("`regions` items must be maps", item)
             return@mapNotNull null
         }
-        region.warnUnknownKeys(setOf("windingRule", "loops"), reading)
+        region.warnUnknownKeys(setOf("windingRule", "loops", "fills"), reading)
         val loops = (region.listValue("loops", reading)?.items ?: emptyList()).mapNotNull { loopItem ->
             numberList(loopItem)?.map { it.toInt() } ?: run {
                 reading.warning("Loop must be a list of segment indices", loopItem)

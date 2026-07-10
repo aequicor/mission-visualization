@@ -20,6 +20,8 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.subsystems.figures.NoVectorAssets
+import io.aequicor.visualization.subsystems.figures.VectorAssetProvider
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
 

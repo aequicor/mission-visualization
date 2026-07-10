@@ -6,12 +6,12 @@ import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
 import io.aequicor.visualization.engine.frontend.blocks.VectorPatch
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.MaskType
-import io.aequicor.visualization.engine.ir.model.ShapeType
-import io.aequicor.visualization.engine.ir.model.VectorPath
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.subsystems.figures.VectorPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -36,6 +36,33 @@ class ShapeVectorMaskReaderTest {
         assertEquals(
             StylePatch(fills = listOf(DesignPaint.Solid(Bindable.VarRef("color.status.success")))),
             patches[1],
+        )
+    }
+
+    @Test
+    fun readsEllipseArcFields() {
+        val (patches, collector) = readPatches(
+            """
+            shape:
+              kind: ellipse
+              width: 40
+              height: 40
+              arcStart: -90
+              arcSweep: 270
+              innerRadius: 0.5
+            """,
+        )
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        assertEquals(
+            ShapePatch(
+                kind = ShapeType.Ellipse,
+                width = 40.0,
+                height = 40.0,
+                arcStartDeg = -90.0,
+                arcSweepDeg = 270.0,
+                innerRadius = 0.5,
+            ),
+            patches[0],
         )
     }
 

@@ -10,10 +10,10 @@ import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
@@ -347,7 +347,7 @@ private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = whe
 
     is SetVectorNetwork -> PayloadOutcome.Ok(
         TypedBlockKind.Vector,
-        YamlPayload.Mapping(listOf("network" to NetworkYamlWriter.network(edit.network))),
+        YamlPayload.Mapping(listOf("network" to NetworkYamlWriter.network(edit.network, edit.regionFills))),
     )
 
     is SetBooleanOp -> PayloadOutcome.Ok(

@@ -1,6 +1,6 @@
 package io.aequicor.visualization.engine.ir.layout
 
-import io.aequicor.visualization.engine.ir.geometry.RectD
+import io.aequicor.visualization.subsystems.figures.RectD
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.GridTrack

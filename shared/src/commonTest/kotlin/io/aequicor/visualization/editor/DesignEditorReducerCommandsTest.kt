@@ -20,7 +20,7 @@ import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals

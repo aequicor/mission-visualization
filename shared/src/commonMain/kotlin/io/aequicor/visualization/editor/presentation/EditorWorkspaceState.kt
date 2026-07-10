@@ -22,6 +22,8 @@ data class EditorWorkspaceState(
      */
     val mode: EditorMode = EditorMode.Canvas,
     val tool: EditorTool = EditorTool.Select,
+    /** The most recently used shape tool, shown in the toolbar's shape-flyout slot. */
+    val lastShapeTool: EditorTool = EditorTool.Rectangle,
     val deviceMode: DeviceMode = DeviceMode.Pc,
     val sourceTab: SourceTab = SourceTab.Layers,
     val inspectorTab: InspectorTab = InspectorTab.Design,
@@ -37,6 +39,14 @@ data class EditorWorkspaceState(
     val vectorSelectedPoint: VectorPointRef? = null,
     /** Selected element (vertex anchor or a bezier handle) in structural-network vector edit mode, or null. */
     val vectorSelectedVertex: VectorVertexRef? = null,
+    /**
+     * Paint-bucket sub-mode of vector edit: while active, a canvas press inside a network region
+     * fills that region with [vectorPaintBucketColor] instead of manipulating anchors/handles.
+     * View-only preference; never part of the document.
+     */
+    val vectorPaintBucket: Boolean = false,
+    /** Color the paint-bucket sub-mode applies to a clicked region. */
+    val vectorPaintBucketColor: DesignColor = DesignColor(0xFF4C6EF5),
     /** A pending fit-to request the canvas applies on its next layout pass. */
     val pendingFit: PendingFit = PendingFit.None,
     /**
@@ -86,11 +96,22 @@ enum class EditorTool(val label: String, val creates: NewObjectKind?) {
     Select("Move", null),
     Frame("Frame", NewObjectKind.Frame),
     Rectangle("Rectangle", NewObjectKind.Rectangle),
-    Pen("Pen", NewObjectKind.Line),
+    Ellipse("Ellipse", NewObjectKind.Ellipse),
+    Polygon("Polygon", NewObjectKind.Polygon),
+    Star("Star", NewObjectKind.Star),
+    Line("Line", NewObjectKind.Line),
+    Arrow("Arrow", NewObjectKind.Arrow),
+    Pen("Pen", NewObjectKind.Vector),
     Text("Text", NewObjectKind.Text),
     Comment("Comment", null),
     Link("Link", null),
     Code("Code", null),
+    ;
+
+    /** A shape-drawing tool grouped under the toolbar's shape flyout. */
+    val isShapeTool: Boolean
+        get() = this == Rectangle || this == Ellipse || this == Polygon ||
+            this == Star || this == Line || this == Arrow
 }
 
 enum class SourceTab(val label: CompactLabel) {

@@ -11,7 +11,7 @@ import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals

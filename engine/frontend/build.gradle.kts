@@ -34,6 +34,8 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(projects.engine.ir)
+            // Figures types (VectorNetwork, ShapeType, ...) appear in SLM patch/edit public surface.
+            api(projects.subsystems.figures)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

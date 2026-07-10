@@ -967,6 +967,30 @@ Rules:
 - use inline vector paths only when the file itself owns the shape;
 - boolean operations must preserve child source maps.
 
+### Figure keys (Figma parity)
+
+- **Ellipse arc / donut** — under `shape:` (`kind: ellipse`): `arcStart` and `arcSweep`
+  (degrees; 0° = 3 o'clock, positive sweep clockwise on screen), and `innerRadius`
+  (donut-hole ratio 0..1). `|arcSweep| ≥ 360` or omitted = full ellipse.
+  ```md
+  shape:
+    kind: ellipse
+    arcStart: -90
+    arcSweep: 270
+    innerRadius: 0.5   # donut
+  ```
+- **Per-vertex corner radius** — each `network.vertices[]` may carry `radius: N`
+  (rounds the vertex when it joins two straight segments; clamped to half the shorter
+  adjacent segment).
+- **Region fills** — each `network.regions[]` may carry `fills:` (same schema as
+  `style.fills`); a region's fills replace the object fills for that region, and regions
+  without fills inherit the object fills.
+- **Stroke join** — `style.strokes[].joins` = `miter` | `round` | `bevel`.
+- **Fill rule** — `vector.paths[].windingRule` / `network.regions[].windingRule` =
+  `nonzero` | `evenodd`.
+- **Flatten / Outline stroke** are editor operations, not new keys: they persist as
+  plain `vector.paths` (or `vector.network`) with the appropriate winding rule.
+
 ## Images and Media
 
 Figma treats images and videos as fills. SLM can expose a `media` convenience

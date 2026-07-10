@@ -50,8 +50,8 @@ enum class CnlPropertyKind {
     Overflow, Scroll, Columns, Rows, Place, Guides, Grids,
     // Components (instance side): ref/library/variant/props records + detach/reset flags + slot/nested overrides.
     ComponentRef, LibraryRef, Variant, Props, Detach, ResetOverrides, SlotOverride, NestedOverride,
-    // P6: media record / shape point+inner / vector viewBox·iconRef·pathRef·paths·network / boolean op / mask block.
-    Media, ShapePoints, ShapeInner, ViewBox, IconRef, PathRef, VectorPaths, VectorNetwork, BooleanOp, Mask,
+    // P6: media record / shape point+inner+arc / vector viewBox·iconRef·pathRef·paths·network / boolean op / mask block.
+    Media, ShapePoints, ShapeInner, ShapeArc, ViewBox, IconRef, PathRef, VectorPaths, VectorNetwork, BooleanOp, Mask,
     // P7: interaction triggers (one per trigger phrase) + motion attachment.
     Interactions, Motion,
     // P10: responsive `when (dim value) …` variants + `export (…)` settings + handoff annotations.

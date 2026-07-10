@@ -3,10 +3,10 @@ package io.aequicor.visualization.engine.ir.serialization
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.HandleMirror
-import io.aequicor.visualization.engine.ir.model.HandleOffset
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
 import io.aequicor.visualization.engine.ir.model.DesignAction
@@ -346,6 +346,8 @@ private fun JsonObjectBuilder.putTextKindFields(kind: DesignNodeKind.Text) {
 private fun JsonObjectBuilder.putShapeKindFields(kind: DesignNodeKind.Shape) {
     kind.pointCount?.let { put("pointCount", it) }
     kind.innerRadius?.let { put("innerRadius", it) }
+    kind.arcStartDeg?.let { put("arcStartDeg", it) }
+    kind.arcSweepDeg?.let { put("arcSweepDeg", it) }
     if (kind.paths.isNotEmpty()) {
         put(
             "paths",
@@ -373,6 +375,16 @@ private fun JsonObjectBuilder.putShapeKindFields(kind: DesignNodeKind.Shape) {
         )
     }
     kind.network?.takeIf { it.isNotEmpty() }?.let { put("network", writeVectorNetwork(it)) }
+    if (kind.regionFills.isNotEmpty()) {
+        put(
+            "regionFills",
+            buildJsonObject {
+                kind.regionFills.forEach { (index, fills) ->
+                    put(index.toString(), JsonArray(fills.map(::writePaint)))
+                }
+            },
+        )
+    }
 }
 
 private fun writeVectorNetwork(network: VectorNetwork): JsonObject =
@@ -388,6 +400,7 @@ private fun writeVectorNetwork(network: VectorNetwork): JsonObject =
                         vertex.outHandle?.let { put("out", writeHandleOffset(it)) }
                         if (vertex.mirror != HandleMirror.None) put("mirror", handleMirrorName(vertex.mirror))
                         if (vertex.corner) put("corner", true)
+                        if (vertex.cornerRadius > 0.0) put("cornerRadius", vertex.cornerRadius)
                     }
                 },
             ),

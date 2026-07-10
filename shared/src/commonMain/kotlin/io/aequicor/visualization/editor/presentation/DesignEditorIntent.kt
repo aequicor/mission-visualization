@@ -1,17 +1,19 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignTransition
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
-import io.aequicor.visualization.engine.ir.model.HandleMirror
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleSide
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.MotionKeyframes
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
@@ -222,6 +224,15 @@ sealed interface DesignEditorIntent {
     /** Sets a star's inner-radius ratio (0..1). Tier-1. */
     data class SetStarInnerRadius(val nodeId: String, val ratio: Double) : DesignEditorIntent
 
+    /** Sets an ellipse arc's start angle in degrees (0° = 3 o'clock). Tier-1. */
+    data class SetArcStart(val nodeId: String, val degrees: Double) : DesignEditorIntent
+
+    /** Sets an ellipse arc's sweep in degrees (0..360, clockwise). Tier-1. */
+    data class SetArcSweep(val nodeId: String, val degrees: Double) : DesignEditorIntent
+
+    /** Sets an ellipse's donut-hole ratio (0..1); reuses the shape's `innerRadius`. Tier-1. */
+    data class SetArcRatio(val nodeId: String, val ratio: Double) : DesignEditorIntent
+
     /** Sets a vector shape's design-system icon reference. Tier-1. */
     data class SetIconRef(val nodeId: String, val ref: String) : DesignEditorIntent
 
@@ -234,8 +245,26 @@ sealed interface DesignEditorIntent {
     /** Sets the operator of a boolean-operation node. Tier-1. */
     data class SetBooleanOperation(val nodeId: String, val op: BooleanOperationKind) : DesignEditorIntent
 
-    /** Bakes a parametric shape into an editable [io.aequicor.visualization.engine.ir.model.VectorNetwork]. Tier-1. */
+    /** Sets a vector network's fill (winding) rule: "nonzero" | "evenodd". Tier-1. */
+    data class SetWindingRule(val nodeId: String, val rule: String) : DesignEditorIntent
+
+    /** Sets the corner-rounding radius of a single vector-network vertex. Tier-1. */
+    data class SetVertexCornerRadius(val nodeId: String, val vertexIndex: Int, val radius: Double) : DesignEditorIntent
+
+    /** Sets (or with empty [fills], clears) the fills of a vector network region. Tier-1. */
+    data class SetRegionFill(val nodeId: String, val regionIndex: Int, val fills: List<DesignPaint>) : DesignEditorIntent
+
+    /** Applies a [FillOp] to one vector-network region's paint list, then writes it back. Tier-1. */
+    data class RegionFillCommand(val nodeId: String, val regionIndex: Int, val op: FillOp) : DesignEditorIntent
+
+    /** Bakes a parametric shape into an editable [io.aequicor.visualization.subsystems.figures.VectorNetwork]. Tier-1. */
     data class ConvertToEditableVector(val nodeId: String) : DesignEditorIntent
+
+    /** Flattens a boolean-operation node (or parametric shape) into a single vector shape. */
+    data class FlattenNode(val nodeId: String) : DesignEditorIntent
+
+    /** Converts a shape's stroke into a filled vector outline (Figma "Outline stroke"). */
+    data class OutlineStroke(val nodeId: String) : DesignEditorIntent
 
     /** In-memory (per-drag frame): moves network vertex [vertexIndex] by a parent-relative delta. */
     data class MoveVectorVertex(
@@ -268,6 +297,17 @@ sealed interface DesignEditorIntent {
     data class AddVectorVertex(
         val nodeId: String,
         val segmentIndex: Int,
+        val x: Double,
+        val y: Double,
+    ) : DesignEditorIntent
+
+    /**
+     * Appends a vertex at network-space ([x], [y]) to the growing end of an open path (pen tool
+     * click-to-place), then commits the network. Unlike [AddVectorVertex] (which splits an existing
+     * segment), this extends the path from its last vertex. Tier-1.
+     */
+    data class AppendVectorVertex(
+        val nodeId: String,
         val x: Double,
         val y: Double,
     ) : DesignEditorIntent
@@ -442,6 +482,9 @@ sealed interface StrokeOp {
     data class SetAlign(val align: StrokeAlign) : StrokeOp
 
     data class SetCap(val cap: String) : StrokeOp
+
+    /** Stroke corner join: "miter" | "round" | "bevel". */
+    data class SetJoin(val join: String) : StrokeOp
 
     data class SetDashed(val dashed: Boolean) : StrokeOp
 

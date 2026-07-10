@@ -12,6 +12,18 @@ Compose-превью с оверлеями (выделение, инспекто
   model / serialization / resolve / layout / validate.
 - `:engine:frontend` — SLM-компилятор (чистый Kotlin): `*.layout.md` → IR; `SlmPatcher` для write-back.
 - `:engine:backend-compose` — Compose-рендерер (`DesignArtboard`); единственный engine-модуль с Compose.
+- `:subsystems:figures` — векторные фигуры (чистый Kotlin, KMP): геометрия (`PathGeometry`,
+  примитивы rect/ellipse/polygon/star/line/arrow, дуги эллипса `ellipseArcGeometry`, SVG-парсер,
+  hit-test, `meetFit`), модель `VectorNetwork`/`ShapeType`/`VectorPath`/`BooleanOperationKind`,
+  чистые editing-ops (move/handle/mirror/corner/radius/winding), lowering `networkToGeometry`
+  (со скруглением углов), `VectorAssetProvider`, чистый boolean-движок
+  (`PathBoolean`: `pathBoolean`/`pathBooleanFold`, `PathBooleanOp` union/subtract/intersect/
+  exclude), `strokeOutline` (реальные joins/caps + align) для Flatten/Outline и
+  `toSvgPathData`. `:engine:ir` зависит через `api`.
+- `:subsystems:figures-compose` — Compose-адаптер фигур: `PathGeometry.toComposePath`, stroke
+  cap/join, boolean `PathOperation`, мини-превью `FigureShapePreview`/`FigureBooleanPreview`.
+  Потребители: `:engine:backend-compose`, `:shared`.
+- `:subsystems:anchoring`(+`-compose`) — снаппинг/магнит (см. `MEMORY.md`).
 - `:shared` — app shell: `App`, `MissionEditorScreen`, `editor.{presentation,domain,data,ui}`.
   Таргеты: Android, JVM, JS, wasmJs, iOS. Редактор: `editor.presentation` — иммутабельный
   `DesignEditorState` (документ) + `EditorWorkspaceState` (вид, **отдельно** от документа),
