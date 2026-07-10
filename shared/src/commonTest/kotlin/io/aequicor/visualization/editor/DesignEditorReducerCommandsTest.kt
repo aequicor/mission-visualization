@@ -13,11 +13,13 @@ import io.aequicor.visualization.editor.presentation.StrokeOp
 import io.aequicor.visualization.editor.presentation.TypographyPatch
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
+import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.subsystems.figures.ShapeType
@@ -439,6 +441,46 @@ class DesignEditorReducerCommandsTest {
         // re-leveled and relocated under the container in the owning source (others byte-identical),
         // and the id + parent-of veto both pass so the patch is accepted.
         state.assertWroteBackToOneSource(before)
+    }
+
+    @Test
+    fun positionedReparentPreservesGeometryAndIsOneUndoStep() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        val oldParent = assertNotNull(
+            state.document?.nodeById(root)?.children?.firstOrNull { parent ->
+                parent.children.any { child -> !child.locked }
+            },
+            "root has a nested movable node",
+        )
+        val moving = assertNotNull(oldParent.children.firstOrNull { !it.locked })
+        val originalPosition = moving.position
+        val originalRotation = moving.rotation
+        val desiredPosition = DesignPoint(321.0, 123.0)
+
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        state = reduceDesignEditor(
+            state,
+            DesignEditorIntent.ReparentNode(
+                nodeId = moving.id,
+                newParentId = root,
+                position = desiredPosition,
+                rotation = 37.0,
+            ),
+        )
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
+
+        val reparented = assertNotNull(state.document?.nodeById(moving.id))
+        assertEquals(root, state.document?.parentNodeOf(moving.id)?.id)
+        assertEquals(desiredPosition, reparented.position)
+        assertEquals(37.0, reparented.rotation)
+        assertTrue(reparented.layoutChild.absolute, "canvas reparent stays out of Auto layout flow")
+
+        state = reduceDesignEditor(state, DesignEditorIntent.Undo)
+        val restored = assertNotNull(state.document?.nodeById(moving.id))
+        assertEquals(oldParent.id, state.document?.parentNodeOf(moving.id)?.id)
+        assertEquals(originalPosition, restored.position)
+        assertEquals(originalRotation, restored.rotation)
     }
 
     @Test

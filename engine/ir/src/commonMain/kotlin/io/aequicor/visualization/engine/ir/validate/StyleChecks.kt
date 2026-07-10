@@ -23,6 +23,8 @@ import io.aequicor.visualization.engine.ir.model.literalOrNull
  *   0..1, or not ascending).
  * - IR-STYLE-008 (warning): unknown blend mode.
  * - IR-STYLE-009 (warning): literal opacity outside 0..1 or negative stroke weight.
+ * - IR-STYLE-010 (warning): a text style range `styleRef` pointing to a missing or
+ *   non-text style (the range then falls back to the node's base style).
  */
 internal object StyleChecks {
 
@@ -65,8 +67,19 @@ internal object StyleChecks {
         flag(node.strokeStyleId, "strokeStyleId") { it is DesignStyle.Paint }
         flag(node.effectStyleId, "effectStyleId") { it is DesignStyle.Effect }
         flag(node.gridStyleId, "gridStyleId") { it is DesignStyle.Grid }
-        (node.kind as? DesignNodeKind.Text)?.textStyleId?.let { textStyleId ->
-            flag(textStyleId, "textStyleId") { it is DesignStyle.Text }
+        (node.kind as? DesignNodeKind.Text)?.let { text ->
+            flag(text.textStyleId, "textStyleId") { it is DesignStyle.Text }
+            text.styleRanges.forEachIndexed { index, range ->
+                if (range.styleRef.isNotEmpty() && ctx.document.styles[range.styleRef] !is DesignStyle.Text) {
+                    val missing = range.styleRef !in ctx.document.styles
+                    sink += validationWarning(
+                        "IR-STYLE-010",
+                        "Text style range styleRef '${range.styleRef}' on 'styleRanges[$index]' of " +
+                            "'${node.id}' is ${if (missing) "missing" else "not a text style"}",
+                        ctx.location(node),
+                    )
+                }
+            }
         }
     }
 

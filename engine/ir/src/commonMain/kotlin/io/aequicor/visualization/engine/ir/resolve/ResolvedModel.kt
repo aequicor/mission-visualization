@@ -29,12 +29,16 @@ import io.aequicor.visualization.engine.ir.model.MaskType
 import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.SourceLocation
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
+import io.aequicor.visualization.engine.ir.model.LeadingTrim
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextCase
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
+import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
+import io.aequicor.visualization.engine.ir.model.TextLink
 import io.aequicor.visualization.engine.ir.model.TextListSettings
+import io.aequicor.visualization.engine.ir.model.TextScriptPosition
 import io.aequicor.visualization.engine.ir.model.TextTruncate
 
 /**
@@ -257,6 +261,8 @@ data class ResolvedText(
     val autoResize: TextAutoResize = TextAutoResize.None,
     val truncate: TextTruncate? = null,
     val ranges: List<ResolvedTextRange> = emptyList(),
+    /** Hyperlink ranges; offsets follow the same clamping rules as [ranges]. */
+    val links: List<TextLink> = emptyList(),
     val list: TextListSettings = TextListSettings(),
     /** i18n resource key the characters came from; "" for raw/legacy content. */
     val contentKey: String = "",
@@ -265,16 +271,33 @@ data class ResolvedText(
 data class ResolvedTextStyle(
     val fontFamily: String = "",
     val fontWeight: Int = 400,
+    val italic: Boolean = false,
     val fontSize: Double = 14.0,
     /** Line height in px, already resolved from percent against font size. */
     val lineHeight: Double = 0.0,
     /** Letter spacing in px. */
     val letterSpacing: Double = 0.0,
     val paragraphSpacing: Double = 0.0,
+    /** First-line indent of each paragraph, px. */
+    val paragraphIndent: Double = 0.0,
     val textAlignHorizontal: TextAlignHorizontal = TextAlignHorizontal.Left,
     val textAlignVertical: TextAlignVertical = TextAlignVertical.Top,
     val textCase: TextCase = TextCase.None,
     val textDecoration: TextDecorationKind = TextDecorationKind.None,
+    val decorationStyle: TextDecorationStyle = TextDecorationStyle.Solid,
+    /** null = decoration follows the glyph color. */
+    val decorationColor: DesignColor? = null,
+    /** Decoration thickness in px; null = automatic. */
+    val decorationThickness: Double? = null,
+    val decorationSkipInk: Boolean = false,
+    val textPosition: TextScriptPosition = TextScriptPosition.None,
+    val leadingTrim: LeadingTrim = LeadingTrim.None,
+    val hangingPunctuation: Boolean = false,
+    val hangingList: Boolean = false,
+    /** OpenType features by tag. */
+    val fontFeatures: Map<String, Boolean> = emptyMap(),
+    /** Variable font axes. */
+    val variableAxes: Map<String, Double> = emptyMap(),
 )
 
 data class ResolvedTextRange(

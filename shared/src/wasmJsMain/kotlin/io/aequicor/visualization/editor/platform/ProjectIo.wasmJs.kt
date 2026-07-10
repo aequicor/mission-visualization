@@ -558,3 +558,7 @@ private fun callFinishPdf(fileName: String): Unit = js("window.__mvProjectIo.fin
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun callToggleFullscreen(): Unit =
     js("(function(){if(document.fullscreenElement){if(document.exitFullscreen)document.exitFullscreen();}else{var el=document.documentElement;if(el.requestFullscreen)el.requestFullscreen().catch(function(){});}})()")
+
+private fun openUrlInBrowser(url: String): Unit = js("{ window.open(url, '_blank'); }")
+
+internal actual fun platformOpenUrl(url: String) = openUrlInBrowser(url)

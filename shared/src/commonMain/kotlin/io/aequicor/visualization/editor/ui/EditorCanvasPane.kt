@@ -85,17 +85,31 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.aequicor.visualization.editor.presentation.TextSelection
+import io.aequicor.visualization.subsystems.typography.FontDescriptor
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.FontProvider
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
+import io.aequicor.visualization.engine.backend.compose.textEditGeometry
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.runtime.CompositionLocalProvider
 import kotlin.time.TimeSource
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.AncestorRotation
 import io.aequicor.visualization.editor.presentation.BoundsBox
+import io.aequicor.visualization.editor.presentation.CanvasParentFrame
 import io.aequicor.visualization.editor.presentation.CanvasOperation
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
@@ -116,6 +130,7 @@ import io.aequicor.visualization.editor.presentation.ResizeCursorKind
 import io.aequicor.visualization.editor.presentation.SelectableBounds
 import io.aequicor.visualization.editor.presentation.ResizableEdges
 import io.aequicor.visualization.editor.presentation.ResizeHandle
+import io.aequicor.visualization.editor.presentation.ResizeResult
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.ancestorRotationDegrees
@@ -157,6 +172,7 @@ import io.aequicor.visualization.editor.presentation.measureGaps
 import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
+import io.aequicor.visualization.editor.presentation.reparentPlacementWhenMovedOutside
 import io.aequicor.visualization.editor.presentation.resizeCursorKindForHandle
 import io.aequicor.visualization.editor.presentation.rotateAffordancePoint
 import io.aequicor.visualization.editor.presentation.rotatePointAroundCenter
@@ -184,6 +200,7 @@ import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.LayoutMode
@@ -260,6 +277,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
     val pageId = design.selectedPageId
     val rootNode = document?.pageById(pageId)?.children?.firstOrNull()
     val textMeasurer = rememberTextMeasurer()
+    // Bundled Google Fonts so document text renders in its authored family (skiko ships no
+    // system fonts on wasm); shared with the inline text-edit overlay for aligned metrics.
+    val fontProvider = rememberBundledFontProvider()
 
     BoxWithConstraints(
         Modifier
@@ -557,10 +577,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             }
                         }
                     }
-                    // Press / drag / tap. `viewport` is intentionally not a key — see the
-                    // rememberUpdatedState comment above; an in-flight zoom animation would
-                    // otherwise cancel any drag/resize/rotate gesture in progress every frame.
-                    .pointerInput(pageId, ws.tool, design.selectedNodeId, design.selectedNodeIds, spaceHeld) {
+                    // Press / drag / tap. `viewport` and selection are intentionally not keys:
+                    // both are re-read from `state` at press time, and selecting a previously
+                    // unselected node on pointer-down must not restart this handler and cancel
+                    // the drag that began with the same press.
+                    .pointerInput(pageId, ws.tool, spaceHeld) {
                         val slop = viewConfiguration.touchSlop
                         awaitEachGesture {
                             val gestureStart = awaitCanvasGestureStart()
@@ -608,7 +629,6 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // Own rotation drives the rotate-gesture baseline and the resize position
                             // shift (root-local); the ancestor rotation is undone separately for moves.
                             val selectionRotation = if (isSingleSelection) primaryBox?.node?.rotation ?: 0.0 else 0.0
-                            val ancestorRotation = if (isSingleSelection) primaryPath?.let { ancestorRotationDegrees(ancestorRotationsOf(it)) } ?: 0.0 else 0.0
                             // Handle geometry (where handles/affordance are drawn and grabbed) uses the
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
@@ -638,6 +658,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // the nested element) nor on a shift-add.
                             if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !shiftHeld) {
                                 state.dispatch(DesignEditorIntent.SelectNode(hitId))
+                            }
+                            // Selection may have changed on this very down event. Resolve the move frame
+                            // from that live selection too, otherwise the first drag could inherit the
+                            // previously selected node's rotated ancestor coordinate system.
+                            val moveAncestorRotation = if (mode == CanvasOperation.Move) {
+                                val moveDesign = state.designState
+                                moveDesign.selectedNodeId
+                                    .takeIf { moveDesign.selectedNodeIds.size == 1 && it.isNotBlank() }
+                                    ?.let { pressLayout?.pathToSourceId(it) }
+                                    ?.let { ancestorRotationDegrees(ancestorRotationsOf(it)) }
+                                    ?: 0.0
+                            } else {
+                                0.0
                             }
                             val moveStartPositions = if (mode == CanvasOperation.Move) {
                                 state.designState.selectedNodeIds.mapNotNull { id ->
@@ -669,6 +702,16 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     siblings = flowChildren.filterNot { child -> child.node.sourceId == singleId }.map { child -> child.toBoundsBox() },
                                     originalIndex = flowChildren.indexOfFirst { child -> child.node.sourceId == singleId },
                                 )
+                            }
+                            // A single-node move may leave its immediate container. Capture the
+                            // visual transform and ancestor frames once so release can promote a
+                            // free or Auto layout flow child without depending on recomposition.
+                            val moveReparentBaseline = if (mode == CanvasOperation.Move) {
+                                state.designState.selectedNodeIds.singleOrNull()?.let { id ->
+                                    buildMoveReparentBaseline(pressDocument, pressLayout, id)
+                                }
+                            } else {
+                                null
                             }
                             // Beautiful-anchor candidates for a free move (not a reorder): the dragged
                             // selection's start union bounds, its sibling peers, and the containers to
@@ -753,6 +796,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // — the incremental MoveNodes model can't stably snap a raw per-frame delta.
                             var appliedDx = 0.0
                             var appliedDy = 0.0
+                            // Final snapped displacement in the visual/document frame. Unlike
+                            // appliedDx/Y this is not inverse-rotated into the old parent's frame.
+                            var appliedVisualDx = 0.0
+                            var appliedVisualDy = 0.0
                             // Sticky-snap latches carried across this gesture's frames (hysteresis).
                             var moveSnapState = MoveSnapState.None
                             var resizeSnapState = ResizeSnapState.None
@@ -802,9 +849,26 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         badge = "${(abs(end.x - start.x) / zoomPx).roundToInt()} x ${(abs(end.y - start.y) / zoomPx).roundToInt()}"
                                     }
                                     CanvasOperation.Move -> if (reorderBaseline != null) {
-                                        val pointerMain = if (reorderBaseline.horizontal) viewport.toDocX(pos.x) else viewport.toDocY(pos.y)
-                                        val index = flowInsertionIndex(reorderBaseline.siblings, pointerMain, reorderBaseline.horizontal)
-                                        reorderPreview = ReorderPreview(reorderBaseline, index)
+                                        appliedVisualDx = (accX / zoomPx).toDouble()
+                                        appliedVisualDy = (accY / zoomPx).toDouble()
+                                        val outsideParent = moveReparentBaseline?.let { baseline ->
+                                            reparentPlacementWhenMovedOutside(
+                                                movedVisual = baseline.startVisual.copy(
+                                                    box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
+                                                ),
+                                                currentParent = baseline.currentParent,
+                                                upperParents = baseline.upperParents,
+                                            )
+                                        } != null
+                                        if (outsideParent) {
+                                            // Outside the flow container the drop means detach + promote,
+                                            // not a reorder at the nearest edge.
+                                            reorderPreview = null
+                                        } else {
+                                            val pointerMain = if (reorderBaseline.horizontal) viewport.toDocX(pos.x) else viewport.toDocY(pos.y)
+                                            val index = flowInsertionIndex(reorderBaseline.siblings, pointerMain, reorderBaseline.horizontal)
+                                            reorderPreview = ReorderPreview(reorderBaseline, index)
+                                        }
                                         badge = null
                                     } else {
                                         val rawDx = (accX / zoomPx).toDouble()
@@ -835,12 +899,18 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         // The drag is measured in the document (screen) frame, but a node's
                                         // position lives in the shared root-local frame; under a rotated
                                         // ancestor undo that rotation so the node tracks the pointer. Snapping
-                                        // is gated to ancestorRotation == 0, so when it runs this is identity.
-                                        val local = if (ancestorRotation != 0.0) rotateVector(totalDx, totalDy, -ancestorRotation) else GeoPoint(totalDx, totalDy)
+                                        // is gated to moveAncestorRotation == 0, so when it runs this is identity.
+                                        val local = if (moveAncestorRotation != 0.0) {
+                                            rotateVector(totalDx, totalDy, -moveAncestorRotation)
+                                        } else {
+                                            GeoPoint(totalDx, totalDy)
+                                        }
                                         // Read the live selection: a new node may have been selected on press.
                                         state.dispatch(DesignEditorIntent.MoveNodes(state.designState.selectedNodeIds, local.x - appliedDx, local.y - appliedDy))
                                         appliedDx = local.x
                                         appliedDy = local.y
+                                        appliedVisualDx = totalDx
+                                        appliedVisualDy = totalDy
                                         snapGuides = snap?.guides ?: emptyList()
                                         spacingBars = snap?.spacing ?: emptyList()
                                         dragMoveActive = true
@@ -864,6 +934,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 val snap = snapResizeDeltas(
                                                     resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
                                                     resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                    edges = target.edges,
+                                                    minWidth = target.minWidth,
+                                                    minHeight = target.minHeight,
+                                                    maxWidth = target.maxWidth,
+                                                    maxHeight = target.maxHeight,
                                                 )
                                                 resizeSnapState = snap.output?.state ?: ResizeSnapState.None
                                                 applyResize(
@@ -948,7 +1023,35 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         state.updateWorkspace { it.copy(tool = EditorTool.Select) }
                                     }
                                     CanvasOperation.Move -> {
-                                        if (moved && reorderBaseline != null) {
+                                        val reparent = moveReparentBaseline?.takeIf { moved }?.let { baseline ->
+                                            reparentPlacementWhenMovedOutside(
+                                                movedVisual = baseline.startVisual.copy(
+                                                    box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
+                                                ),
+                                                currentParent = baseline.currentParent,
+                                                upperParents = baseline.upperParents,
+                                            )?.let { placement -> baseline to placement }
+                                        }
+                                        if (reparent != null) {
+                                            val (baseline, placement) = reparent
+                                            val currentRotation = state.designState.document
+                                                ?.nodeById(baseline.nodeId)
+                                                ?.rotation
+                                            state.dispatch(
+                                                DesignEditorIntent.ReparentNode(
+                                                    nodeId = baseline.nodeId,
+                                                    newParentId = placement.parentId,
+                                                    position = DesignPoint(placement.x, placement.y),
+                                                    size = DesignSize(
+                                                        width = baseline.startVisual.box.width,
+                                                        height = baseline.startVisual.box.height,
+                                                    ),
+                                                    rotation = placement.rotation.takeIf { value ->
+                                                        currentRotation == null || abs(value - currentRotation) > 0.0001
+                                                    },
+                                                ),
+                                            )
+                                        } else if (moved && reorderBaseline != null) {
                                             val target = reorderPreview?.index ?: reorderBaseline.originalIndex
                                             if (target != reorderBaseline.originalIndex) {
                                                 state.dispatch(DesignEditorIntent.ReparentNode(reorderBaseline.nodeId, reorderBaseline.parentId, target))
@@ -987,6 +1090,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 val snap = snapResizeDeltas(
                                                     resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
                                                     resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                    edges = target.edges,
+                                                    minWidth = target.minWidth,
+                                                    minHeight = target.minHeight,
+                                                    maxWidth = target.maxWidth,
+                                                    maxHeight = target.maxHeight,
                                                 )
                                                 commitResizeWriteBack(
                                                     state = state,
@@ -1043,6 +1151,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     interactive = false,
                     showSelection = false,
                     vectorAssets = rememberVectorAssetProvider(document),
+                    fontProvider = fontProvider,
                     onLayoutComputed = state::onArtboardLayout,
                 )
             }
@@ -1170,7 +1279,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
 
             // Inline text editing overlay for a double-clicked text node.
-            TextEditOverlay(state, layout, viewport)
+            TextEditOverlay(state, layout, viewport, fontProvider)
         }
         CanvasScrollbars(state, scrollbars)
     }
@@ -1306,42 +1415,137 @@ private fun CanvasScrollbar(
 // --- Text editing overlay ----------------------------------------------------
 
 @Composable
-private fun TextEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox?, viewport: CanvasViewport) {
+private fun TextEditOverlay(
+    state: MissionEditorStateHolder,
+    layout: LayoutBox?,
+    viewport: CanvasViewport,
+    fontProvider: FontProvider,
+) {
     val colors = LocalEditorColors.current
     val editingId = state.designState.editingTextNodeId
+    // Always-run effect: leaving edit mode clears the caret/selection so the inspector
+    // reverts to node-level styling. Keyed on editingId so it fires on every transition.
+    LaunchedEffect(editingId) {
+        if (editingId.isBlank()) state.updateWorkspace { it.copy(textSelection = null) }
+    }
     if (editingId.isBlank()) return
     val node = state.designState.document?.nodeById(editingId) ?: return
     val kind = node.kind as? DesignNodeKind.Text ?: return
     val box = layout?.findBySourceId(editingId) ?: return
-    val density = LocalDensity.current.density
+    val densityObj = LocalDensity.current
+    val density = densityObj.density
     val tl = viewport.toScreen(box.x, box.y)
     val initial = kind.characters.literalOrNull()?.takeIf { it.isNotBlank() } ?: kind.content?.defaultText.orEmpty()
-    var draft by remember(editingId) { mutableStateOf(initial) }
+    var field by remember(editingId) {
+        mutableStateOf(TextFieldValue(initial, selection = TextRange(0, initial.length)))
+    }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(editingId) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(editingId) {
+        runCatching { focus.requestFocus() }
+        // Whole-string selection to start, so an immediate inspector edit restyles everything.
+        state.updateWorkspace { it.copy(textSelection = TextSelection(editingId, 0, initial.length)) }
+    }
     val wDp = (box.width * viewport.zoom / density).coerceAtLeast(40.0)
     val hDp = (box.height * viewport.zoom / density).coerceAtLeast(20.0)
+
+    // Native caret + selection are drawn from the node's REAL text layout (the same geometry
+    // the artboard paints), so they follow wrapping, mixed sizes, alignment and per-range
+    // styling exactly, mapped document -> screen through the shared viewport. The transparent
+    // field below still owns text input / IME / selection, but its own caret and selection
+    // highlight are hidden so only these geometry-accurate ones show.
+    val textMeasurer = rememberTextMeasurer()
+    val measurer = remember(textMeasurer, densityObj, fontProvider) {
+        ComposeTypographyMeasurer(textMeasurer, densityObj, fontProvider)
+    }
+    val geometry = remember(box, measurer) { textEditGeometry(box, measurer) }
+    var caretVisible by remember(editingId) { mutableStateOf(true) }
+    LaunchedEffect(editingId, field.selection) {
+        caretVisible = true
+        while (true) {
+            kotlinx.coroutines.delay(530)
+            caretVisible = !caretVisible
+        }
+    }
+    Canvas(Modifier.fillMaxSize()) {
+        val geo = geometry ?: return@Canvas
+        val laid = geo.laid
+        val transformed = laid.transformed
+        val len = field.text.length
+        fun screen(localX: Double, localY: Double): Offset =
+            viewport.toScreen(box.x + localX, box.y + geo.yOffset + localY)
+        val selMin = field.selection.min.coerceIn(0, len)
+        val selMax = field.selection.max.coerceIn(0, len)
+        if (selMax > selMin) {
+            laid.selectionRects(transformed.toTransformed(selMin), transformed.toTransformed(selMax)).forEach { r ->
+                val a = screen(r.left, r.top)
+                val b = screen(r.right, r.bottom)
+                drawRect(color = colors.selectionFill, topLeft = a, size = Size(b.x - a.x, b.y - a.y))
+            }
+        }
+        if (caretVisible) {
+            val caret = laid.caretRect(transformed.toTransformed(field.selection.end.coerceIn(0, len)))
+            drawLine(
+                color = colors.accent,
+                start = screen(caret.left, caret.top),
+                end = screen(caret.left, caret.bottom),
+                strokeWidth = 1.75f * density,
+            )
+        }
+    }
+
+    // The overlay field is transparent and metric-matched to the node, so the artboard's
+    // real styled glyphs show through beneath while this field owns input + IME.
+    val base = kind.textStyle
+    val editStyle = TextStyle(
+        color = Color.Transparent,
+        fontSize = ((base?.fontSize?.literalOrNull() ?: 16.0) * viewport.zoom).sp,
+        fontWeight = FontWeight((base?.fontWeight?.literalOrNull()?.toInt() ?: 400).coerceIn(1, 1000)),
+        fontStyle = if (base?.italic == true) FontStyle.Italic else FontStyle.Normal,
+        fontFamily = fontProvider.resolve(
+            FontDescriptor(
+                family = base?.fontFamily.orEmpty(),
+                weight = base?.fontWeight?.literalOrNull()?.toInt() ?: 400,
+                italic = base?.italic ?: false,
+            ),
+        ),
+    )
     Box(
         modifier = Modifier
             .offset { androidx.compose.ui.unit.IntOffset(tl.x.roundToInt(), tl.y.roundToInt()) }
             .size(wDp.dp, hDp.dp)
-            .background(Color.White.copy(alpha = 0.9f))
-            .border(1.dp, colors.accent),
+            .border(1.dp, colors.accent.copy(alpha = 0.6f)),
     ) {
-        androidx.compose.foundation.text.BasicTextField(
-            value = draft,
-            onValueChange = { draft = it; state.dispatch(DesignEditorIntent.SetTextCharacters(editingId, it)) },
-            modifier = Modifier.fillMaxSize().padding(4.dp)
-                .focusRequester(focus)
-                .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
-                        state.dispatch(DesignEditorIntent.SetEditingText("")); true
-                    } else {
-                        false
+        CompositionLocalProvider(
+            LocalTextSelectionColors provides TextSelectionColors(
+                handleColor = Color.Transparent,
+                backgroundColor = Color.Transparent,
+            ),
+        ) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = field,
+                onValueChange = { next ->
+                    val textChanged = next.text != field.text
+                    field = next
+                    if (textChanged) state.dispatch(DesignEditorIntent.SetTextCharacters(editingId, next.text))
+                    // Report the caret/selection so the inspector styles the selected range.
+                    state.updateWorkspace {
+                        it.copy(textSelection = TextSelection(editingId, next.selection.start, next.selection.end))
                     }
                 },
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.ink),
-        )
+                // Our geometry-accurate caret is drawn above; hide the field's own.
+                cursorBrush = SolidColor(Color.Transparent),
+                modifier = Modifier.fillMaxSize()
+                    .focusRequester(focus)
+                    .onPreviewKeyEvent { e ->
+                        if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
+                            state.dispatch(DesignEditorIntent.SetEditingText("")); true
+                        } else {
+                            false
+                        }
+                    },
+                textStyle = editStyle,
+            )
+        }
     }
 }
 
@@ -2145,6 +2349,14 @@ private data class ReorderPreview(
     val index: Int,
 )
 
+/** Fixed visual/ancestor geometry used to promote a free node on drag release. */
+private data class MoveReparentBaseline(
+    val nodeId: String,
+    val startVisual: EffectiveTransform,
+    val currentParent: CanvasParentFrame,
+    val upperParents: List<CanvasParentFrame>,
+)
+
 /**
  * Press-time snapshot for beautiful-anchor snapping during a free move (design-book §18): the
  * dragged selection's union bounds, the [containers] (immediate parent frame plus its
@@ -2159,7 +2371,7 @@ private data class SnapBaseline(
 )
 
 /** The anchor targets a snap resolves against: co-resident [siblings] plus the unrotated ancestor [containers]. */
-private data class SnapContext(
+internal data class SnapContext(
     val containers: List<BoundsBox>,
     val siblings: List<BoundsBox>,
 )
@@ -2191,15 +2403,19 @@ private fun collectSnapContext(
 }
 
 /** The docDx/docDy to feed the resize (raw + snap correction) plus the snap output, or the raw deltas when snapping is off. */
-private data class SnappedResize(val docDx: Float, val docDy: Float, val output: ResizeSnapOutput?)
+internal data class SnappedResize(val docDx: Float, val docDy: Float, val output: ResizeSnapOutput?)
+
+private enum class AspectResizeSnapAxis { Horizontal, Vertical }
 
 /**
  * Folds a resize drag's raw deltas through the magnetic resize snap: builds the candidate box from
  * [computeResize], snaps its moving edges to [context]'s neighbours/containers (edge/center align +
  * dimension match), and returns the corrected deltas. Snapping is off (raw deltas) when there is no
- * [context] (rotated/grouped/locked selection) or [lockRatio] is on (aspect-preserving, unsnapped).
+ * [context] (rotated/grouped/locked selection). For an aspect-locked corner only one axis may drive
+ * the shared scale: the closest caught axis (or the already-latched one) wins, and its correction is
+ * projected onto the other axis so the snapped edge and the original ratio both remain exact.
  */
-private fun snapResizeDeltas(
+internal fun snapResizeDeltas(
     baseline: BoundsBox,
     handle: ResizeHandle,
     rawDocDx: Float,
@@ -2209,20 +2425,188 @@ private fun snapResizeDeltas(
     catchPx: Double,
     releasePx: Double,
     prior: ResizeSnapState,
+    edges: ResizableEdges = ResizableEdges.All,
+    minWidth: Double = 1.0,
+    minHeight: Double = 1.0,
+    maxWidth: Double? = null,
+    maxHeight: Double? = null,
 ): SnappedResize {
-    if (context == null || lockRatio) return SnappedResize(rawDocDx, rawDocDy, null)
-    val result = computeResize(baseline.width, baseline.height, handle, rawDocDx.toDouble(), rawDocDy.toDouble(), lockRatio = false)
+    if (context == null) return SnappedResize(rawDocDx, rawDocDy, null)
+    val handleEdges = handle.toMovingEdges()
+    val movingEdges = handleEdges.copy(
+        left = handleEdges.left && edges.left,
+        right = handleEdges.right && edges.right,
+        top = handleEdges.top && edges.top,
+        bottom = handleEdges.bottom && edges.bottom,
+    )
+    val result = computeResize(
+        baseline.width,
+        baseline.height,
+        handle,
+        rawDocDx.toDouble(),
+        rawDocDy.toDouble(),
+        minWidth = minWidth,
+        minHeight = minHeight,
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        canMoveLeft = edges.left,
+        canMoveRight = edges.right,
+        canMoveTop = edges.top,
+        canMoveBottom = edges.bottom,
+        lockRatio = lockRatio,
+    )
     val candidate = SnapBox(baseline.x + result.dx, baseline.y + result.dy, result.width, result.height)
     val output = solveResizeSnap(
         candidate,
-        handle.toMovingEdges(),
+        movingEdges,
         context.containers.map { it.toSnapBox() },
         context.siblings.map { it.toSnapBox() },
         catch = catchPx,
         release = releasePx,
         prior = prior,
     )
-    return SnappedResize(rawDocDx + output.dx.toFloat(), rawDocDy + output.dy.toFloat(), output)
+    val aspectLocked = lockRatio &&
+        (movingEdges.left || movingEdges.right) &&
+        (movingEdges.top || movingEdges.bottom) &&
+        baseline.width > 0.0 &&
+        baseline.height > 0.0
+    if (!aspectLocked) {
+        return SnappedResize(rawDocDx + output.dx.toFloat(), rawDocDy + output.dy.toFloat(), output)
+    }
+
+    val hasHorizontalSnap = output.state.latchX != null
+    val hasVerticalSnap = output.state.latchY != null
+    val movingX = if (movingEdges.left) candidate.x else candidate.right
+    val movingY = if (movingEdges.top) candidate.y else candidate.bottom
+
+    fun horizontalCorrectionFor(axis: AspectResizeSnapAxis): Double = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> output.dx
+        AspectResizeSnapAxis.Vertical -> {
+            val ratio = baseline.width / baseline.height
+            val heightCorrection = if (movingEdges.bottom) output.dy else -output.dy
+            val widthCorrection = heightCorrection * ratio
+            if (movingEdges.right) widthCorrection else -widthCorrection
+        }
+    }
+    fun resultFor(axis: AspectResizeSnapAxis): ResizeResult = computeResize(
+        baseline.width,
+        baseline.height,
+        handle,
+        rawDocDx.toDouble() + horizontalCorrectionFor(axis),
+        rawDocDy.toDouble(),
+        minWidth = minWidth,
+        minHeight = minHeight,
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        canMoveLeft = edges.left,
+        canMoveRight = edges.right,
+        canMoveTop = edges.top,
+        canMoveBottom = edges.bottom,
+        lockRatio = true,
+    )
+    fun candidateFor(resize: ResizeResult): SnapBox = SnapBox(
+        baseline.x + resize.dx,
+        baseline.y + resize.dy,
+        resize.width,
+        resize.height,
+    )
+
+    val horizontalResult = if (hasHorizontalSnap) resultFor(AspectResizeSnapAxis.Horizontal) else null
+    val verticalResult = if (hasVerticalSnap) resultFor(AspectResizeSnapAxis.Vertical) else null
+    val horizontalCandidate = horizontalResult?.let(::candidateFor)
+    val verticalCandidate = verticalResult?.let(::candidateFor)
+    val horizontalFeasible = output.state.latchX?.let { target ->
+        horizontalCandidate?.let { box -> abs(target - if (movingEdges.left) box.x else box.right) <= 0.0001 }
+    } == true
+    val verticalFeasible = output.state.latchY?.let { target ->
+        verticalCandidate?.let { box -> abs(target - if (movingEdges.top) box.y else box.bottom) <= 0.0001 }
+    } == true
+    val priorHorizontalHeld = horizontalFeasible && prior.latchX?.let { abs(it - movingX) <= releasePx } == true
+    val priorVerticalHeld = verticalFeasible && prior.latchY?.let { abs(it - movingY) <= releasePx } == true
+    val axis = when {
+        !horizontalFeasible && !verticalFeasible -> null
+        horizontalFeasible && !verticalFeasible -> AspectResizeSnapAxis.Horizontal
+        !horizontalFeasible && verticalFeasible -> AspectResizeSnapAxis.Vertical
+        priorHorizontalHeld && !priorVerticalHeld -> AspectResizeSnapAxis.Horizontal
+        priorVerticalHeld && !priorHorizontalHeld -> AspectResizeSnapAxis.Vertical
+        abs(output.dx) <= abs(output.dy) -> AspectResizeSnapAxis.Horizontal
+        else -> AspectResizeSnapAxis.Vertical
+    } ?: return SnappedResize(
+        rawDocDx,
+        rawDocDy,
+        output.copy(
+            dx = 0.0,
+            dy = 0.0,
+            guides = emptyList(),
+            match = output.match.copy(
+                width = result.width,
+                height = result.height,
+                widthMatched = false,
+                heightMatched = false,
+            ),
+            state = ResizeSnapState.None,
+        ),
+    )
+
+    val snappedResult = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> requireNotNull(horizontalResult)
+        AspectResizeSnapAxis.Vertical -> requireNotNull(verticalResult)
+    }
+    val snappedCandidate = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> requireNotNull(horizontalCandidate)
+        AspectResizeSnapAxis.Vertical -> requireNotNull(verticalCandidate)
+    }
+    val snappedDocDx = if (movingEdges.right) {
+        snappedResult.width - baseline.width
+    } else {
+        baseline.width - snappedResult.width
+    }
+    val snappedDocDy = if (movingEdges.bottom) {
+        snappedResult.height - baseline.height
+    } else {
+        baseline.height - snappedResult.height
+    }
+    val coupledDx = (if (movingEdges.left) snappedCandidate.x else snappedCandidate.right) -
+        (if (movingEdges.left) candidate.x else candidate.right)
+    val coupledDy = (if (movingEdges.top) snappedCandidate.y else snappedCandidate.bottom) -
+        (if (movingEdges.top) candidate.y else candidate.bottom)
+    val snappedMovingX = if (movingEdges.left) snappedCandidate.x else snappedCandidate.right
+    val snappedMovingY = if (movingEdges.top) snappedCandidate.y else snappedCandidate.bottom
+    val horizontalStillAligned = output.state.latchX?.let { abs(it - snappedMovingX) <= 0.0001 } == true
+    val verticalStillAligned = output.state.latchY?.let { abs(it - snappedMovingY) <= 0.0001 } == true
+    val selectedOutput = output.copy(
+        dx = coupledDx,
+        dy = coupledDy,
+        guides = output.guides.mapNotNull { guide ->
+            val line = guide.line
+            when {
+                horizontalStillAligned && line.x1 == line.x2 -> guide.copy(
+                    line = line.copy(
+                        y1 = minOf(line.y1, snappedCandidate.y),
+                        y2 = maxOf(line.y2, snappedCandidate.bottom),
+                    ),
+                )
+                verticalStillAligned && line.y1 == line.y2 -> guide.copy(
+                    line = line.copy(
+                        x1 = minOf(line.x1, snappedCandidate.x),
+                        x2 = maxOf(line.x2, snappedCandidate.right),
+                    ),
+                )
+                else -> null
+            }
+        },
+        match = output.match.copy(
+            width = snappedResult.width,
+            height = snappedResult.height,
+            widthMatched = horizontalStillAligned && output.match.widthMatched,
+            heightMatched = verticalStillAligned && output.match.heightMatched,
+        ),
+        state = ResizeSnapState(
+            latchX = output.state.latchX.takeIf { horizontalStillAligned },
+            latchY = output.state.latchY.takeIf { verticalStillAligned },
+        ),
+    )
+    return SnappedResize(snappedDocDx.toFloat(), snappedDocDy.toFloat(), selectedOutput)
 }
 
 private fun LayoutBox.toBoundsBox(): BoundsBox =
@@ -2277,6 +2661,53 @@ private fun LayoutBox.effectiveTransformFor(sourceId: String): EffectiveTransfor
     val path = pathToSourceId(sourceId) ?: return null
     val target = path.last()
     return effectiveTransform(target.toBoundsBox(), target.node.rotation, ancestorRotationsOf(path))
+}
+
+/**
+ * Builds the nearest-parent -> root frame chain for automatic drag-out promotion.
+ * A child of the root has no higher renderable node parent, so it deliberately returns
+ * null and may remain visible as root overflow.
+ */
+private fun buildMoveReparentBaseline(
+    document: DesignDocument,
+    layout: LayoutBox?,
+    nodeId: String,
+): MoveReparentBaseline? {
+    if (document.nodeById(nodeId)?.anchors != null) return null
+    val nodePath = layout?.pathToSourceId(nodeId) ?: return null
+    val parentPath = nodePath.dropLast(1)
+    if (parentPath.size < 2) return null
+    val node = nodePath.last()
+    val frames = parentPath.indices.reversed().map { index ->
+        canvasParentFrame(parentPath.take(index + 1))
+    }
+    return MoveReparentBaseline(
+        nodeId = nodeId,
+        startVisual = effectiveTransform(node.toBoundsBox(), node.node.rotation, ancestorRotationsOf(nodePath)),
+        currentParent = frames.first(),
+        upperParents = frames.drop(1),
+    )
+}
+
+/** Converts a root->parent layout path into the geometry a child inherits from that parent. */
+private fun canvasParentFrame(path: List<LayoutBox>): CanvasParentFrame {
+    val parent = path.last()
+    val visual = effectiveTransform(parent.toBoundsBox(), parent.node.rotation, ancestorRotationsOf(path))
+    val childRotations = path.asReversed().mapNotNull { box ->
+        box.node.rotation.takeIf { it != 0.0 }?.let { rotation ->
+            AncestorRotation(
+                center = GeoPoint(box.x + box.width / 2.0, box.y + box.height / 2.0),
+                degrees = rotation,
+            )
+        }
+    }
+    return CanvasParentFrame(
+        id = parent.node.sourceId,
+        layoutBounds = parent.toBoundsBox(),
+        visualBox = visual.box,
+        visualRotation = visual.rotation,
+        childAncestorRotations = childRotations,
+    )
 }
 
 private const val HandleHitRadiusPx = 11f

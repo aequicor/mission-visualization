@@ -270,17 +270,18 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
 @Composable
 private fun WorkbenchLayout(state: MissionEditorStateHolder) {
     val ws = state.workspace
-    val inspectorWidthDp = ws.inspectorWidthDp.coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxInspectorDp)
+    val sourceWidthDp = ws.sourceWidthDp.coerceIn(WorkspaceLimits.MinSourceDp, WorkspaceLimits.MaxSourceDp)
+    val inspectorWidthDp = ws.inspectorWidthDp.coerceIn(WorkspaceLimits.MinInspectorDp, WorkspaceLimits.MaxInspectorDp)
     Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         // Left: Source + Screens (or collapsed rail).
         if (ws.sourceCollapsed) {
             CollapsedRail(label = "Source", icon = EditorIcon.Source, onExpand = { state.updateWorkspace { it.copy(sourceCollapsed = false) } })
         } else {
-            EditorSourcePane(state, Modifier.width(ws.sourceWidthDp.dp).fillMaxHeight())
+            EditorSourcePane(state, Modifier.width(sourceWidthDp.dp).fillMaxHeight())
             VerticalSplitter(
                 onDeltaDp = { d ->
                     state.updateWorkspace {
-                        it.copy(sourceWidthDp = (it.sourceWidthDp + d).coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxSourceDp))
+                        it.copy(sourceWidthDp = (it.sourceWidthDp + d).coerceIn(WorkspaceLimits.MinSourceDp, WorkspaceLimits.MaxSourceDp))
                     }
                 },
                 onReset = { state.updateWorkspace { it.copy(sourceWidthDp = WorkspaceLimits.DefaultSourceDp) } },
@@ -298,7 +299,7 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
                 onDeltaDp = { d ->
                     state.updateWorkspace {
                         // Splitter is left of the inspector, so dragging right shrinks it.
-                        it.copy(inspectorWidthDp = (it.inspectorWidthDp - d).coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxInspectorDp))
+                        it.copy(inspectorWidthDp = (it.inspectorWidthDp - d).coerceIn(WorkspaceLimits.MinInspectorDp, WorkspaceLimits.MaxInspectorDp))
                     }
                 },
                 onReset = { state.updateWorkspace { it.copy(inspectorWidthDp = WorkspaceLimits.DefaultInspectorDp) } },

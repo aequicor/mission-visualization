@@ -389,10 +389,18 @@ class PatchMerger(
         } else {
             kind.autoResize
         }
-        val styleRanges = patch.spans?.filter { it.styleRef != null }?.map { span ->
-            // IR style ranges carry inline styles; shared-ref resolution is a later stage.
-            TextStyleRange(start = span.start, end = span.end, style = DesignTextStyle())
-        }
+        val styleRanges = patch.spans
+            ?.filter { it.styleRef != null || it.style != null || it.fills != null }
+            ?.map { span ->
+                // Shared-style refs resolve later; inline typography/fills ride directly.
+                TextStyleRange(
+                    start = span.start,
+                    end = span.end,
+                    style = span.style ?: DesignTextStyle(),
+                    fills = span.fills,
+                    styleRef = span.styleRef.orEmpty(),
+                )
+            }
         val links = patch.spans
             ?.filter { it.linkUrl != null || it.linkNodeTarget != null }
             ?.map { span ->

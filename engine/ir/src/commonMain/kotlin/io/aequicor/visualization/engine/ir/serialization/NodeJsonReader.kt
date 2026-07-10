@@ -185,15 +185,7 @@ private fun DesignDocumentReader.readTextKind(obj: JsonObject, pointer: String):
         styleRanges = obj["styleRanges"].asArray("$pointer/styleRanges").mapIndexed { index, range ->
             readStyleRange(range, "$pointer/styleRanges/$index")
         },
-        links = obj["links"].asArray("$pointer/links").map { link ->
-            val linkObj = link.asObject()
-            TextLink(
-                start = linkObj.intOrDefault("start", 0),
-                end = linkObj.intOrDefault("end", 0),
-                url = linkObj.stringOrDefault("url"),
-                nodeTarget = linkObj.stringOrDefault("nodeTarget"),
-            )
-        },
+        links = obj["links"].asArray("$pointer/links").map { readTextLink(it) },
         list = readTextListSettings(obj["list"], "$pointer/list"),
     )
 
@@ -446,14 +438,26 @@ private fun DesignDocumentReader.readTextListSettings(
 
 internal fun DesignDocumentReader.readStyleRange(element: JsonElement, pointer: String): TextStyleRange {
     val obj: Map<String, JsonElement> = element.asObject()
+    // A "style" string is a shared-style ref; a "style" object is inline typography.
     val styleObj = obj["style"] as? JsonObject
     return TextStyleRange(
         start = obj.intOrDefault("start", 0),
         end = obj.intOrDefault("end", 0),
+        styleRef = obj.stringOrDefault("styleRef").ifEmpty { obj.stringOrDefault("style") },
         style = styleObj?.let { readTextStyle(it, "$pointer/style") } ?: DesignTextStyle(),
         fills = (styleObj?.get("fills") as? JsonArray)?.mapIndexedNotNull { index, paint ->
             readPaint(paint, "$pointer/style/fills/$index")
         },
+    )
+}
+
+internal fun DesignDocumentReader.readTextLink(element: JsonElement): TextLink {
+    val linkObj = element.asObject()
+    return TextLink(
+        start = linkObj.intOrDefault("start", 0),
+        end = linkObj.intOrDefault("end", 0),
+        url = linkObj.stringOrDefault("url"),
+        nodeTarget = linkObj.stringOrDefault("nodeTarget"),
     )
 }
 

@@ -158,6 +158,43 @@ data class SetEffects(
 data class SetTextStyle(
     override val nodeId: String,
     val style: DesignTextStyle,
+    /** Typography keys to delete from the source (e.g. "decorationColor" reset to auto). */
+    val clearKeys: Set<String> = emptySet(),
+) : SlmEdit
+
+/**
+ * Rewrites the node's whole `text.spans` list from the working node's [styleRanges] and
+ * [links] (via [TextSpansYamlWriter]). Style ranges and links sharing a `[start, end)`
+ * collapse to one span. The list is replaced wholesale (the working document owns the
+ * authoritative set); an empty result removes the `spans:` key.
+ *
+ * Offsets are authored against the source-locale `defaultText`, so the caller must gate
+ * this out (falling back in-memory) when the node's text is ICU-formatted or resolved in
+ * a non-source locale — offsets would not align with the rendered string.
+ */
+data class SetTextSpans(
+    override val nodeId: String,
+    val styleRanges: List<io.aequicor.visualization.engine.ir.model.TextStyleRange>,
+    val links: List<io.aequicor.visualization.engine.ir.model.TextLink>,
+) : SlmEdit
+
+/**
+ * Writes the node's text auto-resize as `text.resizing: { width, height }`. Maps the
+ * Figma modes to sizing shorthands: WidthAndHeight -> both `hug`, Height -> height `hug`
+ * (width `fixed`), None -> both `fixed`.
+ */
+data class SetTextAutoResize(
+    override val nodeId: String,
+    val mode: io.aequicor.visualization.engine.ir.model.TextAutoResize,
+) : SlmEdit
+
+/**
+ * Writes text truncation as `text.maxLines` (+ `overflow: truncate` when ellipsis is on).
+ * A null [truncate] removes truncation by writing `overflow: visible` and dropping maxLines.
+ */
+data class SetTextTruncate(
+    override val nodeId: String,
+    val truncate: io.aequicor.visualization.engine.ir.model.TextTruncate?,
 ) : SlmEdit
 
 /** Writes `vector.viewBox: [x, y, w, h]` (creating the `vector:` block when absent). */

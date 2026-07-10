@@ -197,6 +197,10 @@ data class InstanceOverride(
     val visible: Bindable<Boolean>? = null,
     val characters: Bindable<String>? = null,
     val textStyle: DesignTextStyle? = null,
+    /** Replaces (does not merge with) the target text's [DesignNodeKind.Text.styleRanges]. */
+    val styleRanges: List<TextStyleRange>? = null,
+    /** Replaces (does not merge with) the target text's [DesignNodeKind.Text.links]. */
+    val links: List<TextLink>? = null,
     val cornerRadius: DesignCornerRadius? = null,
     /** Nested-instance overrides: applied when the target path ends at an instance. */
     val variant: Map<String, String>? = null,

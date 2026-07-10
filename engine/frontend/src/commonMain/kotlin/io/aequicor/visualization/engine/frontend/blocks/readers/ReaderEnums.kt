@@ -25,9 +25,12 @@ import io.aequicor.visualization.engine.ir.model.ScrollOverflow
 import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
+import io.aequicor.visualization.engine.ir.model.LeadingTrim
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextCase
+import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
+import io.aequicor.visualization.engine.ir.model.TextScriptPosition
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.TransitionType
@@ -149,12 +152,37 @@ internal object ReaderEnums {
         "upper" to TextCase.Upper,
         "lower" to TextCase.Lower,
         "title" to TextCase.Title,
+        "smallCaps" to TextCase.SmallCaps,
+        "smallcaps" to TextCase.SmallCaps,
+        "smallCapsForced" to TextCase.SmallCapsForced,
     )
 
     val textDecoration: Map<String, TextDecorationKind> = mapOf(
         "none" to TextDecorationKind.None,
         "underline" to TextDecorationKind.Underline,
         "strikethrough" to TextDecorationKind.Strikethrough,
+        "strike" to TextDecorationKind.Strikethrough,
+    )
+
+    val textDecorationStyle: Map<String, TextDecorationStyle> = mapOf(
+        "solid" to TextDecorationStyle.Solid,
+        "dashed" to TextDecorationStyle.Dashed,
+        "dotted" to TextDecorationStyle.Dotted,
+        "wavy" to TextDecorationStyle.Wavy,
+    )
+
+    val textScriptPosition: Map<String, TextScriptPosition> = mapOf(
+        "none" to TextScriptPosition.None,
+        "superscript" to TextScriptPosition.Superscript,
+        "super" to TextScriptPosition.Superscript,
+        "subscript" to TextScriptPosition.Subscript,
+        "sub" to TextScriptPosition.Subscript,
+    )
+
+    val leadingTrim: Map<String, LeadingTrim> = mapOf(
+        "none" to LeadingTrim.None,
+        "capHeight" to LeadingTrim.CapHeight,
+        "cap" to LeadingTrim.CapHeight,
     )
 
     val textListType: Map<String, TextListType> = mapOf(

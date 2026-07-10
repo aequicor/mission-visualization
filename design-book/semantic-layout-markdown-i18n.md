@@ -44,34 +44,284 @@ IR должен быть language-neutral.
 - быть независимым от renderer: Figma, React, HTML, Canvas, Native;
 - быть достаточно точным, чтобы описать финальный Figma-like screen/frame.
 
-## CNL: элементы предложениями
+## CNL: узел = предложение (основной формат авторинга)
 
-Поверх типизированных YAML-блоков SLM поддерживает **контролируемый естественный язык (CNL)**:
-элемент описывается одной строкой-**предложением** из фраз `ключевое-слово значение…` на русском
-или английском.
+**Контролируемый естественный язык (CNL)** — основной способ описывать вёрстку в SLM. Один
+узел — **одно предложение**: существительное (тип узла) + последовательность фраз
+`ключевое-слово значение…`. Дерево берётся из **вложенности markdown-заголовков**, а не из
+отступов. Язык авторинга — **английский** (i18n-рантайм — `sourceLocale`/`targetLocales`,
+ключи переводов — остаётся; см. [Две i18n-задачи](#две-i18n-задачи)).
 
 ```md
-## Панель миссий колонка отступ 16 паддинги 24 цвет #FFFFFF радиус 12
+## Mission panel  column gap 16 padding 24 color #FFFFFF radius 12
 
-Прямоугольник 120 на 15 цвет #00B843 радиус 15
-Текст «Активные миссии» размер 20 жирный цвет #0F172A
+Rectangle 120 by 15 color #00B843 radius 15
+Text «Active missions» size 20 bold color #0F172A
+Button «Create mission» size 16 bold color #22C55E
 ```
 
-- **Существительное** в начале строки задаёт тип узла (`прямоугольник|rectangle` → shape,
-  `текст|text`, `кнопка|button`, `контейнер|frame`, `изображение|image`, `иконка|icon`, …).
-- **Фразы-свойства**: размер (`120 на 15`), цвет (`цвет #00B843` / `$token`), радиус, поворот
-  (`30 градусов`), паддинги, отступ (gap), направление (`колонка|строка|сетка`), выравнивание в
-  родителе (`родительский контейнер вверх`), позиция, прозрачность; для текста — `размер N`,
-  `жирный`, `курсив`, а видимый текст в `«…»`/`"…"`.
-- **Контейнеры — заголовки** (`##`/`###`); заголовок может нести те же layout/style-фразы после
-  имени. Вложенность — уровнями заголовков.
+CNL при полном покрытии выражает **весь IR-паритет** для узла (это цель формата — см.
+[Итоговая формула](#итоговая-формула)): любое свойство пишется инлайновой фразой, при
+необходимости — со структурным значением в круглых скобках `( … )`. Реализация — пакет
+`engine/frontend/.../cnl/`.
 
-CNL **разворачивается в те же типизированные патчи** (`node`/`shape`/`layout`/`style`/`text`), что и
-явные YAML-блоки, и **сосуществует** с ними: явный блок остаётся точным/escape-слоем и имеет
-приоритет. Реализация — пакет `engine/frontend/.../cnl/` (`CnlVocabulary`, `CnlParser`,
-`CnlDiagnostics`); write-back правит предложение хирургически (`edit/CnlWriter`). Полный словарь,
-примеры-экраны и каталог ошибок — в `SLM-SKILL.md` (генерация экранов моделью, напр. DeepSeek).
-Диагностики CNL самообъясняющие: `[CNL:<rule>] … Правило … Как исправить …`.
+### Двунаправленность
+
+CNL — не «shorthand поверх YAML», а **двусторонний** формат:
+
+- **понимать** (`parse`): CNL → IR (`CnlParser`, десугар в типизированные патчи);
+- **генерировать** (`emit`): IR → CNL детерминированно (`CnlEmitter`) — используется для
+  write-back новых узлов, регенерации документа и тестов;
+- **обновлять** (`write-back`): правка редактора хирургически патчит предложение
+  (`edit/CnlWriter`), при неизбежности — перегенерирует всё предложение эмиттером.
+
+Единый источник истины — реестр `CnlGrammar` (`Descriptor(kind, keyword, order, render)`):
+одно ключевое слово работает в обе стороны, поэтому держится инвариант
+`parse(emit(node)) ≡ node` (round-trip) и идемпотентность `emit`. Генерация
+**детерминированная** (код, а не языковая модель). Диагностики самообъясняющие:
+`[CNL:<rule>] … Правило … Как исправить …`.
+
+### Существительные (тип узла)
+
+Только в начале предложения:
+
+| Существительное | Узел |
+| --- | --- |
+| `Rectangle` (`Rect`), `Ellipse` (`Circle`), `Line`, `Star`, `Polygon`, `Arrow` | shape |
+| `Text` (`Label`) | текст |
+| `Button` | текст с ролью `button` |
+| `Frame` (`Container`), `Group` | контейнер |
+| `Image` | media |
+| `Vector` (`Icon`) | вектор/иконка |
+| `Instance` | инстанс компонента |
+
+**Контейнеры — это заголовки** `##`/`###`: заголовок несёт имя и те же layout/style-фразы
+после имени; вложенность даёт дерево. Видимый текст узла — в `«…»` (или `"…"`). Явный
+`id <nodeId>` пишет только структурный райтер (id-стабильные вставки), в ручном авторинге не
+нужен.
+
+### Значения и токены
+
+| Форма | Значение |
+| --- | --- |
+| `12`, `0.5`, `-8` | число (хвостовой `.0` опускается) |
+| `#RRGGBB`, `#RRGGBBAA` | цвет (альфа — когда ≠ FF) |
+| `$id`, `$color.accent` | ссылка на переменную (var-ref) |
+| `{{expr}}` | data-binding (выражение) |
+| `«text»` | строковый литерал (текст, имя ассета, URL) |
+| `1fr`, `2fr` | flex-трек grid; `hug` — трек по содержимому |
+| `140%` | доля (line-height/tracking) |
+| `( … )` | **структурная группа** (см. ниже) |
+
+### Группы `( … )` и локальный scope
+
+Богатые свойства пишутся группой. **Ключевое правило (keystone): под-ключи внутри `( )`
+резолвятся ЛОКАЛЬНОй таблицей своего бакета и не «утекают» на уровень узла.** Например
+`opacity`/`blend` внутри `color ( … )` — свойства этой заливки, а не узла; `duration` внутри
+`animate ( … )` — параметр перехода, а не отдельная фраза. Группы вложены рекурсивно
+(`stops (#hex at 0) (#hex at 1)`, `frames (0 rotation 0) (1 rotation 360)`).
+
+### Каталог фраз (проверено round-trip-тестами)
+
+**Геометрия и трансформация**
+
+```md
+Rectangle 520 by 8 color #22C55E radius 4
+Rectangle 40 by 40 color #2563EB opacity 0.5 rotation 30
+Rectangle 120 by 80 color #111827 radius (12 12 0 0) smoothing 0.6 blend multiply
+```
+`W by H` (fixed) · `radius N` / `radius (tl tr br bl)` · `smoothing N` · `opacity N|$id|{{expr}}`
+· `rotation N` · `position x y` · `blend <mode>`.
+
+**Размеры (sizing-режимы)**
+
+```md
+Rectangle width (fill min 320 max 520) height hug
+Rectangle width (fixed 200 min 100) height (fill max 400)
+```
+`width|height fixed|hug|fill` или группа `(fixed N min N max N)`.
+
+**Заливки (fills)** — можно несколько подряд (стек по порядку IR)
+
+```md
+Rectangle 40 by 40 color #FF0000 color #00FF0080
+Rectangle 40 by 40 color $color.accent
+Rectangle 40 by 40 color (#4F46E5 opacity 0.5 blend multiply visible no)
+Rectangle 200 by 120 gradient (linear from (0 0) to (0 1) stops (#4F46E5 at 0) (#9333EA at 1))
+Rectangle 300 by 200 image (asset «hero.jpg» crop focus (0.5 0.5) replaceable)
+Rectangle 300 by 200 video (asset «promo.mp4» poster «promo.jpg» autoplay loop muted no)
+```
+`color <token>` (solid) · per-fill `color (<token> opacity N blend M visible no)` ·
+`gradient (linear|radial|angular|diamond from (x y) to (x y) stops (<token> at p) …)` ·
+`image (asset «id» fit|crop|tile|stretch focus (x y) replaceable)` ·
+`video (asset «id» poster «id» autoplay loop muted no)`.
+
+**Обводки (strokes) и эффекты**
+
+```md
+Rectangle 96 by 32 color #14532D stroke #1F2937 2 outside
+Rectangle 40 by 40 stroke (color #4F46E5 color $accent weight 2 align outside dash (4 2) cap round join round)
+Rectangle 40 by 40 color #FFFFFF effect (dropShadow color #00000040 offset (0 2) blur 8)
+Rectangle 40 by 40 effect (innerShadow color $shadow offset (0 1) blur 4 spread 1) effect (backgroundBlur 12)
+```
+Тривиальная обводка: `stroke <token> [weight] [outside|center]`. Запись:
+`stroke (color … weight N align … dash (…) cap butt|round|square join miter|round|bevel)`.
+Эффекты (повторяются): `effect (dropShadow|innerShadow color <token> offset (x y) blur N spread N)`,
+`effect (layerBlur N)`, `effect (backgroundBlur N)`.
+
+**Общие (shared) стили**
+
+```md
+Frame styles (fill card.primary effect shadow.card grid layout.12col)
+```
+
+**Auto-layout контейнера**
+
+```md
+Frame column align (inline stretch) distribute space-between wrap clip
+Frame grid gap (row 24 column 24)
+Frame row gap auto
+```
+Направление: `column|row|grid|free`. `gap N` / `gap auto` / `gap (row N column N)`.
+`padding N` / `padding v h` / `padding t r b l`. `align (inline start|center|end|stretch
+block … baseline last)`. `distribute center|end|space-between`. `wrap` · `clip`.
+
+**Позиционирование ребёнка и constraints**
+
+```md
+Frame absolute anchor (inlineEnd 4 blockStart 4) width (fixed 8) height (fixed 8)
+Rectangle 40 by 40 constraints (horizontal left-right vertical scale)
+```
+`absolute` · `anchor (inlineStart|inlineEnd|blockStart|blockEnd N …)` ·
+`constraints (horizontal left|right|center|left-right|scale vertical top|bottom|center|top-bottom|scale)`
+· краткое выравнивание в родителе `align center|bottom|right`.
+
+**Grid**
+
+```md
+Frame grid columns (count 12 track 1fr) rows (auto min 96) gap (row 24 column 24)
+Rectangle place (column 1 row 1 columnSpan 8 rowSpan 2)
+Frame guides (vertical 72) (horizontal 120) grids (columns count 12 gutter 24 margin 72 alignment stretch color #EEEEEE)
+Frame overflow (x hidden y auto) scroll (direction vertical fixedChildren (missionPanelHeader))
+```
+
+**Типографика (Text)**
+
+```md
+Text «Active missions» size 20 bold color #F8FAFC
+Text «Ship status» font «Inter Display» line-height 140% tracking 0.5 paragraph-spacing 8 text-align center text-valign top case upper decoration underline
+Text «Metrics» features (liga on) (tnum off) axes (opsz 28) (wght 620) autosize height truncate 2 list (bullet indent 1)
+Text «Caption» line-height 20 decoration strikethrough case title text-align justified maxLines 3 text-style $body
+```
+`size N` · веса `bold|semibold|thin` · `font «…»` · `line-height N|N%` · `tracking N|N%` ·
+`paragraph-spacing N` · `text-align left|center|right|justified` · `text-valign top|center|bottom` ·
+`case upper|lower|title` · `decoration underline|strikethrough` · `features (<tag> on|off) …` ·
+`axes (<tag> N) …` · `autosize height|both` · `truncate N` · `maxLines N` ·
+`list (bullet|ordered indent N)` · `text-style $id` · `key <i18nKey>` (обычно ключи
+генерируются автоматически).
+
+**Ссылки в тексте**
+
+```md
+Text «Read more» link (range (0 9) url «https://a.co»)
+Text «Open cart» link (range (0 9) to checkout)
+```
+
+**Компоненты (сторона инстанса)**
+
+```md
+Instance of ds/Button variant (size md tone primary) props (label «Save» loading true count 3)
+Instance of ds/Button library acme/ui props (total {{cart.total}} icon (swap ds/Icon/Check))
+Instance of ds/Card slot actions (ds/Button props (label «Save»)) (ds/Button props (label «Cancel»)) nested title (variant (size sm) props (text «Overview»))
+Instance of ds/Card detach reset
+```
+`of <ref>` · `library <id>` · `variant (axis value …)` · `props (name «text» | name true |
+name N | name {{expr}} | name (swap <ref>) | name (text «…» key <id>))` · `detach` · `reset` ·
+`slot <name> (<ref> props (…)) …` · `nested <path> (variant (…) props (…))`.
+
+**Медиа-узел**
+
+```md
+Image media (asset media/hero video crop focus center alt «Hero banner» opacity 0.85 blend multiply poster media/hero_thumb autoplay loop unmuted)
+Image media (asset icons/avatar fit)
+```
+
+**Фигуры и вектор**
+
+```md
+Star points 5 inner 0.45
+Vector viewbox (0 0 24 24) icon ds/Icon/Plus
+Vector viewbox (0 0 24 24) path «M4 12L20 12» path «M12 4L12 20» evenodd
+Vector network (vertex (0 0 corner) vertex (24 0) vertex (24 24 in (-8 0) out (8 0) mirror angle) segment (0 1) segment (1 2) segment (2 0) region evenodd loops (0 1 2))
+Frame boolean subtract
+```
+`points N` · `inner F` · `viewbox (x y w h)` · `icon <ref>` · `svg <ref>` ·
+`path «d» [evenodd] …` · `network ( vertex ( x y [in (dx dy)] [out (dx dy)]
+[mirror angle|angleAndLength] [corner] ) … segment (from to) … region [evenodd] loops (i …) )` ·
+`boolean union|subtract|intersect|exclude`.
+
+**Маска**
+
+```md
+Rectangle mask alpha clips (title_bar hero_image)
+Ellipse mask luminance
+```
+
+**Интеракции и motion**
+
+```md
+Button onClick navigate (home) animate (type smartAnimate duration 400)
+Frame onKey (Enter) setVariable (isOpen) to (true) closeOverlay
+Rectangle onClick openOverlay (menu) overlay (position bottomCenter closeOnOutside false) whileHovering changeToVariant (self) variant (state hover)
+Frame afterDelay (3000) navigate (splash) animate (easing spring stiffness 120 damping 14 duration 500)
+Vector motion (loader) duration 800 loop frames (0 rotation 0) (1 rotation 360)
+```
+Триггеры (каждый начинает отдельную интеракцию): `onClick|onHover|onPress|onDrag|onKey (Key)|
+afterDelay (ms)|whileHovering|whilePressed|onVariableChange (var)`. Действия:
+`navigate (dest)|back|openOverlay (id)|swapOverlay (id)|closeOverlay|openLink (url)|
+scrollTo (id)|setVariable (v) to (val)|changeToVariant (target) variant (…)|runActionSet (id)`.
+Переход: `animate (type smartAnimate|dissolve|push|… direction … duration N)` или
+`animate (easing spring stiffness N damping N mass N duration N)`; `animated (false)`; overlay —
+`overlay (position … closeOnOutside false background …)`. Motion:
+`motion (<ref>) duration N loop frames (t <prop> <val> …) …`.
+
+**Data-binding**
+
+```md
+Rectangle 120 by 40 color {{theme.bg}}
+Rectangle 120 by 40 color ({{theme.bg}} opacity 0.5)
+Rectangle 120 by 40 color #FFFFFF opacity $anim.fade
+```
+
+**Отзывчивость, экспорт, handoff**
+
+```md
+Frame column gap 12 when (breakpoint sm) column gap 8
+Frame when (platform ios density high) radius 12 when (breakpoint lg) row gap 24
+Image export (png at 2 «@2x») (svg)
+Rectangle 40 by 40 note «Keep 8pt spacing» (target card audience dev) measure (from title to cta inline value 16) code (framework «Compose» component «MissionCard»)
+```
+`when (dim value [dim value …]) <фразы>` — `dim` ∈ `breakpoint|theme|platform|density|locale`
+(повторяется). `export (png|svg|jpg|pdf [at N] [«suffix»]) …` / `export off`. `note`/`measure`/
+`code` — авторятся, но поднимаются в `DesignDocument.handoff` (per-node не эмитятся обратно).
+
+### Статус и сосуществование с YAML
+
+- **Готово (в `main`):** двусторонняя грамматика всех нод-уровневых бакетов выше
+  (`parse` + `emit` + write-back).
+- **Пока авторится YAML (в миграции):** словари уровня документа — **variable collections**,
+  **component definitions**, **shared styles** (не свойства узла, а `DesignDocument.{variables,
+  components,styles}`), а также несколько reader-gap'ов (гетерогенные grid-треки,
+  `weightPerSide`, per-node `variableModes`, `overrides.set`, rich-text style-спаны, `$ref` в
+  literal-only слотах и др.). План их переноса и удаления YAML/`ir`-авторинга — в
+  [4-ОСТАЛОСЬ](../4-ОСТАЛОСЬ.md); цель — в [1-ЦЕЛЬ](../1-ЦЕЛЬ.md).
+- **Внутренняя машинерия (не авторинг):** CNL десугарит в те же типизированные патчи
+  (`node`/`layout`/`style`/`text`/…) через block-readers — они остаются как внутренний
+  compile-путь, но **не** как поверхность авторинга. Frontmatter остаётся YAML (метаданные).
+  Типизированные YAML-блоки и `ir` как способ **авторинга** — легаси, выводятся из
+  употребления.
+
+Полный словарь для генерации экранов моделью и каталог ошибок — в `SLM-SKILL.md`.
 
 ## Уровни полноты
 
@@ -87,25 +337,36 @@ SLM не должен моделировать историю версий, mult
 permissions or product rollout. Он должен уметь описать финальный экран,
 который можно воспроизвести в Figma-like renderer или другом UI renderer.
 
-## Два режима authoring
+## Слои authoring
 
-SLM имеет два совместимых режима:
+SLM различает слои авторинга (от свободного к точному):
 
 ```text
 1. Semantic shorthand
-   Markdown and natural language for common product UI.
+   Markdown и естественный язык для смысла экрана (sections, actions, bindings).
 
-2. Explicit declarative blocks
-   Typed attributes for exact Figma-like properties.
+2. CNL — узел = предложение
+   Точный слой на IR-паритете. Основной формат авторинга вёрстки.
+
+3. Typed YAML blocks / ```ir  (легаси)
+   Внутренняя типизированная форма, в которую CNL десугарит. Как поверхность
+   АВТОРИНГА — выводится из употребления (см. миграцию).
 ```
 
-Natural language удобен для частых паттернов:
+Semantic shorthand удобен для частых паттернов:
 
 ```md
 Верхняя панель: заголовок Mission Control, справа основная кнопка [Создать миссию](/missions/new).
 ```
 
-Typed blocks нужны для полноты:
+Точные свойства задаёт **CNL-предложение** (контейнер — заголовок с фразами после имени):
+
+```md
+## CTA Card  row distribute space-between align (block center) padding 24 gap 12 width fill height hug color $color.surface radius 12 styles (effect shadow.card)
+```
+
+Под капотом это разворачивается в те же типизированные патчи — раньше их писали YAML-блоком
+напрямую (легаси-форма, эквивалент строки выше):
 
 ```md
 ## CTA Card
@@ -130,14 +391,14 @@ style:
     - style: shadow.card
 ```
 
-Правило приоритета:
+Правило приоритета (на уровне патчей, куда десугарят и CNL, и легаси-блоки):
 
 ```text
-explicit block > frontmatter defaults > semantic extraction > renderer defaults
+явный патч (CNL / typed-block) > frontmatter defaults > semantic extraction > renderer defaults
 ```
 
-Если explicit block конфликтует с natural-language extraction, compiler должен
-использовать explicit block и выдать diagnostic с source map.
+Если явный патч конфликтует с natural-language extraction, compiler использует явный патч и
+выдаёт diagnostic с source map.
 
 ## Pipeline
 
@@ -232,6 +493,14 @@ Frontmatter может задавать только screen-level defaults. То
 узлом.
 
 ## Typed Attribute Blocks
+
+> **Статус.** Типизированные блоки — это **внутренняя типизированная модель**, в которую
+> десугарит [CNL](#cnl-узел--предложение-основной-формат-авторинга); block-readers и эта
+> схема остаются как compile-путь. Как **поверхность авторинга** (писать YAML-блоки/`ir`
+> руками) они легаси и выводятся из употребления — новый код авторится CNL-предложениями.
+> Разделы ниже описывают семантику каждого ключа (это же — контракт соответствующих
+> CNL-фраз). Исключения, которые пока авторятся именно так: словари уровня документа
+> (`variables`/`component`-definition/`styles`) и часть reader-gap'ов — см. миграцию.
 
 Typed attribute block - это YAML-like блок с зарезервированным top-level ключом,
 который относится к ближайшему предыдущему heading, list item, image, table or
@@ -793,14 +1062,24 @@ text:
   typography:
     fontFamily: Inter
     fontWeight: 700
+    italic: false
     fontSize: 24
-    lineHeight: 32
+    lineHeight: 32            # bare number = px; {unit: percent, value: 135} = %; omit = Auto
     letterSpacing: 0
     paragraphSpacing: 0
+    paragraphIndent: 0
     horizontalAlign: start
     verticalAlign: center
-    decoration: none
-    case: none
+    decoration: none          # none | underline | strikethrough
+    decorationStyle: solid    # solid | dashed | dotted | wavy
+    decorationColor: "#3366FF"  # omit = follows the glyph color
+    decorationThickness: 1    # px number, or {unit: percent, value}; omit = auto
+    decorationSkipInk: false
+    case: none                # none | upper | lower | title | smallCaps | smallCapsForced
+    position: none            # none | superscript | subscript
+    leadingTrim: none         # none | capHeight
+    hangingPunctuation: false
+    hangingList: false
     openType:
       liga: true
       tnum: true
@@ -814,7 +1093,9 @@ text:
   overflow: truncate
 ```
 
-Rich text spans:
+Rich text spans — each span carries a `range: [start, end]` (or `text:` substring matched
+against `defaultText`) plus any of a shared `style:` ref, an inline `typography:` map, inline
+`fills:`, and a `link:`. Offsets index the source-locale `defaultText`.
 
 ```md
 text:
@@ -822,7 +1103,11 @@ text:
   defaultText: "Проверьте SLA перед запуском миссии."
   spans:
     - range: [0, 10]
-      style: typography.body.strong
+      typography:
+        fontWeight: 700
+        italic: true
+      fills:
+        - "#FF3366"
     - text: SLA
       link:
         type: url
@@ -1165,6 +1450,11 @@ history, permissions, billing, branch state and multiplayer comments remain out
 of scope.
 
 ## Exact IR Escape Hatch
+
+> **Deprecated.** Цель формата — **полный IR-паритет в CNL без escape-люка** (см.
+> [1-ЦЕЛЬ](../1-ЦЕЛЬ.md)). `ir` как способ авторинга выводится из употребления и будет
+> удалён; новые фичи закрываются CNL-фразами и, при необходимости, расширением ридеров/IR,
+> а не встраиванием сырого JSON. Раздел оставлен как исторический контекст.
 
 Rare unsupported cases can embed exact IR:
 
@@ -1697,7 +1987,7 @@ Semantic Layout Markdown with i18n =
   Markdown-first authoring
   + minimal formal expressions
   + multilingual semantic extraction
-  + explicit typed attribute blocks
+  + CNL (узел = предложение) на полном IR-паритете
   + language-neutral JSON IR
   + Figma-like screen node/property schema
   + generated i18n resources
@@ -1710,6 +2000,7 @@ Semantic Layout Markdown with i18n =
 интерфейса.
 
 Для обычных product screens автор пишет почти обычный Markdown. Для точного
-воспроизведения Figma-like screen он добавляет typed blocks, которые фиксируют
-layout, visual style, typography, components, assets, interactions and export
-metadata без бесконечного расширения natural-language словаря.
+воспроизведения Figma-like screen он уточняет каждый узел **CNL-предложением** —
+одна строка фиксирует layout, visual style, typography, components, assets,
+interactions and export metadata на IR-паритете, без сырого JSON и без второго
+(YAML-)синтаксиса авторинга.

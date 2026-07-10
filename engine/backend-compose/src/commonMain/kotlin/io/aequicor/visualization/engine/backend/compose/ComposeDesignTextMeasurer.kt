@@ -1,103 +1,47 @@
 package io.aequicor.visualization.engine.backend.compose
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.TextUnit
 import io.aequicor.visualization.engine.ir.layout.DesignTextMeasurer
 import io.aequicor.visualization.engine.ir.layout.MeasuredText
 import io.aequicor.visualization.engine.ir.model.DesignColor
-import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
-import io.aequicor.visualization.engine.ir.model.TextCase
-import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedText
-import io.aequicor.visualization.engine.ir.resolve.ResolvedTextStyle
-import kotlin.math.ceil
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.FontProvider
+import io.aequicor.visualization.subsystems.typography.compose.NoFonts
 
 /**
- * Bridges the pure layout engine to Compose text measurement. Document px map 1:1
- * to draw px (the artboard canvas applies the zoom transform), so font sizes are
- * converted with `toSp()` against the current density.
+ * Bridges the pure layout engine to the typography subsystem's Compose measurer.
+ * Document px map 1:1 to draw px (the artboard canvas applies the zoom transform),
+ * and the subsystem's paragraph-stacked layout supplies real per-line baselines.
  */
 class ComposeDesignTextMeasurer(
-    private val textMeasurer: TextMeasurer,
-    private val density: Density,
+    /** Shared with the draw path so measured and painted layouts hit the same cache. */
+    val typography: ComposeTypographyMeasurer,
 ) : DesignTextMeasurer {
+
+    constructor(
+        textMeasurer: TextMeasurer,
+        density: Density,
+        fontProvider: FontProvider = NoFonts,
+    ) : this(ComposeTypographyMeasurer(textMeasurer, density, fontProvider))
+
     override fun measure(text: ResolvedText, maxWidth: Double?): MeasuredText {
-        val result = measureResolvedText(
-            measurer = textMeasurer,
-            density = density,
-            text = text,
-            color = Color.Black,
-            maxWidth = maxWidth,
+        val measured = typography.measure(text.toRichText(), maxWidth)
+        return MeasuredText(
+            width = measured.width,
+            height = measured.height,
+            lineCount = measured.lineCount.coerceAtLeast(1),
+            firstBaseline = measured.firstBaseline,
+            lastBaseline = measured.lastBaseline,
         )
-        return MeasuredText(result.size.width.toDouble(), result.size.height.toDouble())
     }
 
-    /** Real first-line baseline from the measured paragraph, not the 0.8em default. */
-    override fun firstBaseline(text: ResolvedText, maxWidth: Double?): Double {
-        val result = measureResolvedText(
-            measurer = textMeasurer,
-            density = density,
-            text = text,
-            color = Color.Black,
-            maxWidth = maxWidth,
-        )
-        if (result.lineCount == 0) return text.style.fontSize * 0.8
-        return result.getLineBaseline(0).toDouble()
-    }
-}
-
-internal fun measureResolvedText(
-    measurer: TextMeasurer,
-    density: Density,
-    text: ResolvedText,
-    color: Color,
-    maxWidth: Double? = null,
-    exactWidth: Boolean = false,
-): TextLayoutResult {
-    val truncate = text.truncate
-    val constraints = when {
-        maxWidth == null -> Constraints()
-        exactWidth -> {
-            val width = ceil(maxWidth).toInt().coerceAtLeast(0)
-            Constraints(minWidth = width, maxWidth = width)
-        }
-        else -> Constraints(maxWidth = ceil(maxWidth).toInt().coerceAtLeast(0))
-    }
-    return measurer.measure(
-        text = text.toAnnotatedString(density, color),
-        style = text.style.toTextStyle(density, color),
-        overflow = if (truncate?.ellipsis == true) TextOverflow.Ellipsis else TextOverflow.Clip,
-        softWrap = maxWidth != null,
-        maxLines = truncate?.maxLines ?: Int.MAX_VALUE,
-        constraints = constraints,
-    )
-}
-
-internal fun ResolvedText.toAnnotatedString(density: Density, baseColor: Color): AnnotatedString {
-    val transformed = style.textCase.apply(characters)
-    return buildAnnotatedString {
-        append(transformed)
-        ranges.forEach { range ->
-            val start = range.start.coerceIn(0, transformed.length)
-            val end = range.end.coerceIn(start, transformed.length)
-            if (end > start) {
-                addStyle(range.style.toSpanStyle(density, range.fills.firstSolidColor() ?: baseColor), start, end)
-            }
-        }
-    }
+    override fun firstBaseline(text: ResolvedText, maxWidth: Double?): Double =
+        typography.measure(text.toRichText(), maxWidth).firstBaseline
+            ?: (text.style.fontSize * 0.8)
 }
 
 internal fun List<ResolvedPaint>?.firstSolidColor(): Color? =
@@ -114,49 +58,3 @@ internal fun DesignColor.toComposeColor(): Color =
         blue = blue / 255f,
         alpha = alpha / 255f,
     )
-
-internal fun ResolvedTextStyle.toTextStyle(density: Density, color: Color): TextStyle =
-    TextStyle(
-        color = color,
-        fontSize = fontSize.toSp(density),
-        fontWeight = FontWeight(fontWeight.coerceIn(1, 1000)),
-        letterSpacing = if (letterSpacing != 0.0) letterSpacing.toSp(density) else TextUnit.Unspecified,
-        lineHeight = if (lineHeight > 0.0) lineHeight.toSp(density) else TextUnit.Unspecified,
-        textAlign = when (textAlignHorizontal) {
-            TextAlignHorizontal.Left -> TextAlign.Left
-            TextAlignHorizontal.Center -> TextAlign.Center
-            TextAlignHorizontal.Right -> TextAlign.Right
-            TextAlignHorizontal.Justified -> TextAlign.Justify
-        },
-        textDecoration = when (textDecoration) {
-            TextDecorationKind.None -> TextDecoration.None
-            TextDecorationKind.Underline -> TextDecoration.Underline
-            TextDecorationKind.Strikethrough -> TextDecoration.LineThrough
-        },
-    )
-
-private fun ResolvedTextStyle.toSpanStyle(density: Density, color: Color): SpanStyle =
-    SpanStyle(
-        color = color,
-        fontSize = fontSize.toSp(density),
-        fontWeight = FontWeight(fontWeight.coerceIn(1, 1000)),
-        letterSpacing = if (letterSpacing != 0.0) letterSpacing.toSp(density) else TextUnit.Unspecified,
-        textDecoration = when (textDecoration) {
-            TextDecorationKind.None -> null
-            TextDecorationKind.Underline -> TextDecoration.Underline
-            TextDecorationKind.Strikethrough -> TextDecoration.LineThrough
-        },
-    )
-
-private fun Double.toSp(density: Density): TextUnit =
-    with(density) { toFloat().toSp() }
-
-private fun TextCase.apply(value: String): String =
-    when (this) {
-        TextCase.None -> value
-        TextCase.Upper -> value.uppercase()
-        TextCase.Lower -> value.lowercase()
-        TextCase.Title -> value.split(' ').joinToString(" ") { word ->
-            word.replaceFirstChar { it.uppercaseChar() }
-        }
-    }
