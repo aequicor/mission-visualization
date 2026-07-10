@@ -545,10 +545,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             }
                         }
                     }
-                    // Press / drag / tap. `viewport` is intentionally not a key — see the
-                    // rememberUpdatedState comment above; an in-flight zoom animation would
-                    // otherwise cancel any drag/resize/rotate gesture in progress every frame.
-                    .pointerInput(pageId, ws.tool, design.selectedNodeId, design.selectedNodeIds, spaceHeld) {
+                    // Press / drag / tap. `viewport` and selection are intentionally not keys:
+                    // both are re-read from `state` at press time, and selecting a previously
+                    // unselected node on pointer-down must not restart this handler and cancel
+                    // the drag that began with the same press.
+                    .pointerInput(pageId, ws.tool, spaceHeld) {
                         val slop = viewConfiguration.touchSlop
                         awaitEachGesture {
                             val gestureStart = awaitCanvasGestureStart()
@@ -596,7 +597,6 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // Own rotation drives the rotate-gesture baseline and the resize position
                             // shift (root-local); the ancestor rotation is undone separately for moves.
                             val selectionRotation = if (isSingleSelection) primaryBox?.node?.rotation ?: 0.0 else 0.0
-                            val ancestorRotation = if (isSingleSelection) primaryPath?.let { ancestorRotationDegrees(ancestorRotationsOf(it)) } ?: 0.0 else 0.0
                             // Handle geometry (where handles/affordance are drawn and grabbed) uses the
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
@@ -626,6 +626,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // the nested element) nor on a shift-add.
                             if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !shiftHeld) {
                                 state.dispatch(DesignEditorIntent.SelectNode(hitId))
+                            }
+                            // Selection may have changed on this very down event. Resolve the move frame
+                            // from that live selection too, otherwise the first drag could inherit the
+                            // previously selected node's rotated ancestor coordinate system.
+                            val moveAncestorRotation = if (mode == CanvasOperation.Move) {
+                                val moveDesign = state.designState
+                                moveDesign.selectedNodeId
+                                    .takeIf { moveDesign.selectedNodeIds.size == 1 && it.isNotBlank() }
+                                    ?.let { pressLayout?.pathToSourceId(it) }
+                                    ?.let { ancestorRotationDegrees(ancestorRotationsOf(it)) }
+                                    ?: 0.0
+                            } else {
+                                0.0
                             }
                             val moveStartPositions = if (mode == CanvasOperation.Move) {
                                 state.designState.selectedNodeIds.mapNotNull { id ->
@@ -819,8 +832,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         // The drag is measured in the document (screen) frame, but a node's
                                         // position lives in the shared root-local frame; under a rotated
                                         // ancestor undo that rotation so the node tracks the pointer. Snapping
-                                        // is gated to ancestorRotation == 0, so when it runs this is identity.
-                                        val local = if (ancestorRotation != 0.0) rotateVector(totalDx, totalDy, -ancestorRotation) else GeoPoint(totalDx, totalDy)
+                                        // is gated to moveAncestorRotation == 0, so when it runs this is identity.
+                                        val local = if (moveAncestorRotation != 0.0) {
+                                            rotateVector(totalDx, totalDy, -moveAncestorRotation)
+                                        } else {
+                                            GeoPoint(totalDx, totalDy)
+                                        }
                                         // Read the live selection: a new node may have been selected on press.
                                         state.dispatch(DesignEditorIntent.MoveNodes(state.designState.selectedNodeIds, local.x - appliedDx, local.y - appliedDy))
                                         appliedDx = local.x
