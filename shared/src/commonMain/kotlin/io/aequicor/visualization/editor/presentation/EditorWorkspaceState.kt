@@ -135,7 +135,9 @@ enum class InspectorSection(val label: CompactLabel) {
 
 /** Minimum and maximum panel widths (dp) used by the splitter drag clamps. */
 object WorkspaceLimits {
-    const val MinPanelDp: Float = 220f
+    /** Keeps the project button and all three source-tab captions visible without ellipsis. */
+    const val MinSourceDp: Float = 240f
+    const val MinInspectorDp: Float = 220f
     const val MaxSourceDp: Float = 640f
     const val MaxInspectorDp: Float = 380f
     const val DefaultSourceDp: Float = 440f
