@@ -96,6 +96,7 @@ import kotlin.time.TimeSource
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.AncestorRotation
 import io.aequicor.visualization.editor.presentation.BoundsBox
+import io.aequicor.visualization.editor.presentation.CanvasParentFrame
 import io.aequicor.visualization.editor.presentation.CanvasOperation
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
@@ -159,6 +160,7 @@ import io.aequicor.visualization.editor.presentation.measureGaps
 import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
+import io.aequicor.visualization.editor.presentation.reparentPlacementWhenMovedOutside
 import io.aequicor.visualization.editor.presentation.resizeCursorKindForHandle
 import io.aequicor.visualization.editor.presentation.rotateAffordancePoint
 import io.aequicor.visualization.editor.presentation.rotatePointAroundCenter
@@ -178,6 +180,7 @@ import io.aequicor.visualization.engine.ir.geometry.meetFit
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.ShapeType
@@ -672,6 +675,16 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     originalIndex = flowChildren.indexOfFirst { child -> child.node.sourceId == singleId },
                                 )
                             }
+                            // A single-node move may leave its immediate container. Capture the
+                            // visual transform and ancestor frames once so release can promote a
+                            // free or Auto layout flow child without depending on recomposition.
+                            val moveReparentBaseline = if (mode == CanvasOperation.Move) {
+                                state.designState.selectedNodeIds.singleOrNull()?.let { id ->
+                                    buildMoveReparentBaseline(pressDocument, pressLayout, id)
+                                }
+                            } else {
+                                null
+                            }
                             // Beautiful-anchor candidates for a free move (not a reorder): the dragged
                             // selection's start union bounds, its sibling peers, and the containers to
                             // anchor against — the immediate parent frame plus its unrotated ancestors
@@ -755,6 +768,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // — the incremental MoveNodes model can't stably snap a raw per-frame delta.
                             var appliedDx = 0.0
                             var appliedDy = 0.0
+                            // Final snapped displacement in the visual/document frame. Unlike
+                            // appliedDx/Y this is not inverse-rotated into the old parent's frame.
+                            var appliedVisualDx = 0.0
+                            var appliedVisualDy = 0.0
                             // Sticky-snap latches carried across this gesture's frames (hysteresis).
                             var moveSnapState = MoveSnapState.None
                             var resizeSnapState = ResizeSnapState.None
@@ -800,9 +817,26 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         badge = "${(abs(end.x - start.x) / zoomPx).roundToInt()} x ${(abs(end.y - start.y) / zoomPx).roundToInt()}"
                                     }
                                     CanvasOperation.Move -> if (reorderBaseline != null) {
-                                        val pointerMain = if (reorderBaseline.horizontal) viewport.toDocX(pos.x) else viewport.toDocY(pos.y)
-                                        val index = flowInsertionIndex(reorderBaseline.siblings, pointerMain, reorderBaseline.horizontal)
-                                        reorderPreview = ReorderPreview(reorderBaseline, index)
+                                        appliedVisualDx = (accX / zoomPx).toDouble()
+                                        appliedVisualDy = (accY / zoomPx).toDouble()
+                                        val outsideParent = moveReparentBaseline?.let { baseline ->
+                                            reparentPlacementWhenMovedOutside(
+                                                movedVisual = baseline.startVisual.copy(
+                                                    box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
+                                                ),
+                                                currentParent = baseline.currentParent,
+                                                upperParents = baseline.upperParents,
+                                            )
+                                        } != null
+                                        if (outsideParent) {
+                                            // Outside the flow container the drop means detach + promote,
+                                            // not a reorder at the nearest edge.
+                                            reorderPreview = null
+                                        } else {
+                                            val pointerMain = if (reorderBaseline.horizontal) viewport.toDocX(pos.x) else viewport.toDocY(pos.y)
+                                            val index = flowInsertionIndex(reorderBaseline.siblings, pointerMain, reorderBaseline.horizontal)
+                                            reorderPreview = ReorderPreview(reorderBaseline, index)
+                                        }
                                         badge = null
                                     } else {
                                         val rawDx = (accX / zoomPx).toDouble()
@@ -843,6 +877,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         state.dispatch(DesignEditorIntent.MoveNodes(state.designState.selectedNodeIds, local.x - appliedDx, local.y - appliedDy))
                                         appliedDx = local.x
                                         appliedDy = local.y
+                                        appliedVisualDx = totalDx
+                                        appliedVisualDy = totalDy
                                         snapGuides = snap?.guides ?: emptyList()
                                         spacingBars = snap?.spacing ?: emptyList()
                                         dragMoveActive = true
@@ -950,7 +986,35 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         state.updateWorkspace { it.copy(tool = EditorTool.Select) }
                                     }
                                     CanvasOperation.Move -> {
-                                        if (moved && reorderBaseline != null) {
+                                        val reparent = moveReparentBaseline?.takeIf { moved }?.let { baseline ->
+                                            reparentPlacementWhenMovedOutside(
+                                                movedVisual = baseline.startVisual.copy(
+                                                    box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
+                                                ),
+                                                currentParent = baseline.currentParent,
+                                                upperParents = baseline.upperParents,
+                                            )?.let { placement -> baseline to placement }
+                                        }
+                                        if (reparent != null) {
+                                            val (baseline, placement) = reparent
+                                            val currentRotation = state.designState.document
+                                                ?.nodeById(baseline.nodeId)
+                                                ?.rotation
+                                            state.dispatch(
+                                                DesignEditorIntent.ReparentNode(
+                                                    nodeId = baseline.nodeId,
+                                                    newParentId = placement.parentId,
+                                                    position = DesignPoint(placement.x, placement.y),
+                                                    size = DesignSize(
+                                                        width = baseline.startVisual.box.width,
+                                                        height = baseline.startVisual.box.height,
+                                                    ),
+                                                    rotation = placement.rotation.takeIf { value ->
+                                                        currentRotation == null || abs(value - currentRotation) > 0.0001
+                                                    },
+                                                ),
+                                            )
+                                        } else if (moved && reorderBaseline != null) {
                                             val target = reorderPreview?.index ?: reorderBaseline.originalIndex
                                             if (target != reorderBaseline.originalIndex) {
                                                 state.dispatch(DesignEditorIntent.ReparentNode(reorderBaseline.nodeId, reorderBaseline.parentId, target))
@@ -1877,6 +1941,14 @@ private data class ReorderPreview(
     val index: Int,
 )
 
+/** Fixed visual/ancestor geometry used to promote a free node on drag release. */
+private data class MoveReparentBaseline(
+    val nodeId: String,
+    val startVisual: EffectiveTransform,
+    val currentParent: CanvasParentFrame,
+    val upperParents: List<CanvasParentFrame>,
+)
+
 /**
  * Press-time snapshot for beautiful-anchor snapping during a free move (design-book §18): the
  * dragged selection's union bounds, the [containers] (immediate parent frame plus its
@@ -2181,6 +2253,53 @@ private fun LayoutBox.effectiveTransformFor(sourceId: String): EffectiveTransfor
     val path = pathToSourceId(sourceId) ?: return null
     val target = path.last()
     return effectiveTransform(target.toBoundsBox(), target.node.rotation, ancestorRotationsOf(path))
+}
+
+/**
+ * Builds the nearest-parent -> root frame chain for automatic drag-out promotion.
+ * A child of the root has no higher renderable node parent, so it deliberately returns
+ * null and may remain visible as root overflow.
+ */
+private fun buildMoveReparentBaseline(
+    document: DesignDocument,
+    layout: LayoutBox?,
+    nodeId: String,
+): MoveReparentBaseline? {
+    if (document.nodeById(nodeId)?.anchors != null) return null
+    val nodePath = layout?.pathToSourceId(nodeId) ?: return null
+    val parentPath = nodePath.dropLast(1)
+    if (parentPath.size < 2) return null
+    val node = nodePath.last()
+    val frames = parentPath.indices.reversed().map { index ->
+        canvasParentFrame(parentPath.take(index + 1))
+    }
+    return MoveReparentBaseline(
+        nodeId = nodeId,
+        startVisual = effectiveTransform(node.toBoundsBox(), node.node.rotation, ancestorRotationsOf(nodePath)),
+        currentParent = frames.first(),
+        upperParents = frames.drop(1),
+    )
+}
+
+/** Converts a root->parent layout path into the geometry a child inherits from that parent. */
+private fun canvasParentFrame(path: List<LayoutBox>): CanvasParentFrame {
+    val parent = path.last()
+    val visual = effectiveTransform(parent.toBoundsBox(), parent.node.rotation, ancestorRotationsOf(path))
+    val childRotations = path.asReversed().mapNotNull { box ->
+        box.node.rotation.takeIf { it != 0.0 }?.let { rotation ->
+            AncestorRotation(
+                center = GeoPoint(box.x + box.width / 2.0, box.y + box.height / 2.0),
+                degrees = rotation,
+            )
+        }
+    }
+    return CanvasParentFrame(
+        id = parent.node.sourceId,
+        layoutBounds = parent.toBoundsBox(),
+        visualBox = visual.box,
+        visualRotation = visual.rotation,
+        childAncestorRotations = childRotations,
+    )
 }
 
 private const val HandleHitRadiusPx = 11f

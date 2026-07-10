@@ -1,8 +1,13 @@
 package io.aequicor.visualization.editor.presentation
 
+import io.aequicor.visualization.engine.ir.model.DesignConstraints
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPage
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignSize
+import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.SizingMode
 
 /**
  * Structural tree editing over a [DesignDocument], used by the in-memory editor
@@ -113,12 +118,34 @@ internal fun DesignDocument.reorderSibling(nodeId: String, newIndex: Int): Desig
  * Moves [nodeId] to become a child of [newParentId] at [index]. No-op when the move
  * would create a cycle (target is the node or a descendant) or either end is missing.
  */
-internal fun DesignDocument.reparent(nodeId: String, newParentId: String, index: Int = -1): DesignDocument {
+internal fun DesignDocument.reparent(
+    nodeId: String,
+    newParentId: String,
+    index: Int = -1,
+    position: DesignPoint? = null,
+    size: DesignSize? = null,
+    rotation: Double? = null,
+): DesignDocument {
     if (nodeId == newParentId) return this
     if (isSelfOrAncestor(nodeId, newParentId)) return this
-    val moving = nodeById(nodeId) ?: return this
+    val source = nodeById(nodeId) ?: return this
     val validParent = newParentId in pages.map { it.id } || nodeById(newParentId) != null
     if (!validParent) return this
+    val moving = source.copy(
+        position = position ?: source.position,
+        size = size ?: source.size,
+        sizing = if (size != null) {
+            (source.sizing ?: DesignSizing()).copy(
+                horizontal = SizingMode.Fixed,
+                vertical = SizingMode.Fixed,
+            )
+        } else {
+            source.sizing
+        },
+        rotation = rotation ?: source.rotation,
+        constraints = if (position != null) DesignConstraints() else source.constraints,
+        layoutChild = if (position != null) source.layoutChild.copy(absolute = true) else source.layoutChild,
+    )
     return removeNodes(setOf(nodeId)).insertNode(newParentId, moving, index)
 }
 

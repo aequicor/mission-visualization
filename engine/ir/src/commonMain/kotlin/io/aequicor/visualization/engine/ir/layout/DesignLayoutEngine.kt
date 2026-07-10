@@ -69,17 +69,24 @@ data class LayoutBox(
         } else {
             px to py
         }
-        if (lx < x || ly < y || lx > right || ly > bottom) return null
-        for (child in children.asReversed()) {
-            child.hitTest(lx, ly)?.let { return it }
+        val rect = RectD(x, y, right, bottom)
+        val geometry = node.outlineGeometry(rect)
+        val insideBounds = lx >= x && ly >= y && lx <= right && ly <= bottom
+        val hitsSelf = insideBounds && (geometry == null || node.outlineContains(geometry, rect, lx, ly))
+
+        // Rendering allows descendants to overflow an unclipped container, so hit-testing
+        // must follow the same rule. A clipped container still prunes the whole subtree as
+        // soon as the pointer leaves its own outline.
+        if (!node.layout.clipsContent || hitsSelf) {
+            for (child in children.asReversed()) {
+                child.hitTest(lx, ly)?.let { return it }
+            }
         }
+
         // Path-accurate self-test: a click in the bounding box but outside the actual
         // outline (a star's notch, a vector's transparent area) misses, so a node behind
         // still gets a chance. Nodes whose box IS their outline skip this (geometry == null).
-        val rect = RectD(x, y, right, bottom)
-        val geometry = node.outlineGeometry(rect)
-        if (geometry != null && !node.outlineContains(geometry, rect, lx, ly)) return null
-        return this
+        return this.takeIf { hitsSelf }
     }
 
     fun allBoxes(): List<LayoutBox> = listOf(this) + children.flatMap { it.allBoxes() }
