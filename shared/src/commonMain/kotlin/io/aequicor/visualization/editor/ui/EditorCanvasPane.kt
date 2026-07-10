@@ -117,6 +117,7 @@ import io.aequicor.visualization.editor.presentation.ResizeCursorKind
 import io.aequicor.visualization.editor.presentation.SelectableBounds
 import io.aequicor.visualization.editor.presentation.ResizableEdges
 import io.aequicor.visualization.editor.presentation.ResizeHandle
+import io.aequicor.visualization.editor.presentation.ResizeResult
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.ancestorRotationDegrees
@@ -865,6 +866,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 val snap = snapResizeDeltas(
                                                     resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
                                                     resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                    edges = target.edges,
+                                                    minWidth = target.minWidth,
+                                                    minHeight = target.minHeight,
+                                                    maxWidth = target.maxWidth,
+                                                    maxHeight = target.maxHeight,
                                                 )
                                                 resizeSnapState = snap.output?.state ?: ResizeSnapState.None
                                                 applyResize(
@@ -983,6 +989,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 val snap = snapResizeDeltas(
                                                     resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
                                                     resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                    edges = target.edges,
+                                                    minWidth = target.minWidth,
+                                                    minHeight = target.minHeight,
+                                                    maxWidth = target.maxWidth,
+                                                    maxHeight = target.maxHeight,
                                                 )
                                                 commitResizeWriteBack(
                                                     state = state,
@@ -1880,7 +1891,7 @@ private data class SnapBaseline(
 )
 
 /** The anchor targets a snap resolves against: co-resident [siblings] plus the unrotated ancestor [containers]. */
-private data class SnapContext(
+internal data class SnapContext(
     val containers: List<BoundsBox>,
     val siblings: List<BoundsBox>,
 )
@@ -1912,15 +1923,19 @@ private fun collectSnapContext(
 }
 
 /** The docDx/docDy to feed the resize (raw + snap correction) plus the snap output, or the raw deltas when snapping is off. */
-private data class SnappedResize(val docDx: Float, val docDy: Float, val output: ResizeSnapOutput?)
+internal data class SnappedResize(val docDx: Float, val docDy: Float, val output: ResizeSnapOutput?)
+
+private enum class AspectResizeSnapAxis { Horizontal, Vertical }
 
 /**
  * Folds a resize drag's raw deltas through the magnetic resize snap: builds the candidate box from
  * [computeResize], snaps its moving edges to [context]'s neighbours/containers (edge/center align +
  * dimension match), and returns the corrected deltas. Snapping is off (raw deltas) when there is no
- * [context] (rotated/grouped/locked selection) or [lockRatio] is on (aspect-preserving, unsnapped).
+ * [context] (rotated/grouped/locked selection). For an aspect-locked corner only one axis may drive
+ * the shared scale: the closest caught axis (or the already-latched one) wins, and its correction is
+ * projected onto the other axis so the snapped edge and the original ratio both remain exact.
  */
-private fun snapResizeDeltas(
+internal fun snapResizeDeltas(
     baseline: BoundsBox,
     handle: ResizeHandle,
     rawDocDx: Float,
@@ -1930,20 +1945,188 @@ private fun snapResizeDeltas(
     catchPx: Double,
     releasePx: Double,
     prior: ResizeSnapState,
+    edges: ResizableEdges = ResizableEdges.All,
+    minWidth: Double = 1.0,
+    minHeight: Double = 1.0,
+    maxWidth: Double? = null,
+    maxHeight: Double? = null,
 ): SnappedResize {
-    if (context == null || lockRatio) return SnappedResize(rawDocDx, rawDocDy, null)
-    val result = computeResize(baseline.width, baseline.height, handle, rawDocDx.toDouble(), rawDocDy.toDouble(), lockRatio = false)
+    if (context == null) return SnappedResize(rawDocDx, rawDocDy, null)
+    val handleEdges = handle.toMovingEdges()
+    val movingEdges = handleEdges.copy(
+        left = handleEdges.left && edges.left,
+        right = handleEdges.right && edges.right,
+        top = handleEdges.top && edges.top,
+        bottom = handleEdges.bottom && edges.bottom,
+    )
+    val result = computeResize(
+        baseline.width,
+        baseline.height,
+        handle,
+        rawDocDx.toDouble(),
+        rawDocDy.toDouble(),
+        minWidth = minWidth,
+        minHeight = minHeight,
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        canMoveLeft = edges.left,
+        canMoveRight = edges.right,
+        canMoveTop = edges.top,
+        canMoveBottom = edges.bottom,
+        lockRatio = lockRatio,
+    )
     val candidate = SnapBox(baseline.x + result.dx, baseline.y + result.dy, result.width, result.height)
     val output = solveResizeSnap(
         candidate,
-        handle.toMovingEdges(),
+        movingEdges,
         context.containers.map { it.toSnapBox() },
         context.siblings.map { it.toSnapBox() },
         catch = catchPx,
         release = releasePx,
         prior = prior,
     )
-    return SnappedResize(rawDocDx + output.dx.toFloat(), rawDocDy + output.dy.toFloat(), output)
+    val aspectLocked = lockRatio &&
+        (movingEdges.left || movingEdges.right) &&
+        (movingEdges.top || movingEdges.bottom) &&
+        baseline.width > 0.0 &&
+        baseline.height > 0.0
+    if (!aspectLocked) {
+        return SnappedResize(rawDocDx + output.dx.toFloat(), rawDocDy + output.dy.toFloat(), output)
+    }
+
+    val hasHorizontalSnap = output.state.latchX != null
+    val hasVerticalSnap = output.state.latchY != null
+    val movingX = if (movingEdges.left) candidate.x else candidate.right
+    val movingY = if (movingEdges.top) candidate.y else candidate.bottom
+
+    fun horizontalCorrectionFor(axis: AspectResizeSnapAxis): Double = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> output.dx
+        AspectResizeSnapAxis.Vertical -> {
+            val ratio = baseline.width / baseline.height
+            val heightCorrection = if (movingEdges.bottom) output.dy else -output.dy
+            val widthCorrection = heightCorrection * ratio
+            if (movingEdges.right) widthCorrection else -widthCorrection
+        }
+    }
+    fun resultFor(axis: AspectResizeSnapAxis): ResizeResult = computeResize(
+        baseline.width,
+        baseline.height,
+        handle,
+        rawDocDx.toDouble() + horizontalCorrectionFor(axis),
+        rawDocDy.toDouble(),
+        minWidth = minWidth,
+        minHeight = minHeight,
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        canMoveLeft = edges.left,
+        canMoveRight = edges.right,
+        canMoveTop = edges.top,
+        canMoveBottom = edges.bottom,
+        lockRatio = true,
+    )
+    fun candidateFor(resize: ResizeResult): SnapBox = SnapBox(
+        baseline.x + resize.dx,
+        baseline.y + resize.dy,
+        resize.width,
+        resize.height,
+    )
+
+    val horizontalResult = if (hasHorizontalSnap) resultFor(AspectResizeSnapAxis.Horizontal) else null
+    val verticalResult = if (hasVerticalSnap) resultFor(AspectResizeSnapAxis.Vertical) else null
+    val horizontalCandidate = horizontalResult?.let(::candidateFor)
+    val verticalCandidate = verticalResult?.let(::candidateFor)
+    val horizontalFeasible = output.state.latchX?.let { target ->
+        horizontalCandidate?.let { box -> abs(target - if (movingEdges.left) box.x else box.right) <= 0.0001 }
+    } == true
+    val verticalFeasible = output.state.latchY?.let { target ->
+        verticalCandidate?.let { box -> abs(target - if (movingEdges.top) box.y else box.bottom) <= 0.0001 }
+    } == true
+    val priorHorizontalHeld = horizontalFeasible && prior.latchX?.let { abs(it - movingX) <= releasePx } == true
+    val priorVerticalHeld = verticalFeasible && prior.latchY?.let { abs(it - movingY) <= releasePx } == true
+    val axis = when {
+        !horizontalFeasible && !verticalFeasible -> null
+        horizontalFeasible && !verticalFeasible -> AspectResizeSnapAxis.Horizontal
+        !horizontalFeasible && verticalFeasible -> AspectResizeSnapAxis.Vertical
+        priorHorizontalHeld && !priorVerticalHeld -> AspectResizeSnapAxis.Horizontal
+        priorVerticalHeld && !priorHorizontalHeld -> AspectResizeSnapAxis.Vertical
+        abs(output.dx) <= abs(output.dy) -> AspectResizeSnapAxis.Horizontal
+        else -> AspectResizeSnapAxis.Vertical
+    } ?: return SnappedResize(
+        rawDocDx,
+        rawDocDy,
+        output.copy(
+            dx = 0.0,
+            dy = 0.0,
+            guides = emptyList(),
+            match = output.match.copy(
+                width = result.width,
+                height = result.height,
+                widthMatched = false,
+                heightMatched = false,
+            ),
+            state = ResizeSnapState.None,
+        ),
+    )
+
+    val snappedResult = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> requireNotNull(horizontalResult)
+        AspectResizeSnapAxis.Vertical -> requireNotNull(verticalResult)
+    }
+    val snappedCandidate = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> requireNotNull(horizontalCandidate)
+        AspectResizeSnapAxis.Vertical -> requireNotNull(verticalCandidate)
+    }
+    val snappedDocDx = if (movingEdges.right) {
+        snappedResult.width - baseline.width
+    } else {
+        baseline.width - snappedResult.width
+    }
+    val snappedDocDy = if (movingEdges.bottom) {
+        snappedResult.height - baseline.height
+    } else {
+        baseline.height - snappedResult.height
+    }
+    val coupledDx = (if (movingEdges.left) snappedCandidate.x else snappedCandidate.right) -
+        (if (movingEdges.left) candidate.x else candidate.right)
+    val coupledDy = (if (movingEdges.top) snappedCandidate.y else snappedCandidate.bottom) -
+        (if (movingEdges.top) candidate.y else candidate.bottom)
+    val snappedMovingX = if (movingEdges.left) snappedCandidate.x else snappedCandidate.right
+    val snappedMovingY = if (movingEdges.top) snappedCandidate.y else snappedCandidate.bottom
+    val horizontalStillAligned = output.state.latchX?.let { abs(it - snappedMovingX) <= 0.0001 } == true
+    val verticalStillAligned = output.state.latchY?.let { abs(it - snappedMovingY) <= 0.0001 } == true
+    val selectedOutput = output.copy(
+        dx = coupledDx,
+        dy = coupledDy,
+        guides = output.guides.mapNotNull { guide ->
+            val line = guide.line
+            when {
+                horizontalStillAligned && line.x1 == line.x2 -> guide.copy(
+                    line = line.copy(
+                        y1 = minOf(line.y1, snappedCandidate.y),
+                        y2 = maxOf(line.y2, snappedCandidate.bottom),
+                    ),
+                )
+                verticalStillAligned && line.y1 == line.y2 -> guide.copy(
+                    line = line.copy(
+                        x1 = minOf(line.x1, snappedCandidate.x),
+                        x2 = maxOf(line.x2, snappedCandidate.right),
+                    ),
+                )
+                else -> null
+            }
+        },
+        match = output.match.copy(
+            width = snappedResult.width,
+            height = snappedResult.height,
+            widthMatched = horizontalStillAligned && output.match.widthMatched,
+            heightMatched = verticalStillAligned && output.match.heightMatched,
+        ),
+        state = ResizeSnapState(
+            latchX = output.state.latchX.takeIf { horizontalStillAligned },
+            latchY = output.state.latchY.takeIf { verticalStillAligned },
+        ),
+    )
+    return SnappedResize(snappedDocDx.toFloat(), snappedDocDy.toFloat(), selectedOutput)
 }
 
 private fun LayoutBox.toBoundsBox(): BoundsBox =
