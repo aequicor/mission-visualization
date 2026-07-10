@@ -3,14 +3,24 @@ package io.aequicor.visualization.editor.data
 import io.aequicor.visualization.engine.ir.model.DesignAsset
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.subsystems.figures.VectorRef
+import io.aequicor.visualization.subsystems.figures.graphicGeometry
+import io.aequicor.visualization.subsystems.figures.parseSvgDocument
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SlmVectorAssetProviderTest {
 
     private val rectSvg = """<svg viewBox="0 0 24 24"><path d="M2 2 H22 V22 H2 Z"/></svg>"""
+
+    // Verbatim contents of the bundled editor-icons SVGs (Material Symbols) the loader ships;
+    // see shared/.../composeResources/files/editor-icons/{rectangle,star}.svg. Keyed by bare name.
+    private val bundledRectangleSvg =
+        """<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M200-720h560v480H200v-480Z"/></svg>"""
+    private val bundledStarSvg =
+        """<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="m354-287 126-76 126 77-33-144 111-96-146-13-58-136-58 135-146 13 111 97-33 143ZM233-120l65-281L80-590l288-25 112-265 112 265 288 25-218 189 65 281-247-149-247 149Zm247-350Z"/></svg>"""
 
     @Test
     fun resolvesIconRefByNormalizedLastSegment() {
@@ -49,6 +59,27 @@ class SlmVectorAssetProviderTest {
         val provider = SlmVectorAssetProvider(svgSources = mapOf("rectangle" to rectSvg))
         assertNull(provider.resolve(VectorRef.Icon("ds/Icon/Unknown")))
         assertNull(provider.resolve(VectorRef.Svg("missing")))
+    }
+
+    @Test
+    fun bundledIconXmlParsesToGeometryAndResolvesEndToEnd() {
+        // 1. parseSvgDocument on the real bundled icon XML yields a graphic with >= 1 path.
+        val rectGraphic = assertNotNull(parseSvgDocument(bundledRectangleSvg))
+        assertTrue(rectGraphic.paths.isNotEmpty())
+        assertEquals(960.0, rectGraphic.viewBox?.width)
+        assertNotNull(graphicGeometry(rectGraphic))
+
+        // 2. The provider, keyed by bare bundle name (what the loader produces), resolves an
+        //    iconRef to that geometry instead of the box fallback.
+        val provider = SlmVectorAssetProvider(
+            svgSources = mapOf(
+                "rectangle" to bundledRectangleSvg,
+                "star" to bundledStarSvg,
+            ),
+        )
+        val resolved = assertNotNull(provider.resolve(VectorRef.Icon("ds/Icon/Rectangle")))
+        assertNotNull(graphicGeometry(resolved))
+        assertNotNull(graphicGeometry(assertNotNull(provider.resolve(VectorRef.Icon("star")))))
     }
 
     @Test

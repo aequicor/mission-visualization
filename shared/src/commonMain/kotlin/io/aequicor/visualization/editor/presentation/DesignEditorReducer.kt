@@ -87,6 +87,7 @@ import io.aequicor.visualization.subsystems.figures.roundedRectGeometry
 import io.aequicor.visualization.subsystems.figures.starGeometry
 import io.aequicor.visualization.subsystems.figures.PathBooleanOp
 import io.aequicor.visualization.subsystems.figures.pathBooleanFold
+import io.aequicor.visualization.subsystems.figures.refitCurves
 import io.aequicor.visualization.subsystems.figures.strokeOutline
 import io.aequicor.visualization.subsystems.figures.toSvgPathData
 import io.aequicor.visualization.subsystems.figures.translateSvgPoint
@@ -1731,7 +1732,7 @@ private fun DesignEditorState.flattenNode(nodeId: String): DesignEditorState {
     if (childGeoms.isEmpty()) return this
     val combined = pathBooleanFold(childGeoms, op.toBooleanOp())
     if (combined.commands.isEmpty()) return this
-    val paths = listOf(VectorPath(windingRule = "nonzero", d = combined.toSvgPathData()))
+    val paths = listOf(VectorPath(windingRule = "nonzero", d = combined.refitCurves().toSvgPathData()))
     val flattened = node.copy(
         type = "vector",
         kind = DesignNodeKind.Shape(shape = ShapeType.Vector, paths = paths, viewBox = DesignViewBox(0.0, 0.0, w, h)),
@@ -1774,7 +1775,7 @@ private fun DesignEditorState.outlineStrokeNode(nodeId: String): DesignEditorSta
         type = "vector",
         kind = DesignNodeKind.Shape(
             shape = ShapeType.Vector,
-            paths = listOf(VectorPath("nonzero", outlined.toSvgPathData())),
+            paths = listOf(VectorPath("nonzero", outlined.refitCurves().toSvgPathData())),
             viewBox = DesignViewBox(0.0, 0.0, w, h),
         ),
         fills = strokes.paints,
