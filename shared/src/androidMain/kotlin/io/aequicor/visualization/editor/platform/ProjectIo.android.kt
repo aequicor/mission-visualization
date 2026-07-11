@@ -1,12 +1,14 @@
 package io.aequicor.visualization.editor.platform
 
+internal actual val platformSupportsProjectDiskIo: Boolean = false
+
 internal actual fun platformOpenProjectZipArchive() = Unit
 
 internal actual fun platformOpenProjectFolder() = Unit
 
-internal actual fun platformSaveProjectFolder(sourcesJson: String) = Unit
+internal actual fun platformSaveProjectFolder(sourcesJson: String, onSaved: () -> Unit) = Unit
 
-internal actual fun platformDownloadProjectZip(sourcesJson: String) = Unit
+internal actual fun platformDownloadProjectZip(sourcesJson: String, onSaved: () -> Unit) = Unit
 
 internal actual fun platformExportCanvasPng(fileName: String, crop: CanvasExportCrop?) = Unit
 

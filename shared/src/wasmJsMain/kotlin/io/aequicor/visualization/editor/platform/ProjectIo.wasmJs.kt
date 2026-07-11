@@ -315,9 +315,10 @@ private fun ensureProjectIoInstalled() {
             setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
           }
 
-          async function saveFolder(sourcesJson) {
+          async function saveFolder(sourcesJson, onSaved) {
             if (!window.showDirectoryPicker) {
               saveZip(sourcesJson);
+              if (onSaved) onSaved();
               return;
             }
             var handle = await window.showDirectoryPicker({ mode: "readwrite" });
@@ -328,6 +329,7 @@ private fun ensureProjectIoInstalled() {
               await writable.write(files[i].content);
               await writable.close();
             }
+            if (onSaved) onSaved();
           }
 
           function saveZip(sourcesJson) {
@@ -447,8 +449,8 @@ private fun ensureProjectIoInstalled() {
           window.__mvProjectIo = {
             openZip: function () { run(openZip()); },
             openFolder: function () { run(openFolder()); },
-            saveFolder: function (sourcesJson) { run(saveFolder(sourcesJson)); },
-            saveZip: function (sourcesJson) { run(Promise.resolve().then(function () { saveZip(sourcesJson); })); },
+            saveFolder: function (sourcesJson, onSaved) { run(saveFolder(sourcesJson, onSaved)); },
+            saveZip: function (sourcesJson, onSaved) { run(Promise.resolve().then(function () { saveZip(sourcesJson); if (onSaved) onSaved(); })); },
             exportPng: function (fileName, crop) { run(Promise.resolve().then(function () { exportPng(fileName, crop); })); },
             beginPdf: function () { pdfPages = []; },
             appendPdfPage: function (title, crop) {
@@ -466,6 +468,8 @@ private fun ensureProjectIoInstalled() {
     )
 }
 
+internal actual val platformSupportsProjectDiskIo: Boolean = true
+
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformOpenProjectZipArchive() {
     ensureProjectIoInstalled()
@@ -479,15 +483,15 @@ internal actual fun platformOpenProjectFolder() {
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
-internal actual fun platformSaveProjectFolder(sourcesJson: String) {
+internal actual fun platformSaveProjectFolder(sourcesJson: String, onSaved: () -> Unit) {
     ensureProjectIoInstalled()
-    callSaveFolder(sourcesJson)
+    callSaveFolder(sourcesJson, onSaved)
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
-internal actual fun platformDownloadProjectZip(sourcesJson: String) {
+internal actual fun platformDownloadProjectZip(sourcesJson: String, onSaved: () -> Unit) {
     ensureProjectIoInstalled()
-    callSaveZip(sourcesJson)
+    callSaveZip(sourcesJson, onSaved)
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
@@ -536,10 +540,10 @@ private fun callOpenZip(): Unit = js("window.__mvProjectIo.openZip()")
 private fun callOpenFolder(): Unit = js("window.__mvProjectIo.openFolder()")
 
 @OptIn(ExperimentalWasmJsInterop::class)
-private fun callSaveFolder(sourcesJson: String): Unit = js("window.__mvProjectIo.saveFolder(sourcesJson)")
+private fun callSaveFolder(sourcesJson: String, onSaved: () -> Unit): Unit = js("window.__mvProjectIo.saveFolder(sourcesJson, onSaved)")
 
 @OptIn(ExperimentalWasmJsInterop::class)
-private fun callSaveZip(sourcesJson: String): Unit = js("window.__mvProjectIo.saveZip(sourcesJson)")
+private fun callSaveZip(sourcesJson: String, onSaved: () -> Unit): Unit = js("window.__mvProjectIo.saveZip(sourcesJson, onSaved)")
 
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun callExportPng(fileName: String, hasCrop: Boolean, x: Double, y: Double, width: Double, height: Double): Unit =

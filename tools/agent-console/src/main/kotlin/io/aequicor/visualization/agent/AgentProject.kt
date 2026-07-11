@@ -26,7 +26,7 @@ object AgentProject {
         return files.map { MissionDocumentSource(fileName = it.name, content = it.readText()) }
     }
 
-    /** The 6 bundled demo screens — an instant corpus that needs no files on disk. */
+    /** The 3 bundled Welcome screens — an instant corpus that needs no files on disk. */
     fun samples(): List<MissionDocumentSource> =
         DefaultDesignDocumentRepository().missionDocumentSources()
 

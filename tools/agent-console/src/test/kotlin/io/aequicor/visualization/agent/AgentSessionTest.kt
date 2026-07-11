@@ -15,39 +15,39 @@ class AgentSessionTest {
         val session = AgentSession.fromSamples()
         assertNotNull(session.document, "bundled samples must compile")
         val screens = session.screens()
-        assertEquals(6, screens.size)
-        val overview = screens.first { it.id == "missionOverview" }
-        assertEquals(1440.0, overview.width)
-        assertEquals(1024.0, overview.height)
-        assertTrue(overview.nodeCount > 0)
-        assertEquals("mission-overview.layout.md", overview.sourceFile)
+        assertEquals(3, screens.size)
+        val welcome = screens.first { it.id == "welcomeEditor" }
+        assertEquals(1440.0, welcome.width)
+        assertEquals(1024.0, welcome.height)
+        assertTrue(welcome.nodeCount > 0)
+        assertEquals("welcome-editor.layout.md", welcome.sourceFile)
     }
 
     @Test
     fun inspectReturnsLaidOutTreeAndFindsNodesByAuthoredId() {
         val session = AgentSession.fromSamples()
-        val root = assertNotNull(session.inspect("missionTelemetry"))
+        val root = assertNotNull(session.inspect("welcomeVectors"))
         assertEquals(1440.0, root.width)
         assertEquals(1024.0, root.height)
         assertTrue(root.children.isNotEmpty(), "screen root must have laid-out children")
 
-        val header = assertNotNull(session.inspect("missionTelemetry", "telemetry_header"))
-        assertEquals("telemetry_header", header.node.sourceId)
-        assertTrue(header.width > 0.0)
+        val rocket = assertNotNull(session.inspect("welcomeVectors", "rocket"))
+        assertEquals("rocket", rocket.node.sourceId)
+        assertTrue(rocket.width > 0.0)
 
-        assertNull(session.inspect("missionTelemetry", "no_such_node"))
+        assertNull(session.inspect("welcomeVectors", "no_such_node"))
         assertNull(session.inspect("no_such_screen"))
     }
 
     @Test
     fun validateFiltersOtherScreensFileAnchoredDiagnostics() {
         val session = AgentSession.fromSamples()
-        val filtered = session.validate("missionTelemetry")
+        val filtered = session.validate("welcomeEditor")
         assertTrue(filtered.isNotEmpty())
         filtered.forEach { diagnostic ->
             val file = diagnostic.location?.file.orEmpty()
             assertTrue(
-                file.isBlank() || file == "mission-telemetry.layout.md",
+                file.isBlank() || file == "welcome-editor.layout.md",
                 "unexpected foreign-file diagnostic: $diagnostic",
             )
             if (file.isBlank()) {

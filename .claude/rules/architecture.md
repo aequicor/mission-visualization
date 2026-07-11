@@ -96,7 +96,7 @@ ui  ──▶  presentation  ──▶  domain  ◀──  data
 - Экраны/области — **компоненты** с `ComponentContext`; навигация через child stack/slot/pages;
   lifecycle-aware; сохранение состояния и retained instances.
 - UI — pluggable Compose поверх компонентов, без логики навигации в composable.
-- Цель: навигацию MissionEditor (экраны Overview/Telemetry/Event Log; панели инструментов и инспектора)
+- Цель: навигацию MissionEditor (Welcome-экраны Welcome/Vectors & Objects/Architecture; панели инструментов и инспектора)
   перевести с ручного `MissionEditorViewState` на Decompose child-навигацию.
 
 ## Ktor (когда появится сеть/бэкенд)

@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.data
 
 /**
+ * Frozen test fixture (former bundled default; diagram reducer tests anchor to its graph).
  * Project Structure screen: a UML component diagram of the Gradle module graph
  * (apps -> :shared -> engine/subsystem renderers -> pure cores -> :engine:ir -> :subsystems:figures),
  * authored in pure CNL — the host frame as heading property suffixes and the diagram as a
