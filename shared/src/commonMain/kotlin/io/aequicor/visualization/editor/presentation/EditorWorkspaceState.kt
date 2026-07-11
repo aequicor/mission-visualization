@@ -1,6 +1,8 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 
 /**
  * Editor workspace / view state, kept strictly separate from the design document
@@ -59,6 +61,20 @@ data class EditorWorkspaceState(
     val recentColors: List<DesignColor> = emptyList(),
     /** Active caret/selection while editing text on the canvas; null when not editing text. */
     val textSelection: TextSelection? = null,
+    /**
+     * IR node id of the diagram currently in edit mode (double-click / diagram toolbar),
+     * or "" when no diagram is being edited. Mirrors [vectorEditNodeId]: while set, the
+     * diagram overlay owns canvas gestures inside the node's box.
+     */
+    val diagramEditNodeId: String = "",
+    /** Active tool of the diagram canvas while a diagram node is being edited. */
+    val diagramTool: DiagramTool = DiagramTool.Select,
+    /**
+     * Selected diagram elements *inside* the selected diagram node (graph node/edge ids).
+     * A view concern like text selection — never part of the document — so undo/redo of
+     * graph edits cannot resurrect a stale selection.
+     */
+    val diagramSelection: DiagramSelection = DiagramSelection.Empty,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -81,6 +97,30 @@ data class TextSelection(val nodeId: String, val start: Int, val end: Int) {
     val min: Int get() = minOf(start, end)
     val max: Int get() = maxOf(start, end)
     val isCollapsed: Boolean get() = start == end
+}
+
+/**
+ * Diagram-canvas tools: [Select] manipulates existing elements; [AddNode] stamps a new
+ * element of [AddNode.payload] on press; [DrawEdge] drags a new connector between nodes.
+ */
+sealed interface DiagramTool {
+    data object Select : DiagramTool
+
+    data class AddNode(val payload: DiagramNodePayload) : DiagramTool
+
+    data class DrawEdge(val relation: DiagramRelation = DiagramRelation.Plain) : DiagramTool
+}
+
+/** Selected elements of the diagram graph being edited (ids are graph-local strings). */
+data class DiagramSelection(
+    val elementIds: Set<String> = emptySet(),
+    val edgeIds: Set<String> = emptySet(),
+) {
+    val isEmpty: Boolean get() = elementIds.isEmpty() && edgeIds.isEmpty()
+
+    companion object {
+        val Empty: DiagramSelection = DiagramSelection()
+    }
 }
 
 /** Reference to a single editable vector anchor. */

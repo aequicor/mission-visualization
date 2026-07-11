@@ -1,6 +1,5 @@
 package io.aequicor.visualization.editor.domain
 
-import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.SlmCompileResult
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.ir.model.DesignComponent
@@ -36,7 +35,7 @@ data class MissionDocuments(
  */
 fun compileMissionDocuments(sources: List<MissionDocumentSource>): MissionDocuments {
     val compiled = sources.map { source ->
-        compileSlm(source.content, SlmCompileOptions(fileName = source.fileName))
+        compileSlm(source.content, editorSlmCompileOptions(source.fileName))
     }
     return mergeMissionDocuments(sources, compiled)
 }

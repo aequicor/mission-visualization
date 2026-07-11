@@ -106,6 +106,7 @@ internal enum class EditorIcon(resourceName: String) {
     Superscript("superscript"),
     Subscript("subscript"),
     MatchCase("match_case"),
+    Diagram("diagram"),
     ;
 
     val resourcePath: String = "files/editor-icons/$resourceName.svg"

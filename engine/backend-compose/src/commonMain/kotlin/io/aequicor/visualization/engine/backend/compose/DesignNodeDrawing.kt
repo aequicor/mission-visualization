@@ -52,6 +52,7 @@ import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes
 import kotlin.math.abs
+import io.aequicor.visualization.subsystems.diagrams.compose.DiagramCanvasColors
 import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
 import io.aequicor.visualization.subsystems.typography.compose.drawRichText
 import kotlin.math.ceil
@@ -64,7 +65,12 @@ internal class DesignDrawContext(
     /** Shared rich-text measurer/cache for the text draw path. */
     val typography: ComposeTypographyMeasurer =
         ComposeTypographyMeasurer(textMeasurer, density),
-)
+    /** Theme defaults for embedded diagram nodes; the app bridges its tokens in. */
+    val diagramColors: DiagramCanvasColors = DiagramCanvasColors(),
+) {
+    /** Per-graph edge-route cache for embedded diagram nodes (see [DiagramRouteCache]). */
+    val diagramRoutes: DiagramRouteCache = DiagramRouteCache()
+}
 
 /** The laid-out box as a figures [RectD] (the coordinate seam the geometry adapter consumes). */
 internal fun LayoutBox.rectD(): RectD = RectD(x, y, right, bottom)
@@ -155,6 +161,10 @@ private fun DrawScope.drawDesignBoxContent(
     }
 
     node.media?.let { media -> drawMediaPlaceholder(box, media, outline, context) }
+
+    // Embedded diagram canvas: the graph paints above the wrapper fills and below any
+    // children/strokes, clipped to the node outline (see DiagramNodeDrawing.kt).
+    node.diagram?.let { graph -> drawDiagramNodeContent(box, graph, outline, context) }
 
     node.text?.let { text ->
         val laidOut = context.typography.layout(

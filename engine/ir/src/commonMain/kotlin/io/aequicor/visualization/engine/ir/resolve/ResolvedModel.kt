@@ -1,5 +1,6 @@
 package io.aequicor.visualization.engine.ir.resolve
 
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.figures.PathGeometry
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
@@ -75,6 +76,11 @@ data class ResolvedNode(
     val cornerRadius: ResolvedCornerRadius = ResolvedCornerRadius(),
     val text: ResolvedText? = null,
     val shape: DesignNodeKind.Shape? = null,
+    /**
+     * Embedded diagram of a `diagram` node, carried through resolution as-is (the graph is
+     * already concrete). Graph coordinates are local to the node's laid-out box.
+     */
+    val diagram: DiagramGraph? = null,
     /**
      * Lowered, device-independent outline for shape nodes (vector/network/inline-`d` in
      * view-box space, or null when geometry is built draw-time from the laid-out box).

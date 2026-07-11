@@ -24,6 +24,7 @@ import io.aequicor.visualization.subsystems.figures.NoVectorAssets
 import io.aequicor.visualization.subsystems.figures.VectorAssetProvider
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
+import io.aequicor.visualization.subsystems.diagrams.compose.DiagramCanvasColors
 import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
 import io.aequicor.visualization.subsystems.typography.compose.FontProvider
 import io.aequicor.visualization.subsystems.typography.compose.NoFonts
@@ -93,6 +94,8 @@ fun DesignArtboard(
     vectorAssets: VectorAssetProvider = NoVectorAssets,
     /** Resolves document font families; app-supplied (defaults to no bundled fonts). */
     fontProvider: FontProvider = NoFonts,
+    /** Theme defaults for embedded diagram nodes; the app bridges its color tokens in. */
+    diagramColors: DiagramCanvasColors = DiagramCanvasColors(),
     onInteraction: ((ResolvedInteraction, LayoutBox) -> Unit)? = null,
     /** Invoked when a tap lands on a hyperlink range of a text node (takes tap precedence). */
     onLinkClick: ((io.aequicor.visualization.engine.ir.model.TextLink) -> Unit)? = null,
@@ -127,8 +130,8 @@ fun DesignArtboard(
     }
     if (layoutBox == null) return
 
-    val drawDesignContext = remember(textMeasurer, density, vectorAssets, typographyMeasurer) {
-        DesignDrawContext(textMeasurer, density, vectorAssets, typographyMeasurer)
+    val drawDesignContext = remember(textMeasurer, density, vectorAssets, typographyMeasurer, diagramColors) {
+        DesignDrawContext(textMeasurer, density, vectorAssets, typographyMeasurer, diagramColors)
     }
 
     val allSelected = if (selectedNodeId.isNotBlank()) selectedNodeIds + selectedNodeId else selectedNodeIds

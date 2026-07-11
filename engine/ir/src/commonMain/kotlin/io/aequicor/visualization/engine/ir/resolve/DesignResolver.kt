@@ -303,6 +303,7 @@ class DesignResolver(
             cornerRadius = resolveCornerRadius(override?.cornerRadius ?: node.cornerRadius, scope),
             text = (node.kind as? DesignNodeKind.Text)?.let { resolveText(it, override, scope) },
             shape = node.kind as? DesignNodeKind.Shape,
+            diagram = (node.kind as? DesignNodeKind.Diagram)?.graph,
             geometry = (node.kind as? DesignNodeKind.Shape)?.let { lowerShapeGeometry(it) },
             regionPaints = resolveRegionPaints(node.kind as? DesignNodeKind.Shape, scope),
             booleanOp = (node.kind as? DesignNodeKind.BooleanOperation)?.operation,

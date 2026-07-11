@@ -13,8 +13,10 @@ import io.aequicor.visualization.engine.frontend.blocks.NodePatch
 import io.aequicor.visualization.engine.frontend.blocks.NodePositionMode
 import io.aequicor.visualization.engine.frontend.blocks.OverridesPatch
 import io.aequicor.visualization.engine.frontend.blocks.PropsPatch
+import io.aequicor.visualization.engine.frontend.blocks.ExtensionPatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsiveVariantPatch
+import io.aequicor.visualization.engine.frontend.blocks.ShapeBlockExtension
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
@@ -150,7 +152,8 @@ class PatchMerger(
             is PropsPatch -> applyProps(node, patch)
             is OverridesPatch -> applyOverrides(node, patch)
             is MediaPatch -> applyMedia(node, patch)
-            is ShapePatch -> applyShape(node, patch)
+            is ShapePatch -> ShapeBlockExtension.applyToNode(node, patch)
+            is ExtensionPatch -> patch.applyTo(node)
             is VectorPatch -> applyVector(node, patch, applied.line)
             is MaskPatch -> applyMask(node, patch, applied.line)
             is ActionPatch -> node.copy(
@@ -527,22 +530,6 @@ class PatchMerger(
                     muted = patch.muted ?: media.muted,
                 ),
             ),
-        )
-    }
-
-    private fun applyShape(node: DesignNode, patch: ShapePatch): DesignNode {
-        val kind = node.kind as? DesignNodeKind.Shape
-            ?: DesignNodeKind.Shape(shape = ShapeType.Rectangle)
-        return node.copy(
-            type = if (node.kind is DesignNodeKind.Shape) node.type else "shape",
-            kind = kind.copy(
-                shape = patch.kind ?: kind.shape,
-                pointCount = patch.pointCount ?: kind.pointCount,
-                innerRadius = patch.innerRadius ?: kind.innerRadius,
-                arcStartDeg = patch.arcStartDeg ?: kind.arcStartDeg,
-                arcSweepDeg = patch.arcSweepDeg ?: kind.arcSweepDeg,
-            ),
-            size = mergeSize(node.size, patch.width, patch.height) ?: node.size,
         )
     }
 

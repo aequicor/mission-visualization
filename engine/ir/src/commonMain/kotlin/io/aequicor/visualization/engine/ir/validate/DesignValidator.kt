@@ -31,6 +31,7 @@ data class ValidationOptions(
  * - IR-I18N     [TextI18nChecks] — resource keys, ICU syntax, plurals, spans, truncation;
  * - IR-COMP     [ComponentChecks] — component/library refs, variants, props, slots, overrides;
  * - IR-ASSET    [MediaAssetChecks] — assets, focal points, vector paths, masks;
+ * - IR-DIAGRAM  [DiagramChecks] — embedded diagram graphs: edge/port/layer/parent integrity;
  * - IR-PROTO    [InteractionChecks] — triggers, action targets, prototype variables, motion;
  * - IR-RESP     [ResponsiveChecks] — selector vocabulary, ambiguity, breakpoint ranges;
  * - IR-DATA     [DataChecks] — `{{...}}` expression syntax, repeat scopes, data paths;
@@ -54,6 +55,7 @@ fun validateDesignDocument(
         addAll(ComponentChecks.check(ctx))
         addAll(MediaAssetChecks.check(ctx))
         addAll(VectorNetworkChecks.check(ctx))
+        addAll(DiagramChecks.check(ctx))
         addAll(InteractionChecks.check(ctx))
         addAll(ResponsiveChecks.check(ctx))
         addAll(DataChecks.check(ctx))
