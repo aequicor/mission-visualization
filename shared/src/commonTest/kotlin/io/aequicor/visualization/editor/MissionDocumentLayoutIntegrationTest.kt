@@ -4,7 +4,9 @@ import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,7 +14,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/** Compiles the three bundled SLM documents, merges, resolves and lays them out. */
+/** Compiles the bundled Welcome SLM documents, merges, resolves and lays them out. */
 class MissionDocumentLayoutIntegrationTest {
 
     private val engine = DesignLayoutEngine()
@@ -20,31 +22,25 @@ class MissionDocumentLayoutIntegrationTest {
 
     @Test
     fun missionDocumentsCompileAndMergeWithoutErrors() {
-        assertEquals(7, documents.compiled.size)
+        assertEquals(3, documents.compiled.size)
         documents.compiled.forEachIndexed { index, compiled ->
             assertTrue(compiled.isSuccess, "${documents.sources[index].fileName} failed to compile")
         }
         assertTrue(
             documents.diagnostics.none { it.severity == DesignSeverity.Error },
-            "mission doc compile errors: " +
+            "welcome doc compile errors: " +
                 documents.diagnostics.filter { it.severity == DesignSeverity.Error },
         )
 
         val document = assertNotNull(documents.document)
         assertEquals(
-            listOf("Mission Overview", "Telemetry", "Event Log", "Shapes Showcase", "Diagrams", "Project Structure", "CNL Showcase"),
+            listOf("Welcome", "Vectors & Objects", "Architecture"),
             document.pages.map { it.name },
         )
         assertEquals(
-            listOf("missionOverview", "missionTelemetry", "missionEventLog", "shapesShowcase", "diagrams", "projectStructure", "cnlShowcase"),
+            listOf("welcomeEditor", "welcomeVectors", "welcomeUml"),
             document.pages.map { it.id },
         )
-        // Duplicated definitions collapse: Telemetry ships the wire tiles, Event Log the
-        // log row, and every document ships the identical theme variables collection.
-        // (Mission Overview is now an app-UI wireframe and contributes no components.)
-        assertTrue("cmp_wire_tile_default" in document.components)
-        assertTrue("cmp_wire_tile_highlight" in document.components)
-        assertTrue("cmp_log_row" in document.components)
         assertEquals(setOf("theme"), document.variables.collections.keys)
     }
 
@@ -67,15 +63,15 @@ class MissionDocumentLayoutIntegrationTest {
         }
         assertTrue(
             resolver.diagnostics.isEmpty(),
-            "mission doc resolve diagnostics: ${resolver.diagnostics}",
+            "welcome doc resolve diagnostics: ${resolver.diagnostics}",
         )
 
-        // Mission Overview is a Free-layout (`mode: none`) wireframe of the editor app:
+        // The Welcome screen is a Free-layout (`mode: none`) wireframe of the editor app:
         // its three working panels are absolutely positioned side by side.
-        val overview = document.pages.first()
-        val overviewBox = engine.layout(assertNotNull(resolver.resolvePage(overview).firstOrNull()))
+        val welcome = document.pages.first()
+        val welcomeBox = engine.layout(assertNotNull(resolver.resolvePage(welcome).firstOrNull()))
         val panels = listOf("src_panel", "cv_panel", "in_panel").map { id ->
-            assertNotNull(overviewBox.findBySourceId(id), "missing $id")
+            assertNotNull(welcomeBox.findBySourceId(id), "missing $id")
         }
         assertTrue(panels[0].x < panels[1].x, "Source sits left of Canvas")
         assertTrue(panels[1].x < panels[2].x, "Canvas sits left of Inspector")
@@ -86,18 +82,53 @@ class MissionDocumentLayoutIntegrationTest {
     fun sourceLocaleBundleCarriesAuthoredTexts() {
         val document = assertNotNull(documents.document)
         val bundle = assertNotNull(document.i18n.resources["en-US"], "en-US bundle present")
-        assertEquals("Mission Overview", bundle["missionOverview.title"])
-        assertEquals("Telemetry", bundle["missionTelemetry.title"])
-        assertEquals("Event Log", bundle["missionEventLog.title"])
-        assertEquals("LIVE", bundle["missionTelemetry.badge.live"])
-        // Log Row's text property defaults become component resources.
-        assertEquals("Event", bundle["components.logRow.label"])
-        assertEquals("00:00", bundle["components.logRow.time"])
+        assertEquals("Source", bundle["welcome.source.title"])
+        assertEquals("SCENE TOUR", bundle["welcome.canvas.badge"])
+        assertEquals("Vectors & Objects", bundle["welcomeVectors.heading"])
+        assertEquals("Architecture", bundle["welcomeUml.heading"])
 
-        // The footer keeps i18n-shaped content even though its subtree comes from
-        // an `ir` splice (which bypasses resource generation).
-        val footerLabel = assertNotNull(document.nodeById("footer_label"))
-        val footerKind = assertIs<DesignNodeKind.Text>(footerLabel.kind)
-        assertEquals("6 events captured in the last orbit", footerKind.content?.defaultText)
+        val nextLabel = assertNotNull(document.nodeById("wel_nav_next_label"))
+        val nextKind = assertIs<DesignNodeKind.Text>(nextLabel.kind)
+        assertEquals("Next · Vectors →", nextKind.content?.defaultText)
+    }
+
+    @Test
+    fun welcomeUmlShipsCompiledDiagramGraphs() {
+        // Live-bundle pin: the shipped Architecture screen's `## Diagram:` containers must
+        // compile into non-empty graphs (the fixture-based diagram tests no longer cover
+        // what actually ships).
+        val document = assertNotNull(documents.document)
+        val expected = mapOf(
+            "module_map" to (12 to 13),
+            "slm_pipeline" to (6 to 6),
+            "editor_mvi" to (3 to 2),
+        )
+        expected.forEach { (id, counts) ->
+            val diagram = assertIs<DesignNodeKind.Diagram>(assertNotNull(document.nodeById(id), "diagram $id").kind)
+            assertEquals(counts.first, diagram.graph.nodes.size, "$id node count")
+            assertEquals(counts.second, diagram.graph.edges.size, "$id edge count")
+        }
+    }
+
+    @Test
+    fun welcomeTourWiresSceneNavigationAcrossAllScreens() {
+        // Every Welcome screen participates in the auto-tour: its root frame carries an
+        // afterDelay → navigate interaction, and the loop closes back on the first screen.
+        val document = assertNotNull(documents.document)
+        val tour = document.pages.associate { page ->
+            val root = assertNotNull(page.children.firstOrNull(), "page ${page.id} root frame")
+            val timer = assertNotNull(
+                root.interactions.firstOrNull { it.trigger == InteractionTrigger.AfterDelay },
+                "page ${page.id} root carries an afterDelay interaction",
+            )
+            val navigate = assertNotNull(
+                timer.actions.filterIsInstance<DesignAction.Navigate>().firstOrNull(),
+                "page ${page.id} afterDelay navigates",
+            )
+            page.id to navigate.to
+        }
+        assertEquals("welcomeVectors", tour["welcomeEditor"])
+        assertEquals("welcomeUml", tour["welcomeVectors"])
+        assertEquals("welcomeEditor", tour["welcomeUml"])
     }
 }

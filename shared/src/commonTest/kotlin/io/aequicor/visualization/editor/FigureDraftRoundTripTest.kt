@@ -1,11 +1,9 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
 import io.aequicor.visualization.editor.data.DraftEnvelopeDto
 import io.aequicor.visualization.editor.data.toDomain
 import io.aequicor.visualization.editor.data.toDto
 import io.aequicor.visualization.editor.domain.DraftSchemaVersion
-import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.WorkspaceDraft
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
@@ -41,7 +39,7 @@ class FigureDraftRoundTripTest {
 
     /** A state whose SLM sources carry every new figure field, produced via real write-back. */
     private fun figureLoadedState(): DesignEditorState {
-        var state = createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())())
+        var state = createDesignEditorState(missionDemoDocuments())
         val fill = listOf(DesignPaint.Solid(DesignColor(0xFFEF476F).bindable()))
         state = reduceDesignEditor(state, DesignEditorIntent.SetArcStart("showcase_ellipse", -90.0))
         state = reduceDesignEditor(state, DesignEditorIntent.SetArcSweep("showcase_ellipse", 270.0))

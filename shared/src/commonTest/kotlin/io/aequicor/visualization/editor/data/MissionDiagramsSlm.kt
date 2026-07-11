@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.data
 
 /**
+ * Frozen test fixture (former bundled default; diagram reducer tests anchor to its graphs).
  * Diagrams screen: two diagram-canvas nodes demonstrating the `:subsystems:diagrams`
  * pipeline through SLM — a UML class diagram (generalization / composition / association)
  * and a state machine (initial / simple / final states with transitions). Authored in pure

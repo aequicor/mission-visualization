@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.data
 
 /**
+ * Frozen test fixture (former bundled default; instance/override tests anchor to its node ids).
  * Event Log page authored entirely in CNL (controlled natural language): a header
  * placeholder, six Log Row instances (two patch the status dot fill via an `override`
  * at an id path), a footer frame that pins the theme collection to `dark` for its

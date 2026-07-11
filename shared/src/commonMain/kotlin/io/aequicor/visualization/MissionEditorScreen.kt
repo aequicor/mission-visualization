@@ -101,6 +101,15 @@ class MissionEditorStateHolder(
     var projectName by mutableStateOf("")
         private set
 
+    /**
+     * True once the working set is a persistent project: a restored draft / opened
+     * project, or after the user explicitly saves. The bundled Welcome project is
+     * in-memory — autosave stays off until this flips, so a reload (or «Открыть →
+     * Welcome») restores the pristine screens.
+     */
+    var persistenceEnabled by mutableStateOf(false)
+        private set
+
     val displayProjectName: String
         get() = projectDisplayName(projectName, designState.document?.name, designState.sources)
 
@@ -177,26 +186,50 @@ class MissionEditorStateHolder(
     suspend fun runPersistence() {
         val draft = draft ?: return
         draft.restore()?.let { restored ->
+            persistenceEnabled = true
             projectName = restored.projectName
             designState = createDesignEditorState(compileMissionDocuments(restored.files))
         }
         // Only the SLM `sources` are persisted; edits that do not write back leave them
         // unchanged, so snapshotFlow never emits for them. drop(1) skips the just-restored
-        // value so restore does not immediately re-save.
+        // value so restore does not immediately re-save. The gate sits inside collect
+        // (checked at fire time) so the in-memory Welcome project never autosaves and a
+        // stale debounced write cannot land after «Открыть → Welcome» clears the draft.
         snapshotFlow { designState.sources }
             .drop(1)
             .distinctUntilChanged()
             .debounce(AutosaveDebounceMs)
-            .collect { sources -> draft.save(sources, displayProjectName) }
+            .collect { sources -> if (persistenceEnabled) draft.save(sources, displayProjectName) }
     }
 
-    /** Explicit Save: force-flush the current SLM sources to the draft now. */
+    /**
+     * Explicit Save: force-flush the current SLM sources to the draft now. This is the
+     * opt-in that turns the in-memory Welcome project into a persistent one.
+     */
     fun saveDraftNow() {
-        draft?.saveNow(designState.sources, displayProjectName)
+        val draft = draft ?: return
+        persistenceEnabled = true
+        draft.saveNow(designState.sources, displayProjectName)
     }
 
-    /** Reset: discard the draft and reseed the editor from the bundled default sources. */
+    /**
+     * «Открыть → Welcome»: reseed the editor with the bundled in-memory Welcome project.
+     * Non-destructive — autosave switches off but a saved draft stays untouched, so a
+     * reload returns to the saved project; the Welcome copy persists only if the user
+     * explicitly saves it.
+     */
+    fun openWelcomeProject() {
+        persistenceEnabled = false
+        projectName = ""
+        designState = createDesignEditorState(loadDesignDocument())
+    }
+
+    /**
+     * Reset: discard the draft and reseed the editor from the bundled Welcome sources.
+     * Destructive counterpart of [openWelcomeProject]; currently has no UI entry point.
+     */
     fun resetToDefaults() {
+        persistenceEnabled = false
         val draft = draft
         if (draft == null) {
             projectName = ""

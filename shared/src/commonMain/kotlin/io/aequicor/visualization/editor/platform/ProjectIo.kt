@@ -15,13 +15,21 @@ data class CanvasExportCrop(
     val height: Double,
 )
 
+/**
+ * True where the open/save-project-to-disk actions are actually implemented (web today);
+ * platforms with stub actuals hide those menu items instead of silently doing nothing.
+ */
+internal expect val platformSupportsProjectDiskIo: Boolean
+
 internal expect fun platformOpenProjectZipArchive()
 
 internal expect fun platformOpenProjectFolder()
 
-internal expect fun platformSaveProjectFolder(sourcesJson: String)
+/** Saves the project to a user-picked folder; [onSaved] runs only after a successful write. */
+internal expect fun platformSaveProjectFolder(sourcesJson: String, onSaved: () -> Unit)
 
-internal expect fun platformDownloadProjectZip(sourcesJson: String)
+/** Downloads the project as a ZIP; [onSaved] runs only after the download is handed off. */
+internal expect fun platformDownloadProjectZip(sourcesJson: String, onSaved: () -> Unit)
 
 internal expect fun platformExportCanvasPng(fileName: String, crop: CanvasExportCrop?)
 

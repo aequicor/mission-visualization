@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.data
 
 /**
+ * Frozen test fixture (former bundled default; write-back tests anchor to its node ids).
  * Mission Overview page authored in CNL. The retained frontmatter is metadata; all layout,
  * variables, styling, text, and structure below it are controlled-natural-language source.
  */

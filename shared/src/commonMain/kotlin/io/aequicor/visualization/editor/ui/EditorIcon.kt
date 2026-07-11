@@ -76,6 +76,7 @@ internal enum class EditorIcon(resourceName: String) {
     Save("save"),
     FolderOpen("folder_open"),
     Folder("folder"),
+    Home("home"),
     ArrowBack("arrow_back"),
     ArrowUp("arrow_up"),
     ArrowDown("arrow_down"),

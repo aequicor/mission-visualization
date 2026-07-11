@@ -1,7 +1,5 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
-import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.StrokeOp
@@ -27,7 +25,7 @@ class FigureUndoRedoTest {
 
     private fun freshState(selecting: String): DesignEditorState =
         reduceDesignEditor(
-            createDesignEditorState(LoadDesignDocumentUseCase(DefaultDesignDocumentRepository())()),
+            createDesignEditorState(missionDemoDocuments()),
             DesignEditorIntent.SelectNode(selecting),
         )
 

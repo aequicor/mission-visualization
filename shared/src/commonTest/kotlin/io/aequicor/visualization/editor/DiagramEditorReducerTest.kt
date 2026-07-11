@@ -1,6 +1,8 @@
 package io.aequicor.visualization.editor
 
 import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
+import io.aequicor.visualization.editor.data.MissionDiagramsSlm
+import io.aequicor.visualization.editor.data.ProjectStructureSlm
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
@@ -232,11 +234,16 @@ class DiagramEditorReducerTest {
     }
 
     @Test
-    fun bundledDiagramsScreenCompilesWithDiagramNodes() {
-        val documents = compileMissionDocuments(DefaultDesignDocumentRepository().missionDocumentSources())
+    fun fixtureDiagramScreensCompileWithDiagramNodes() {
+        val documents = compileMissionDocuments(
+            listOf(
+                MissionDocumentSource("diagrams.layout.md", MissionDiagramsSlm),
+                MissionDocumentSource("project-structure.layout.md", ProjectStructureSlm),
+            ),
+        )
         assertTrue(
             documents.diagnostics.none { it.severity == DesignSeverity.Error },
-            "bundled sources must compile clean: ${documents.diagnostics.filter { it.severity == DesignSeverity.Error }}",
+            "fixture sources must compile clean: ${documents.diagnostics.filter { it.severity == DesignSeverity.Error }}",
         )
         val document = assertNotNull(documents.document)
         val classDiagram = assertIs<DesignNodeKind.Diagram>(assertNotNull(document.nodeById("class_diagram")).kind)
@@ -251,16 +258,14 @@ class DiagramEditorReducerTest {
 
     @Test
     fun bundledDiagramScreensAreAuthoredAsPureCnl() {
-        // Migration pin: the bundled diagram screens author their graphs as `## Diagram:`
-        // CNL containers; no raw `diagram:` YAML block remains in any bundled source.
+        // Migration pin: the bundled Welcome screens author diagrams as `## Diagram:`
+        // CNL containers; no raw `diagram:` YAML block appears in any bundled source.
         val sources = DefaultDesignDocumentRepository().missionDocumentSources()
-        val diagramScreens = sources.filter {
-            it.fileName == "diagrams.layout.md" || it.fileName == "project-structure.layout.md"
-        }
-        assertEquals(2, diagramScreens.size, "both diagram screens bundled")
-        diagramScreens.forEach { source ->
-            assertTrue("## Diagram:" in source.content, "${source.fileName} authors diagrams as CNL containers")
-        }
+        val umlScreen = assertNotNull(
+            sources.firstOrNull { it.fileName == "welcome-uml.layout.md" },
+            "the Welcome UML screen is bundled",
+        )
+        assertTrue("## Diagram:" in umlScreen.content, "${umlScreen.fileName} authors diagrams as CNL containers")
         sources.forEach { source ->
             assertTrue(
                 !Regex("^\\s*diagram:", RegexOption.MULTILINE).containsMatchIn(source.content),
@@ -271,8 +276,7 @@ class DiagramEditorReducerTest {
 
     @Test
     fun editOnBundledCnlDiagramPersistsAsCnlSentences() {
-        val diagrams = DefaultDesignDocumentRepository().missionDocumentSources()
-            .single { it.fileName == "diagrams.layout.md" }
+        val diagrams = MissionDocumentSource("diagrams.layout.md", MissionDiagramsSlm)
         val state = createDesignEditorState(compileMissionDocuments(listOf(diagrams)))
 
         val next = reduceDesignEditor(

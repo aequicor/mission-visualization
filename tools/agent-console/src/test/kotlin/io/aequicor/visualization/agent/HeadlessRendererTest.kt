@@ -18,7 +18,7 @@ class HeadlessRendererTest {
         val session = AgentSession.fromSamples()
         val document = assertNotNull(session.document)
 
-        val png = HeadlessRenderer.renderPng(document, "missionTelemetry", scale = 1f)
+        val png = HeadlessRenderer.renderPng(document, "welcomeVectors", scale = 1f)
         assertTrue(png.size > pngSignature.size, "png must not be empty")
         assertContentEquals(pngSignature, png.copyOfRange(0, pngSignature.size))
 
@@ -31,7 +31,7 @@ class HeadlessRendererTest {
     fun scaleMultipliesPixelDimensions() {
         val session = AgentSession.fromSamples()
         val document = assertNotNull(session.document)
-        val png = HeadlessRenderer.renderPng(document, "missionEventLog", scale = 2f)
+        val png = HeadlessRenderer.renderPng(document, "welcomeUml", scale = 2f)
         assertEquals(2880, png.readIntBe(16))
         assertEquals(2048, png.readIntBe(20))
     }
@@ -40,7 +40,7 @@ class HeadlessRendererTest {
     fun screenSizePrefersAuthoredRootFrame() {
         val session = AgentSession.fromSamples()
         val document = assertNotNull(session.document)
-        assertEquals(1440.0 to 1024.0, HeadlessRenderer.screenSize(document, "missionOverview"))
+        assertEquals(1440.0 to 1024.0, HeadlessRenderer.screenSize(document, "welcomeEditor"))
     }
 
     private fun ByteArray.readIntBe(offset: Int): Int =

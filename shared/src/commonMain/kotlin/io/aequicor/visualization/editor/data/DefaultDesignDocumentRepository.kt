@@ -3,15 +3,15 @@ package io.aequicor.visualization.editor.data
 import io.aequicor.visualization.editor.domain.DesignDocumentRepository
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 
-/** Serves the bundled mission design SLM documents, one per page. */
+/**
+ * Serves the bundled Welcome project, one SLM source per page. These screens live
+ * in memory: the editor does not autosave them, so a reload restores this pristine
+ * set until the user saves the project or opens another one.
+ */
 class DefaultDesignDocumentRepository : DesignDocumentRepository {
     override fun missionDocumentSources(): List<MissionDocumentSource> = listOf(
-        MissionDocumentSource("mission-overview.layout.md", MissionOverviewSlm),
-        MissionDocumentSource("mission-telemetry.layout.md", MissionTelemetrySlm),
-        MissionDocumentSource("mission-event-log.layout.md", MissionEventLogSlm),
-        MissionDocumentSource("shapes-showcase.layout.md", ShapesShowcaseSlm),
-        MissionDocumentSource("diagrams.layout.md", MissionDiagramsSlm),
-        MissionDocumentSource("project-structure.layout.md", ProjectStructureSlm),
-        MissionDocumentSource("cnl-showcase.layout.md", CnlShowcaseSlm),
+        MissionDocumentSource("welcome-editor.layout.md", WelcomeEditorSlm),
+        MissionDocumentSource("welcome-vectors.layout.md", WelcomeVectorsSlm),
+        MissionDocumentSource("welcome-uml.layout.md", WelcomeUmlSlm),
     )
 }

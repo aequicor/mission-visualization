@@ -81,6 +81,7 @@ import io.aequicor.visualization.editor.platform.platformFinishPdfExport
 import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
 import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
 import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
+import io.aequicor.visualization.editor.platform.platformSupportsProjectDiskIo
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
@@ -172,13 +173,19 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                     }
                     ProjectMenuPane.Open -> {
                         EditorDropdownMenuItem("Назад") { menuPane = ProjectMenuPane.Root }
-                        EditorDropdownMenuItem("Открыть ZIP архив") {
+                        EditorDropdownMenuItem("Welcome-проект", leadingContent = { DropdownMenuIcon(EditorIcon.Home) }) {
                             closeMenu()
-                            platformOpenProjectZipArchive()
+                            state.openWelcomeProject()
                         }
-                        EditorDropdownMenuItem("Выбрать папку на ПК") {
-                            closeMenu()
-                            platformOpenProjectFolder()
+                        if (platformSupportsProjectDiskIo) {
+                            EditorDropdownMenuItem("Открыть ZIP архив") {
+                                closeMenu()
+                                platformOpenProjectZipArchive()
+                            }
+                            EditorDropdownMenuItem("Выбрать папку на ПК") {
+                                closeMenu()
+                                platformOpenProjectFolder()
+                            }
                         }
                     }
                     ProjectMenuPane.Save -> {
@@ -187,13 +194,21 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             closeMenu()
                             state.saveDraftNow()
                         }
-                        EditorDropdownMenuItem("Сохранить в папку на ПК") {
-                            closeMenu()
-                            platformSaveProjectFolder(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources))
-                        }
-                        EditorDropdownMenuItem("Сохранить ZIP архивом") {
-                            closeMenu()
-                            platformDownloadProjectZip(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources))
+                        if (platformSupportsProjectDiskIo) {
+                            EditorDropdownMenuItem("Сохранить в папку на ПК") {
+                                closeMenu()
+                                // A completed disk save makes the working set persistent: keep the
+                                // local draft in sync from now on (cancelling the picker changes nothing).
+                                platformSaveProjectFolder(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources)) {
+                                    state.saveDraftNow()
+                                }
+                            }
+                            EditorDropdownMenuItem("Сохранить ZIP архивом") {
+                                closeMenu()
+                                platformDownloadProjectZip(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources)) {
+                                    state.saveDraftNow()
+                                }
+                            }
                         }
                     }
                     ProjectMenuPane.Export -> {

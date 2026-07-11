@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.data
 
 /**
+ * Frozen test fixture (former bundled default; typography/scene tests anchor to its node ids).
  * Telemetry page authored in CNL. The retained frontmatter is metadata; variables,
  * component definitions, styling, text, motion, and layout are controlled-natural-language source.
  */

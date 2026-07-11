@@ -1,7 +1,8 @@
 package io.aequicor.visualization.editor.data
 
 /**
- * Shapes Showcase screen: the shipped demo is authored in CNL and covers parametric
+ * Frozen test fixture (former bundled default; figure tests anchor to its node ids).
+ * Shapes Showcase screen: authored in CNL, covering parametric
  * primitives, stroked open paths, an editable vector network, even-odd paths, and a
  * boolean union of two ellipses.
  */

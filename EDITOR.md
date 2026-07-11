@@ -30,15 +30,15 @@ Property edits that the source can express **write back into the owning `*.layou
 (recompile keeps the fingerprint chain valid, and the in-memory node is mirrored in
 lock-step) and are **saved locally** (browser `localStorage` on web, a file on desktop,
 SharedPreferences on Android) with debounced autosave + Save/Reset, restored on boot. The
-writer depends on how the node is authored: a **CNL-owned** node (the 4 demos are CNL-only)
+writer depends on how the node is authored: a **CNL-owned** node (the 3 bundled Welcome screens are CNL-only)
 routes through `CnlWriter` (see "CNL write-back" below); a legacy YAML-authored source is
 patched by `SlmPatcher` and the YAML writers named below. Covered today, all through the
 `writeBackEdits` helper (`DesignEditorReducer`):
 
 - **Geometry / node contract:** resize, position, constraints, visibility, lock, rename.
 - **Layout / appearance scalars:** layout mode, gap, padding; opacity, corner radius; text.
-- **Style lists (Tier-2):** fills, strokes, effects — for CNL-owned nodes (the 4 demos, all
-  CNL-only) the whole stack re-emits as `color`/`stroke`/`effect` phrases via `CnlWriter` /
+- **Style lists (Tier-2):** fills, strokes, effects — for CNL-owned nodes (the 3 bundled
+  Welcome screens, all CNL-only) the whole stack re-emits as `color`/`stroke`/`effect` phrases via `CnlWriter` /
   `CnlEmitter` (see "CNL write-back" below). For a legacy YAML-authored source the list is
   re-serialized from the IR via `StyleYamlWriter` (`SetFills`/`SetStrokes`/`SetEffects`),
   preserving `token:` refs and `#hex` literals; `YamlPayload.Sequence.replaceWhole` rewrites the
@@ -80,9 +80,9 @@ revert sources** — `undo()`/`redo()` swap only the in-memory document, so afte
 reverts but the source keeps the last write-back. The working document remains the single source of
 truth within a session; samples still load and compile unchanged.
 
-#### CNL write-back (the demos' path)
+#### CNL write-back (the bundled screens' path)
 
-The 4 bundled demos are **CNL-only** (English-only, one sentence per node, at full IR parity), so a
+The 3 bundled Welcome screens are **CNL-only** (English-only, one sentence per node, at full IR parity), so a
 CNL-authored node routes its write-back through `CnlWriter` rather than the YAML writers above. A node
 is CNL-owned when its source span belongs to the CNL front-slice (`SlmEditIndex.cnlOwners`). `CnlWriter`
 patches the owning sentence in three tiers, cheapest first:
@@ -397,7 +397,7 @@ Run: `./gradlew :shared:jvmTest` (engine: `:engine:ir:jvmTest`, `:engine:fronten
 - **Write-back coverage.** Geometry, node-contract, layout/appearance scalars, style lists
   (fills/strokes/effects), **typography** (`text:` style) and **structural** edits
   (create/delete/duplicate/reorder/reparent, plus new screens as their own `*.layout.md`) all
-  patch `*.layout.md` and persist locally. The 4 demos are **CNL-only**, so those nodes are
+  patch `*.layout.md` and persist locally. The bundled Welcome screens are **CNL-only**, so those nodes are
   owned by `CnlWriter` (`SlmEditIndex.cnlOwners`) with the tier-1 span-replace / tier-2
   phrase-append / tier-3 whole-sentence re-emit model plus the anti-corruption fidelity veto —
   a CNL node never falls back to a YAML typed block. Structural write-back mints an explicit id,
