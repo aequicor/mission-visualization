@@ -4,7 +4,7 @@ import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import kotlin.math.ceil

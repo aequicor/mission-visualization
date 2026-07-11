@@ -3,7 +3,6 @@ package io.aequicor.visualization.editor.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,8 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.VerticalScrollbar
-import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -408,21 +405,13 @@ private fun SourceMarkdown(state: MissionEditorStateHolder) {
                 }
             }
         }
-        VerticalScrollbar(
-            adapter = rememberScrollbarAdapter(verticalScroll),
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(bottom = SourceScrollbarThicknessDp.dp),
-        )
-        HorizontalScrollbar(
-            adapter = rememberScrollbarAdapter(horizontalScroll),
-            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 46.dp, end = SourceScrollbarThicknessDp.dp),
-        )
+        SourceScrollbars(verticalScroll, horizontalScroll)
     }
 }
 
 private const val SourceCodeLineHeightDp = 20
 private const val SourceCodeLineHeightSp = 20
 private const val SourceCodeCharWidthDp = 8
-private const val SourceScrollbarThicknessDp = 12
 
 /** SLM source of the page currently selected, or null for an in-memory screen. */
 private data class SourceReference(val index: Int, val content: String)

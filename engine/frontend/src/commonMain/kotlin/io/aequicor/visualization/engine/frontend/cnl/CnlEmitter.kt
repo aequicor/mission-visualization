@@ -11,7 +11,7 @@ import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
 import io.aequicor.visualization.engine.ir.model.PropValue
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.VariableType
 import io.aequicor.visualization.engine.ir.model.VariableValue
 

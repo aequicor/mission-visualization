@@ -18,10 +18,13 @@ import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
 import io.aequicor.visualization.engine.ir.model.LayoutGridDefinition
 import io.aequicor.visualization.engine.ir.model.LayoutGridType
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
+import io.aequicor.visualization.engine.ir.model.LeadingTrim
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextCase
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
+import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
+import io.aequicor.visualization.engine.ir.model.TextScriptPosition
 import io.aequicor.visualization.engine.ir.model.UnitValue
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -60,10 +63,12 @@ internal fun DesignDocumentReader.readTextStyle(obj: JsonObject, pointer: String
     DesignTextStyle(
         fontFamily = (obj["fontFamily"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
         fontWeight = obj["fontWeight"]?.let { readBindableDouble(it, 400.0) },
+        italic = (obj["italic"] as? JsonPrimitive)?.booleanOrNull,
         fontSize = obj["fontSize"]?.let { readBindableDouble(it, 14.0) },
         lineHeight = readUnitValue(obj["lineHeight"], "$pointer/lineHeight"),
         letterSpacing = readUnitValue(obj["letterSpacing"], "$pointer/letterSpacing"),
         paragraphSpacing = (obj["paragraphSpacing"] as? JsonPrimitive)?.doubleOrNull,
+        paragraphIndent = (obj["paragraphIndent"] as? JsonPrimitive)?.doubleOrNull,
         textAlignHorizontal = obj["textAlignHorizontal"]?.let {
             readEnum(
                 it, "$pointer/textAlignHorizontal", TextAlignHorizontal.Left,
@@ -93,6 +98,8 @@ internal fun DesignDocumentReader.readTextStyle(obj: JsonObject, pointer: String
                     "upper" to TextCase.Upper,
                     "lower" to TextCase.Lower,
                     "title" to TextCase.Title,
+                    "smallCaps" to TextCase.SmallCaps,
+                    "smallCapsForced" to TextCase.SmallCapsForced,
                 ),
             )
         },
@@ -106,6 +113,47 @@ internal fun DesignDocumentReader.readTextStyle(obj: JsonObject, pointer: String
                 ),
             )
         },
+        decorationStyle = obj["decorationStyle"]?.let {
+            readEnum(
+                it, "$pointer/decorationStyle", TextDecorationStyle.Solid,
+                mapOf(
+                    "solid" to TextDecorationStyle.Solid,
+                    "dashed" to TextDecorationStyle.Dashed,
+                    "dotted" to TextDecorationStyle.Dotted,
+                    "wavy" to TextDecorationStyle.Wavy,
+                ),
+            )
+        },
+        decorationColor = (obj["decorationColor"] as? JsonPrimitive)?.takeIf { it.isString }?.let { primitive ->
+            DesignColor.fromHex(primitive.content)
+                ?: run {
+                    warn("$pointer/decorationColor", "Invalid color value")
+                    null
+                }
+        },
+        decorationThickness = readUnitValue(obj["decorationThickness"], "$pointer/decorationThickness"),
+        decorationSkipInk = (obj["decorationSkipInk"] as? JsonPrimitive)?.booleanOrNull,
+        textPosition = obj["textPosition"]?.let {
+            readEnum(
+                it, "$pointer/textPosition", TextScriptPosition.None,
+                mapOf(
+                    "none" to TextScriptPosition.None,
+                    "superscript" to TextScriptPosition.Superscript,
+                    "subscript" to TextScriptPosition.Subscript,
+                ),
+            )
+        },
+        leadingTrim = obj["leadingTrim"]?.let {
+            readEnum(
+                it, "$pointer/leadingTrim", LeadingTrim.None,
+                mapOf(
+                    "none" to LeadingTrim.None,
+                    "capHeight" to LeadingTrim.CapHeight,
+                ),
+            )
+        },
+        hangingPunctuation = (obj["hangingPunctuation"] as? JsonPrimitive)?.booleanOrNull,
+        hangingList = (obj["hangingList"] as? JsonPrimitive)?.booleanOrNull,
         fontFeatures = obj["fontFeatures"].asObject().mapValues { (_, enabled) ->
             (enabled as? JsonPrimitive)?.booleanOrNull ?: false
         },

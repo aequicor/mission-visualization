@@ -12,6 +12,18 @@ Compose-превью с оверлеями (выделение, инспекто
   model / serialization / resolve / layout / validate.
 - `:engine:frontend` — SLM-компилятор (чистый Kotlin): `*.layout.md` → IR; `SlmPatcher` для write-back.
 - `:engine:backend-compose` — Compose-рендерер (`DesignArtboard`); единственный engine-модуль с Compose.
+- `:subsystems:figures` — векторные фигуры (чистый Kotlin, KMP): геометрия (`PathGeometry`,
+  примитивы rect/ellipse/polygon/star/line/arrow, дуги эллипса `ellipseArcGeometry`, SVG-парсер,
+  hit-test, `meetFit`), модель `VectorNetwork`/`ShapeType`/`VectorPath`/`BooleanOperationKind`,
+  чистые editing-ops (move/handle/mirror/corner/radius/winding), lowering `networkToGeometry`
+  (со скруглением углов), `VectorAssetProvider`, чистый boolean-движок
+  (`PathBoolean`: `pathBoolean`/`pathBooleanFold`, `PathBooleanOp` union/subtract/intersect/
+  exclude), `strokeOutline` (реальные joins/caps + align) для Flatten/Outline и
+  `toSvgPathData`. `:engine:ir` зависит через `api`.
+- `:subsystems:figures-compose` — Compose-адаптер фигур: `PathGeometry.toComposePath`, stroke
+  cap/join, boolean `PathOperation`, мини-превью `FigureShapePreview`/`FigureBooleanPreview`.
+  Потребители: `:engine:backend-compose`, `:shared`.
+- `:subsystems:anchoring`(+`-compose`) — снаппинг/магнит (см. `MEMORY.md`).
 - `:shared` — app shell: `App`, `MissionEditorScreen`, `editor.{presentation,domain,data,ui}`.
   Таргеты: Android, JVM, JS, wasmJs, iOS. Редактор: `editor.presentation` — иммутабельный
   `DesignEditorState` (документ) + `EditorWorkspaceState` (вид, **отдельно** от документа),
@@ -30,6 +42,30 @@ Compose-превью с оверлеями (выделение, инспекто
   (не выразимо одним источником): cross-page reparent, reparent глубже ATX-6, узлы без
   heading-якоря (`ir`-splice/prose), instance/media/vector-path субдеревья, multi-page delete.
   Scope и gaps — в `EDITOR.md`.
+- `:subsystems:*` — извлечённые переиспользуемые подсистемы редактора, каждая парой модулей
+  «чистое ядро + `-compose` рендерер» (layering как у anchoring, `engine/README.md`):
+  - `:subsystems:anchoring` / `:subsystems:anchoring-compose` — снаппинг/магнит (см. `EDITOR.md`).
+  - `:subsystems:typography` / `:subsystems:typography-compose` — вся типографика: чистое ядро
+    (`RichText`/`TypographyStyle` — полный Figma-набор: italic, decoration style/color/thickness/
+    skip-ink, small caps, super/subscript, leading trim, hanging punctuation, lists, OpenType,
+    variable axes; `SpanAlgebra` — **стилизация части строки**; `OffsetHealing`, `CaseTransform`,
+    `TypographyMeasurer` c per-line-метриками + selection-geometry) и compose-рендерер
+    (`RichTextComposer`/`ComposeTypographyMeasurer` с кэшем / `RichTextPainter` / `FontProvider` +
+    `BundledFontProvider` — забандленные Google Fonts: Inter / Source Serif 4 / Roboto /
+    JetBrains Mono). `:engine:backend-compose` потребляет `-compose` (адаптер
+    `ResolvedText`→`RichText`), редактор (`:shared`) — оба (span-алгебра в редьюсере
+    `TextRangeEditing`, шрифты в артборде).
+  - `:subsystems:annotations` / `:subsystems:annotations-compose` / `:subsystems:annotations-slm` —
+    аннотации/комментарии как отдельный review-слой поверх дизайна: чистое ядро (модель
+    `Annotation`/`AnnotationKind` note|issue/`AnnotationAnchor` node|free/`AnnotationLayer`,
+    чистые операции слоя, `annotationBadgePosition`, `AnnotationPromptExporter` — промпт для
+    ИИ-агента только из issue, scope selected/screen/document, контекст узлов через
+    `nodeContext`-лямбду), compose-рендерер (`AnnotationBadge` капля / `AnnotationCard`
+    табличка с data-URI-картинкой / `AnnotationOverlay` поверх артборда с pan/zoom;
+    issue = `statusWarning`) и sidecar-формат `*.annotations.md` (`AnnotationSlmParser`
+    толерантный / `AnnotationSlmWriter` round-trip / `AnnotationSlmPatcher` хирургический
+    upsert/delete секции; спека — `design-book/annotations-sidecar-format.md`). Потребитель —
+    `:shared` (интенты + `writeBackAnnotations`, оверлей в канве, секция инспектора, экспорт).
 - `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — тонкие обёртки над shared UI.
 
 Документация конвейера — `engine/README.md`; спецификация SLM —

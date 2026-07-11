@@ -314,3 +314,73 @@ fun flowInsertionLine(siblings: List<BoundsBox>, index: Int, parent: BoundsBox, 
 
 /** Translates the box by ([dx], [dy]); size is unchanged. */
 fun BoundsBox.translate(dx: Double, dy: Double): BoundsBox = copy(x = x + dx, y = y + dy)
+
+/**
+ * One possible parent during a canvas drag-out reparent.
+ *
+ * [layoutBounds] are the parent's untransformed root-layout bounds. [visualBox] and
+ * [visualRotation] describe the same parent after its ancestor rotations are composed.
+ * [childAncestorRotations] is the nearest-first transform chain a child of this parent
+ * inherits (this parent first, then its ancestors up to the root).
+ */
+data class CanvasParentFrame(
+    val id: String,
+    val layoutBounds: BoundsBox,
+    val visualBox: BoundsBox,
+    val visualRotation: Double,
+    val childAncestorRotations: List<AncestorRotation>,
+)
+
+/** Parent and parent-relative geometry for an automatic canvas drag-out reparent. */
+data class CanvasReparentPlacement(
+    val parentId: String,
+    val x: Double,
+    val y: Double,
+    val rotation: Double,
+)
+
+/**
+ * Promotes a moved node when its visual center leaves [currentParent]. [upperParents]
+ * must be nearest-first and end with the screen's root frame; the page itself is never
+ * a target because the artboard renders the root frame tree.
+ *
+ * The nearest upper parent containing the moved center wins. If the node was dragged
+ * beyond every ancestor, the root frame remains the target so the node stays renderable
+ * as root overflow. The returned position is expressed in the target parent's layout
+ * coordinate system, and the node's own rotation compensates for any rotated ancestors
+ * it stopped inheriting, preserving its on-canvas appearance.
+ */
+fun reparentPlacementWhenMovedOutside(
+    movedVisual: EffectiveTransform,
+    currentParent: CanvasParentFrame,
+    upperParents: List<CanvasParentFrame>,
+): CanvasReparentPlacement? {
+    val center = GeoPoint(movedVisual.box.centerX, movedVisual.box.centerY)
+    if (currentParent.containsVisual(center)) return null
+    val target = upperParents.firstOrNull { it.containsVisual(center) }
+        ?: upperParents.lastOrNull()
+        ?: return null
+
+    var layoutCenter = center
+    target.childAncestorRotations.asReversed().forEach { transform ->
+        layoutCenter = rotatePointAroundCenter(layoutCenter, transform.center, -transform.degrees)
+    }
+    val inheritedRotation = target.childAncestorRotations.sumOf { it.degrees }
+    return CanvasReparentPlacement(
+        parentId = target.id,
+        x = layoutCenter.x - movedVisual.box.width / 2.0 - target.layoutBounds.x,
+        y = layoutCenter.y - movedVisual.box.height / 2.0 - target.layoutBounds.y,
+        rotation = movedVisual.rotation - inheritedRotation,
+    )
+}
+
+/** Point-in-rotated-rectangle test for a parent's composed visual transform. */
+private fun CanvasParentFrame.containsVisual(point: GeoPoint): Boolean {
+    val local = rotatePointAroundCenter(
+        point = point,
+        center = GeoPoint(visualBox.centerX, visualBox.centerY),
+        degrees = -visualRotation,
+    )
+    return local.x >= visualBox.x && local.x <= visualBox.right &&
+        local.y >= visualBox.y && local.y <= visualBox.bottom
+}

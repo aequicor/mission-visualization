@@ -18,6 +18,7 @@ import io.aequicor.visualization.engine.ir.model.DesignMask
 import io.aequicor.visualization.engine.ir.model.DesignMedia
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.subsystems.figures.networkRegionGeometry
 import io.aequicor.visualization.engine.ir.model.DesignNodePatch
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignPaint
@@ -47,7 +48,10 @@ import io.aequicor.visualization.engine.ir.model.ResponsiveVariant
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
+import io.aequicor.visualization.engine.ir.model.LeadingTrim
 import io.aequicor.visualization.engine.ir.model.TextCase
+import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
+import io.aequicor.visualization.engine.ir.model.TextScriptPosition
 import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.model.UnitValue
@@ -301,7 +305,9 @@ class DesignResolver(
             cornerRadius = resolveCornerRadius(override?.cornerRadius ?: node.cornerRadius, scope),
             text = (node.kind as? DesignNodeKind.Text)?.let { resolveText(it, override, scope) },
             shape = node.kind as? DesignNodeKind.Shape,
+            diagram = (node.kind as? DesignNodeKind.Diagram)?.graph,
             geometry = (node.kind as? DesignNodeKind.Shape)?.let { lowerShapeGeometry(it) },
+            regionPaints = resolveRegionPaints(node.kind as? DesignNodeKind.Shape, scope),
             booleanOp = (node.kind as? DesignNodeKind.BooleanOperation)?.operation,
             scroll = node.scroll,
             role = node.role,
@@ -510,6 +516,8 @@ class DesignResolver(
                 visible = next.visible ?: merged.visible,
                 characters = next.characters ?: merged.characters,
                 textStyle = merged.textStyle?.mergedWith(next.textStyle) ?: next.textStyle,
+                styleRanges = next.styleRanges ?: merged.styleRanges,
+                links = next.links ?: merged.links,
                 cornerRadius = next.cornerRadius ?: merged.cornerRadius,
                 variant = next.variant ?: merged.variant,
                 props = next.props ?: merged.props,
@@ -769,6 +777,16 @@ class DesignResolver(
         return paints.mapNotNull { resolvePaint(it, scope) }
     }
 
+    /** Lowers each explicitly-filled region of a vector network into geometry + resolved paints. */
+    private fun resolveRegionPaints(shape: DesignNodeKind.Shape?, scope: Scope): List<ResolvedRegionPaint> {
+        if (shape == null || shape.regionFills.isEmpty()) return emptyList()
+        val network = shape.network?.takeIf { it.isNotEmpty() } ?: return emptyList()
+        return shape.regionFills.entries.sortedBy { it.key }.mapNotNull { (index, fills) ->
+            val geometry = networkRegionGeometry(network, index, shape.viewBox) ?: return@mapNotNull null
+            ResolvedRegionPaint(geometry, fills.mapNotNull { resolvePaint(it, scope) })
+        }
+    }
+
     private fun resolveStrokes(node: DesignNode, override: InstanceOverride?, scope: Scope): ResolvedStrokes? {
         val strokes = override?.strokes
             ?: node.strokes
@@ -873,21 +891,29 @@ class DesignResolver(
             override?.characters?.let { resolveString(it, scope, "") }
                 ?: resolveString(text.characters, scope, "")
         }
+        // An override replaces (does not merge) the authored spans/links when present.
+        val styleRanges = override?.styleRanges ?: text.styleRanges
+        val links = override?.links ?: text.links
         return ResolvedText(
             characters = text.content?.let { resolveTextContent(it, scope, rawCharacters) }
                 ?: rawCharacters(),
             style = resolvedBase,
             autoResize = text.autoResize,
             truncate = text.truncate,
-            ranges = text.styleRanges.map { range ->
-                val rangeShared = (document.styles[range.styleRef] as? DesignStyle.Text)?.value ?: DesignTextStyle()
+            ranges = styleRanges.map { range ->
+                // Precedence: node base < shared range ref < inline range style.
+                val sharedRangeStyle = (document.styles[range.styleRef] as? DesignStyle.Text)?.value
                 ResolvedTextRange(
                     start = range.start,
                     end = range.end,
-                    style = resolveTextStyle(baseStyle.mergedWith(rangeShared).mergedWith(range.style), scope),
+                    style = resolveTextStyle(
+                        baseStyle.mergedWith(sharedRangeStyle).mergedWith(range.style),
+                        scope,
+                    ),
                     fills = range.fills?.mapNotNull { resolvePaint(it, scope) },
                 )
             },
+            links = links,
             list = text.list,
             contentKey = text.content?.key.orEmpty(),
         )
@@ -943,14 +969,31 @@ class DesignResolver(
         return ResolvedTextStyle(
             fontFamily = style.fontFamily.orEmpty(),
             fontWeight = (style.fontWeight?.let { resolveDouble(it, scope, 400.0) } ?: 400.0).toInt(),
+            italic = style.italic ?: false,
             fontSize = fontSize,
             lineHeight = style.lineHeight.resolveAgainst(fontSize),
             letterSpacing = style.letterSpacing.resolveAgainst(fontSize),
             paragraphSpacing = style.paragraphSpacing ?: 0.0,
+            paragraphIndent = style.paragraphIndent ?: 0.0,
             textAlignHorizontal = style.textAlignHorizontal ?: TextAlignHorizontal.Left,
             textAlignVertical = style.textAlignVertical ?: TextAlignVertical.Top,
             textCase = style.textCase ?: TextCase.None,
             textDecoration = style.textDecoration ?: TextDecorationKind.None,
+            decorationStyle = style.decorationStyle ?: TextDecorationStyle.Solid,
+            decorationColor = style.decorationColor,
+            decorationThickness = style.decorationThickness?.let { thickness ->
+                when (thickness.unit) {
+                    DesignUnit.Px -> thickness.value
+                    DesignUnit.Percent -> fontSize * thickness.value / 100.0
+                }
+            },
+            decorationSkipInk = style.decorationSkipInk ?: false,
+            textPosition = style.textPosition ?: TextScriptPosition.None,
+            leadingTrim = style.leadingTrim ?: LeadingTrim.None,
+            hangingPunctuation = style.hangingPunctuation ?: false,
+            hangingList = style.hangingList ?: false,
+            fontFeatures = style.fontFeatures,
+            variableAxes = style.variableAxes,
         )
     }
 

@@ -22,23 +22,28 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
-import io.aequicor.visualization.engine.ir.geometry.PathFillRule
-import io.aequicor.visualization.engine.ir.geometry.PathGeometry
-import io.aequicor.visualization.engine.ir.geometry.RectD
-import io.aequicor.visualization.engine.ir.geometry.arrowGeometry
-import io.aequicor.visualization.engine.ir.geometry.bounds
-import io.aequicor.visualization.engine.ir.geometry.lineGeometry
-import io.aequicor.visualization.engine.ir.geometry.parseSvgPathToGeometry
-import io.aequicor.visualization.engine.ir.geometry.regularPolygonGeometry
-import io.aequicor.visualization.engine.ir.geometry.starGeometry
+import io.aequicor.visualization.subsystems.figures.PathGeometry
+import io.aequicor.visualization.subsystems.figures.RectD
+import io.aequicor.visualization.subsystems.figures.arrowGeometry
+import io.aequicor.visualization.subsystems.figures.ellipseArcGeometry
+import io.aequicor.visualization.subsystems.figures.compose.pathOperationOf
+import io.aequicor.visualization.subsystems.figures.compose.strokeCapOf
+import io.aequicor.visualization.subsystems.figures.compose.strokeJoinOf
+import io.aequicor.visualization.subsystems.figures.compose.toComposePath
+import io.aequicor.visualization.subsystems.figures.graphicGeometry
+import io.aequicor.visualization.subsystems.figures.NoVectorAssets
+import io.aequicor.visualization.subsystems.figures.VectorAssetProvider
+import io.aequicor.visualization.subsystems.figures.VectorRef
+import io.aequicor.visualization.subsystems.figures.lineGeometry
+import io.aequicor.visualization.subsystems.figures.regularPolygonGeometry
+import io.aequicor.visualization.subsystems.figures.starGeometry
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.MediaKind
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.resolve.ResolvedCornerRadius
@@ -47,6 +52,10 @@ import io.aequicor.visualization.engine.ir.resolve.ResolvedMedia
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedStrokes
+import kotlin.math.abs
+import io.aequicor.visualization.subsystems.diagrams.compose.DiagramCanvasColors
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.drawRichText
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -54,7 +63,18 @@ internal class DesignDrawContext(
     val textMeasurer: TextMeasurer,
     val density: Density,
     val vectorAssets: VectorAssetProvider = NoVectorAssets,
-)
+    /** Shared rich-text measurer/cache for the text draw path. */
+    val typography: ComposeTypographyMeasurer =
+        ComposeTypographyMeasurer(textMeasurer, density),
+    /** Theme defaults for embedded diagram nodes; the app bridges its tokens in. */
+    val diagramColors: DiagramCanvasColors = DiagramCanvasColors(),
+) {
+    /** Per-graph edge-route cache for embedded diagram nodes (see [DiagramRouteCache]). */
+    val diagramRoutes: DiagramRouteCache = DiagramRouteCache()
+}
+
+/** The laid-out box as a figures [RectD] (the coordinate seam the geometry adapter consumes). */
+internal fun LayoutBox.rectD(): RectD = RectD(x, y, right, bottom)
 
 private val PlaceholderImageColor = Color(0xFFD9E1EA)
 private val UnknownPaintColor = Color(0xFFC9CFD6)
@@ -131,6 +151,11 @@ private fun DrawScope.drawDesignBoxContent(
     // A text node's fills paint the glyphs, not the node box.
     if (node.text == null) {
         node.fills.forEach { fill -> drawResolvedPaint(fill, outline, box) }
+        // Region paint: each explicitly-filled region overpaints its own area (Figma region fills).
+        node.regionPaints.forEach { region ->
+            val regionPath = region.geometry.toComposePath(box.rectD())
+            region.paints.forEach { paint -> drawResolvedPaint(paint, regionPath, box) }
+        }
         node.effects.filterIsInstance<ResolvedEffect.InnerShadow>().forEach { shadow ->
             drawInnerShadow(shadow, outline)
         }
@@ -138,22 +163,23 @@ private fun DrawScope.drawDesignBoxContent(
 
     node.media?.let { media -> drawMediaPlaceholder(box, media, outline, context) }
 
+    // Embedded diagram canvas: the graph paints above the wrapper fills and below any
+    // children/strokes, clipped to the node outline (see DiagramNodeDrawing.kt).
+    node.diagram?.let { graph -> drawDiagramNodeContent(box, graph, outline, context) }
+
     node.text?.let { text ->
-        val color = node.fills.firstSolidColor() ?: Color.Black
-        val layout = measureResolvedText(
-            measurer = context.textMeasurer,
-            density = context.density,
-            text = text,
-            color = color,
+        val laidOut = context.typography.layout(
+            rich = text.toRichText(),
             maxWidth = box.width,
+            fill = node.fills.toRichTextFill(),
             exactWidth = true,
         )
         val yOffset = when (text.style.textAlignVertical) {
             TextAlignVertical.Top -> 0.0
-            TextAlignVertical.Center -> (box.height - layout.size.height) / 2.0
-            TextAlignVertical.Bottom -> box.height - layout.size.height
+            TextAlignVertical.Center -> (box.height - laidOut.measured.height) / 2.0
+            TextAlignVertical.Bottom -> box.height - laidOut.measured.height
         }
-        drawText(layout, topLeft = Offset(box.x.toFloat(), (box.y + yOffset).toFloat()))
+        drawRichText(laidOut, topLeft = Offset(box.x.toFloat(), (box.y + yOffset).toFloat()))
     }
 
     if (box.children.isNotEmpty()) {
@@ -631,7 +657,17 @@ private fun outlinePath(
     val insetRect = RectD(box.x + inset, box.y + inset, box.right - inset, box.bottom - inset)
     return when (node.shape?.shape) {
         // Ellipse/rounded-rect stay native for pixel-exact ovals and inset-aware corner clamping.
-        ShapeType.Ellipse -> Path().apply { addOval(rect) }
+        ShapeType.Ellipse -> {
+            val shape = node.shape!!
+            val sweep = shape.arcSweepDeg
+            val inner = shape.innerRadius ?: 0.0
+            val isArc = (sweep != null && abs(sweep) < 360.0) || inner > 0.0
+            if (isArc) {
+                ellipseArcGeometry(insetRect, shape.arcStartDeg ?: 0.0, sweep ?: 360.0, inner).toComposePath(insetRect)
+            } else {
+                Path().apply { addOval(rect) }
+            }
+        }
         ShapeType.Polygon -> regularPolygonGeometry(insetRect, node.shape?.pointCount ?: 3).toComposePath(insetRect)
         ShapeType.Star ->
             starGeometry(insetRect, node.shape?.pointCount ?: 5, node.shape?.innerRadius ?: 0.4).toComposePath(insetRect)
@@ -692,25 +728,6 @@ private fun vectorPath(box: LayoutBox, rect: Rect, provider: VectorAssetProvider
 
     return Path().apply { addRect(rect) }
 }
-
-/**
- * Builds the geometry IR from a provider-supplied [VectorGraphic], mirroring the engine's inline
- * path lowering: each [io.aequicor.visualization.engine.ir.model.VectorPath] `d` parsed via
- * [parseSvgPathToGeometry] and concatenated, fill rule from the first path's winding rule, and the
- * source view box taken from the graphic (else the parsed path bounds). Returns null when the
- * graphic carries no drawable geometry.
- */
-private fun graphicGeometry(graphic: VectorGraphic): PathGeometry? {
-    val firstPath = graphic.paths.firstOrNull() ?: return null
-    val fillRule = if (firstPath.windingRule == "evenodd") PathFillRule.EvenOdd else PathFillRule.NonZero
-    val commands = graphic.paths.flatMap { parseSvgPathToGeometry(it.d).commands }
-    if (commands.isEmpty()) return null
-    val geometry = PathGeometry(commands, fillRule)
-    return geometry.copy(sourceViewBox = graphic.viewBox.toRectD() ?: geometry.bounds())
-}
-
-private fun DesignViewBox?.toRectD(): RectD? =
-    if (this != null && width > 0.0 && height > 0.0) RectD(x, y, x + width, y + height) else null
 
 /**
  * Combines the operand children of a boolean node into one path via `Path.op` and paints the

@@ -14,8 +14,10 @@ import io.aequicor.visualization.engine.frontend.blocks.NodePositionMode
 import io.aequicor.visualization.engine.frontend.blocks.OverridesPatch
 import io.aequicor.visualization.engine.frontend.blocks.SetOverridePatch
 import io.aequicor.visualization.engine.frontend.blocks.PropsPatch
+import io.aequicor.visualization.engine.frontend.blocks.ExtensionPatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsiveVariantPatch
+import io.aequicor.visualization.engine.frontend.blocks.ShapeBlockExtension
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylesPatch
@@ -48,7 +50,7 @@ import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.MaskType
 import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.ResponsiveVariant
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.SourceLocation
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
@@ -153,7 +155,8 @@ class PatchMerger(
             is PropsPatch -> applyProps(node, patch)
             is OverridesPatch -> applyOverrides(node, patch)
             is MediaPatch -> applyMedia(node, patch)
-            is ShapePatch -> applyShape(node, patch)
+            is ShapePatch -> ShapeBlockExtension.applyToNode(node, patch)
+            is ExtensionPatch -> patch.applyTo(node)
             is VectorPatch -> applyVector(node, patch, applied.line)
             is MaskPatch -> applyMask(node, patch, applied.line)
             is ActionPatch -> node.copy(
@@ -395,10 +398,18 @@ class PatchMerger(
         } else {
             kind.autoResize
         }
-        val styleRanges = patch.spans?.filter { it.styleRef != null }?.map { span ->
-            // IR style ranges carry inline styles; shared-ref resolution is a later stage.
-            TextStyleRange(start = span.start, end = span.end, style = DesignTextStyle(), styleRef = span.styleRef.orEmpty())
-        }
+        val styleRanges = patch.spans
+            ?.filter { it.styleRef != null || it.style != null || it.fills != null }
+            ?.map { span ->
+                // Shared-style refs resolve later; inline typography/fills ride directly.
+                TextStyleRange(
+                    start = span.start,
+                    end = span.end,
+                    style = span.style ?: DesignTextStyle(),
+                    fills = span.fills,
+                    styleRef = span.styleRef.orEmpty(),
+                )
+            }
         val links = patch.spans
             ?.filter { it.linkUrl != null || it.linkNodeTarget != null }
             ?.map { span ->
@@ -557,20 +568,6 @@ class PatchMerger(
         )
     }
 
-    private fun applyShape(node: DesignNode, patch: ShapePatch): DesignNode {
-        val kind = node.kind as? DesignNodeKind.Shape
-            ?: DesignNodeKind.Shape(shape = ShapeType.Rectangle)
-        return node.copy(
-            type = if (node.kind is DesignNodeKind.Shape) node.type else "shape",
-            kind = kind.copy(
-                shape = patch.kind ?: kind.shape,
-                pointCount = patch.pointCount ?: kind.pointCount,
-                innerRadius = patch.innerRadius ?: kind.innerRadius,
-            ),
-            size = mergeSize(node.size, patch.width, patch.height) ?: node.size,
-        )
-    }
-
     private fun applyVector(node: DesignNode, patch: VectorPatch, line: Int): DesignNode {
         if (patch.boolean != null) {
             // Operands are the node's nested children; the operation carries only its kind.
@@ -590,6 +587,7 @@ class PatchMerger(
                 viewBox = patch.viewBox ?: kind.viewBox,
                 paths = patch.paths ?: kind.paths,
                 network = patch.network ?: kind.network,
+                regionFills = patch.regionFills ?: kind.regionFills,
             ),
         )
     }
@@ -672,6 +670,7 @@ internal fun patchFields(patch: TypedPatch): Map<String, Any?> = when (patch) {
     is ShapePatch -> mapOf(
         "kind" to patch.kind, "width" to patch.width, "height" to patch.height,
         "pointCount" to patch.pointCount, "innerRadius" to patch.innerRadius,
+        "arcStart" to patch.arcStartDeg, "arcSweep" to patch.arcSweepDeg,
     )
     is ComponentPatch -> mapOf(
         "ref" to patch.ref, "libraryRef" to patch.libraryRef, "variant" to patch.variant,

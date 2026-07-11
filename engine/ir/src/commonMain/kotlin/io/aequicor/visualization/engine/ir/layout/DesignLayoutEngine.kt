@@ -1,6 +1,6 @@
 package io.aequicor.visualization.engine.ir.layout
 
-import io.aequicor.visualization.engine.ir.geometry.RectD
+import io.aequicor.visualization.subsystems.figures.RectD
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.orZero
@@ -71,17 +71,24 @@ data class LayoutBox(
         } else {
             px to py
         }
-        if (lx < x || ly < y || lx > right || ly > bottom) return null
-        for (child in children.asReversed()) {
-            child.hitTest(lx, ly)?.let { return it }
+        val rect = RectD(x, y, right, bottom)
+        val geometry = node.outlineGeometry(rect)
+        val insideBounds = lx >= x && ly >= y && lx <= right && ly <= bottom
+        val hitsSelf = insideBounds && (geometry == null || node.outlineContains(geometry, rect, lx, ly))
+
+        // Rendering allows descendants to overflow an unclipped container, so hit-testing
+        // must follow the same rule. A clipped container still prunes the whole subtree as
+        // soon as the pointer leaves its own outline.
+        if (!node.layout.clipsContent || hitsSelf) {
+            for (child in children.asReversed()) {
+                child.hitTest(lx, ly)?.let { return it }
+            }
         }
+
         // Path-accurate self-test: a click in the bounding box but outside the actual
         // outline (a star's notch, a vector's transparent area) misses, so a node behind
         // still gets a chance. Nodes whose box IS their outline skip this (geometry == null).
-        val rect = RectD(x, y, right, bottom)
-        val geometry = node.outlineGeometry(rect)
-        if (geometry != null && !node.outlineContains(geometry, rect, lx, ly)) return null
-        return this
+        return this.takeIf { hitsSelf }
     }
 
     fun allBoxes(): List<LayoutBox> = listOf(this) + children.flatMap { it.allBoxes() }
@@ -122,12 +129,14 @@ class DesignLayoutEngine(
     fun naturalWidth(node: ResolvedNode): Double {
         val fixed = node.size.width
         val intrinsic = node.media?.intrinsicWidth
+            ?: node.diagram?.let(::diagramIntrinsicWidth)
         val width = when {
             node.sizing.horizontal == SizingMode.Fixed && fixed != null -> fixed
-            // A hugging media node without an authored size hugs the asset's intrinsic size.
+            // A hugging media/diagram node without an authored size hugs its intrinsic size.
             node.sizing.horizontal == SizingMode.Hug && fixed == null && intrinsic != null -> intrinsic
             node.text != null -> textNaturalWidth(node)
-            node.children.isEmpty() -> fixed ?: 0.0
+            // Diagram leaves default to the graph's bbox when no size is authored.
+            node.children.isEmpty() -> fixed ?: intrinsic ?: 0.0
             else -> when (node.layout.mode) {
                 LayoutMode.Horizontal -> {
                     val flow = flowChildren(node)
@@ -163,11 +172,12 @@ class DesignLayoutEngine(
     fun naturalHeight(node: ResolvedNode, width: Double): Double {
         val fixed = node.size.height
         val intrinsic = node.media?.intrinsicHeight
+            ?: node.diagram?.let(::diagramIntrinsicHeight)
         val height = when {
             node.sizing.vertical == SizingMode.Fixed && fixed != null -> fixed
             node.sizing.vertical == SizingMode.Hug && fixed == null && intrinsic != null -> intrinsic
             node.text != null -> textNaturalHeight(node, width)
-            node.children.isEmpty() -> fixed ?: 0.0
+            node.children.isEmpty() -> fixed ?: intrinsic ?: 0.0
             else -> when (node.layout.mode) {
                 LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
                     layoutChildren(node, width, null).contentHeight
@@ -427,6 +437,8 @@ class DesignLayoutEngine(
     private fun textBaseline(text: ResolvedText, width: Double, align: BaselineAlign): Double {
         val first = textMeasurer.firstBaseline(text, width)
         if (align == BaselineAlign.Last) {
+            // Prefer real per-line metrics (mixed-size ranges break the uniform formula).
+            textMeasurer.measure(text, width).lastBaseline?.let { return it }
             val lineHeight = if (text.style.lineHeight > 0.0) text.style.lineHeight else text.style.fontSize * 1.25
             if (lineHeight > 0.0) {
                 val lineCount = (textMeasurer.measure(text, width).height / lineHeight).toInt().coerceAtLeast(1)

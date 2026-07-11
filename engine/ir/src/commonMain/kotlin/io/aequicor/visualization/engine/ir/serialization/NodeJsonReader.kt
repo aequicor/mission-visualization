@@ -1,7 +1,7 @@
 package io.aequicor.visualization.engine.ir.serialization
 
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
 import io.aequicor.visualization.engine.ir.model.DesignCondition
 import io.aequicor.visualization.engine.ir.model.DesignExpression
@@ -9,13 +9,14 @@ import io.aequicor.visualization.engine.ir.model.DesignMask
 import io.aequicor.visualization.engine.ir.model.DesignMedia
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignRepeat
 import io.aequicor.visualization.engine.ir.model.DesignTable
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.MaskType
 import io.aequicor.visualization.engine.ir.model.MediaKind
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SourceLocation
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextContent
@@ -26,13 +27,13 @@ import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.TextStyleRange
 import io.aequicor.visualization.engine.ir.model.TextTruncate
-import io.aequicor.visualization.engine.ir.model.HandleMirror
-import io.aequicor.visualization.engine.ir.model.HandleOffset
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.VectorPath
-import io.aequicor.visualization.engine.ir.model.VectorRegion
-import io.aequicor.visualization.engine.ir.model.VectorSegment
-import io.aequicor.visualization.engine.ir.model.VectorVertex
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorPath
+import io.aequicor.visualization.subsystems.figures.VectorRegion
+import io.aequicor.visualization.subsystems.figures.VectorSegment
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -123,6 +124,7 @@ private fun DesignDocumentReader.readKind(type: String, obj: JsonObject, pointer
         "line" -> shapeKind(ShapeType.Line, obj, pointer)
         "arrow" -> shapeKind(ShapeType.Arrow, obj, pointer)
         "vector" -> shapeKind(ShapeType.Vector, obj, pointer)
+        "diagram" -> readDiagramKind(obj, pointer)
         "instance" -> DesignNodeKind.Instance(
             componentId = readBindableString(obj["componentId"], ""),
             libraryRef = obj.stringOrDefault("libraryRef"),
@@ -184,15 +186,7 @@ private fun DesignDocumentReader.readTextKind(obj: JsonObject, pointer: String):
         styleRanges = obj["styleRanges"].asArray("$pointer/styleRanges").mapIndexed { index, range ->
             readStyleRange(range, "$pointer/styleRanges/$index")
         },
-        links = obj["links"].asArray("$pointer/links").map { link ->
-            val linkObj = link.asObject()
-            TextLink(
-                start = linkObj.intOrDefault("start", 0),
-                end = linkObj.intOrDefault("end", 0),
-                url = linkObj.stringOrDefault("url"),
-                nodeTarget = linkObj.stringOrDefault("nodeTarget"),
-            )
-        },
+        links = obj["links"].asArray("$pointer/links").map { readTextLink(it) },
         list = readTextListSettings(obj["list"], "$pointer/list"),
     )
 
@@ -205,6 +199,8 @@ private fun DesignDocumentReader.shapeKind(
         shape = shape,
         pointCount = (obj["pointCount"] as? JsonPrimitive)?.intOrNull,
         innerRadius = (obj["innerRadius"] as? JsonPrimitive)?.doubleOrNull,
+        arcStartDeg = (obj["arcStartDeg"] as? JsonPrimitive)?.doubleOrNull,
+        arcSweepDeg = (obj["arcSweepDeg"] as? JsonPrimitive)?.doubleOrNull,
         paths = obj["paths"].asArray("$pointer/paths").mapNotNull { path ->
             val pathObj = path as? JsonObject ?: return@mapNotNull null
             VectorPath(
@@ -223,7 +219,19 @@ private fun DesignDocumentReader.shapeKind(
             )
         },
         network = readVectorNetwork(obj["network"], "$pointer/network"),
+        regionFills = readRegionFills(obj["regionFills"], "$pointer/regionFills"),
     )
+
+private fun DesignDocumentReader.readRegionFills(element: JsonElement?, pointer: String): Map<Int, List<DesignPaint>> {
+    val obj = element as? JsonObject ?: return emptyMap()
+    val result = LinkedHashMap<Int, List<DesignPaint>>()
+    obj.forEach { (key, value) ->
+        val index = key.toIntOrNull() ?: return@forEach
+        val paints = (value as? JsonArray)?.mapNotNull { readPaint(it, "$pointer/$key") } ?: return@forEach
+        if (paints.isNotEmpty()) result[index] = paints
+    }
+    return result
+}
 
 private fun DesignDocumentReader.readVectorNetwork(element: JsonElement?, pointer: String): VectorNetwork? {
     val obj = element as? JsonObject ?: return null
@@ -243,6 +251,7 @@ private fun DesignDocumentReader.readVectorNetwork(element: JsonElement?, pointe
                 ),
             ),
             corner = vertexObj.booleanOrDefault("corner", false),
+            cornerRadius = vertexObj.plainDouble("cornerRadius", "$pointer/vertices", 0.0),
         )
     }
     val segments = obj["segments"].asArray("$pointer/segments").mapNotNull { segment ->
@@ -431,15 +440,26 @@ private fun DesignDocumentReader.readTextListSettings(
 
 internal fun DesignDocumentReader.readStyleRange(element: JsonElement, pointer: String): TextStyleRange {
     val obj: Map<String, JsonElement> = element.asObject()
+    // A "style" string is a shared-style ref; a "style" object is inline typography.
     val styleObj = obj["style"] as? JsonObject
     return TextStyleRange(
         start = obj.intOrDefault("start", 0),
         end = obj.intOrDefault("end", 0),
+        styleRef = obj.stringOrDefault("styleRef").ifEmpty { obj.stringOrDefault("style") },
         style = styleObj?.let { readTextStyle(it, "$pointer/style") } ?: DesignTextStyle(),
         fills = (styleObj?.get("fills") as? JsonArray)?.mapIndexedNotNull { index, paint ->
             readPaint(paint, "$pointer/style/fills/$index")
         },
-        styleRef = obj.stringOrDefault("styleRef"),
+    )
+}
+
+internal fun DesignDocumentReader.readTextLink(element: JsonElement): TextLink {
+    val linkObj = element.asObject()
+    return TextLink(
+        start = linkObj.intOrDefault("start", 0),
+        end = linkObj.intOrDefault("end", 0),
+        url = linkObj.stringOrDefault("url"),
+        nodeTarget = linkObj.stringOrDefault("nodeTarget"),
     )
 }
 

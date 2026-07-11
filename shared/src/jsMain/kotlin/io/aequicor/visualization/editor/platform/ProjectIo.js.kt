@@ -17,3 +17,7 @@ internal actual fun platformAppendCanvasPdfPage(title: String, crop: CanvasExpor
 internal actual fun platformFinishPdfExport(fileName: String) = Unit
 
 internal actual fun platformToggleFullscreen() = Unit
+
+internal actual fun platformOpenUrl(url: String) {
+    kotlinx.browser.window.open(url, "_blank")
+}

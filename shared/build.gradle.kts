@@ -110,6 +110,27 @@ kotlin {
                 api(projects.subsystems.anchoring)
                 implementation(projects.subsystems.anchoringCompose)
 
+                // Annotations subsystem: pure model / ops / prompt export + sidecar SLM format (api —
+                // their types cross editor state/intents) + Compose overlay renderer (implementation).
+                api(projects.subsystems.annotations)
+                api(projects.subsystems.annotationsSlm)
+                implementation(projects.subsystems.annotationsCompose)
+
+                // Figures subsystem: pure geometry / vector-network model + editing ops (api — its
+                // types cross into editor state/intents) + Compose overlay & previews (implementation).
+                api(projects.subsystems.figures)
+                implementation(projects.subsystems.figuresCompose)
+                // Diagrams subsystem: pure graph model/routing/editing ops (api — editor state and
+                // intents expose its types) + Compose canvas/preview renderer (implementation)
+                // + SLM parse/write-back adapter wired at the composition root.
+                api(projects.subsystems.diagrams)
+                implementation(projects.subsystems.diagramsCompose)
+                api(projects.subsystems.diagramsSlm)
+                // Typography subsystem: pure span algebra / selection contracts (api — reducer and
+                // intents expose its types) + Compose selection geometry and font provider.
+                api(projects.subsystems.typography)
+                implementation(projects.subsystems.typographyCompose)
+
                 // Local draft persistence: coroutines for autosave flow, serialization for the envelope.
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)

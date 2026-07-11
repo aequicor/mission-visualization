@@ -29,5 +29,12 @@ enum class TypedBlockKind(val key: String) {
 
     companion object {
         fun fromKey(key: String): TypedBlockKind? = entries.firstOrNull { it.key == key }
+
+        /**
+         * All built-in reserved keys, including fenced-only `ir`. Used to validate that a
+         * registered [io.aequicor.visualization.engine.frontend.blocks.TypedBlockExtension]
+         * key does not collide with a built-in kind.
+         */
+        val reservedKeys: Set<String> = entries.map { it.key }.toSet() + "ir"
     }
 }

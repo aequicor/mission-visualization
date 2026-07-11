@@ -46,6 +46,7 @@ import io.aequicor.visualization.editor.data.DefaultDraftRepository
 import io.aequicor.visualization.editor.data.createKeyValueStore
 import io.aequicor.visualization.editor.domain.ClearDraftUseCase
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
+import io.aequicor.visualization.editor.domain.ExportIssuesPromptUseCase
 import io.aequicor.visualization.editor.domain.RestoreDraftSourcesUseCase
 import io.aequicor.visualization.editor.domain.SaveDraftUseCase
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
@@ -57,7 +58,10 @@ import io.aequicor.visualization.editor.presentation.InspectorSection
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.projectDisplayName
+import io.aequicor.visualization.editor.presentation.reduceAnnotationWorkspace
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
+import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
+import io.aequicor.visualization.subsystems.annotations.ExportScope
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
 import kotlinx.coroutines.Dispatchers
@@ -146,7 +150,23 @@ class MissionEditorStateHolder(
 
     fun dispatch(intent: DesignEditorIntent) {
         designState = reduceDesignEditor(designState, intent)
+        // Annotation view intents (expand/select/tool) live in workspace state, and a
+        // deleted annotation prunes its view entries; every other intent is a no-op here.
+        updateWorkspace { reduceAnnotationWorkspace(it, intent) }
     }
+
+    private val exportIssuesPromptUseCase = ExportIssuesPromptUseCase()
+
+    /**
+     * Builds the "fix these design issues" AI prompt from the issue annotations in
+     * [scope] with resolved node context; the toolbar copies it to the clipboard.
+     */
+    fun exportIssuesPrompt(scope: ExportScope): String = exportIssuesPromptUseCase(
+        layers = designState.annotationLayers.values.toList(),
+        scope = scope,
+        document = designState.document,
+        screenFileNameByPageId = designState.screenFileNamesByPageId(),
+    )
 
     /**
      * Restores a persisted draft (if any) into the editor, then autosaves subsequent
@@ -270,17 +290,18 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
 @Composable
 private fun WorkbenchLayout(state: MissionEditorStateHolder) {
     val ws = state.workspace
-    val inspectorWidthDp = ws.inspectorWidthDp.coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxInspectorDp)
+    val sourceWidthDp = ws.sourceWidthDp.coerceIn(WorkspaceLimits.MinSourceDp, WorkspaceLimits.MaxSourceDp)
+    val inspectorWidthDp = ws.inspectorWidthDp.coerceIn(WorkspaceLimits.MinInspectorDp, WorkspaceLimits.MaxInspectorDp)
     Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         // Left: Source + Screens (or collapsed rail).
         if (ws.sourceCollapsed) {
             CollapsedRail(label = "Source", icon = EditorIcon.Source, onExpand = { state.updateWorkspace { it.copy(sourceCollapsed = false) } })
         } else {
-            EditorSourcePane(state, Modifier.width(ws.sourceWidthDp.dp).fillMaxHeight())
+            EditorSourcePane(state, Modifier.width(sourceWidthDp.dp).fillMaxHeight())
             VerticalSplitter(
                 onDeltaDp = { d ->
                     state.updateWorkspace {
-                        it.copy(sourceWidthDp = (it.sourceWidthDp + d).coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxSourceDp))
+                        it.copy(sourceWidthDp = (it.sourceWidthDp + d).coerceIn(WorkspaceLimits.MinSourceDp, WorkspaceLimits.MaxSourceDp))
                     }
                 },
                 onReset = { state.updateWorkspace { it.copy(sourceWidthDp = WorkspaceLimits.DefaultSourceDp) } },
@@ -298,7 +319,7 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
                 onDeltaDp = { d ->
                     state.updateWorkspace {
                         // Splitter is left of the inspector, so dragging right shrinks it.
-                        it.copy(inspectorWidthDp = (it.inspectorWidthDp - d).coerceIn(WorkspaceLimits.MinPanelDp, WorkspaceLimits.MaxInspectorDp))
+                        it.copy(inspectorWidthDp = (it.inspectorWidthDp - d).coerceIn(WorkspaceLimits.MinInspectorDp, WorkspaceLimits.MaxInspectorDp))
                     }
                 },
                 onReset = { state.updateWorkspace { it.copy(inspectorWidthDp = WorkspaceLimits.DefaultInspectorDp) } },

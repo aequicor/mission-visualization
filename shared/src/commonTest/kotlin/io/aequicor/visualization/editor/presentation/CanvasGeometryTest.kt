@@ -3,6 +3,7 @@ package io.aequicor.visualization.editor.presentation
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -304,6 +305,89 @@ class CanvasGeometryTest {
         val parent = BoundsBox(x = 0.0, y = 0.0, width = 300.0, height = 50.0)
         val line = flowInsertionLine(emptyList(), index = 0, parent = parent, horizontal = true)
         assertEquals(150.0, line.x1)
+    }
+
+    // --- Drag-out reparent -------------------------------------------------------
+
+    private fun parentFrame(
+        id: String,
+        bounds: BoundsBox,
+        visualRotation: Double = 0.0,
+        childAncestorRotations: List<AncestorRotation> = emptyList(),
+    ): CanvasParentFrame = CanvasParentFrame(
+        id = id,
+        layoutBounds = bounds,
+        visualBox = bounds,
+        visualRotation = visualRotation,
+        childAncestorRotations = childAncestorRotations,
+    )
+
+    @Test
+    fun movedCenterInsideCurrentParentDoesNotReparent() {
+        val current = parentFrame("current", BoundsBox(100.0, 100.0, 100.0, 100.0))
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(120.0, 130.0, 20.0, 20.0), 0.0, 0.0)
+
+        assertNull(reparentPlacementWhenMovedOutside(moved, current, listOf(root)))
+    }
+
+    @Test
+    fun movedCenterOnCurrentParentBoundaryStaysInCurrentParent() {
+        val current = parentFrame("current", BoundsBox(100.0, 100.0, 100.0, 100.0))
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(190.0, 130.0, 20.0, 20.0), 0.0, 0.0)
+
+        assertNull(reparentPlacementWhenMovedOutside(moved, current, listOf(root)))
+    }
+
+    @Test
+    fun movedOutsidePromotesToNearestContainingParent() {
+        val current = parentFrame("current", BoundsBox(100.0, 100.0, 100.0, 100.0))
+        val grandparent = parentFrame("grandparent", BoundsBox(50.0, 50.0, 300.0, 300.0))
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(220.0, 120.0, 20.0, 20.0), 15.0, 15.0)
+
+        val placement = assertNotNull(
+            reparentPlacementWhenMovedOutside(moved, current, listOf(grandparent, root)),
+        )
+        assertEquals("grandparent", placement.parentId)
+        assertEquals(170.0, placement.x)
+        assertEquals(70.0, placement.y)
+        assertEquals(15.0, placement.rotation)
+    }
+
+    @Test
+    fun movedBeyondEveryAncestorPromotesOnlyAsFarAsRoot() {
+        val current = parentFrame("current", BoundsBox(100.0, 100.0, 100.0, 100.0))
+        val grandparent = parentFrame("grandparent", BoundsBox(50.0, 50.0, 300.0, 300.0))
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(600.0, 120.0, 20.0, 20.0), 0.0, 0.0)
+
+        val placement = assertNotNull(
+            reparentPlacementWhenMovedOutside(moved, current, listOf(grandparent, root)),
+        )
+        assertEquals("root", placement.parentId)
+        assertEquals(600.0, placement.x)
+        assertEquals(120.0, placement.y)
+    }
+
+    @Test
+    fun promotionOutOfRotatedParentPreservesVisualRotation() {
+        val center = GeoPoint(200.0, 200.0)
+        val current = parentFrame(
+            id = "rotated",
+            bounds = BoundsBox(150.0, 150.0, 100.0, 100.0),
+            visualRotation = 90.0,
+            childAncestorRotations = listOf(AncestorRotation(center, 90.0)),
+        )
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(290.0, 190.0, 20.0, 20.0), 105.0, 15.0)
+
+        val placement = assertNotNull(reparentPlacementWhenMovedOutside(moved, current, listOf(root)))
+        assertEquals("root", placement.parentId)
+        assertEquals(290.0, placement.x)
+        assertEquals(190.0, placement.y)
+        assertEquals(105.0, placement.rotation)
     }
 
 }

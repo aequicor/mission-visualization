@@ -428,6 +428,7 @@ internal object CnlParser {
             CnlPropertyKind.Media -> consumeMedia(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.ShapePoints, CnlPropertyKind.ShapeInner ->
                 consumeNumber(kind, tokens, valueStart, ::add, lineNumber, diagnostics)
+            CnlPropertyKind.ShapeArc -> consumeShapeArc(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.ViewBox -> consumeViewBox(tokens, valueStart, keywordSpan, properties, lineNumber, diagnostics)
             CnlPropertyKind.IconRef, CnlPropertyKind.PathRef, CnlPropertyKind.BooleanOp ->
                 consumeToken(kind, tokens, valueStart, ::add, lineNumber, diagnostics)
@@ -1527,6 +1528,34 @@ internal object CnlParser {
     }
 
     /** `viewbox (x y w h)` → `viewBox: [ x, y, w, h ]`. */
+    /** `arc ( start sweep )` → shape `arcStart` + `arcSweep` (ellipse pie/donut geometry). */
+    private fun consumeShapeArc(
+        tokens: List<Token>,
+        valueStart: Int,
+        keywordSpan: CnlSpan,
+        properties: MutableList<CnlProperty>,
+        lineNumber: Int,
+        diagnostics: DiagnosticCollector,
+    ): Int {
+        if (tokens.getOrNull(valueStart)?.text != "(") {
+            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"arc\" needs a ( start sweep ) group")
+            return valueStart
+        }
+        val (group, after) = parseGroup(tokens, valueStart)
+        val nums = group.children.mapNotNull { it.leaf() }.filter { isNumber(it.token.text) }
+        if (nums.size < 2) {
+            CnlDiagnostics.warn(diagnostics, CnlRule.BadNumber, lineNumber, "arc needs 2 numbers (start sweep)")
+            return after
+        }
+        val span = joinSpan(keywordSpan, tokens[after - 1].span)
+        properties += CnlProperty(
+            CnlPropertyKind.ShapeArc,
+            listOf(CnlValue(nums[0].token.text, nums[0].token.span), CnlValue(nums[1].token.text, nums[1].token.span)),
+            keywordSpan, span,
+        )
+        return after
+    }
+
     private fun consumeViewBox(
         tokens: List<Token>,
         valueStart: Int,
@@ -1647,9 +1676,16 @@ internal object CnlParser {
                         loops += "[ ${nums.joinToString(", ")} ]"
                         i += 1
                     }
+                    // Per-region solid/token fills: `fill #hex` / `fill $ref` / `fill token:ref`.
+                    val fills = mutableListOf<String>()
+                    while (children.getOrNull(i)?.leafText()?.lowercase() == "fill") {
+                        children.getOrNull(i + 1)?.leafText()?.let { fills += regionFillItem(it) }
+                        i += 2
+                    }
                     val parts = buildList {
                         if (winding == "evenodd") add("windingRule: evenodd")
                         add("loops: [ ${loops.joinToString(", ")} ]")
+                        if (fills.isNotEmpty()) add("fills: [ ${fills.joinToString(", ")} ]")
                     }
                     regions += "{ ${parts.joinToString(", ")} }"
                 }
@@ -1672,6 +1708,7 @@ internal object CnlParser {
         var outH: String? = null
         var mirror: String? = null
         var corner = false
+        var radius: String? = null
         var i = 2
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
@@ -1679,6 +1716,7 @@ internal object CnlParser {
                 "out" -> { outH = offsetFragment(children.getOrNull(i + 1)); i += 2 }
                 "mirror" -> { mirror = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "corner" -> { corner = true; i += 1 }
+                "radius" -> { radius = children.getOrNull(i + 1)?.leafText()?.takeIf { isNumber(it) }; i += 2 }
                 else -> i += 1
             }
         }
@@ -1689,6 +1727,7 @@ internal object CnlParser {
             outH?.let { add("out: $it") }
             mirror?.let { if (it.lowercase() != "none") add("mirror: $it") }
             if (corner) add("corner: true")
+            radius?.let { add("radius: $it") }
         }
         return "{ ${parts.joinToString(", ")} }"
     }
@@ -3201,6 +3240,10 @@ internal object CnlParser {
             CnlPropertyKind.Media -> builder.media(values[0])
             CnlPropertyKind.ShapePoints -> builder.shape("pointCount" to values[0])
             CnlPropertyKind.ShapeInner -> builder.shape("innerRadius" to values[0])
+            CnlPropertyKind.ShapeArc -> {
+                builder.shape("arcStart" to values[0])
+                builder.shape("arcSweep" to values[1])
+            }
             CnlPropertyKind.ViewBox -> builder.vector(values[0])
             CnlPropertyKind.IconRef -> builder.vector("iconRef: ${yamlString(values[0])}")
             CnlPropertyKind.PathRef -> builder.vector("pathRef: ${yamlString(values[0])}")
@@ -3225,6 +3268,13 @@ internal object CnlParser {
 
     private fun colorLiteral(color: String): String =
         if (color.startsWith("#") || color.startsWith("{{")) "\"$color\"" else color
+
+    /** A region-fill token → a `fills:` list item: `#hex` (quoted), `token:ref` → map, else bare `$ref`. */
+    private fun regionFillItem(token: String): String = when {
+        token.startsWith("#") -> "\"$token\""
+        token.startsWith("token:") -> "{ token: ${token.removePrefix("token:")} }"
+        else -> token
+    }
 
     /** Opacity/binding literal — quotes `{{expr}}`, turns `$prop.name` into an internal prop ref map. */
     private fun bindingLiteral(value: String): String =
@@ -3482,8 +3532,8 @@ internal object CnlParser {
             if (parts.isEmpty()) return null
             val parsed = parseSlmYaml("$key: { ${parts.joinToString(", ")} }", diagnostics, startLine = line)
             val value = (parsed as? YamlMap)?.entries?.get(key) ?: return null
-            val kind = TypedBlockKind.fromKey(key) ?: return null
-            return TypedEntry(kind, value, SlmSourceSpan(line, line))
+            if (TypedBlockKind.fromKey(key) == null) return null
+            return TypedEntry(key, value, SlmSourceSpan(line, line))
         }
     }
 }

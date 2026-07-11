@@ -35,7 +35,10 @@ only at the very edge:
   into — not an authoring surface.
 - `:engine:backend-compose` — this renderer: `DesignArtboard` +
   `ComposeDesignTextMeasurer` + the canvas drawing pass. The only engine module
-  that depends on Compose.
+  that depends on Compose. Text measurement/rendering is delegated to the
+  **typography subsystem** (`:subsystems:typography-compose`): `ComposeDesignTextMeasurer`
+  is a thin adapter mapping `ResolvedText` → the subsystem's `RichText`
+  (`ResolvedTextAdapter.kt`), and `DesignNodeDrawing` paints via `drawRichText`.
 
 ## Pipeline
 
@@ -103,10 +106,18 @@ those readers are machinery, not an authoring surface. Contract and authoring gu
 
 ## Layering rules
 
+- `:subsystems:figures` sits **below** `:engine:ir` — it is a pure-Kotlin vector
+  subsystem (geometry IR, `VectorNetwork`, primitive builders, the `PathBoolean`
+  boolean engine, `strokeOutline`, `VectorAssetProvider`) and `:engine:ir` depends
+  on it via `api`, re-exporting its types. The Compose adapter
+  `:subsystems:figures-compose` (path conversion, cap/join, previews) is consumed by
+  `:engine:backend-compose` and `:shared`.
 - `:engine:ir` and `:engine:frontend` are pure Kotlin — no Compose, no platform
   APIs. Anything platform-specific is injected (e.g. `DesignTextMeasurer`).
-- Compose lives only in `:engine:backend-compose`; it depends on `:engine:ir`
-  and never on the frontend.
+- Compose lives only in `:engine:backend-compose`; it depends on `:engine:ir`,
+  on `:subsystems:typography-compose` (rich-text render/measure/fonts), and never
+  on the frontend. The pure `:subsystems:typography` core carries no engine or
+  Compose dependency; the adapter at the backend boundary converts between them.
 - Rendering math that does not need a brush (crop windows, grid slices, hairline
   positions, mask/hit-test selection) is factored into pure functions
   (`RenderGeometry.kt`) and unit-tested headlessly; the `DrawScope` extensions

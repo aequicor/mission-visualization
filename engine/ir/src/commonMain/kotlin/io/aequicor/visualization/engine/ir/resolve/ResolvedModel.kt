@@ -1,10 +1,11 @@
 package io.aequicor.visualization.engine.ir.resolve
 
-import io.aequicor.visualization.engine.ir.geometry.PathGeometry
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import io.aequicor.visualization.subsystems.figures.PathGeometry
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -30,12 +31,16 @@ import io.aequicor.visualization.engine.ir.model.MaskType
 import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.SourceLocation
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
+import io.aequicor.visualization.engine.ir.model.LeadingTrim
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextCase
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
+import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
+import io.aequicor.visualization.engine.ir.model.TextLink
 import io.aequicor.visualization.engine.ir.model.TextListSettings
+import io.aequicor.visualization.engine.ir.model.TextScriptPosition
 import io.aequicor.visualization.engine.ir.model.TextTruncate
 
 /**
@@ -73,10 +78,17 @@ data class ResolvedNode(
     val text: ResolvedText? = null,
     val shape: DesignNodeKind.Shape? = null,
     /**
+     * Embedded diagram of a `diagram` node, carried through resolution as-is (the graph is
+     * already concrete). Graph coordinates are local to the node's laid-out box.
+     */
+    val diagram: DiagramGraph? = null,
+    /**
      * Lowered, device-independent outline for shape nodes (vector/network/inline-`d` in
      * view-box space, or null when geometry is built draw-time from the laid-out box).
      */
     val geometry: PathGeometry? = null,
+    /** Per-region fills (Figma region paint): each region's own lowered geometry + resolved paints. */
+    val regionPaints: List<ResolvedRegionPaint> = emptyList(),
     /** Populated for boolean-operation nodes; drives path combination at render time. */
     val booleanOp: BooleanOperationKind? = null,
     val scroll: DesignScroll = DesignScroll(),
@@ -200,6 +212,12 @@ data class ResolvedGradientStop(
     val color: DesignColor,
 )
 
+/** One region of a vector network with its own lowered outline and resolved fills (region paint). */
+data class ResolvedRegionPaint(
+    val geometry: PathGeometry,
+    val paints: List<ResolvedPaint>,
+)
+
 data class ResolvedStrokes(
     val paints: List<ResolvedPaint> = emptyList(),
     val weight: Double = 1.0,
@@ -252,6 +270,8 @@ data class ResolvedText(
     val autoResize: TextAutoResize = TextAutoResize.None,
     val truncate: TextTruncate? = null,
     val ranges: List<ResolvedTextRange> = emptyList(),
+    /** Hyperlink ranges; offsets follow the same clamping rules as [ranges]. */
+    val links: List<TextLink> = emptyList(),
     val list: TextListSettings = TextListSettings(),
     /** i18n resource key the characters came from; "" for raw/legacy content. */
     val contentKey: String = "",
@@ -260,16 +280,33 @@ data class ResolvedText(
 data class ResolvedTextStyle(
     val fontFamily: String = "",
     val fontWeight: Int = 400,
+    val italic: Boolean = false,
     val fontSize: Double = 14.0,
     /** Line height in px, already resolved from percent against font size. */
     val lineHeight: Double = 0.0,
     /** Letter spacing in px. */
     val letterSpacing: Double = 0.0,
     val paragraphSpacing: Double = 0.0,
+    /** First-line indent of each paragraph, px. */
+    val paragraphIndent: Double = 0.0,
     val textAlignHorizontal: TextAlignHorizontal = TextAlignHorizontal.Left,
     val textAlignVertical: TextAlignVertical = TextAlignVertical.Top,
     val textCase: TextCase = TextCase.None,
     val textDecoration: TextDecorationKind = TextDecorationKind.None,
+    val decorationStyle: TextDecorationStyle = TextDecorationStyle.Solid,
+    /** null = decoration follows the glyph color. */
+    val decorationColor: DesignColor? = null,
+    /** Decoration thickness in px; null = automatic. */
+    val decorationThickness: Double? = null,
+    val decorationSkipInk: Boolean = false,
+    val textPosition: TextScriptPosition = TextScriptPosition.None,
+    val leadingTrim: LeadingTrim = LeadingTrim.None,
+    val hangingPunctuation: Boolean = false,
+    val hangingList: Boolean = false,
+    /** OpenType features by tag. */
+    val fontFeatures: Map<String, Boolean> = emptyMap(),
+    /** Variable font axes. */
+    val variableAxes: Map<String, Double> = emptyMap(),
 )
 
 data class ResolvedTextRange(

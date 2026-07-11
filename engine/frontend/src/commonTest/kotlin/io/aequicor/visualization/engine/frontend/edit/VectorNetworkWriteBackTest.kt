@@ -2,15 +2,15 @@ package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
-import io.aequicor.visualization.engine.ir.model.HandleMirror
-import io.aequicor.visualization.engine.ir.model.HandleOffset
-import io.aequicor.visualization.engine.ir.model.ShapeType
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.VectorRegion
-import io.aequicor.visualization.engine.ir.model.VectorSegment
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorRegion
+import io.aequicor.visualization.subsystems.figures.VectorSegment
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
-import io.aequicor.visualization.engine.ir.model.VectorVertex
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

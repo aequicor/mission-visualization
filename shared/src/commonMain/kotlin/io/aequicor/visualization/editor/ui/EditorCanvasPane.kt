@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,9 +26,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -85,22 +92,51 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.aequicor.visualization.editor.presentation.TextSelection
+import io.aequicor.visualization.subsystems.typography.FontDescriptor
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.FontProvider
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
+import io.aequicor.visualization.engine.backend.compose.textEditGeometry
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.runtime.CompositionLocalProvider
 import kotlin.time.TimeSource
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.AncestorRotation
+import io.aequicor.visualization.editor.presentation.AnnotationTool
+import io.aequicor.visualization.editor.presentation.InspectorTab
+import io.aequicor.visualization.editor.presentation.annotationAnchorForPress
+import io.aequicor.visualization.editor.presentation.annotationMoveCommitTarget
+import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
+import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
+import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
+import io.aequicor.visualization.subsystems.annotations.ExportScope
+import io.aequicor.visualization.subsystems.annotations.compose.AnnotationOverlay
+import io.aequicor.visualization.subsystems.annotations.compose.AnnotationViewTransform
+import androidx.compose.ui.platform.LocalClipboardManager
 import io.aequicor.visualization.editor.presentation.BoundsBox
+import io.aequicor.visualization.editor.presentation.CanvasParentFrame
 import io.aequicor.visualization.editor.presentation.CanvasOperation
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
+import io.aequicor.visualization.editor.presentation.DiagramSelection
+import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.DocumentRect
 import io.aequicor.visualization.editor.presentation.DeviceMode
 import io.aequicor.visualization.editor.presentation.EditorMode
@@ -108,7 +144,6 @@ import io.aequicor.visualization.editor.presentation.EditorTool
 import io.aequicor.visualization.editor.presentation.FocusMode
 import io.aequicor.visualization.editor.presentation.GapMeasurement
 import io.aequicor.visualization.editor.presentation.GeoPoint
-import io.aequicor.visualization.editor.presentation.HandleSide
 import io.aequicor.visualization.editor.presentation.VectorVertexPart
 import io.aequicor.visualization.editor.presentation.VectorVertexRef
 import io.aequicor.visualization.editor.presentation.NewObjectKind
@@ -117,6 +152,7 @@ import io.aequicor.visualization.editor.presentation.ResizeCursorKind
 import io.aequicor.visualization.editor.presentation.SelectableBounds
 import io.aequicor.visualization.editor.presentation.ResizableEdges
 import io.aequicor.visualization.editor.presentation.ResizeHandle
+import io.aequicor.visualization.editor.presentation.ResizeResult
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.ancestorRotationDegrees
@@ -158,6 +194,7 @@ import io.aequicor.visualization.editor.presentation.measureGaps
 import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
+import io.aequicor.visualization.editor.presentation.reparentPlacementWhenMovedOutside
 import io.aequicor.visualization.editor.presentation.resizeCursorKindForHandle
 import io.aequicor.visualization.editor.presentation.rotateAffordancePoint
 import io.aequicor.visualization.editor.presentation.rotatePointAroundCenter
@@ -171,18 +208,30 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import io.aequicor.visualization.engine.backend.compose.selectableNodeId
-import io.aequicor.visualization.engine.ir.geometry.Affine2D
-import io.aequicor.visualization.engine.ir.geometry.RectD
-import io.aequicor.visualization.engine.ir.geometry.meetFit
+import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.figures.Affine2D
+import io.aequicor.visualization.subsystems.figures.compose.FigurePreviewStyle
+import io.aequicor.visualization.subsystems.figures.compose.FigureShapePreview
+import io.aequicor.visualization.subsystems.figures.HandleSide
+import io.aequicor.visualization.subsystems.figures.closePath
+import io.aequicor.visualization.subsystems.figures.contains
+import io.aequicor.visualization.subsystems.figures.networkRegionGeometry
+import io.aequicor.visualization.subsystems.figures.vectorAnchors
+import io.aequicor.visualization.subsystems.figures.RectD
+import io.aequicor.visualization.subsystems.figures.meetFit
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.orZero
+import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.VectorVertex
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.math.PI
 import kotlin.math.abs
@@ -230,7 +279,16 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
             DeviceControl(ws.deviceMode) { mode -> state.updateWorkspace { it.copy(deviceMode = mode) } }
             SceneModeToggle(ws.mode) { mode -> state.updateWorkspace { it.copy(mode = mode) } }
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                FloatingToolbar(ws.tool) { tool -> state.updateWorkspace { it.copy(tool = tool) } }
+                FloatingToolbar(state, ws.tool, ws.lastShapeTool) { tool ->
+                    state.updateWorkspace {
+                        it.copy(
+                            tool = tool,
+                            lastShapeTool = if (tool.isShapeTool) tool else it.lastShapeTool,
+                            // Picking a canvas tool leaves annotation mode (one axis active at a time).
+                            annotationTool = AnnotationTool.None,
+                        )
+                    }
+                }
             }
             ZoomControls(state)
         }
@@ -249,6 +307,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
     val pageId = design.selectedPageId
     val rootNode = document?.pageById(pageId)?.children?.firstOrNull()
     val textMeasurer = rememberTextMeasurer()
+    // Bundled Google Fonts so document text renders in its authored family (skiko ships no
+    // system fonts on wasm); shared with the inline text-edit overlay for aligned metrics.
+    val fontProvider = rememberBundledFontProvider()
 
     BoxWithConstraints(
         Modifier
@@ -401,6 +462,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         val primarySelectionRotation = primarySelectionTransform?.rotation ?: 0.0
         val primarySelectionLocked = primarySelectionId?.let { document?.nodeById(it)?.locked == true } ?: false
         val primarySelectionInVectorEdit = primarySelectionId != null && primarySelectionId == ws.vectorEditNodeId
+        val primarySelectionInDiagramEdit = primarySelectionId != null && primarySelectionId == ws.diagramEditNodeId
         val parentOfPrimarySelection = primarySelectionId
             ?.let { document?.parentNodeOf(it)?.id }
             ?.let { layout?.effectiveTransformFor(it) }
@@ -534,6 +596,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             hoverCursor = resolveHandleCursor(
                                                 liveDesign, liveLayout, viewport, change.position, ws.tool, latestSpaceHeld,
                                                 vectorEditNodeId = state.workspace.vectorEditNodeId,
+                                                diagramEditNodeId = state.workspace.diagramEditNodeId,
                                             )
                                         }
                                     }
@@ -546,10 +609,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             }
                         }
                     }
-                    // Press / drag / tap. `viewport` is intentionally not a key — see the
-                    // rememberUpdatedState comment above; an in-flight zoom animation would
-                    // otherwise cancel any drag/resize/rotate gesture in progress every frame.
-                    .pointerInput(pageId, ws.tool, design.selectedNodeId, design.selectedNodeIds, spaceHeld) {
+                    // Press / drag / tap. `viewport` and selection are intentionally not keys:
+                    // both are re-read from `state` at press time, and selecting a previously
+                    // unselected node on pointer-down must not restart this handler and cancel
+                    // the drag that began with the same press.
+                    .pointerInput(pageId, ws.tool, spaceHeld) {
                         val slop = viewConfiguration.touchSlop
                         awaitEachGesture {
                             val gestureStart = awaitCanvasGestureStart()
@@ -573,6 +637,18 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val panFromTertiaryButton = gestureStart.tertiaryButton || currentEvent.buttons.isTertiaryPressed
                             val forcePan = panFromTertiaryButton || spaceHeld
                             if (forcePan) down.consume()
+                            // Annotation tool: a click drops a note/issue on the review layer
+                            // instead of running any canvas operation (select/move/create).
+                            val annotationKind = pressWorkspace.annotationTool.annotationKind()
+                            if (annotationKind != null && !forcePan) {
+                                down.consume()
+                                val up = waitForUpOrCancellation()
+                                if (up != null) {
+                                    up.consume()
+                                    commitAddAnnotation(state, annotationKind, start, viewport, pressDocument, pressLayout)
+                                }
+                                return@awaitEachGesture
+                            }
                             // Root→selection path (single selection) resolves the node's own layout box,
                             // its effective on-screen transform (with rotated ancestors) and the net
                             // ancestor rotation, all from one tree walk.
@@ -586,6 +662,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val selectionLocked = pressDesign.selectedNodeIds.any { id -> pressDocument.nodeById(id)?.locked == true }
                             val isSingleSelection = pressDesign.selectedNodeIds.size == 1
                             val inVectorEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.vectorEditNodeId
+                            val inDiagramEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.diagramEditNodeId
                             val multiSelectionUnion = if (pressDesign.selectedNodeIds.size > 1) {
                                 selectionHandleBounds(pressLayout, pressDesign.selectedNodeIds)
                             } else {
@@ -597,12 +674,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // Own rotation drives the rotate-gesture baseline and the resize position
                             // shift (root-local); the ancestor rotation is undone separately for moves.
                             val selectionRotation = if (isSingleSelection) primaryBox?.node?.rotation ?: 0.0 else 0.0
-                            val ancestorRotation = if (isSingleSelection) primaryPath?.let { ancestorRotationDegrees(ancestorRotationsOf(it)) } ?: 0.0 else 0.0
                             // Handle geometry (where handles/affordance are drawn and grabbed) uses the
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
                             val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit
+                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
                             val handle = handleGeometryBox?.takeIf { handlesActive }
                                 ?.let { box -> rotatedHandleAt(box, handleRotation, viewport, start) }
                             val rotateHit = handle == null && isSingleSelection &&
@@ -627,6 +703,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // the nested element) nor on a shift-add.
                             if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !shiftHeld) {
                                 state.dispatch(DesignEditorIntent.SelectNode(hitId))
+                            }
+                            // Selection may have changed on this very down event. Resolve the move frame
+                            // from that live selection too, otherwise the first drag could inherit the
+                            // previously selected node's rotated ancestor coordinate system.
+                            val moveAncestorRotation = if (mode == CanvasOperation.Move) {
+                                val moveDesign = state.designState
+                                moveDesign.selectedNodeId
+                                    .takeIf { moveDesign.selectedNodeIds.size == 1 && it.isNotBlank() }
+                                    ?.let { pressLayout?.pathToSourceId(it) }
+                                    ?.let { ancestorRotationDegrees(ancestorRotationsOf(it)) }
+                                    ?: 0.0
+                            } else {
+                                0.0
                             }
                             val moveStartPositions = if (mode == CanvasOperation.Move) {
                                 state.designState.selectedNodeIds.mapNotNull { id ->
@@ -658,6 +747,16 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     siblings = flowChildren.filterNot { child -> child.node.sourceId == singleId }.map { child -> child.toBoundsBox() },
                                     originalIndex = flowChildren.indexOfFirst { child -> child.node.sourceId == singleId },
                                 )
+                            }
+                            // A single-node move may leave its immediate container. Capture the
+                            // visual transform and ancestor frames once so release can promote a
+                            // free or Auto layout flow child without depending on recomposition.
+                            val moveReparentBaseline = if (mode == CanvasOperation.Move) {
+                                state.designState.selectedNodeIds.singleOrNull()?.let { id ->
+                                    buildMoveReparentBaseline(pressDocument, pressLayout, id)
+                                }
+                            } else {
+                                null
                             }
                             // Beautiful-anchor candidates for a free move (not a reorder): the dragged
                             // selection's start union bounds, its sibling peers, and the containers to
@@ -742,6 +841,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // — the incremental MoveNodes model can't stably snap a raw per-frame delta.
                             var appliedDx = 0.0
                             var appliedDy = 0.0
+                            // Final snapped displacement in the visual/document frame. Unlike
+                            // appliedDx/Y this is not inverse-rotated into the old parent's frame.
+                            var appliedVisualDx = 0.0
+                            var appliedVisualDy = 0.0
                             // Sticky-snap latches carried across this gesture's frames (hysteresis).
                             var moveSnapState = MoveSnapState.None
                             var resizeSnapState = ResizeSnapState.None
@@ -781,15 +884,36 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         it.copy(viewport = it.viewport.panByScreenDelta(delta.x, delta.y, density))
                                     }
                                     CanvasOperation.Marquee -> marquee = Rect(min(start.x, pos.x), min(start.y, pos.y), max(start.x, pos.x), max(start.y, pos.y))
-                                    is CanvasOperation.Create -> {
+                                    is CanvasOperation.Create -> if (mode.kind == NewObjectKind.Vector) {
+                                        // Pen click-to-place draws no rubber-band rect; it seeds a
+                                        // single-vertex path on release (see commitPenStart).
+                                        badge = null
+                                    } else {
                                         val end = constrainCreatePoint(start, pos, mode.kind, shiftHeld)
                                         createRect = Rect(min(start.x, end.x), min(start.y, end.y), max(start.x, end.x), max(start.y, end.y))
                                         badge = "${(abs(end.x - start.x) / zoomPx).roundToInt()} x ${(abs(end.y - start.y) / zoomPx).roundToInt()}"
                                     }
                                     CanvasOperation.Move -> if (reorderBaseline != null) {
-                                        val pointerMain = if (reorderBaseline.horizontal) viewport.toDocX(pos.x) else viewport.toDocY(pos.y)
-                                        val index = flowInsertionIndex(reorderBaseline.siblings, pointerMain, reorderBaseline.horizontal)
-                                        reorderPreview = ReorderPreview(reorderBaseline, index)
+                                        appliedVisualDx = (accX / zoomPx).toDouble()
+                                        appliedVisualDy = (accY / zoomPx).toDouble()
+                                        val outsideParent = moveReparentBaseline?.let { baseline ->
+                                            reparentPlacementWhenMovedOutside(
+                                                movedVisual = baseline.startVisual.copy(
+                                                    box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
+                                                ),
+                                                currentParent = baseline.currentParent,
+                                                upperParents = baseline.upperParents,
+                                            )
+                                        } != null
+                                        if (outsideParent) {
+                                            // Outside the flow container the drop means detach + promote,
+                                            // not a reorder at the nearest edge.
+                                            reorderPreview = null
+                                        } else {
+                                            val pointerMain = if (reorderBaseline.horizontal) viewport.toDocX(pos.x) else viewport.toDocY(pos.y)
+                                            val index = flowInsertionIndex(reorderBaseline.siblings, pointerMain, reorderBaseline.horizontal)
+                                            reorderPreview = ReorderPreview(reorderBaseline, index)
+                                        }
                                         badge = null
                                     } else {
                                         val rawDx = (accX / zoomPx).toDouble()
@@ -820,12 +944,18 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         // The drag is measured in the document (screen) frame, but a node's
                                         // position lives in the shared root-local frame; under a rotated
                                         // ancestor undo that rotation so the node tracks the pointer. Snapping
-                                        // is gated to ancestorRotation == 0, so when it runs this is identity.
-                                        val local = if (ancestorRotation != 0.0) rotateVector(totalDx, totalDy, -ancestorRotation) else GeoPoint(totalDx, totalDy)
+                                        // is gated to moveAncestorRotation == 0, so when it runs this is identity.
+                                        val local = if (moveAncestorRotation != 0.0) {
+                                            rotateVector(totalDx, totalDy, -moveAncestorRotation)
+                                        } else {
+                                            GeoPoint(totalDx, totalDy)
+                                        }
                                         // Read the live selection: a new node may have been selected on press.
                                         state.dispatch(DesignEditorIntent.MoveNodes(state.designState.selectedNodeIds, local.x - appliedDx, local.y - appliedDy))
                                         appliedDx = local.x
                                         appliedDy = local.y
+                                        appliedVisualDx = totalDx
+                                        appliedVisualDy = totalDy
                                         snapGuides = snap?.guides ?: emptyList()
                                         spacingBars = snap?.spacing ?: emptyList()
                                         dragMoveActive = true
@@ -849,6 +979,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 val snap = snapResizeDeltas(
                                                     resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
                                                     resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                    edges = target.edges,
+                                                    minWidth = target.minWidth,
+                                                    minHeight = target.minHeight,
+                                                    maxWidth = target.maxWidth,
+                                                    maxHeight = target.maxHeight,
                                                 )
                                                 resizeSnapState = snap.output?.state ?: ResizeSnapState.None
                                                 applyResize(
@@ -922,13 +1057,46 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             }
                                         }
                                     }
-                                    is CanvasOperation.Create -> {
+                                    is CanvasOperation.Create -> if (mode.kind == NewObjectKind.Vector) {
+                                        // Pen: first click seeds a single-vertex vector node and enters
+                                        // vector-edit mode WITHOUT resetting the tool, so the next click
+                                        // appends the second vertex (VectorEditOverlay owns it thereafter).
+                                        commitPenStart(state, start, viewport, pressRootId)
+                                    } else {
                                         val end = constrainCreatePoint(start, last, mode.kind, shiftHeld)
                                         commitCreate(state, mode, start, end, zoomPx, viewport, pressRootId, moved)
                                         state.updateWorkspace { it.copy(tool = EditorTool.Select) }
                                     }
                                     CanvasOperation.Move -> {
-                                        if (moved && reorderBaseline != null) {
+                                        val reparent = moveReparentBaseline?.takeIf { moved }?.let { baseline ->
+                                            reparentPlacementWhenMovedOutside(
+                                                movedVisual = baseline.startVisual.copy(
+                                                    box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
+                                                ),
+                                                currentParent = baseline.currentParent,
+                                                upperParents = baseline.upperParents,
+                                            )?.let { placement -> baseline to placement }
+                                        }
+                                        if (reparent != null) {
+                                            val (baseline, placement) = reparent
+                                            val currentRotation = state.designState.document
+                                                ?.nodeById(baseline.nodeId)
+                                                ?.rotation
+                                            state.dispatch(
+                                                DesignEditorIntent.ReparentNode(
+                                                    nodeId = baseline.nodeId,
+                                                    newParentId = placement.parentId,
+                                                    position = DesignPoint(placement.x, placement.y),
+                                                    size = DesignSize(
+                                                        width = baseline.startVisual.box.width,
+                                                        height = baseline.startVisual.box.height,
+                                                    ),
+                                                    rotation = placement.rotation.takeIf { value ->
+                                                        currentRotation == null || abs(value - currentRotation) > 0.0001
+                                                    },
+                                                ),
+                                            )
+                                        } else if (moved && reorderBaseline != null) {
                                             val target = reorderPreview?.index ?: reorderBaseline.originalIndex
                                             if (target != reorderBaseline.originalIndex) {
                                                 state.dispatch(DesignEditorIntent.ReparentNode(reorderBaseline.nodeId, reorderBaseline.parentId, target))
@@ -967,6 +1135,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 val snap = snapResizeDeltas(
                                                     resizeBaseline, mode.handle, accX / zoomPx, accY / zoomPx, lockRatio,
                                                     resizeSnapBaseline, (SnapCatchPx / zoomPx).toDouble(), (SnapReleasePx / zoomPx).toDouble(), resizeSnapState,
+                                                    edges = target.edges,
+                                                    minWidth = target.minWidth,
+                                                    minHeight = target.minHeight,
+                                                    maxWidth = target.maxWidth,
+                                                    maxHeight = target.maxHeight,
                                                 )
                                                 commitResizeWriteBack(
                                                     state = state,
@@ -1011,7 +1184,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             rotateDragActive = false
                         }
                     }
-                    .pointerHoverIcon(hoverCursor ?: if (spaceHeld) PointerIcon.Hand else cursorFor(ws.tool)),
+                    .pointerHoverIcon(
+                        hoverCursor ?: when {
+                            spaceHeld -> PointerIcon.Hand
+                            ws.annotationTool != AnnotationTool.None -> PointerIcon.Crosshair
+                            else -> cursorFor(ws.tool)
+                        },
+                    ),
             ) {
                 DesignArtboard(
                     document = document,
@@ -1022,6 +1201,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     viewport = viewport,
                     interactive = false,
                     showSelection = false,
+                    vectorAssets = rememberVectorAssetProvider(document),
+                    fontProvider = fontProvider,
                     onLayoutComputed = state::onArtboardLayout,
                 )
             }
@@ -1084,9 +1265,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 }
 
                 drawRotatedOutline(primarySelectionBox, primarySelectionRotation, viewport, colors.accent, width = 1.5f)
-                // Point-edit mode replaces object handles with path anchors (VectorEditOverlay),
-                // so suppress handles and the rotate affordance but keep the rest of the overlay.
-                if (!primarySelectionLocked && !primarySelectionInVectorEdit) {
+                // Point-edit mode replaces object handles with path anchors (VectorEditOverlay);
+                // diagram edit mode replaces them with the diagram element overlays — both
+                // suppress handles and the rotate affordance but keep the rest of the overlay.
+                if (!primarySelectionLocked && !primarySelectionInVectorEdit && !primarySelectionInDiagramEdit) {
                     drawRotatedHandles(primarySelectionBox, primarySelectionRotation, viewport, colors.accent)
                     if (!dragMoveActive && !rotateDragActive) {
                         val offsetDoc = (RotateHandleScreenOffsetPx / zoomPx).toDouble()
@@ -1138,8 +1320,74 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             // Vector edit mode: draw/drag path anchors of the target shape.
             VectorEditOverlay(state, layout, viewport, zoomPx)
 
+            // Diagram edit mode: selection/ports/waypoints overlays + element gestures.
+            DiagramEditOverlay(state, layout, viewport, zoomPx)
+
+            // On-canvas arc handles for a single, unlocked ellipse authored with an arc/donut, while
+            // the Select tool is active and it is not in point-edit mode.
+            val arcNode = primarySelectionId
+                ?.takeIf { ws.tool == EditorTool.Select && !primarySelectionLocked && !primarySelectionInVectorEdit }
+                ?.let { document?.nodeById(it) }
+            val arcShape = (arcNode?.kind as? DesignNodeKind.Shape)?.takeIf { hasEllipseArc(it) }
+            if (primarySelectionId != null && primarySelectionBox != null && arcShape != null) {
+                ArcHandlesOverlay(state, primarySelectionId, primarySelectionBox, primarySelectionRotation, viewport)
+            }
+
             // Inline text editing overlay for a double-clicked text node.
-            TextEditOverlay(state, layout, viewport)
+            TextEditOverlay(state, layout, viewport, fontProvider)
+
+            // Annotation review layer: collapsed droplet badges + expanded cards over the
+            // artboard, positioned from the resolved layout through the live viewport.
+            // Badge/card clicks land on the overlay's own clickables (it sits above the
+            // gesture surface); empty overlay space stays hit-transparent for the canvas.
+            val annotationScreenFile = remember(design.compiledResults, design.sources, pageId) {
+                design.screenFileNamesByPageId()[pageId]
+            }
+            val annotationLayer = annotationScreenFile?.let { design.annotationLayers[it] }
+            // Transient badge drag: view state only (like node-drag's in-gesture offset) —
+            // the badge follows the pointer without touching the document, and release
+            // commits exactly ONE MoveAnnotation (one sidecar patch, one history entry).
+            var annotationDrag by remember(pageId) { mutableStateOf<Pair<String, AnnotationPoint>?>(null) }
+            if (annotationLayer != null && annotationLayer.annotations.isNotEmpty()) {
+                AnnotationOverlay(
+                    layer = annotationLayer,
+                    expandedIds = ws.expandedAnnotationIds,
+                    selectedId = ws.selectedAnnotationId.takeIf { it.isNotBlank() },
+                    // Anchors resolve through the node's effective (post-rotation) bounds, the
+                    // same transform path the selection overlay uses — raw layout boxes are
+                    // pre-rotation and would detach badges after any ancestor rotate.
+                    nodeBounds = { nodeId -> annotationNodeVisualBounds(layout, nodeId) },
+                    transform = AnnotationViewTransform(viewport.zoom, viewport.panX, viewport.panY),
+                    colors = annotationOverlayColors(),
+                    onToggleExpand = { id -> state.dispatch(DesignEditorIntent.ToggleAnnotationExpanded(id)) },
+                    onSelect = { id ->
+                        state.dispatch(DesignEditorIntent.SelectAnnotation(id))
+                        // Surface the annotation editor for the picked badge/card.
+                        state.updateWorkspace { it.copy(inspectorTab = InspectorTab.Comments) }
+                    },
+                    modifier = Modifier.matchParentSize(),
+                    dragOffsets = annotationDrag?.let { (id, offset) -> mapOf(id to offset) } ?: emptyMap(),
+                    onMoveBy = { id, dx, dy ->
+                        val current = annotationDrag?.takeIf { it.first == id }?.second ?: AnnotationPoint(0.0, 0.0)
+                        annotationDrag = id to AnnotationPoint(current.x + dx, current.y + dy)
+                    },
+                    onMoveEnd = { id ->
+                        val drag = annotationDrag?.takeIf { it.first == id }?.second
+                        annotationDrag = null
+                        if (drag != null && (drag.x != 0.0 || drag.y != 0.0)) {
+                            state.designState.annotationLayers[annotationScreenFile]?.annotations
+                                ?.firstOrNull { it.id == id }
+                                ?.let { annotation ->
+                                    val target = annotationMoveCommitTarget(annotation.anchor, drag.x, drag.y)
+                                    state.dispatch(
+                                        DesignEditorIntent.MoveAnnotation(annotationScreenFile, id, target.x, target.y),
+                                    )
+                                }
+                        }
+                    },
+                    onMoveCancel = { annotationDrag = null },
+                )
+            }
         }
         CanvasScrollbars(state, scrollbars)
     }
@@ -1275,42 +1523,137 @@ private fun CanvasScrollbar(
 // --- Text editing overlay ----------------------------------------------------
 
 @Composable
-private fun TextEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox?, viewport: CanvasViewport) {
+private fun TextEditOverlay(
+    state: MissionEditorStateHolder,
+    layout: LayoutBox?,
+    viewport: CanvasViewport,
+    fontProvider: FontProvider,
+) {
     val colors = LocalEditorColors.current
     val editingId = state.designState.editingTextNodeId
+    // Always-run effect: leaving edit mode clears the caret/selection so the inspector
+    // reverts to node-level styling. Keyed on editingId so it fires on every transition.
+    LaunchedEffect(editingId) {
+        if (editingId.isBlank()) state.updateWorkspace { it.copy(textSelection = null) }
+    }
     if (editingId.isBlank()) return
     val node = state.designState.document?.nodeById(editingId) ?: return
     val kind = node.kind as? DesignNodeKind.Text ?: return
     val box = layout?.findBySourceId(editingId) ?: return
-    val density = LocalDensity.current.density
+    val densityObj = LocalDensity.current
+    val density = densityObj.density
     val tl = viewport.toScreen(box.x, box.y)
     val initial = kind.characters.literalOrNull()?.takeIf { it.isNotBlank() } ?: kind.content?.defaultText.orEmpty()
-    var draft by remember(editingId) { mutableStateOf(initial) }
+    var field by remember(editingId) {
+        mutableStateOf(TextFieldValue(initial, selection = TextRange(0, initial.length)))
+    }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(editingId) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(editingId) {
+        runCatching { focus.requestFocus() }
+        // Whole-string selection to start, so an immediate inspector edit restyles everything.
+        state.updateWorkspace { it.copy(textSelection = TextSelection(editingId, 0, initial.length)) }
+    }
     val wDp = (box.width * viewport.zoom / density).coerceAtLeast(40.0)
     val hDp = (box.height * viewport.zoom / density).coerceAtLeast(20.0)
+
+    // Native caret + selection are drawn from the node's REAL text layout (the same geometry
+    // the artboard paints), so they follow wrapping, mixed sizes, alignment and per-range
+    // styling exactly, mapped document -> screen through the shared viewport. The transparent
+    // field below still owns text input / IME / selection, but its own caret and selection
+    // highlight are hidden so only these geometry-accurate ones show.
+    val textMeasurer = rememberTextMeasurer()
+    val measurer = remember(textMeasurer, densityObj, fontProvider) {
+        ComposeTypographyMeasurer(textMeasurer, densityObj, fontProvider)
+    }
+    val geometry = remember(box, measurer) { textEditGeometry(box, measurer) }
+    var caretVisible by remember(editingId) { mutableStateOf(true) }
+    LaunchedEffect(editingId, field.selection) {
+        caretVisible = true
+        while (true) {
+            kotlinx.coroutines.delay(530)
+            caretVisible = !caretVisible
+        }
+    }
+    Canvas(Modifier.fillMaxSize()) {
+        val geo = geometry ?: return@Canvas
+        val laid = geo.laid
+        val transformed = laid.transformed
+        val len = field.text.length
+        fun screen(localX: Double, localY: Double): Offset =
+            viewport.toScreen(box.x + localX, box.y + geo.yOffset + localY)
+        val selMin = field.selection.min.coerceIn(0, len)
+        val selMax = field.selection.max.coerceIn(0, len)
+        if (selMax > selMin) {
+            laid.selectionRects(transformed.toTransformed(selMin), transformed.toTransformed(selMax)).forEach { r ->
+                val a = screen(r.left, r.top)
+                val b = screen(r.right, r.bottom)
+                drawRect(color = colors.selectionFill, topLeft = a, size = Size(b.x - a.x, b.y - a.y))
+            }
+        }
+        if (caretVisible) {
+            val caret = laid.caretRect(transformed.toTransformed(field.selection.end.coerceIn(0, len)))
+            drawLine(
+                color = colors.accent,
+                start = screen(caret.left, caret.top),
+                end = screen(caret.left, caret.bottom),
+                strokeWidth = 1.75f * density,
+            )
+        }
+    }
+
+    // The overlay field is transparent and metric-matched to the node, so the artboard's
+    // real styled glyphs show through beneath while this field owns input + IME.
+    val base = kind.textStyle
+    val editStyle = TextStyle(
+        color = Color.Transparent,
+        fontSize = ((base?.fontSize?.literalOrNull() ?: 16.0) * viewport.zoom).sp,
+        fontWeight = FontWeight((base?.fontWeight?.literalOrNull()?.toInt() ?: 400).coerceIn(1, 1000)),
+        fontStyle = if (base?.italic == true) FontStyle.Italic else FontStyle.Normal,
+        fontFamily = fontProvider.resolve(
+            FontDescriptor(
+                family = base?.fontFamily.orEmpty(),
+                weight = base?.fontWeight?.literalOrNull()?.toInt() ?: 400,
+                italic = base?.italic ?: false,
+            ),
+        ),
+    )
     Box(
         modifier = Modifier
             .offset { androidx.compose.ui.unit.IntOffset(tl.x.roundToInt(), tl.y.roundToInt()) }
             .size(wDp.dp, hDp.dp)
-            .background(Color.White.copy(alpha = 0.9f))
-            .border(1.dp, colors.accent),
+            .border(1.dp, colors.accent.copy(alpha = 0.6f)),
     ) {
-        androidx.compose.foundation.text.BasicTextField(
-            value = draft,
-            onValueChange = { draft = it; state.dispatch(DesignEditorIntent.SetTextCharacters(editingId, it)) },
-            modifier = Modifier.fillMaxSize().padding(4.dp)
-                .focusRequester(focus)
-                .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
-                        state.dispatch(DesignEditorIntent.SetEditingText("")); true
-                    } else {
-                        false
+        CompositionLocalProvider(
+            LocalTextSelectionColors provides TextSelectionColors(
+                handleColor = Color.Transparent,
+                backgroundColor = Color.Transparent,
+            ),
+        ) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = field,
+                onValueChange = { next ->
+                    val textChanged = next.text != field.text
+                    field = next
+                    if (textChanged) state.dispatch(DesignEditorIntent.SetTextCharacters(editingId, next.text))
+                    // Report the caret/selection so the inspector styles the selected range.
+                    state.updateWorkspace {
+                        it.copy(textSelection = TextSelection(editingId, next.selection.start, next.selection.end))
                     }
                 },
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.ink),
-        )
+                // Our geometry-accurate caret is drawn above; hide the field's own.
+                cursorBrush = SolidColor(Color.Transparent),
+                modifier = Modifier.fillMaxSize()
+                    .focusRequester(focus)
+                    .onPreviewKeyEvent { e ->
+                        if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
+                            state.dispatch(DesignEditorIntent.SetEditingText("")); true
+                        } else {
+                            false
+                        }
+                    },
+                textStyle = editStyle,
+            )
+        }
     }
 }
 
@@ -1379,6 +1722,40 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                 val tool = state.workspace.tool
                 down.consume() // vector-edit mode owns the press; never let it also move the node
 
+                // Paint-bucket sub-mode: a press hit-tests the network's regions (in shape space, via
+                // the same viewBox-aware geometry the renderer fills) and paints the first region that
+                // contains the point with the current bucket color, bypassing anchor/handle editing.
+                if (state.workspace.vectorPaintBucket) {
+                    val (shapeX, shapeY) = liveFit.inverse().apply(liveViewport.toDocX(press.x), liveViewport.toDocY(press.y))
+                    val hitRegion = liveNetwork.regions.indices.firstOrNull { regionIndex ->
+                        val geometry = networkRegionGeometry(liveNetwork, regionIndex, liveKind.viewBox)
+                        geometry != null && contains(geometry, shapeX, shapeY)
+                    }
+                    if (hitRegion != null) {
+                        val fill = DesignPaint.Solid(state.workspace.vectorPaintBucketColor.bindable())
+                        state.dispatch(DesignEditorIntent.SetRegionFill(editId, hitRegion, listOf(fill)))
+                    }
+                    return@awaitEachGesture
+                }
+
+                // Priority 0: the per-vertex corner-radius handle of the selected anchor. Dragging it
+                // sets that vertex's rounding (clamped >= 0), bracketed Begin…End so the per-frame
+                // SetVertexCornerRadius commits coalesce into one undo entry.
+                val selectedAnchor = state.workspace.vectorSelectedVertex
+                    ?.takeIf { it.part == VectorVertexPart.Anchor }
+                    ?.vertexIndex
+                    ?.takeIf { it in liveNetwork.vertices.indices }
+                if (selectedAnchor != null) {
+                    val vertex = liveNetwork.vertices[selectedAnchor]
+                    val anchorScreen = vertexScreen(liveFit, liveViewport, vertex)
+                    val radiusScreen = vertex.cornerRadius * liveScale * latestZoomPx
+                    val handlePos = cornerRadiusHandleScreen(anchorScreen, radiusScreen.toFloat())
+                    if ((handlePos - press).getDistance() <= HandleGrabRadiusPx) {
+                        dragCornerRadius(state, editId, selectedAnchor, down, anchorScreen, liveScale * latestZoomPx)
+                        return@awaitEachGesture
+                    }
+                }
+
                 // Priority 1: a bezier control handle.
                 val handleHit = pickHandle(liveNetwork, liveFit, liveViewport, press)
                 if (handleHit != null) {
@@ -1411,20 +1788,34 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                     return@awaitEachGesture
                 }
 
-                // Empty press: outside the box leaves edit mode; a pen press near a segment
-                // splits it at the pointer (inserting a new vertex there).
+                // Empty press with the Pen tool extends the path (anywhere — a growing path may reach
+                // past the node's fixed box): splitting the nearest segment when the press lands on an
+                // edge, otherwise appending a fresh vertex at the end. A drag off the just-placed vertex
+                // pulls its (symmetric) out-handle, so click-drag draws a smooth curve.
+                if (tool == EditorTool.Pen) {
+                    val (shapeX, shapeY) = liveFit.inverse().apply(liveViewport.toDocX(press.x), liveViewport.toDocY(press.y))
+                    val newIndex = liveNetwork.vertices.size
+                    val segmentIndex = pickSegment(liveNetwork, liveFit, liveViewport, press)
+                    if (segmentIndex != null) {
+                        state.dispatch(DesignEditorIntent.AddVectorVertex(editId, segmentIndex, shapeX, shapeY))
+                        state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(newIndex, VectorVertexPart.Anchor)) }
+                    } else {
+                        state.dispatch(DesignEditorIntent.AppendVectorVertex(editId, shapeX, shapeY))
+                        state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(newIndex, VectorVertexPart.Anchor)) }
+                        dragNetwork(state, editId, down) { delta ->
+                            DesignEditorIntent.MoveVectorHandle(
+                                editId, newIndex, HandleSide.Out,
+                                delta.x / latestZoomPx / liveScale, delta.y / latestZoomPx / liveScale,
+                            )
+                        }
+                    }
+                    return@awaitEachGesture
+                }
+
+                // Empty press with any other tool leaves edit mode when it falls outside the box.
                 if (!press.insideScreenBox(liveBox, liveViewport)) {
                     state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                     return@awaitEachGesture
-                }
-                if (tool == EditorTool.Pen) {
-                    val segmentIndex = pickSegment(liveNetwork, liveFit, liveViewport, press)
-                    if (segmentIndex != null) {
-                        val (shapeX, shapeY) = liveFit.inverse().apply(liveViewport.toDocX(press.x), liveViewport.toDocY(press.y))
-                        val newIndex = liveNetwork.vertices.size
-                        state.dispatch(DesignEditorIntent.AddVectorVertex(editId, segmentIndex, shapeX, shapeY))
-                        state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(newIndex, VectorVertexPart.Anchor)) }
-                    }
                 }
             }
         },
@@ -1455,6 +1846,211 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                 drawCircle(colors.accent, radius = 5f, center = anchor, style = Stroke(width = 1.5f))
             }
         }
+        // Per-vertex corner-radius handle for the selected anchor: a small ring offset up-right of
+        // the vertex by its current radius, joined by a thin guide. Dragging it edits the rounding.
+        val selectedIndex = selected?.takeIf { it.part == VectorVertexPart.Anchor }?.vertexIndex
+        if (selectedIndex != null && selectedIndex in network.vertices.indices) {
+            val vertex = network.vertices[selectedIndex]
+            val anchor = vertexScreen(fit, viewport, vertex)
+            val radiusScreen = (vertex.cornerRadius * fit.a * zoomPx).toFloat()
+            val handlePos = cornerRadiusHandleScreen(anchor, radiusScreen)
+            drawLine(colors.softStroke, anchor, handlePos, strokeWidth = 1f)
+            drawCircle(Color.White, radius = 4.5f, center = handlePos)
+            drawCircle(colors.accent, radius = 4.5f, center = handlePos, style = Stroke(width = 1.5f))
+        }
+    }
+}
+
+/** Screen-space grab radius for the arc start/end/ratio drag handles. */
+private const val ArcHandleGrabRadiusPx = 12f
+
+/** Baseline screen gap between a vertex and its corner-radius handle (added to the radius). */
+private const val CornerRadiusHandleBaseOffsetPx = 16f
+
+/** Fixed up-and-right screen direction the corner-radius handle is offset along. */
+private val CornerRadiusHandleDir = Offset(0.70710677f, -0.70710677f)
+
+/** Screen position of the corner-radius handle for a vertex whose radius maps to [radiusScreen] px. */
+private fun cornerRadiusHandleScreen(anchor: Offset, radiusScreen: Float): Offset =
+    anchor + CornerRadiusHandleDir * (CornerRadiusHandleBaseOffsetPx + radiusScreen.coerceAtLeast(0f))
+
+/**
+ * Drags the selected vertex's corner-radius handle: each frame projects the pointer onto the fixed
+ * offset ray from [anchorScreen] and converts the beyond-baseline distance (screen px) back to
+ * network units via [networkPxPerUnit] (fit scale × zoom). Bracketed Begin…End so the per-frame
+ * [DesignEditorIntent.SetVertexCornerRadius] commits coalesce into a single undo entry.
+ */
+private suspend fun AwaitPointerEventScope.dragCornerRadius(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    vertexIndex: Int,
+    down: PointerInputChange,
+    anchorScreen: Offset,
+    networkPxPerUnit: Double,
+) {
+    var began = false
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull() ?: break
+        if (change.changedToUp()) break
+        if (!began) {
+            state.dispatch(DesignEditorIntent.BeginInteraction)
+            began = true
+        }
+        val along = (change.position - anchorScreen).let { it.x * CornerRadiusHandleDir.x + it.y * CornerRadiusHandleDir.y }
+        val radius = if (networkPxPerUnit > 0.0) {
+            ((along - CornerRadiusHandleBaseOffsetPx) / networkPxPerUnit).coerceAtLeast(0.0)
+        } else {
+            0.0
+        }
+        state.dispatch(DesignEditorIntent.SetVertexCornerRadius(nodeId, vertexIndex, radius))
+        change.consume()
+    }
+    if (began) state.dispatch(DesignEditorIntent.EndInteraction)
+}
+
+// --- Ellipse arc handles -----------------------------------------------------
+
+/** Whether [shape] is an ellipse authored with an arc/wedge or a donut hole (drives arc handles). */
+private fun hasEllipseArc(shape: DesignNodeKind.Shape): Boolean =
+    shape.shape == ShapeType.Ellipse && (shape.arcSweepDeg != null || (shape.innerRadius ?: 0.0) > 0.0)
+
+/** Which arc parameter an arc-handle drag edits. */
+private enum class ArcHandleKind { Start, End, Inner }
+
+/**
+ * On-canvas handles for an ellipse arc/donut: draggable dots on the rim for the start angle and the
+ * end angle (start + sweep), plus an inner-ratio dot along the start radius. Angles follow the
+ * renderer's convention (0° = 3 o'clock, +sweep clockwise on screen; see `ellipseArcGeometry`) and
+ * ride the selection's [rotation]. Each drag brackets Begin…End so the per-frame
+ * SetArcStart / SetArcSweep / SetArcRatio commits coalesce into one undo entry. The press is consumed
+ * only when it lands on a handle, so the ellipse body still moves/selects normally otherwise.
+ */
+@Composable
+private fun ArcHandlesOverlay(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    box: BoundsBox,
+    rotation: Double,
+    viewport: CanvasViewport,
+) {
+    val colors = LocalEditorColors.current
+    val latestViewport by rememberUpdatedState(viewport)
+    val latestBox by rememberUpdatedState(box)
+    val latestRotation by rememberUpdatedState(rotation)
+
+    fun shapeOf(): DesignNodeKind.Shape? =
+        (state.designState.document?.nodeById(nodeId)?.kind as? DesignNodeKind.Shape)?.takeIf { hasEllipseArc(it) }
+
+    // Screen position of a rim point at ellipse-parameter [deg] (radius fraction [r], 1 = rim).
+    fun rimScreen(b: BoundsBox, rot: Double, deg: Double, r: Double): Offset {
+        val rad = deg * PI / 180.0
+        val cx = b.centerX
+        val cy = b.centerY
+        val local = GeoPoint(cx + r * (b.width / 2.0) * cos(rad), cy + r * (b.height / 2.0) * sin(rad))
+        val p = if (rot != 0.0) rotatePointAroundCenter(local, GeoPoint(cx, cy), rot) else local
+        return latestViewport.toScreen(p.x, p.y)
+    }
+
+    // Ellipse parameter angle (deg) of a screen point, undoing the selection rotation.
+    fun paramAngleOf(b: BoundsBox, rot: Double, screen: Offset): Double {
+        val cx = b.centerX
+        val cy = b.centerY
+        val doc = GeoPoint(latestViewport.toDocX(screen.x), latestViewport.toDocY(screen.y))
+        val local = if (rot != 0.0) rotatePointAroundCenter(doc, GeoPoint(cx, cy), -rot) else doc
+        val ux = if (b.width != 0.0) (local.x - cx) / (b.width / 2.0) else 0.0
+        val uy = if (b.height != 0.0) (local.y - cy) / (b.height / 2.0) else 0.0
+        return atan2(uy, ux) * 180.0 / PI
+    }
+
+    fun innerRatioOf(b: BoundsBox, rot: Double, screen: Offset): Double {
+        val cx = b.centerX
+        val cy = b.centerY
+        val doc = GeoPoint(latestViewport.toDocX(screen.x), latestViewport.toDocY(screen.y))
+        val local = if (rot != 0.0) rotatePointAroundCenter(doc, GeoPoint(cx, cy), -rot) else doc
+        val ux = if (b.width != 0.0) (local.x - cx) / (b.width / 2.0) else 0.0
+        val uy = if (b.height != 0.0) (local.y - cy) / (b.height / 2.0) else 0.0
+        return hypot(ux, uy).coerceIn(0.0, 0.95)
+    }
+
+    Canvas(
+        Modifier.fillMaxSize().pointerInput(nodeId) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val shape = shapeOf() ?: return@awaitEachGesture
+                val b = latestBox
+                val rot = latestRotation
+                val start = shape.arcStartDeg ?: 0.0
+                val sweep = shape.arcSweepDeg ?: 360.0
+                val inner = (shape.innerRadius ?: 0.0)
+                val press = down.position
+
+                val startPos = rimScreen(b, rot, start, 1.0)
+                val endPos = rimScreen(b, rot, start + sweep, 1.0)
+                val innerPos = rimScreen(b, rot, start, if (inner > 0.0) inner else 0.5)
+
+                val candidates = buildList {
+                    add(ArcHandleKind.Start to startPos)
+                    add(ArcHandleKind.End to endPos)
+                    add(ArcHandleKind.Inner to innerPos)
+                }
+                val grabbed = candidates
+                    .minByOrNull { (_, p) -> (p - press).getDistanceSquared() }
+                    ?.takeIf { (_, p) -> (p - press).getDistance() <= ArcHandleGrabRadiusPx }
+                    ?.first
+                    ?: return@awaitEachGesture // not a handle: let the ellipse body move/select
+
+                down.consume()
+                var began = false
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull() ?: break
+                    if (change.changedToUp()) break
+                    if (!began) {
+                        state.dispatch(DesignEditorIntent.BeginInteraction)
+                        began = true
+                    }
+                    when (grabbed) {
+                        ArcHandleKind.Start ->
+                            state.dispatch(DesignEditorIntent.SetArcStart(nodeId, normalizeAngleDegrees(paramAngleOf(b, rot, change.position))))
+                        ArcHandleKind.End -> {
+                            var s = (paramAngleOf(b, rot, change.position) - start) % 360.0
+                            if (s <= 0.0) s += 360.0
+                            state.dispatch(DesignEditorIntent.SetArcSweep(nodeId, s))
+                        }
+                        ArcHandleKind.Inner ->
+                            state.dispatch(DesignEditorIntent.SetArcRatio(nodeId, innerRatioOf(b, rot, change.position)))
+                    }
+                    change.consume()
+                }
+                if (began) state.dispatch(DesignEditorIntent.EndInteraction)
+            }
+        },
+    ) {
+        val shape = shapeOf() ?: return@Canvas
+        val b = latestBox
+        val rot = latestRotation
+        val start = shape.arcStartDeg ?: 0.0
+        val sweep = shape.arcSweepDeg ?: 360.0
+        val inner = (shape.innerRadius ?: 0.0)
+
+        fun drawDiamond(center: Offset) {
+            val r = 5f
+            val path = Path().apply {
+                moveTo(center.x, center.y - r)
+                lineTo(center.x + r, center.y)
+                lineTo(center.x, center.y + r)
+                lineTo(center.x - r, center.y)
+                close()
+            }
+            drawPath(path, Color.White)
+            drawPath(path, colors.accent, style = Stroke(width = 1.5f))
+        }
+        drawDiamond(rimScreen(b, rot, start, 1.0))
+        drawDiamond(rimScreen(b, rot, start + sweep, 1.0))
+        val innerPos = rimScreen(b, rot, start, if (inner > 0.0) inner else 0.5)
+        drawCircle(Color.White, radius = 4.5f, center = innerPos)
+        drawCircle(colors.accent, radius = 4.5f, center = innerPos, style = Stroke(width = 1.5f))
     }
 }
 
@@ -1478,7 +2074,7 @@ private fun LegacyVectorEditOverlay(
     val scaleY = if (viewBox != null && viewBox.height > 0) box.height / viewBox.height else 1.0
     val anchors = remember(editId, kind.paths) {
         kind.paths.flatMapIndexed { pathIndex, path ->
-            io.aequicor.visualization.editor.presentation.vectorAnchors(path.d).map { pathIndex to it }
+            vectorAnchors(path.d).map { pathIndex to it }
         }
     }
     val latestAnchors by rememberUpdatedState(anchors)
@@ -1715,6 +2311,9 @@ private fun enterEditMode(state: MissionEditorStateHolder, nodeId: String) {
             state.dispatch(DesignEditorIntent.ConvertToEditableVector(nodeId))
             state.updateWorkspace { it.copy(vectorEditNodeId = nodeId, vectorSelectedPoint = null, vectorSelectedVertex = null) }
         }
+        kind is DesignNodeKind.Diagram -> state.updateWorkspace {
+            it.copy(diagramEditNodeId = nodeId, diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+        }
         else -> Unit
     }
 }
@@ -1752,6 +2351,22 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         key == Key.DirectionRight -> nudge(step, 0.0)
         key == Key.DirectionUp -> nudge(0.0, -step)
         key == Key.DirectionDown -> nudge(0.0, step)
+        // In diagram edit mode Delete/Backspace removes the selected diagram elements —
+        // and with nothing selected it must never fall through to deleting the diagram node.
+        (key == Key.Delete || key == Key.Backspace) && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            val ws = state.workspace
+            if (!ws.diagramSelection.isEmpty) {
+                state.dispatch(
+                    DiagramEditorIntent.DeleteDiagramElement(
+                        ws.diagramEditNodeId,
+                        ws.diagramSelection.elementIds,
+                        ws.diagramSelection.edgeIds,
+                    ),
+                )
+                state.updateWorkspace { it.copy(diagramSelection = DiagramSelection.Empty) }
+            }
+            true
+        }
         // In vector-edit mode Delete/Backspace removes the selected vertex, not the node.
         (key == Key.Delete || key == Key.Backspace) &&
             state.workspace.vectorEditNodeId.isNotBlank() && state.workspace.vectorSelectedVertex != null -> {
@@ -1769,12 +2384,31 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         key == Key.RightBracket -> zorder(ZOrderMove.ToFront)
         key == Key.LeftBracket -> zorder(ZOrderMove.ToBack)
         ctrl && key == Key.A -> { state.dispatch(DesignEditorIntent.SelectAll); true }
+        ctrl && shift && key == Key.O && design.selectedNodeId.isNotBlank() -> {
+            state.dispatch(DesignEditorIntent.OutlineStroke(design.selectedNodeId)); true
+        }
+        ctrl && key == Key.E && design.selectedNodeId.isNotBlank() -> {
+            state.dispatch(DesignEditorIntent.FlattenNode(design.selectedNodeId)); true
+        }
         ctrl && shift && key == Key.Z -> { state.dispatch(DesignEditorIntent.Redo); true }
         ctrl && key == Key.Z -> { state.dispatch(DesignEditorIntent.Undo); true }
+        // Enter finishes a vector-edit session (pen path complete), keeping the node selected.
+        (key == Key.Enter || key == Key.NumPadEnter) && state.workspace.vectorEditNodeId.isNotBlank() -> {
+            state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
+            true
+        }
+        // Enter likewise finishes a diagram edit session, keeping the diagram node selected.
+        (key == Key.Enter || key == Key.NumPadEnter) && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            state.updateWorkspace { it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty) }
+            true
+        }
         key == Key.Escape -> {
             when {
                 // A live drag takes priority: abort it (revert + no undo entry).
                 state.activeDrag -> state.requestCancelDrag()
+                state.workspace.diagramEditNodeId.isNotBlank() -> state.updateWorkspace {
+                    it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+                }
                 state.workspace.vectorEditNodeId.isNotBlank() -> state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                 state.designState.editingTextNodeId.isNotBlank() -> state.dispatch(DesignEditorIntent.SetEditingText(""))
                 state.workspace.isMainOnly -> state.updateWorkspace { it.copy(focusMode = FocusMode.Normal) }
@@ -1850,6 +2484,14 @@ private data class ReorderPreview(
     val index: Int,
 )
 
+/** Fixed visual/ancestor geometry used to promote a free node on drag release. */
+private data class MoveReparentBaseline(
+    val nodeId: String,
+    val startVisual: EffectiveTransform,
+    val currentParent: CanvasParentFrame,
+    val upperParents: List<CanvasParentFrame>,
+)
+
 /**
  * Press-time snapshot for beautiful-anchor snapping during a free move (design-book §18): the
  * dragged selection's union bounds, the [containers] (immediate parent frame plus its
@@ -1864,7 +2506,7 @@ private data class SnapBaseline(
 )
 
 /** The anchor targets a snap resolves against: co-resident [siblings] plus the unrotated ancestor [containers]. */
-private data class SnapContext(
+internal data class SnapContext(
     val containers: List<BoundsBox>,
     val siblings: List<BoundsBox>,
 )
@@ -1896,15 +2538,19 @@ private fun collectSnapContext(
 }
 
 /** The docDx/docDy to feed the resize (raw + snap correction) plus the snap output, or the raw deltas when snapping is off. */
-private data class SnappedResize(val docDx: Float, val docDy: Float, val output: ResizeSnapOutput?)
+internal data class SnappedResize(val docDx: Float, val docDy: Float, val output: ResizeSnapOutput?)
+
+private enum class AspectResizeSnapAxis { Horizontal, Vertical }
 
 /**
  * Folds a resize drag's raw deltas through the magnetic resize snap: builds the candidate box from
  * [computeResize], snaps its moving edges to [context]'s neighbours/containers (edge/center align +
  * dimension match), and returns the corrected deltas. Snapping is off (raw deltas) when there is no
- * [context] (rotated/grouped/locked selection) or [lockRatio] is on (aspect-preserving, unsnapped).
+ * [context] (rotated/grouped/locked selection). For an aspect-locked corner only one axis may drive
+ * the shared scale: the closest caught axis (or the already-latched one) wins, and its correction is
+ * projected onto the other axis so the snapped edge and the original ratio both remain exact.
  */
-private fun snapResizeDeltas(
+internal fun snapResizeDeltas(
     baseline: BoundsBox,
     handle: ResizeHandle,
     rawDocDx: Float,
@@ -1914,20 +2560,188 @@ private fun snapResizeDeltas(
     catchPx: Double,
     releasePx: Double,
     prior: ResizeSnapState,
+    edges: ResizableEdges = ResizableEdges.All,
+    minWidth: Double = 1.0,
+    minHeight: Double = 1.0,
+    maxWidth: Double? = null,
+    maxHeight: Double? = null,
 ): SnappedResize {
-    if (context == null || lockRatio) return SnappedResize(rawDocDx, rawDocDy, null)
-    val result = computeResize(baseline.width, baseline.height, handle, rawDocDx.toDouble(), rawDocDy.toDouble(), lockRatio = false)
+    if (context == null) return SnappedResize(rawDocDx, rawDocDy, null)
+    val handleEdges = handle.toMovingEdges()
+    val movingEdges = handleEdges.copy(
+        left = handleEdges.left && edges.left,
+        right = handleEdges.right && edges.right,
+        top = handleEdges.top && edges.top,
+        bottom = handleEdges.bottom && edges.bottom,
+    )
+    val result = computeResize(
+        baseline.width,
+        baseline.height,
+        handle,
+        rawDocDx.toDouble(),
+        rawDocDy.toDouble(),
+        minWidth = minWidth,
+        minHeight = minHeight,
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        canMoveLeft = edges.left,
+        canMoveRight = edges.right,
+        canMoveTop = edges.top,
+        canMoveBottom = edges.bottom,
+        lockRatio = lockRatio,
+    )
     val candidate = SnapBox(baseline.x + result.dx, baseline.y + result.dy, result.width, result.height)
     val output = solveResizeSnap(
         candidate,
-        handle.toMovingEdges(),
+        movingEdges,
         context.containers.map { it.toSnapBox() },
         context.siblings.map { it.toSnapBox() },
         catch = catchPx,
         release = releasePx,
         prior = prior,
     )
-    return SnappedResize(rawDocDx + output.dx.toFloat(), rawDocDy + output.dy.toFloat(), output)
+    val aspectLocked = lockRatio &&
+        (movingEdges.left || movingEdges.right) &&
+        (movingEdges.top || movingEdges.bottom) &&
+        baseline.width > 0.0 &&
+        baseline.height > 0.0
+    if (!aspectLocked) {
+        return SnappedResize(rawDocDx + output.dx.toFloat(), rawDocDy + output.dy.toFloat(), output)
+    }
+
+    val hasHorizontalSnap = output.state.latchX != null
+    val hasVerticalSnap = output.state.latchY != null
+    val movingX = if (movingEdges.left) candidate.x else candidate.right
+    val movingY = if (movingEdges.top) candidate.y else candidate.bottom
+
+    fun horizontalCorrectionFor(axis: AspectResizeSnapAxis): Double = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> output.dx
+        AspectResizeSnapAxis.Vertical -> {
+            val ratio = baseline.width / baseline.height
+            val heightCorrection = if (movingEdges.bottom) output.dy else -output.dy
+            val widthCorrection = heightCorrection * ratio
+            if (movingEdges.right) widthCorrection else -widthCorrection
+        }
+    }
+    fun resultFor(axis: AspectResizeSnapAxis): ResizeResult = computeResize(
+        baseline.width,
+        baseline.height,
+        handle,
+        rawDocDx.toDouble() + horizontalCorrectionFor(axis),
+        rawDocDy.toDouble(),
+        minWidth = minWidth,
+        minHeight = minHeight,
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        canMoveLeft = edges.left,
+        canMoveRight = edges.right,
+        canMoveTop = edges.top,
+        canMoveBottom = edges.bottom,
+        lockRatio = true,
+    )
+    fun candidateFor(resize: ResizeResult): SnapBox = SnapBox(
+        baseline.x + resize.dx,
+        baseline.y + resize.dy,
+        resize.width,
+        resize.height,
+    )
+
+    val horizontalResult = if (hasHorizontalSnap) resultFor(AspectResizeSnapAxis.Horizontal) else null
+    val verticalResult = if (hasVerticalSnap) resultFor(AspectResizeSnapAxis.Vertical) else null
+    val horizontalCandidate = horizontalResult?.let(::candidateFor)
+    val verticalCandidate = verticalResult?.let(::candidateFor)
+    val horizontalFeasible = output.state.latchX?.let { target ->
+        horizontalCandidate?.let { box -> abs(target - if (movingEdges.left) box.x else box.right) <= 0.0001 }
+    } == true
+    val verticalFeasible = output.state.latchY?.let { target ->
+        verticalCandidate?.let { box -> abs(target - if (movingEdges.top) box.y else box.bottom) <= 0.0001 }
+    } == true
+    val priorHorizontalHeld = horizontalFeasible && prior.latchX?.let { abs(it - movingX) <= releasePx } == true
+    val priorVerticalHeld = verticalFeasible && prior.latchY?.let { abs(it - movingY) <= releasePx } == true
+    val axis = when {
+        !horizontalFeasible && !verticalFeasible -> null
+        horizontalFeasible && !verticalFeasible -> AspectResizeSnapAxis.Horizontal
+        !horizontalFeasible && verticalFeasible -> AspectResizeSnapAxis.Vertical
+        priorHorizontalHeld && !priorVerticalHeld -> AspectResizeSnapAxis.Horizontal
+        priorVerticalHeld && !priorHorizontalHeld -> AspectResizeSnapAxis.Vertical
+        abs(output.dx) <= abs(output.dy) -> AspectResizeSnapAxis.Horizontal
+        else -> AspectResizeSnapAxis.Vertical
+    } ?: return SnappedResize(
+        rawDocDx,
+        rawDocDy,
+        output.copy(
+            dx = 0.0,
+            dy = 0.0,
+            guides = emptyList(),
+            match = output.match.copy(
+                width = result.width,
+                height = result.height,
+                widthMatched = false,
+                heightMatched = false,
+            ),
+            state = ResizeSnapState.None,
+        ),
+    )
+
+    val snappedResult = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> requireNotNull(horizontalResult)
+        AspectResizeSnapAxis.Vertical -> requireNotNull(verticalResult)
+    }
+    val snappedCandidate = when (axis) {
+        AspectResizeSnapAxis.Horizontal -> requireNotNull(horizontalCandidate)
+        AspectResizeSnapAxis.Vertical -> requireNotNull(verticalCandidate)
+    }
+    val snappedDocDx = if (movingEdges.right) {
+        snappedResult.width - baseline.width
+    } else {
+        baseline.width - snappedResult.width
+    }
+    val snappedDocDy = if (movingEdges.bottom) {
+        snappedResult.height - baseline.height
+    } else {
+        baseline.height - snappedResult.height
+    }
+    val coupledDx = (if (movingEdges.left) snappedCandidate.x else snappedCandidate.right) -
+        (if (movingEdges.left) candidate.x else candidate.right)
+    val coupledDy = (if (movingEdges.top) snappedCandidate.y else snappedCandidate.bottom) -
+        (if (movingEdges.top) candidate.y else candidate.bottom)
+    val snappedMovingX = if (movingEdges.left) snappedCandidate.x else snappedCandidate.right
+    val snappedMovingY = if (movingEdges.top) snappedCandidate.y else snappedCandidate.bottom
+    val horizontalStillAligned = output.state.latchX?.let { abs(it - snappedMovingX) <= 0.0001 } == true
+    val verticalStillAligned = output.state.latchY?.let { abs(it - snappedMovingY) <= 0.0001 } == true
+    val selectedOutput = output.copy(
+        dx = coupledDx,
+        dy = coupledDy,
+        guides = output.guides.mapNotNull { guide ->
+            val line = guide.line
+            when {
+                horizontalStillAligned && line.x1 == line.x2 -> guide.copy(
+                    line = line.copy(
+                        y1 = minOf(line.y1, snappedCandidate.y),
+                        y2 = maxOf(line.y2, snappedCandidate.bottom),
+                    ),
+                )
+                verticalStillAligned && line.y1 == line.y2 -> guide.copy(
+                    line = line.copy(
+                        x1 = minOf(line.x1, snappedCandidate.x),
+                        x2 = maxOf(line.x2, snappedCandidate.right),
+                    ),
+                )
+                else -> null
+            }
+        },
+        match = output.match.copy(
+            width = snappedResult.width,
+            height = snappedResult.height,
+            widthMatched = horizontalStillAligned && output.match.widthMatched,
+            heightMatched = verticalStillAligned && output.match.heightMatched,
+        ),
+        state = ResizeSnapState(
+            latchX = output.state.latchX.takeIf { horizontalStillAligned },
+            latchY = output.state.latchY.takeIf { verticalStillAligned },
+        ),
+    )
+    return SnappedResize(snappedDocDx.toFloat(), snappedDocDy.toFloat(), selectedOutput)
 }
 
 private fun LayoutBox.toBoundsBox(): BoundsBox =
@@ -1982,6 +2796,53 @@ private fun LayoutBox.effectiveTransformFor(sourceId: String): EffectiveTransfor
     val path = pathToSourceId(sourceId) ?: return null
     val target = path.last()
     return effectiveTransform(target.toBoundsBox(), target.node.rotation, ancestorRotationsOf(path))
+}
+
+/**
+ * Builds the nearest-parent -> root frame chain for automatic drag-out promotion.
+ * A child of the root has no higher renderable node parent, so it deliberately returns
+ * null and may remain visible as root overflow.
+ */
+private fun buildMoveReparentBaseline(
+    document: DesignDocument,
+    layout: LayoutBox?,
+    nodeId: String,
+): MoveReparentBaseline? {
+    if (document.nodeById(nodeId)?.anchors != null) return null
+    val nodePath = layout?.pathToSourceId(nodeId) ?: return null
+    val parentPath = nodePath.dropLast(1)
+    if (parentPath.size < 2) return null
+    val node = nodePath.last()
+    val frames = parentPath.indices.reversed().map { index ->
+        canvasParentFrame(parentPath.take(index + 1))
+    }
+    return MoveReparentBaseline(
+        nodeId = nodeId,
+        startVisual = effectiveTransform(node.toBoundsBox(), node.node.rotation, ancestorRotationsOf(nodePath)),
+        currentParent = frames.first(),
+        upperParents = frames.drop(1),
+    )
+}
+
+/** Converts a root->parent layout path into the geometry a child inherits from that parent. */
+private fun canvasParentFrame(path: List<LayoutBox>): CanvasParentFrame {
+    val parent = path.last()
+    val visual = effectiveTransform(parent.toBoundsBox(), parent.node.rotation, ancestorRotationsOf(path))
+    val childRotations = path.asReversed().mapNotNull { box ->
+        box.node.rotation.takeIf { it != 0.0 }?.let { rotation ->
+            AncestorRotation(
+                center = GeoPoint(box.x + box.width / 2.0, box.y + box.height / 2.0),
+                degrees = rotation,
+            )
+        }
+    }
+    return CanvasParentFrame(
+        id = parent.node.sourceId,
+        layoutBounds = parent.toBoundsBox(),
+        visualBox = visual.box,
+        visualRotation = visual.rotation,
+        childAncestorRotations = childRotations,
+    )
 }
 
 private const val HandleHitRadiusPx = 11f
@@ -2080,6 +2941,7 @@ private fun resolveHandleCursor(
     tool: EditorTool,
     spaceHeld: Boolean,
     vectorEditNodeId: String,
+    diagramEditNodeId: String,
 ): PointerIcon? {
     if (spaceHeld || tool != EditorTool.Select) return null
     val document = design.document ?: return null
@@ -2091,8 +2953,8 @@ private fun resolveHandleCursor(
         return cursorForResizeKind(resizeCursorKindForHandle(handle, 0.0))
     }
     val id = design.selectedNodeId.takeIf { it.isNotBlank() } ?: return null
-    // Point-edit mode replaces object handles with path anchors; no resize cursor there.
-    if (id == vectorEditNodeId) return null
+    // Point-edit / diagram-edit modes replace object handles; no resize cursor there.
+    if (id == vectorEditNodeId || id == diagramEditNodeId) return null
     if (document.nodeById(id)?.locked == true) return null
     val transform = layout?.effectiveTransformFor(id) ?: return null
     val handle = rotatedHandleAt(transform.box, transform.rotation, viewport, pos) ?: return null
@@ -2632,6 +3494,50 @@ private fun commitCreate(
     )
 }
 
+/**
+ * Pen tool, first click: creates a single-vertex `shape: vector` node ([NewObjectKind.Vector], seeded
+ * by [io.aequicor.visualization.editor.presentation.EditorNodeFactory]) whose 100x100 box is centred
+ * on the click so the seeded network vertex at (50,50) in its 0..100 view box lands under the cursor,
+ * then enters vector-edit mode on the new node with vertex 0 selected — leaving the Pen tool active so
+ * the next click appends via [DesignEditorIntent.AppendVectorVertex].
+ */
+private fun commitPenStart(
+    state: MissionEditorStateHolder,
+    start: Offset,
+    viewport: CanvasViewport,
+    rootId: String,
+) {
+    val layout = state.artboardLayout
+    val parentId = hitNode(layout, state.designState.document, viewport, start).ifBlank { rootId }
+    val parentBox = layout?.findBySourceId(parentId) ?: layout
+    val docX = viewport.toDocX(start.x)
+    val docY = viewport.toDocY(start.y)
+    val size = 100.0
+    val relX = (docX - size / 2.0) - (parentBox?.x ?: 0.0)
+    val relY = (docY - size / 2.0) - (parentBox?.y ?: 0.0)
+    state.dispatch(
+        DesignEditorIntent.CreateObject(
+            kind = NewObjectKind.Vector,
+            parentId = parentId,
+            x = relX,
+            y = relY,
+            width = size,
+            height = size,
+        ),
+    )
+    val newId = state.designState.selectedNodeId
+    val createdVector = (state.designState.document?.nodeById(newId)?.kind as? DesignNodeKind.Shape)?.shape == ShapeType.Vector
+    if (createdVector) {
+        state.updateWorkspace {
+            it.copy(
+                vectorEditNodeId = newId,
+                vectorSelectedPoint = null,
+                vectorSelectedVertex = VectorVertexRef(0, VectorVertexPart.Anchor),
+            )
+        }
+    }
+}
+
 // --- Hit-testing helpers -----------------------------------------------------
 
 private fun hitNode(layout: LayoutBox?, document: DesignDocument?, viewport: CanvasViewport, pos: Offset): String {
@@ -2867,10 +3773,18 @@ private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) 
 }
 
 @Composable
-private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit) {
+private fun FloatingToolbar(
+    state: MissionEditorStateHolder,
+    selected: EditorTool,
+    lastShapeTool: EditorTool,
+    onSelect: (EditorTool) -> Unit,
+) {
     val colors = LocalEditorColors.current
+    // Explicit slot list: the six shape tools collapse into one flyout slot (Figma W2 pattern),
+    // the annotation kinds into the comment flyout slot.
+    val slots = listOf(EditorTool.Select, EditorTool.Frame, EditorTool.Pen, EditorTool.Text, EditorTool.Link, EditorTool.Code)
     Surface(
-        modifier = Modifier.height(50.dp).widthIn(max = 560.dp),
+        modifier = Modifier.height(50.dp).widthIn(max = 610.dp),
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
         border = BorderStroke(1.dp, colors.panelStroke),
@@ -2881,24 +3795,462 @@ private fun FloatingToolbar(selected: EditorTool, onSelect: (EditorTool) -> Unit
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            EditorTool.entries.forEach { tool ->
-                val active = tool == selected
-                val shape = RoundedCornerShape(8.dp)
-                Box(
-                    modifier = Modifier.size(36.dp)
-                        .background(if (active) colors.accent else colors.controlSurface, shape)
-                        .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
-                        .clip(shape)
-                        .clickable { onSelect(tool) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    EditorSvgIcon(
-                        icon = toolIcon(tool),
-                        contentDescription = tool.label,
-                        modifier = Modifier.size(24.dp),
-                        tint = if (active) Color.White else colors.ink,
-                    )
+            ToolbarButton(EditorTool.Select, selected, onSelect)
+            ToolbarButton(EditorTool.Frame, selected, onSelect)
+            ShapeToolFlyout(selected, lastShapeTool, onSelect)
+            ToolbarButton(EditorTool.Pen, selected, onSelect)
+            ToolbarButton(EditorTool.Text, selected, onSelect)
+            DiagramToolFlyout(state)
+            AnnotationToolFlyout(state)
+            ToolbarButton(EditorTool.Link, selected, onSelect)
+            ToolbarButton(EditorTool.Code, selected, onSelect)
+            ExportIssuesAction(state)
+            // Referenced so an unused-`slots` warning never appears if the explicit list drifts.
+            check(slots.isNotEmpty())
+        }
+    }
+}
+
+/**
+ * The comment toolbar slot: tapping toggles annotation mode with the last used kind
+ * (fast path), the corner chevron opens the note/issue picker — each row with its
+ * tinted droplet preview per the dropdown rules. Activating annotation mode parks the
+ * canvas tool on Select so a press can never both annotate and create/select.
+ */
+@Composable
+private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
+    val activeTool = state.workspace.annotationTool
+    val active = activeTool != AnnotationTool.None
+    var lastKind by remember { mutableStateOf(AnnotationTool.Note) }
+    var expanded by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(8.dp)
+    fun activate(tool: AnnotationTool) {
+        state.dispatch(DesignEditorIntent.SetAnnotationTool(tool))
+        if (tool != AnnotationTool.None) {
+            lastKind = tool
+            state.updateWorkspace { it.copy(tool = EditorTool.Select) }
+        }
+    }
+    Box {
+        Box(
+            modifier = Modifier.size(36.dp)
+                .background(if (active) colors.accent else colors.controlSurface, shape)
+                .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                .clip(shape)
+                .clickable { activate(if (active) AnnotationTool.None else lastKind) },
+            contentAlignment = Alignment.Center,
+        ) {
+            EditorSvgIcon(
+                icon = EditorIcon.Comments,
+                contentDescription = "Annotation tools",
+                modifier = Modifier.size(24.dp),
+                tint = if (active) Color.White else colors.ink,
+            )
+            // Corner chevron: opens the kind menu without toggling annotation mode.
+            Box(
+                modifier = Modifier.align(Alignment.BottomEnd).size(12.dp).clip(shape).clickable { expanded = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                EditorSvgIcon(
+                    icon = EditorIcon.ChevronDown,
+                    contentDescription = "Choose annotation kind",
+                    modifier = Modifier.size(10.dp),
+                    tint = if (active) Color.White else colors.mutedInk,
+                )
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            AnnotationKind.entries.forEach { kind ->
+                EditorDropdownMenuItem(
+                    text = annotationKindLabel(kind),
+                    leadingContent = { AnnotationKindPreview(kind, Modifier.size(16.dp)) },
+                    onClick = {
+                        expanded = false
+                        activate(kind.annotationTool())
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The diagram toolbar slot: a flyout listing every diagram node type (basic shapes, table,
+ * container/swimlane, UML, flowchart, ER, BPMN), each row with its [DiagramNodePreview]
+ * mini glyph. Picking a type arms [DiagramTool.AddNode] on the targeted diagram node
+ * (the one being edited, the selected one, or the page's first diagram) and enters its
+ * edit mode; the next canvas press inside the diagram stamps the element.
+ */
+@Composable
+private fun DiagramToolFlyout(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
+    val ws = state.workspace
+    val active = ws.diagramEditNodeId.isNotBlank()
+    val shape = RoundedCornerShape(8.dp)
+    var expanded by remember { mutableStateOf(false) }
+    val previewStyle = editorDiagramPreviewStyle()
+    Box {
+        Box(
+            modifier = Modifier.size(36.dp)
+                .background(if (active) colors.accent else colors.controlSurface, shape)
+                .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                .clip(shape)
+                .clickable { expanded = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            EditorSvgIcon(
+                icon = EditorIcon.Diagram,
+                contentDescription = "Diagram tools",
+                modifier = Modifier.size(24.dp),
+                tint = if (active) Color.White else colors.ink,
+            )
+            Box(
+                modifier = Modifier.align(Alignment.BottomEnd).size(12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                EditorSvgIcon(
+                    icon = EditorIcon.ChevronDown,
+                    contentDescription = "Choose diagram node type",
+                    modifier = Modifier.size(10.dp),
+                    tint = if (active) Color.White else colors.mutedInk,
+                )
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DiagramNodePalette.forEach { entry ->
+                EditorDropdownMenuItem(
+                    text = entry.label,
+                    leadingContent = { DiagramNodePreview(entry.payload, previewStyle, Modifier.size(18.dp)) },
+                    onClick = {
+                        expanded = false
+                        armDiagramAddNode(state, entry.payload)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * «Выгрузить замечания»: builds the AI fix-prompt from the issue annotations in the
+ * picked scope (selected / current screen / whole document) and copies it to the
+ * clipboard. Each scope row carries its own left icon per the dropdown rules.
+ *
+ * The copy is never silent: a confirmation popup always opens with the prompt text
+ * selectable for manual copy — on web the clipboard API is a silent no-op outside a
+ * secure context (plain-http remote host), so feedback plus a manual path is the only
+ * way the feature's single output can't be lost.
+ */
+@Composable
+private fun ExportIssuesAction(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
+    val clipboard = LocalClipboardManager.current
+    var expanded by remember { mutableStateOf(false) }
+    var exportedPrompt by remember { mutableStateOf<String?>(null) }
+    val shape = RoundedCornerShape(8.dp)
+    fun copyPrompt(scope: ExportScope) {
+        val prompt = state.exportIssuesPrompt(scope)
+        clipboard.setText(AnnotatedString(prompt))
+        exportedPrompt = prompt
+    }
+    exportedPrompt?.let { prompt ->
+        ExportPromptPopup(
+            prompt = prompt,
+            onCopyAgain = { clipboard.setText(AnnotatedString(prompt)) },
+            onDismiss = { exportedPrompt = null },
+        )
+    }
+    Box {
+        Box(
+            modifier = Modifier.size(36.dp)
+                .background(colors.controlSurface, shape)
+                .border(1.dp, colors.controlStroke, shape)
+                .clip(shape)
+                .clickable { expanded = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            EditorSvgIcon(
+                icon = EditorIcon.Export,
+                contentDescription = "Выгрузить замечания",
+                modifier = Modifier.size(22.dp),
+                tint = colors.ink,
+            )
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            EditorDropdownMenuItem(
+                text = "Выбранная аннотация",
+                leadingContent = { DropdownMenuIcon(EditorIcon.Select) },
+                onClick = {
+                    expanded = false
+                    copyPrompt(ExportScope.Selected(setOfNotNull(state.workspace.selectedAnnotationId.takeIf { it.isNotBlank() })))
+                },
+            )
+            EditorDropdownMenuItem(
+                text = "Текущий экран",
+                leadingContent = { DropdownMenuIcon(EditorIcon.Screens) },
+                onClick = {
+                    expanded = false
+                    val design = state.designState
+                    val screenFile = design.screenFileNamesByPageId()[design.selectedPageId]
+                    copyPrompt(ExportScope.Screen(screenFile.orEmpty()))
+                },
+            )
+            EditorDropdownMenuItem(
+                text = "Весь документ",
+                leadingContent = { DropdownMenuIcon(EditorIcon.Markdown) },
+                onClick = {
+                    expanded = false
+                    copyPrompt(ExportScope.WholeDocument)
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Confirmation of the issue-prompt export: states the clipboard attempt and offers the
+ * prompt text for manual selection/copy — the fallback for insecure-context web where
+ * `navigator.clipboard` is unavailable and the copy silently does nothing.
+ */
+@Composable
+private fun ExportPromptPopup(prompt: String, onCopyAgain: () -> Unit, onDismiss: () -> Unit) {
+    val colors = LocalEditorColors.current
+    Popup(
+        alignment = Alignment.Center,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
+    ) {
+        Surface(
+            modifier = Modifier.widthIn(max = 460.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = colors.raisedSurface,
+            border = BorderStroke(1.dp, colors.panelStroke),
+            shadowElevation = 10.dp,
+        ) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Экспорт замечаний",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.ink,
+                )
+                Text(
+                    if (prompt.isBlank()) {
+                        "В выбранной области нет issue-аннотаций — промпт пуст."
+                    } else {
+                        "Промпт скопирован в буфер обмена. Если вставка не сработала " +
+                            "(например, страница открыта по HTTP), выделите и скопируйте текст вручную:"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.mutedInk,
+                )
+                if (prompt.isNotBlank()) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp)
+                            .background(colors.paneSurface, RoundedCornerShape(6.dp))
+                            .border(1.dp, colors.softStroke, RoundedCornerShape(6.dp))
+                            .padding(8.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                prompt,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = colors.codeInk,
+                            )
+                        }
+                    }
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (prompt.isNotBlank()) {
+                        ExportPromptButton("Скопировать ещё раз", onClick = onCopyAgain)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    ExportPromptButton("Закрыть", onClick = onDismiss)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExportPromptButton(label: String, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        modifier = Modifier.height(26.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
+    ) {
+        Box(Modifier.padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = colors.controlInk)
+        }
+    }
+}
+
+/** The [AnnotationKind] a workspace annotation tool creates, or null for [AnnotationTool.None]. */
+private fun AnnotationTool.annotationKind(): AnnotationKind? = when (this) {
+    AnnotationTool.None -> null
+    AnnotationTool.Note -> AnnotationKind.Note
+    AnnotationTool.Issue -> AnnotationKind.Issue
+}
+
+/** Workspace tool that authors this annotation kind. */
+private fun AnnotationKind.annotationTool(): AnnotationTool = when (this) {
+    AnnotationKind.Note -> AnnotationTool.Note
+    AnnotationKind.Issue -> AnnotationTool.Issue
+}
+
+/**
+ * Annotation-tool click: mints a note/issue on the current screen's review layer — on
+ * the hit node (badge offset keeps it where clicked) or as a free point — then selects
+ * and expands the new annotation, opens the Comments inspector for typing the text and
+ * leaves annotation mode (one placement per activation, like the shape tools).
+ */
+private fun commitAddAnnotation(
+    state: MissionEditorStateHolder,
+    kind: AnnotationKind,
+    position: Offset,
+    viewport: CanvasViewport,
+    document: DesignDocument,
+    layout: LayoutBox?,
+) {
+    val design = state.designState
+    val screenFileName = design.screenFileNamesByPageId()[design.selectedPageId] ?: return
+    val docX = viewport.toDocX(position.x)
+    val docY = viewport.toDocY(position.y)
+    val hitId = hitNode(layout, document, viewport, position)
+    // Visual (post-rotation) bounds: the anchor offset must live in the same space the
+    // overlay re-applies it in, or the badge would drift on rotated nodes.
+    val hitBounds = annotationNodeVisualBounds(layout, hitId)
+    val anchor = annotationAnchorForPress(docX, docY, hitId, hitBounds)
+    val idsBefore = design.annotationLayers[screenFileName]?.annotations?.mapTo(mutableSetOf()) { it.id }.orEmpty()
+    state.dispatch(DesignEditorIntent.AddAnnotation(screenFileName, anchor, kind))
+    val createdId = state.designState.annotationLayers[screenFileName]?.annotations
+        ?.firstOrNull { it.id !in idsBefore }
+        ?.id
+    if (createdId != null) {
+        state.dispatch(DesignEditorIntent.SelectAnnotation(createdId))
+        if (createdId !in state.workspace.expandedAnnotationIds) {
+            state.dispatch(DesignEditorIntent.ToggleAnnotationExpanded(createdId))
+        }
+        state.updateWorkspace { it.copy(inspectorTab = InspectorTab.Comments) }
+    }
+    state.dispatch(DesignEditorIntent.SetAnnotationTool(AnnotationTool.None))
+}
+
+/**
+ * Arms the diagram Add-node tool: targets the diagram already being edited, else the
+ * selected diagram node, else the page's first diagram node; no diagram — no-op.
+ */
+private fun armDiagramAddNode(state: MissionEditorStateHolder, payload: DiagramNodePayload) {
+    val design = state.designState
+    val document = design.document ?: return
+    val targetId = state.workspace.diagramEditNodeId.takeIf { it.isNotBlank() }
+        ?: design.selectedNodeId.takeIf { it.isNotBlank() && document.nodeById(it)?.kind is DesignNodeKind.Diagram }
+        ?: firstDiagramNodeId(document, design.selectedPageId)
+        ?: return
+    if (design.selectedNodeId != targetId) state.dispatch(DesignEditorIntent.SelectNode(targetId))
+    state.updateWorkspace {
+        it.copy(
+            tool = EditorTool.Select,
+            diagramEditNodeId = targetId,
+            diagramTool = DiagramTool.AddNode(payload),
+            diagramSelection = DiagramSelection.Empty,
+        )
+    }
+}
+
+/** Depth-first id of the first diagram node on [pageId], or null when the page has none. */
+private fun firstDiagramNodeId(document: DesignDocument, pageId: String): String? {
+    fun walk(node: io.aequicor.visualization.engine.ir.model.DesignNode): String? {
+        if (node.kind is DesignNodeKind.Diagram) return node.id
+        return node.children.firstNotNullOfOrNull { walk(it) }
+    }
+    return document.pageById(pageId)?.children?.firstNotNullOfOrNull { walk(it) }
+}
+
+@Composable
+private fun ToolbarButton(tool: EditorTool, selected: EditorTool, onSelect: (EditorTool) -> Unit) {
+    val colors = LocalEditorColors.current
+    val active = tool == selected
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier.size(36.dp)
+            .background(if (active) colors.accent else colors.controlSurface, shape)
+            .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+            .clip(shape)
+            .clickable { onSelect(tool) },
+        contentAlignment = Alignment.Center,
+    ) {
+        EditorSvgIcon(
+            icon = toolIcon(tool),
+            contentDescription = tool.label,
+            modifier = Modifier.size(24.dp),
+            tint = if (active) Color.White else colors.ink,
+        )
+    }
+}
+
+/**
+ * One toolbar slot holding all six shape tools. Tapping it selects [lastShapeTool] (fast path);
+ * tapping the corner chevron opens a dropdown of every shape tool, each with its mini preview.
+ */
+@Composable
+private fun ShapeToolFlyout(selected: EditorTool, lastShapeTool: EditorTool, onSelect: (EditorTool) -> Unit) {
+    val colors = LocalEditorColors.current
+    val active = selected.isShapeTool
+    val shape = RoundedCornerShape(8.dp)
+    var expanded by remember { mutableStateOf(false) }
+    val previewStyle = FigurePreviewStyle(
+        ink = colors.controlInk,
+        fill = colors.selectionFill,
+        accent = colors.accent,
+        surface = colors.raisedSurface,
+    )
+    Box {
+        Box(
+            modifier = Modifier.size(36.dp)
+                .background(if (active) colors.accent else colors.controlSurface, shape)
+                .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                .clip(shape)
+                .clickable { onSelect(lastShapeTool) },
+            contentAlignment = Alignment.Center,
+        ) {
+            EditorSvgIcon(
+                icon = toolIcon(lastShapeTool),
+                contentDescription = "Shape tools",
+                modifier = Modifier.size(24.dp),
+                tint = if (active) Color.White else colors.ink,
+            )
+            // Corner chevron: opens the shape-tool menu without changing the active tool.
+            Box(
+                modifier = Modifier.align(Alignment.BottomEnd).size(12.dp).clip(shape).clickable { expanded = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                EditorSvgIcon(
+                    icon = EditorIcon.ChevronDown,
+                    contentDescription = "Choose shape tool",
+                    modifier = Modifier.size(10.dp),
+                    tint = if (active) Color.White else colors.mutedInk,
+                )
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ShapeTools.forEach { tool ->
+                EditorDropdownMenuItem(
+                    text = tool.label,
+                    leadingContent = tool.shapeTypeOrNull()?.let { shapeType ->
+                        { FigureShapePreview(shapeType, previewStyle, Modifier.size(18.dp)) }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(tool)
+                    },
+                )
             }
         }
     }
@@ -2914,12 +4266,37 @@ private fun toolIcon(tool: EditorTool): EditorIcon = when (tool) {
     EditorTool.Select -> EditorIcon.Select
     EditorTool.Frame -> EditorIcon.Frame
     EditorTool.Rectangle -> EditorIcon.Rectangle
+    EditorTool.Ellipse -> EditorIcon.Ellipse
+    EditorTool.Polygon -> EditorIcon.Polygon
+    EditorTool.Star -> EditorIcon.Star
+    EditorTool.Line -> EditorIcon.Line
+    EditorTool.Arrow -> EditorIcon.Arrow
     EditorTool.Pen -> EditorIcon.Pen
     EditorTool.Text -> EditorIcon.Text
     EditorTool.Comment -> EditorIcon.Comments
     EditorTool.Link -> EditorIcon.Link
     EditorTool.Code -> EditorIcon.Code
 }
+
+/** The [ShapeType] a shape tool draws, for its dropdown mini-preview. */
+private fun EditorTool.shapeTypeOrNull(): ShapeType? = when (this) {
+    EditorTool.Rectangle -> ShapeType.Rectangle
+    EditorTool.Ellipse -> ShapeType.Ellipse
+    EditorTool.Polygon -> ShapeType.Polygon
+    EditorTool.Star -> ShapeType.Star
+    EditorTool.Line -> ShapeType.Line
+    EditorTool.Arrow -> ShapeType.Arrow
+    else -> null
+}
+
+private val ShapeTools: List<EditorTool> = listOf(
+    EditorTool.Rectangle,
+    EditorTool.Ellipse,
+    EditorTool.Polygon,
+    EditorTool.Star,
+    EditorTool.Line,
+    EditorTool.Arrow,
+)
 
 @Composable
 private fun ZoomControls(state: MissionEditorStateHolder) {

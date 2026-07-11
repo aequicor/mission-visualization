@@ -1,6 +1,6 @@
 ---
 name: compose-slm
-description: Generate a UI screen as Semantic Layout Markdown (SLM) using its controlled natural language (CNL). Use when asked to create, improve, or convert a .layout.md / SLM screen — turn a screen description into English-only element sentences that compile to a renderer-independent UI IR. Works with any model (DeepSeek, Codex, …).
+description: Author, improve, validate, rewrite, or explain a UI screen as Semantic Layout Markdown (SLM) using its controlled natural language (CNL). Use when asked to create, improve, convert, or review a .layout.md / SLM screen — turn a screen description into English-only element sentences that compile to a renderer-independent UI IR with i18n. Self-contained: works standalone with no host project (use the vocabulary below as the contract) and with small or weak models (DeepSeek, Codex, …).
 ---
 
 # Write SLM screens in CNL (controlled natural language)

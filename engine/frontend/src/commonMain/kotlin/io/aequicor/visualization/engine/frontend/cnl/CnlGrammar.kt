@@ -5,7 +5,7 @@ import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignInsets
 import io.aequicor.visualization.engine.ir.model.InstanceOverride
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignEasing
@@ -32,7 +32,7 @@ import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.GradientKind
-import io.aequicor.visualization.engine.ir.model.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleMirror
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.GridTrack
@@ -46,7 +46,7 @@ import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.OverflowMode
 import io.aequicor.visualization.engine.ir.model.ScrollOverflow
 import io.aequicor.visualization.engine.ir.model.PropValue
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
@@ -56,8 +56,8 @@ import io.aequicor.visualization.engine.ir.model.TextCase
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.UnitValue
-import io.aequicor.visualization.engine.ir.model.VectorRegion
-import io.aequicor.visualization.engine.ir.model.VectorVertex
+import io.aequicor.visualization.subsystems.figures.VectorRegion
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.literalOrNull
@@ -268,6 +268,7 @@ internal object CnlGrammar {
         Descriptor(CnlPropertyKind.Media, "media", 50, ::renderMedia),
         Descriptor(CnlPropertyKind.ShapePoints, "points", 52, ::renderShapePoints),
         Descriptor(CnlPropertyKind.ShapeInner, "inner", 53, ::renderShapeInner),
+        Descriptor(CnlPropertyKind.ShapeArc, "arc", 51, ::renderShapeArc),
         Descriptor(CnlPropertyKind.ViewBox, "viewbox", 54, ::renderViewBox),
         Descriptor(CnlPropertyKind.IconRef, "icon", 55, ::renderIconRef),
         Descriptor(CnlPropertyKind.PathRef, "svg", 56, ::renderPathRef),
@@ -1184,6 +1185,13 @@ internal object CnlGrammar {
     private fun renderShapeInner(node: DesignNode): String? =
         (node.kind as? DesignNodeKind.Shape)?.innerRadius?.let { "inner ${num(it)}" }
 
+    /** `arc (start sweep)` — emitted whenever either arc endpoint is authored (ellipse pie/donut). */
+    private fun renderShapeArc(node: DesignNode): String? {
+        val shape = node.kind as? DesignNodeKind.Shape ?: return null
+        if (shape.arcStartDeg == null && shape.arcSweepDeg == null) return null
+        return "arc (${num(shape.arcStartDeg ?: 0.0)} ${num(shape.arcSweepDeg ?: 0.0)})"
+    }
+
     private fun renderViewBox(node: DesignNode): String? {
         val vb = (node.kind as? DesignNodeKind.Shape)?.viewBox ?: return null
         return "viewbox (${num(vb.x)} ${num(vb.y)} ${num(vb.width)} ${num(vb.height)})"
@@ -1201,11 +1209,15 @@ internal object CnlGrammar {
     }
 
     private fun renderNetwork(node: DesignNode): String? {
-        val n = (node.kind as? DesignNodeKind.Shape)?.network?.takeIf { it.isNotEmpty() } ?: return null
+        val shape = node.kind as? DesignNodeKind.Shape ?: return null
+        val n = shape.network?.takeIf { it.isNotEmpty() } ?: return null
+        val regionFills = shape.regionFills
         val parts = buildList {
             n.vertices.forEach { v -> add(renderVertex(v)) }
             n.segments.forEach { s -> add("segment (${s.from} ${s.to})") }
-            n.regions.forEach { r -> add(renderRegion(r)) }
+            // A region fill that is not a plain solid (gradient/image, or a solid with per-fill
+            // props) is a CNL gap → yield the whole descriptor so the node keeps its retained YAML.
+            n.regions.forEachIndexed { index, r -> add(renderRegion(r, regionFills[index]) ?: return null) }
         }
         return "network (" + parts.joinToString(" ") + ")"
     }
@@ -1222,14 +1234,32 @@ internal object CnlGrammar {
                 HandleMirror.AngleAndLength -> add("mirror angleAndLength")
             }
             if (v.corner) add("corner")
+            if (v.cornerRadius != 0.0) add("radius ${num(v.cornerRadius)}")
         }
         return "vertex (" + parts.joinToString(" ") + ")"
     }
 
-    private fun renderRegion(r: VectorRegion): String {
+    private fun renderRegion(r: VectorRegion, fills: List<DesignPaint>?): String? {
         val loops = r.loops.joinToString(" ") { l -> "(" + l.joinToString(" ") + ")" }
         val prefix = if (r.windingRule == "evenodd") "region evenodd" else "region"
-        return "$prefix loops $loops"
+        val fillPhrase = if (fills.isNullOrEmpty()) {
+            ""
+        } else {
+            val tokens = fills.map { regionFillToken(it) ?: return null }
+            " " + tokens.joinToString(" ") { "fill $it" }
+        }
+        return "$prefix loops $loops$fillPhrase"
+    }
+
+    /** A region fill token: `#hex` (solid value) or `$id` (solid var-ref); null for non-solid / prop-bearing. */
+    private fun regionFillToken(paint: DesignPaint): String? {
+        val solid = paint as? DesignPaint.Solid ?: return null
+        if (solid.opacity.literalOrNull() != 1.0 || solid.blendMode != "normal" ||
+            solid.visible.literalOrNull() == false
+        ) {
+            return null
+        }
+        return colorToken(solid.color)
     }
 
     private fun renderBooleanOp(node: DesignNode): String? {

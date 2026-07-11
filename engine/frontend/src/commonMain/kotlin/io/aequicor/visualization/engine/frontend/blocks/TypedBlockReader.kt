@@ -14,7 +14,6 @@ import io.aequicor.visualization.engine.frontend.blocks.readers.readNodeBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readOverridesBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readPropsBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readResponsiveBlock
-import io.aequicor.visualization.engine.frontend.blocks.readers.readShapeBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readStyleBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readStylesBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readTextBlock
@@ -22,15 +21,22 @@ import io.aequicor.visualization.engine.frontend.blocks.readers.readVariablesBlo
 import io.aequicor.visualization.engine.frontend.blocks.readers.readVectorBlock
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
+import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 
 /**
  * Converts one [TypedEntry] of a typed attribute block into a partial-IR [TypedPatch],
- * dispatching by [TypedBlockKind]. Per-property diagnostics are reported at
- * `file:line#<kind>`. Returns null when the entry is unreadable at the top level.
+ * dispatching by [TypedBlockKind]. An entry whose key is not a built-in kind is
+ * resolved against [SlmExtensionRegistry] and wrapped into an [ExtensionPatch].
+ * Per-property diagnostics are reported at `file:line#<kind>`. Returns null when
+ * the entry is unreadable at the top level (or the key is not registered).
  */
 object TypedBlockReader {
-    fun read(entry: TypedEntry, diagnostics: DiagnosticCollector): TypedPatch? {
-        val reading = BlockReading(diagnostics, entry.kind.key)
+    fun read(
+        entry: TypedEntry,
+        diagnostics: DiagnosticCollector,
+        extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
+    ): TypedPatch? {
+        val reading = BlockReading(diagnostics, entry.key)
         return when (entry.kind) {
             TypedBlockKind.Node -> readNodeBlock(entry.value, reading)
             TypedBlockKind.Layout -> readLayoutBlock(entry.value, reading)
@@ -40,7 +46,7 @@ object TypedBlockReader {
             TypedBlockKind.Props -> readPropsBlock(entry.value, reading)
             TypedBlockKind.Overrides -> readOverridesBlock(entry.value, reading)
             TypedBlockKind.Media -> readMediaBlock(entry.value, reading)
-            TypedBlockKind.Shape -> readShapeBlock(entry.value, reading)
+            TypedBlockKind.Shape -> ShapeBlockExtension.read(entry.value, reading)
             TypedBlockKind.Vector -> readVectorBlock(entry.value, reading)
             TypedBlockKind.Mask -> readMaskBlock(entry.value, reading)
             TypedBlockKind.Action -> readActionBlock(entry.value, reading)
@@ -51,6 +57,17 @@ object TypedBlockReader {
             TypedBlockKind.Styles -> readStylesBlock(entry.value, reading)
             TypedBlockKind.Handoff -> readHandoffBlock(entry.value, reading)
             TypedBlockKind.Export -> readExportBlock(entry.value, reading)
+            null -> extensions.find(entry.key)?.let { readWith(it, entry.value, reading) }
         }
+    }
+
+    private fun <P : Any> readWith(
+        extension: TypedBlockExtension<P>,
+        value: YamlValue,
+        reading: BlockReading,
+    ): TypedPatch? {
+        val payload = extension.read(value, reading) ?: return null
+        extension.validate(payload, reading)
+        return ExtensionPatch(extension, payload)
     }
 }

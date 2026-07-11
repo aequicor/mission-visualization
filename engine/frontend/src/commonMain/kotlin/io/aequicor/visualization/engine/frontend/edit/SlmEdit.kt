@@ -1,7 +1,7 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignInteraction
@@ -10,10 +10,10 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 
 /**
@@ -158,6 +158,43 @@ data class SetEffects(
 data class SetTextStyle(
     override val nodeId: String,
     val style: DesignTextStyle,
+    /** Typography keys to delete from the source (e.g. "decorationColor" reset to auto). */
+    val clearKeys: Set<String> = emptySet(),
+) : SlmEdit
+
+/**
+ * Rewrites the node's whole rich-text spans from the working node's [styleRanges] and
+ * [links]. This edit is not surgically expressible, so [CnlWriter] regenerates the whole
+ * CNL sentence from the patched node (tier-3), re-emitting each `span (…)` / `link (…)`
+ * phrase; the list is replaced wholesale (the working document owns the authoritative set).
+ *
+ * Offsets are authored against the source-locale `defaultText`, so the caller must gate
+ * this out (falling back in-memory) when the node's text is ICU-formatted or resolved in
+ * a non-source locale — offsets would not align with the rendered string.
+ */
+data class SetTextSpans(
+    override val nodeId: String,
+    val styleRanges: List<io.aequicor.visualization.engine.ir.model.TextStyleRange>,
+    val links: List<io.aequicor.visualization.engine.ir.model.TextLink>,
+) : SlmEdit
+
+/**
+ * Writes the node's text auto-resize as `text.resizing: { width, height }`. Maps the
+ * Figma modes to sizing shorthands: WidthAndHeight -> both `hug`, Height -> height `hug`
+ * (width `fixed`), None -> both `fixed`.
+ */
+data class SetTextAutoResize(
+    override val nodeId: String,
+    val mode: io.aequicor.visualization.engine.ir.model.TextAutoResize,
+) : SlmEdit
+
+/**
+ * Writes text truncation as `text.maxLines` (+ `overflow: truncate` when ellipsis is on).
+ * A null [truncate] removes truncation by writing `overflow: visible` and dropping maxLines.
+ */
+data class SetTextTruncate(
+    override val nodeId: String,
+    val truncate: io.aequicor.visualization.engine.ir.model.TextTruncate?,
 ) : SlmEdit
 
 /** Writes `vector.viewBox: [x, y, w, h]` (creating the `vector:` block when absent). */
@@ -174,6 +211,8 @@ data class SetViewBox(
 data class SetVectorNetwork(
     override val nodeId: String,
     val network: VectorNetwork,
+    /** Per-region fills keyed by region index, emitted inside each region mapping. */
+    val regionFills: Map<Int, List<DesignPaint>> = emptyMap(),
 ) : SlmEdit
 
 /** Writes `vector.boolean: { op, children }` for a boolean-operation node. */

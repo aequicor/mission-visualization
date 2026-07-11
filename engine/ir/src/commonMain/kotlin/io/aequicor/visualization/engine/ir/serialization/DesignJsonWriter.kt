@@ -3,10 +3,11 @@ package io.aequicor.visualization.engine.ir.serialization
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.engine.ir.model.HandleMirror
-import io.aequicor.visualization.engine.ir.model.HandleOffset
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
 import io.aequicor.visualization.engine.ir.model.DesignAction
@@ -93,8 +94,12 @@ import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.model.TextFormat
 import io.aequicor.visualization.engine.ir.model.TextFormatKind
+import io.aequicor.visualization.engine.ir.model.LeadingTrim
+import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
+import io.aequicor.visualization.engine.ir.model.TextLink
 import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextListType
+import io.aequicor.visualization.engine.ir.model.TextScriptPosition
 import io.aequicor.visualization.engine.ir.model.TextStyleRange
 import io.aequicor.visualization.engine.ir.model.TransitionDirection
 import io.aequicor.visualization.engine.ir.model.TransitionType
@@ -277,6 +282,9 @@ private fun JsonObjectBuilder.putKindFields(kind: DesignNodeKind) {
         is DesignNodeKind.Instance -> putInstanceKindFields(kind)
         is DesignNodeKind.BooleanOperation -> put("operation", booleanOperationName(kind.operation))
         is DesignNodeKind.Media -> put("media", writeMedia(kind.media))
+        is DesignNodeKind.Diagram -> {
+            if (kind.graph != DiagramGraph.Empty) put("diagram", writeDiagramGraph(kind.graph))
+        }
         is DesignNodeKind.Table -> put("table", writeTable(kind.table))
         is DesignNodeKind.Slot -> put("slot", kind.slotName)
         is DesignNodeKind.Annotation -> put("annotation", writeAnnotation(kind.annotation))
@@ -309,21 +317,7 @@ private fun JsonObjectBuilder.putTextKindFields(kind: DesignNodeKind.Text) {
         )
     }
     if (kind.styleRanges.isNotEmpty()) put("styleRanges", JsonArray(kind.styleRanges.map(::writeStyleRange)))
-    if (kind.links.isNotEmpty()) {
-        put(
-            "links",
-            JsonArray(
-                kind.links.map { link ->
-                    buildJsonObject {
-                        put("start", link.start)
-                        put("end", link.end)
-                        put("url", link.url)
-                        if (link.nodeTarget.isNotEmpty()) put("nodeTarget", link.nodeTarget)
-                    }
-                },
-            ),
-        )
-    }
+    if (kind.links.isNotEmpty()) put("links", JsonArray(kind.links.map(::writeTextLink)))
     if (kind.list != TextListSettings()) {
         put(
             "list",
@@ -347,6 +341,8 @@ private fun JsonObjectBuilder.putTextKindFields(kind: DesignNodeKind.Text) {
 private fun JsonObjectBuilder.putShapeKindFields(kind: DesignNodeKind.Shape) {
     kind.pointCount?.let { put("pointCount", it) }
     kind.innerRadius?.let { put("innerRadius", it) }
+    kind.arcStartDeg?.let { put("arcStartDeg", it) }
+    kind.arcSweepDeg?.let { put("arcSweepDeg", it) }
     if (kind.paths.isNotEmpty()) {
         put(
             "paths",
@@ -374,6 +370,16 @@ private fun JsonObjectBuilder.putShapeKindFields(kind: DesignNodeKind.Shape) {
         )
     }
     kind.network?.takeIf { it.isNotEmpty() }?.let { put("network", writeVectorNetwork(it)) }
+    if (kind.regionFills.isNotEmpty()) {
+        put(
+            "regionFills",
+            buildJsonObject {
+                kind.regionFills.forEach { (index, fills) ->
+                    put(index.toString(), JsonArray(fills.map(::writePaint)))
+                }
+            },
+        )
+    }
 }
 
 private fun writeVectorNetwork(network: VectorNetwork): JsonObject =
@@ -389,6 +395,7 @@ private fun writeVectorNetwork(network: VectorNetwork): JsonObject =
                         vertex.outHandle?.let { put("out", writeHandleOffset(it)) }
                         if (vertex.mirror != HandleMirror.None) put("mirror", handleMirrorName(vertex.mirror))
                         if (vertex.corner) put("corner", true)
+                        if (vertex.cornerRadius > 0.0) put("cornerRadius", vertex.cornerRadius)
                     }
                 },
             ),
@@ -528,12 +535,20 @@ private fun writeTextFormat(format: TextFormat): JsonObject = buildJsonObject {
 private fun writeStyleRange(range: TextStyleRange): JsonObject = buildJsonObject {
     put("start", range.start)
     put("end", range.end)
+    if (range.styleRef.isNotBlank()) put("styleRef", range.styleRef)
     val style = buildJsonObject {
         putTextStyleFields(range.style)
         range.fills?.let { fills -> put("fills", JsonArray(fills.map(::writePaint))) }
     }
     if (style.isNotEmpty()) put("style", style)
     if (range.styleRef.isNotEmpty()) put("styleRef", range.styleRef)
+}
+
+private fun writeTextLink(link: TextLink): JsonObject = buildJsonObject {
+    put("start", link.start)
+    put("end", link.end)
+    put("url", link.url)
+    if (link.nodeTarget.isNotEmpty()) put("nodeTarget", link.nodeTarget)
 }
 
 private fun writeTextStyle(style: DesignTextStyle): JsonObject =
@@ -575,6 +590,8 @@ private fun JsonObjectBuilder.putTextStyleFields(style: DesignTextStyle) {
                 TextCase.Upper -> "upper"
                 TextCase.Lower -> "lower"
                 TextCase.Title -> "title"
+                TextCase.SmallCaps -> "smallCaps"
+                TextCase.SmallCapsForced -> "smallCapsForced"
             },
         )
     }
@@ -588,6 +605,43 @@ private fun JsonObjectBuilder.putTextStyleFields(style: DesignTextStyle) {
             },
         )
     }
+    style.italic?.let { put("italic", it) }
+    style.paragraphIndent?.let { put("paragraphIndent", it) }
+    style.decorationStyle?.let {
+        put(
+            "decorationStyle",
+            when (it) {
+                TextDecorationStyle.Solid -> "solid"
+                TextDecorationStyle.Dashed -> "dashed"
+                TextDecorationStyle.Dotted -> "dotted"
+                TextDecorationStyle.Wavy -> "wavy"
+            },
+        )
+    }
+    style.decorationColor?.let { put("decorationColor", it.toHexString()) }
+    style.decorationThickness?.let { put("decorationThickness", writeUnitValue(it)) }
+    style.decorationSkipInk?.let { put("decorationSkipInk", it) }
+    style.textPosition?.let {
+        put(
+            "textPosition",
+            when (it) {
+                TextScriptPosition.None -> "none"
+                TextScriptPosition.Superscript -> "superscript"
+                TextScriptPosition.Subscript -> "subscript"
+            },
+        )
+    }
+    style.leadingTrim?.let {
+        put(
+            "leadingTrim",
+            when (it) {
+                LeadingTrim.None -> "none"
+                LeadingTrim.CapHeight -> "capHeight"
+            },
+        )
+    }
+    style.hangingPunctuation?.let { put("hangingPunctuation", it) }
+    style.hangingList?.let { put("hangingList", it) }
     if (style.fontFeatures.isNotEmpty()) {
         put(
             "fontFeatures",
@@ -1242,6 +1296,8 @@ private fun writeOverride(override: InstanceOverride): JsonObject = buildJsonObj
         override.visible?.let { put("visible", booleanJson(it)) }
         override.characters?.let { put("characters", stringJson(it)) }
         override.textStyle?.let { put("textStyle", writeTextStyle(it)) }
+        override.styleRanges?.let { ranges -> put("styleRanges", JsonArray(ranges.map(::writeStyleRange))) }
+        override.links?.let { links -> put("links", JsonArray(links.map(::writeTextLink))) }
         // Note: override corner smoothing is not representable in JSON (the reader forces 0.0).
         override.cornerRadius?.let { put("cornerRadius", cornerRadiusJson(it)) }
         override.variant?.let { put("variant", stringMapJson(it)) }

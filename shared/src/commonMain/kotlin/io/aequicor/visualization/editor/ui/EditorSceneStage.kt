@@ -37,10 +37,13 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.SceneRenderer
 import io.aequicor.visualization.engine.backend.compose.rememberDesignTextMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.projection.ScreenComposer
 import io.aequicor.visualization.engine.scene.projection.SceneProjection
+import io.aequicor.visualization.editor.platform.platformOpenUrl
 import io.aequicor.visualization.engine.scene.runtime.PlaybackState
+import io.aequicor.visualization.engine.scene.runtime.SceneEntry
 import io.aequicor.visualization.engine.scene.runtime.SceneRuntime
 import io.aequicor.visualization.engine.scene.runtime.SequentialIdGenerator
 import io.aequicor.visualization.engine.scene.runtime.TraceEntry
@@ -60,7 +63,8 @@ fun SceneStage(state: MissionEditorStateHolder, viewport: CanvasViewport, modifi
     val design = state.designState
     val document = design.document
     val ws = state.workspace
-    val measurer = rememberDesignTextMeasurer()
+    val fontProvider = rememberBundledFontProvider()
+    val measurer = rememberDesignTextMeasurer(fontProvider)
 
     if (document == null) {
         Box(modifier, contentAlignment = Alignment.Center) {
@@ -109,6 +113,15 @@ fun SceneStage(state: MissionEditorStateHolder, viewport: CanvasViewport, modifi
                 renderModel = model,
                 viewport = viewport,
                 modifier = Modifier.fillMaxSize(),
+                fontProvider = fontProvider,
+                onLinkClick = { link ->
+                    // External URL opens in the browser; an internal node target navigates the scene.
+                    if (link.url.isNotBlank()) {
+                        platformOpenUrl(link.url)
+                    } else if (link.nodeTarget.isNotBlank()) {
+                        controller.start(SceneEntry.Screen(link.nodeTarget))
+                    }
+                },
                 onEvent = controller::onEvent,
             )
         }

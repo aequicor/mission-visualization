@@ -1,5 +1,6 @@
 package io.aequicor.visualization.engine.frontend
 
+import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.edit.SlmEditIndex
 import io.aequicor.visualization.engine.frontend.frontmatter.readFrontmatter
@@ -25,7 +26,7 @@ import io.aequicor.visualization.engine.ir.model.DesignDocument
 fun compileSlm(source: String, options: SlmCompileOptions = SlmCompileOptions()): SlmCompileResult {
     val diagnostics = DiagnosticCollector(options.fileName)
     val fingerprint = fnv1a64(source)
-    val parsed = SlmMarkdownParser(diagnostics).parse(source)
+    val parsed = SlmMarkdownParser(diagnostics, options.extensions).parse(source)
 
     val unclosedFrontmatter =
         source.lineSequence().firstOrNull()?.trim() == "---" && parsed.frontmatter == null
@@ -62,7 +63,7 @@ fun compileSlm(source: String, options: SlmCompileOptions = SlmCompileOptions())
         lexicon = lexicon,
         diagnostics = diagnostics,
     )
-    val normalized = IrNormalizer(diagnostics, options.fileName).normalize(screen)
+    val normalized = IrNormalizer(diagnostics, options.fileName, options.extensions).normalize(screen)
 
     val i18n = generateI18nResources(
         entries = normalized.textEntries,
@@ -95,6 +96,8 @@ data class SlmCompileOptions(
     val fallbackLocale: SlmLocale = SlmLocale("en-US"),
     /** Cyrillic-letter ratio at/above which prose is detected as `ru-RU`. */
     val cyrillicRatioThreshold: Double = 0.3,
+    /** Registry of external typed-block extensions; [SlmExtensionRegistry.Empty] keeps legacy behavior. */
+    val extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
 )
 
 data class SlmCompileResult(

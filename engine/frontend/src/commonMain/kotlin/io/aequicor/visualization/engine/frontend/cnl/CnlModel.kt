@@ -58,8 +58,8 @@ enum class CnlPropertyKind {
     /** `override <target> ( … )` — property groups patched at an id path (`overrides.set`). */
     SetOverride,
     ComponentName, ComponentSet, ComponentAxis, ComponentPropDefinition,
-    // P6: media record / shape point+inner / vector viewBox·iconRef·pathRef·paths·network / boolean op / mask block.
-    Media, ShapePoints, ShapeInner, ViewBox, IconRef, PathRef, VectorPaths, VectorNetwork, BooleanOp, Mask,
+    // P6: media record / shape point+inner+arc / vector viewBox·iconRef·pathRef·paths·network / boolean op / mask block.
+    Media, ShapePoints, ShapeInner, ShapeArc, ViewBox, IconRef, PathRef, VectorPaths, VectorNetwork, BooleanOp, Mask,
     // P7: interaction triggers (one per trigger phrase) + motion attachment.
     Interactions, Motion,
     // P10: responsive `when (dim value) …` variants + `export (…)` settings + handoff annotations.

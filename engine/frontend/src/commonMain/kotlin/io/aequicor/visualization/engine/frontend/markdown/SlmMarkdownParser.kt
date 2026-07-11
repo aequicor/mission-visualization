@@ -1,16 +1,25 @@
 package io.aequicor.visualization.engine.frontend.markdown
 
+import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
+import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.cnl.CnlParser
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
+import io.aequicor.visualization.engine.frontend.yaml.YamlMap
+import io.aequicor.visualization.engine.frontend.yaml.parseSlmYaml
 
 /**
  * Hand-rolled block-level SLM markdown parser: frontmatter split, ATX headings 1–6,
  * paragraphs, nested lists, blockquotes, standalone images, GFM tables, fenced code
- * blocks, HTML comments, and CNL element sentences. Typed attribute blocks are produced
- * only by CNL desugar on headings; raw `node:`/`style:`/… lines and ```yaml`/```ir` fences
- * are no longer an authoring surface (unsupported fences are ignored with a warning).
+ * blocks, HTML comments, and CNL element sentences. A leading reserved key or a registered
+ * [SlmExtensionRegistry] extension key (e.g. subsystem `diagram:`) opens a typed attribute
+ * block. Typed blocks are **internal desugar machinery** — CNL is the authoring surface and
+ * lowers each sentence into the same typed patches — but the parser still recognizes them so
+ * that CNL desugar output and self-contained subsystem block-readers round-trip.
  */
-class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
+class SlmMarkdownParser(
+    private val diagnostics: DiagnosticCollector,
+    private val extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
+) {
     private val inlineParser = SlmInlineParser(diagnostics)
 
     fun parse(source: String): SlmMarkdownDocument {
@@ -97,6 +106,12 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
                         blocks += block
                         i = next
                     }
+                }
+
+                typedKeyOf(line) != null -> {
+                    val (block, next) = parseTypedGroup(lines, i)
+                    block?.let { blocks += it }
+                    i = next
                 }
 
                 else -> {
@@ -427,6 +442,62 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
             standaloneImageMatch(text) != null ||
             listMarkerOf(text) != null ||
             isTableStart(lines, i) ||
-            isCommentStart(text)
+            isCommentStart(text) ||
+            typedKeyOf(lines[i]) != null
+    }
+
+    // --- typed attribute blocks (internal desugar targets, not an authoring surface) ---
+    //
+    // A leading built-in reserved key (`node:`/`style:`/…) or a registered extension key
+    // (e.g. `diagram:`) opens a typed block: its indented YAML body is lowered to typed
+    // patches. Fenced-only `ir` is deliberately excluded here (it never opens an unfenced
+    // block). CNL is the authoring surface; these blocks exist for desugar and self-contained
+    // subsystem block-readers.
+
+    /** Leading `word:` (colon followed by space or line end) at column 0 of the window. */
+    private fun leadingWordColon(text: String): String? {
+        if (text.isEmpty() || !text[0].isLetter()) return null
+        var i = 0
+        while (i < text.length && (text[i].isLetterOrDigit() || text[i] == '_' || text[i] == '-')) i++
+        if (i >= text.length || text[i] != ':') return null
+        val after = text.getOrNull(i + 1)
+        if (after != null && after != ' ') return null
+        return text.take(i)
+    }
+
+    /** A built-in reserved key or a registered extension key opening a typed entry, or null. */
+    private fun typedKeyOf(line: Line): String? {
+        val word = leadingWordColon(line.text) ?: return null
+        return word.takeIf { TypedBlockKind.fromKey(it) != null || it in extensions.kinds }
+    }
+
+    private fun parseTypedGroup(lines: List<Line>, start: Int): Pair<TypedAttributeBlock?, Int> {
+        val entries = mutableListOf<TypedEntry>()
+        val startLine = lines[start].number
+        var endLine = startLine
+        var i = start
+        while (i < lines.size) {
+            val line = lines[i]
+            if (line.isBlank) break
+            val key = typedKeyOf(line) ?: break
+            var j = i + 1
+            while (j < lines.size && !lines[j].isBlank && lines[j].text.first().isWhitespace()) j++
+            val sliceLines = lines.subList(i, j)
+            val entrySpan = SlmSourceSpan(line.number, sliceLines.last().number)
+            endLine = entrySpan.endLine
+            i = j
+            val sliceText = sliceLines.joinToString("\n") { " ".repeat(it.columnOffset) + it.text }
+            val parsed = parseSlmYaml(sliceText, diagnostics, startLine = line.number)
+            val value = (parsed as? YamlMap)?.entries?.get(key)
+            if (value == null) {
+                if (parsed != null && parsed !is YamlMap) {
+                    diagnostics.error("Malformed typed block entry `$key:`", line.number, blockPath = key)
+                }
+                continue
+            }
+            entries += TypedEntry(key, value, entrySpan)
+        }
+        val block = if (entries.isEmpty()) null else TypedAttributeBlock(entries, SlmSourceSpan(startLine, endLine))
+        return block to i
     }
 }

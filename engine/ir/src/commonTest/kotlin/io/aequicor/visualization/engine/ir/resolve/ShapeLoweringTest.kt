@@ -1,16 +1,16 @@
 package io.aequicor.visualization.engine.ir.resolve
 
-import io.aequicor.visualization.engine.ir.geometry.PathCommand
-import io.aequicor.visualization.engine.ir.geometry.PathFillRule
-import io.aequicor.visualization.engine.ir.geometry.RectD
+import io.aequicor.visualization.subsystems.figures.PathCommand
+import io.aequicor.visualization.subsystems.figures.PathFillRule
+import io.aequicor.visualization.subsystems.figures.RectD
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
-import io.aequicor.visualization.engine.ir.model.HandleOffset
-import io.aequicor.visualization.engine.ir.model.ShapeType
-import io.aequicor.visualization.engine.ir.model.VectorNetwork
-import io.aequicor.visualization.engine.ir.model.VectorPath
-import io.aequicor.visualization.engine.ir.model.VectorSegment
-import io.aequicor.visualization.engine.ir.model.VectorVertex
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorPath
+import io.aequicor.visualization.subsystems.figures.VectorSegment
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -79,7 +79,7 @@ class ShapeLoweringTest {
                 vertices = listOf(VectorVertex(0.0, 0.0), VectorVertex(10.0, 0.0)),
                 segments = listOf(VectorSegment(0, 1)),
                 regions = listOf(
-                    io.aequicor.visualization.engine.ir.model.VectorRegion("evenodd", listOf(listOf(0))),
+                    io.aequicor.visualization.subsystems.figures.VectorRegion("evenodd", listOf(listOf(0))),
                 ),
             ),
         )

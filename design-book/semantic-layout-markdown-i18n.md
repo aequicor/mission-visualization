@@ -46,7 +46,7 @@ IR должен быть language-neutral.
 - быть независимым от renderer: Figma, React, HTML, Canvas, Native;
 - быть достаточно точным, чтобы описать финальный Figma-like screen/frame.
 
-## CNL: элементы предложениями
+## CNL: узел = предложение (основной формат авторинга)
 
 Авторская поверхность SLM — **контролируемый естественный язык (CNL)**: каждый элемент
 описывается одной строкой-**предложением** из фраз `keyword value…`. **CNL — английский**,
@@ -389,6 +389,14 @@ Frontmatter несёт только screen-level defaults; свойства ко
 > (`engine/frontend/.../blocks/readers`). Таблица ниже — внутренний справочник по IR,
 > а не синтаксис, который пишет автор. Авторская форма каждой из этих возможностей —
 > CNL-фраза (см. «CNL Phrase Reference»).
+
+> **Статус.** Типизированные блоки — это **внутренняя типизированная модель**, в которую
+> десугарит [CNL](#cnl-узел--предложение-основной-формат-авторинга); block-readers и эта
+> схема остаются как compile-путь. Как **поверхность авторинга** (писать YAML-блоки/`ir`
+> руками) они легаси и выводятся из употребления — новый код авторится CNL-предложениями.
+> Разделы ниже описывают семантику каждого ключа (это же — контракт соответствующих
+> CNL-фраз). Исключения, которые пока авторятся именно так: словари уровня документа
+> (`variables`/`component`-definition/`styles`) и часть reader-gap'ов — см. миграцию.
 
 Typed attribute block - это YAML-like блок с зарезервированным top-level ключом,
 который относится к ближайшему предыдущему heading, list item, image, table or
@@ -926,14 +934,24 @@ text:
   typography:
     fontFamily: Inter
     fontWeight: 700
+    italic: false
     fontSize: 24
-    lineHeight: 32
+    lineHeight: 32            # bare number = px; {unit: percent, value: 135} = %; omit = Auto
     letterSpacing: 0
     paragraphSpacing: 0
+    paragraphIndent: 0
     horizontalAlign: start
     verticalAlign: center
-    decoration: none
-    case: none
+    decoration: none          # none | underline | strikethrough
+    decorationStyle: solid    # solid | dashed | dotted | wavy
+    decorationColor: "#3366FF"  # omit = follows the glyph color
+    decorationThickness: 1    # px number, or {unit: percent, value}; omit = auto
+    decorationSkipInk: false
+    case: none                # none | upper | lower | title | smallCaps | smallCapsForced
+    position: none            # none | superscript | subscript
+    leadingTrim: none         # none | capHeight
+    hangingPunctuation: false
+    hangingList: false
     openType:
       liga: true
       tnum: true
@@ -947,7 +965,9 @@ text:
   overflow: truncate
 ```
 
-Rich text spans:
+Rich text spans — each span carries a `range: [start, end]` (or `text:` substring matched
+against `defaultText`) plus any of a shared `style:` ref, an inline `typography:` map, inline
+`fills:`, and a `link:`. Offsets index the source-locale `defaultText`.
 
 ```md
 text:
@@ -955,7 +975,11 @@ text:
   defaultText: "Проверьте SLA перед запуском миссии."
   spans:
     - range: [0, 10]
-      style: typography.body.strong
+      typography:
+        fontWeight: 700
+        italic: true
+      fills:
+        - "#FF3366"
     - text: SLA
       link:
         type: url
@@ -1120,6 +1144,30 @@ Rules:
 - use `vector.pathRef` or `iconRef` for reusable icons;
 - use inline vector paths only when the file itself owns the shape;
 - boolean operations must preserve child source maps.
+
+### Figure keys (Figma parity)
+
+- **Ellipse arc / donut** — under `shape:` (`kind: ellipse`): `arcStart` and `arcSweep`
+  (degrees; 0° = 3 o'clock, positive sweep clockwise on screen), and `innerRadius`
+  (donut-hole ratio 0..1). `|arcSweep| ≥ 360` or omitted = full ellipse.
+  ```md
+  shape:
+    kind: ellipse
+    arcStart: -90
+    arcSweep: 270
+    innerRadius: 0.5   # donut
+  ```
+- **Per-vertex corner radius** — each `network.vertices[]` may carry `radius: N`
+  (rounds the vertex when it joins two straight segments; clamped to half the shorter
+  adjacent segment).
+- **Region fills** — each `network.regions[]` may carry `fills:` (same schema as
+  `style.fills`); a region's fills replace the object fills for that region, and regions
+  without fills inherit the object fills.
+- **Stroke join** — `style.strokes[].joins` = `miter` | `round` | `bevel`.
+- **Fill rule** — `vector.paths[].windingRule` / `network.regions[].windingRule` =
+  `nonzero` | `evenodd`.
+- **Flatten / Outline stroke** are editor operations, not new keys: they persist as
+  plain `vector.paths` (or `vector.network`) with the appropriate winding rule.
 
 ## Images and Media
 

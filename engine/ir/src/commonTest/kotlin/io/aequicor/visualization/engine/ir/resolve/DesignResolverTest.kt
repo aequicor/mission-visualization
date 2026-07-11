@@ -382,6 +382,33 @@ class DesignResolverTest {
     }
 
     @Test
+    fun styleRangeResolvesSharedRefUnderInlineOverride() {
+        val (root, _) = resolveFirstFrame(
+            """
+            {
+              "styles": {
+                "sty_em": { "type": "text", "value": { "fontWeight": 700, "italic": true } }
+              },
+              "pages": [ { "id": "p", "children": [
+                { "id": "root", "type": "frame", "children": [
+                  { "id": "t", "type": "text", "characters": "Hello world",
+                    "textStyle": { "fontFamily": "Inter", "fontSize": 16, "fontWeight": 400 },
+                    "styleRanges": [
+                      { "start": 0, "end": 5, "styleRef": "sty_em", "style": { "italic": false } }
+                    ] }
+                ] }
+              ] } ]
+            }
+            """.trimIndent(),
+        )
+        val range = assertNotNull(assertNotNull(root.findBySourceId("t")).text).ranges.single()
+        assertEquals(700, range.style.fontWeight, "shared ref weight wins over the node base")
+        assertEquals(false, range.style.italic, "inline range style wins over the shared ref")
+        assertEquals("Inter", range.style.fontFamily, "base font family is inherited")
+        assertEquals(16.0, range.style.fontSize, "base font size is inherited")
+    }
+
+    @Test
     fun shadowOffsetRefResolvesToVariableValueNotZero() {
         val (root, _) = resolveFirstFrame(
             """
@@ -407,5 +434,40 @@ class DesignResolverTest {
         )
         assertEquals(12.0, shadow.offset.x.orZero, "a `\$var` offset.x resolves to the variable value, not 0.0")
         assertEquals(4.0, shadow.offset.y.orZero, "literal offset.y is preserved")
+    }
+
+    @Test
+    fun instanceOverrideReplacesTextSpans() {
+        val (root, _) = resolveFirstFrame(
+            """
+            {
+              "components": {
+                "cmp": { "root": { "id": "c_root", "type": "frame", "children": [
+                  { "id": "label", "type": "text", "characters": "Hello world",
+                    "styleRanges": [ { "start": 0, "end": 5, "style": { "fontWeight": 700 } } ],
+                    "links": [ { "start": 0, "end": 5, "url": "https://old.example" } ] }
+                ] } }
+              },
+              "pages": [ { "id": "p", "children": [
+                { "id": "root", "type": "frame", "children": [
+                  { "id": "inst", "type": "instance", "componentId": "cmp",
+                    "overrides": [
+                      { "target": ["label"], "set": {
+                        "styleRanges": [ { "start": 6, "end": 11, "style": { "italic": true } } ],
+                        "links": [ { "start": 6, "end": 11, "url": "https://new.example" } ]
+                      } }
+                    ] }
+                ] }
+              ] } ]
+            }
+            """.trimIndent(),
+        )
+        val text = assertNotNull(assertNotNull(root.findBySourceId("label")).text)
+        val range = text.ranges.single()
+        assertEquals(6, range.start, "override span replaces the component's authored span")
+        assertEquals(11, range.end)
+        assertEquals(true, range.style.italic)
+        assertEquals(listOf(6 to 11), text.links.map { it.start to it.end })
+        assertEquals("https://new.example", text.links.single().url)
     }
 }

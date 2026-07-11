@@ -2,10 +2,12 @@ package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.MissionDocuments
+import io.aequicor.visualization.editor.domain.annotationLayersFrom
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.frontend.SlmCompileResult
+import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
 
 /** Undo history depth for source write-back edits (see [DesignEditorState.previousSources]). */
 internal const val MaxSourceHistory: Int = 50
@@ -49,6 +51,12 @@ data class DesignEditorState(
      * the checkpoint is taken once at `BeginInteraction`.
      */
     val interacting: Boolean = false,
+    /**
+     * Review layer per screen, keyed by screen file name (`*.layout.md`): a screen
+     * without a sidecar has an empty layer. Annotation edits write back to the owning
+     * `*.annotations.md` sidecar in [sources] in lock-step (see `writeBackAnnotations`).
+     */
+    val annotationLayers: Map<String, AnnotationLayer> = emptyMap(),
 ) {
     val selectedNode: DesignNode?
         get() = document?.nodeById(selectedNodeId)
@@ -72,6 +80,7 @@ fun createDesignEditorState(documents: MissionDocuments): DesignEditorState {
         selectedPageId = firstPage?.id.orEmpty(),
         selectedNodeId = firstNode,
         selectedNodeIds = if (firstNode.isBlank()) emptySet() else setOf(firstNode),
+        annotationLayers = annotationLayersFrom(documents.sources),
     )
 }
 

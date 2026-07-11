@@ -41,7 +41,7 @@ import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
 import io.aequicor.visualization.engine.frontend.normalize.latinizeToCamelCase
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.bindable
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 
 /**
  * Locale-neutral structural markers used when extraction runs without a full

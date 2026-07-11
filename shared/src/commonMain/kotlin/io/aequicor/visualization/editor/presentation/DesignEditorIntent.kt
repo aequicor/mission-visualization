@@ -1,23 +1,30 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
-import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
+import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignTransition
-import io.aequicor.visualization.engine.ir.model.DesignViewBox
-import io.aequicor.visualization.engine.ir.model.HandleMirror
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleSide
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.MotionKeyframes
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.LayoutMode
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
+import io.aequicor.visualization.subsystems.annotations.AnnotationImage
+import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 
 /**
  * Every user action against the design document flows through one of these commands
@@ -118,8 +125,20 @@ sealed interface DesignEditorIntent {
     /** Steps a node within its sibling list; z-order = paint order (later = front). */
     data class ReorderNode(val nodeId: String, val move: ZOrderMove) : DesignEditorIntent
 
-    /** Drag/drop in Layers: place [nodeId] under [newParentId] at [index] (-1 appends). */
-    data class ReparentNode(val nodeId: String, val newParentId: String, val index: Int = -1) : DesignEditorIntent
+    /**
+     * Places [nodeId] under [newParentId] at [index] (-1 appends). Canvas drag-out may
+     * additionally provide target-parent-relative [position], fixed visual [size], and
+     * compensated [rotation]; those geometry changes are committed in the same structural
+     * source transaction.
+     */
+    data class ReparentNode(
+        val nodeId: String,
+        val newParentId: String,
+        val index: Int = -1,
+        val position: DesignPoint? = null,
+        val size: DesignSize? = null,
+        val rotation: Double? = null,
+    ) : DesignEditorIntent
 
     /** Bakes a component instance into an editable Frame subtree (Figma "Detach instance"). */
     data class DetachInstance(val nodeId: String) : DesignEditorIntent
@@ -198,9 +217,62 @@ sealed interface DesignEditorIntent {
 
     data class UpdateTypography(val nodeId: String, val patch: TypographyPatch) : DesignEditorIntent
 
+    /**
+     * Applies [patch] to the character range `[start, end)` of the node's text (Figma's
+     * per-range styling). When the range is empty it behaves like [UpdateTypography]. The
+     * reducer splits/merges the node's style ranges (via the typography subsystem) and
+     * writes them back as `text.spans`.
+     */
+    data class UpdateTypographyRange(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val patch: TypographyPatch,
+    ) : DesignEditorIntent
+
+    /** Sets the glyph fills of the character range `[start, end)` (mixed text color). */
+    data class SetTextRangeFills(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val fills: List<io.aequicor.visualization.engine.ir.model.DesignPaint>,
+    ) : DesignEditorIntent
+
+    /**
+     * Applies the shared document text style [ref] to the character range `[start, end)`
+     * (resolver precedence base < ref < inline). A blank [ref] clears the range's style
+     * reference. The reducer splits/merges the node's style ranges and persists them as
+     * `text.spans`.
+     */
+    data class SetTextRangeStyleRef(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val ref: String,
+    ) : DesignEditorIntent
+
+    /** Adds/updates a hyperlink over `[start, end)`; a blank url and node both clear it. */
+    data class SetTextLink(
+        val nodeId: String,
+        val start: Int,
+        val end: Int,
+        val url: String = "",
+        val nodeTarget: String = "",
+    ) : DesignEditorIntent
+
     data class SetTextCharacters(val nodeId: String, val text: String) : DesignEditorIntent
 
     data class SetTextAutoResize(val nodeId: String, val mode: TextAutoResize) : DesignEditorIntent
+
+    data class SetTextTruncate(
+        val nodeId: String,
+        val truncate: io.aequicor.visualization.engine.ir.model.TextTruncate?,
+    ) : DesignEditorIntent
+
+    data class SetTextList(
+        val nodeId: String,
+        val list: io.aequicor.visualization.engine.ir.model.TextListSettings,
+    ) : DesignEditorIntent
 
     // --- Vector ------------------------------------------------------------
 
@@ -222,6 +294,15 @@ sealed interface DesignEditorIntent {
     /** Sets a star's inner-radius ratio (0..1). Tier-1. */
     data class SetStarInnerRadius(val nodeId: String, val ratio: Double) : DesignEditorIntent
 
+    /** Sets an ellipse arc's start angle in degrees (0° = 3 o'clock). Tier-1. */
+    data class SetArcStart(val nodeId: String, val degrees: Double) : DesignEditorIntent
+
+    /** Sets an ellipse arc's sweep in degrees (0..360, clockwise). Tier-1. */
+    data class SetArcSweep(val nodeId: String, val degrees: Double) : DesignEditorIntent
+
+    /** Sets an ellipse's donut-hole ratio (0..1); reuses the shape's `innerRadius`. Tier-1. */
+    data class SetArcRatio(val nodeId: String, val ratio: Double) : DesignEditorIntent
+
     /** Sets a vector shape's design-system icon reference. Tier-1. */
     data class SetIconRef(val nodeId: String, val ref: String) : DesignEditorIntent
 
@@ -234,8 +315,26 @@ sealed interface DesignEditorIntent {
     /** Sets the operator of a boolean-operation node. Tier-1. */
     data class SetBooleanOperation(val nodeId: String, val op: BooleanOperationKind) : DesignEditorIntent
 
-    /** Bakes a parametric shape into an editable [io.aequicor.visualization.engine.ir.model.VectorNetwork]. Tier-1. */
+    /** Sets a vector network's fill (winding) rule: "nonzero" | "evenodd". Tier-1. */
+    data class SetWindingRule(val nodeId: String, val rule: String) : DesignEditorIntent
+
+    /** Sets the corner-rounding radius of a single vector-network vertex. Tier-1. */
+    data class SetVertexCornerRadius(val nodeId: String, val vertexIndex: Int, val radius: Double) : DesignEditorIntent
+
+    /** Sets (or with empty [fills], clears) the fills of a vector network region. Tier-1. */
+    data class SetRegionFill(val nodeId: String, val regionIndex: Int, val fills: List<DesignPaint>) : DesignEditorIntent
+
+    /** Applies a [FillOp] to one vector-network region's paint list, then writes it back. Tier-1. */
+    data class RegionFillCommand(val nodeId: String, val regionIndex: Int, val op: FillOp) : DesignEditorIntent
+
+    /** Bakes a parametric shape into an editable [io.aequicor.visualization.subsystems.figures.VectorNetwork]. Tier-1. */
     data class ConvertToEditableVector(val nodeId: String) : DesignEditorIntent
+
+    /** Flattens a boolean-operation node (or parametric shape) into a single vector shape. */
+    data class FlattenNode(val nodeId: String) : DesignEditorIntent
+
+    /** Converts a shape's stroke into a filled vector outline (Figma "Outline stroke"). */
+    data class OutlineStroke(val nodeId: String) : DesignEditorIntent
 
     /** In-memory (per-drag frame): moves network vertex [vertexIndex] by a parent-relative delta. */
     data class MoveVectorVertex(
@@ -268,6 +367,17 @@ sealed interface DesignEditorIntent {
     data class AddVectorVertex(
         val nodeId: String,
         val segmentIndex: Int,
+        val x: Double,
+        val y: Double,
+    ) : DesignEditorIntent
+
+    /**
+     * Appends a vertex at network-space ([x], [y]) to the growing end of an open path (pen tool
+     * click-to-place), then commits the network. Unlike [AddVectorVertex] (which splits an existing
+     * segment), this extends the path from its last vertex. Tier-1.
+     */
+    data class AppendVectorVertex(
+        val nodeId: String,
         val x: Double,
         val y: Double,
     ) : DesignEditorIntent
@@ -306,6 +416,110 @@ sealed interface DesignEditorIntent {
 
     /** Mutates the node's motion clip via [op] and writes the `motion:` block back to SLM. */
     data class MotionCommand(val nodeId: String, val op: MotionOp) : DesignEditorIntent
+
+    // --- Annotations (review layer; write back to the sidecar source) ------
+
+    /**
+     * Creates an annotation of [kind] at [anchor] on the screen owned by
+     * [screenFileName] (`*.layout.md`). The reducer mints a stable id and writes the
+     * new section into the `*.annotations.md` sidecar, creating that source on the
+     * screen's first annotation.
+     */
+    data class AddAnnotation(
+        val screenFileName: String,
+        val anchor: AnnotationAnchor,
+        val kind: AnnotationKind,
+    ) : DesignEditorIntent
+
+    /** Replaces the plain-text body of the annotation. */
+    data class SetAnnotationText(
+        val screenFileName: String,
+        val annotationId: String,
+        val text: String,
+    ) : DesignEditorIntent
+
+    /** Switches the annotation between note and issue (visual + export participation). */
+    data class SetAnnotationKind(
+        val screenFileName: String,
+        val annotationId: String,
+        val kind: AnnotationKind,
+    ) : DesignEditorIntent
+
+    /** Attaches (or replaces) the annotation's embedded image. */
+    data class AttachAnnotationImage(
+        val screenFileName: String,
+        val annotationId: String,
+        val image: AnnotationImage,
+    ) : DesignEditorIntent
+
+    /** Removes the annotation's embedded image. */
+    data class DetachAnnotationImage(
+        val screenFileName: String,
+        val annotationId: String,
+    ) : DesignEditorIntent
+
+    /**
+     * Moves the annotation: a node-anchored one gets ([x], [y]) as its new offset from
+     * the node's top-center, a free-point one as its new absolute point.
+     */
+    data class MoveAnnotation(
+        val screenFileName: String,
+        val annotationId: String,
+        val x: Double,
+        val y: Double,
+    ) : DesignEditorIntent
+
+    /** Re-pins the annotation to [nodeId] with the given offset from its top-center. */
+    data class AttachAnnotationToNode(
+        val screenFileName: String,
+        val annotationId: String,
+        val nodeId: String,
+        val offsetX: Double = 0.0,
+        val offsetY: Double = 0.0,
+    ) : DesignEditorIntent
+
+    /**
+     * Detaches a node-anchored annotation into a free point at ([x], [y]) — the badge
+     * position the caller resolved from the current node bounds, so it stays visually
+     * in place. A free-point annotation is left unchanged.
+     */
+    data class DetachAnnotationAnchor(
+        val screenFileName: String,
+        val annotationId: String,
+        val x: Double,
+        val y: Double,
+    ) : DesignEditorIntent
+
+    /** Adds an extra node reference to the annotation (deduped). */
+    data class AddAnnotationReference(
+        val screenFileName: String,
+        val annotationId: String,
+        val nodeId: String,
+    ) : DesignEditorIntent
+
+    /** Removes an extra node reference from the annotation. */
+    data class RemoveAnnotationReference(
+        val screenFileName: String,
+        val annotationId: String,
+        val nodeId: String,
+    ) : DesignEditorIntent
+
+    /** Deletes the annotation (its sidecar section is dropped surgically). */
+    data class DeleteAnnotation(
+        val screenFileName: String,
+        val annotationId: String,
+    ) : DesignEditorIntent
+
+    // --- Annotations (view; handled by reduceAnnotationWorkspace) ----------
+
+    /** Collapses/expands the annotation card. View state, never the document. */
+    data class ToggleAnnotationExpanded(val annotationId: String) : DesignEditorIntent
+
+    /** Selects an annotation for the inspector; blank clears (like [SelectNode]). */
+    data class SelectAnnotation(val annotationId: String) : DesignEditorIntent
+
+    /** Activates ([AnnotationTool.Note]/[AnnotationTool.Issue]) or leaves annotation mode. */
+    data class SetAnnotationTool(val tool: AnnotationTool) : DesignEditorIntent
 
     // --- History -----------------------------------------------------------
 
@@ -443,6 +657,9 @@ sealed interface StrokeOp {
 
     data class SetCap(val cap: String) : StrokeOp
 
+    /** Stroke corner join: "miter" | "round" | "bevel". */
+    data class SetJoin(val join: String) : StrokeOp
+
     data class SetDashed(val dashed: Boolean) : StrokeOp
 
     data class SetPerSide(
@@ -482,13 +699,46 @@ enum class EffectType(val displayName: String) {
     BackgroundBlur("Background blur"),
 }
 
-/** Partial typography override; only non-null fields are applied. */
+/**
+ * Line-height override: [auto] takes precedence (native metrics); otherwise [percent]
+ * or [px] sets the value. All null = leave unchanged.
+ */
+data class LineHeightPatch(
+    val auto: Boolean = false,
+    val percent: Double? = null,
+    val px: Double? = null,
+)
+
+/** Partial typography override; only non-null fields are applied. Covers the Figma text panel. */
 data class TypographyPatch(
     val fontFamily: String? = null,
     val fontSize: Double? = null,
     val fontWeight: Double? = null,
+    val italic: Boolean? = null,
     val lineHeightPercent: Double? = null,
+    /** Richer line-height control (Auto / px / %); takes precedence over [lineHeightPercent]. */
+    val lineHeight: LineHeightPatch? = null,
     val letterSpacing: Double? = null,
+    /** Letter spacing expressed as percent of font size; takes precedence over [letterSpacing]. */
+    val letterSpacingPercent: Double? = null,
+    val paragraphSpacing: Double? = null,
+    val paragraphIndent: Double? = null,
     val alignHorizontal: TextAlignHorizontal? = null,
     val alignVertical: TextAlignVertical? = null,
+    val textCase: io.aequicor.visualization.engine.ir.model.TextCase? = null,
+    val textDecoration: io.aequicor.visualization.engine.ir.model.TextDecorationKind? = null,
+    val decorationStyle: io.aequicor.visualization.engine.ir.model.TextDecorationStyle? = null,
+    val decorationColor: io.aequicor.visualization.engine.ir.model.DesignColor? = null,
+    /** Sentinel to clear the decoration color back to "auto" (follows glyph fill). */
+    val clearDecorationColor: Boolean = false,
+    val decorationThickness: io.aequicor.visualization.engine.ir.model.UnitValue? = null,
+    val decorationSkipInk: Boolean? = null,
+    val textPosition: io.aequicor.visualization.engine.ir.model.TextScriptPosition? = null,
+    val leadingTrim: io.aequicor.visualization.engine.ir.model.LeadingTrim? = null,
+    val hangingPunctuation: Boolean? = null,
+    val hangingList: Boolean? = null,
+    /** OpenType feature toggles to set/override (merged over existing). */
+    val fontFeatures: Map<String, Boolean> = emptyMap(),
+    /** Variable-font axis values to set/override. */
+    val variableAxes: Map<String, Double> = emptyMap(),
 )

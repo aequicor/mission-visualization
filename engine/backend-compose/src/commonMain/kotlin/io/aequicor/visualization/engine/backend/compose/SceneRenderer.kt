@@ -27,6 +27,9 @@ import io.aequicor.visualization.engine.scene.projection.SceneRenderModel
 import io.aequicor.visualization.engine.scene.runtime.PointerKind
 import io.aequicor.visualization.engine.scene.runtime.SceneEvent
 import io.aequicor.visualization.engine.scene.sample.VisualOverride
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.FontProvider
+import io.aequicor.visualization.subsystems.typography.compose.NoFonts
 
 /**
  * The Compose text measurer as the pure [DesignTextMeasurer] interface, so `:shared` can build a
@@ -34,10 +37,12 @@ import io.aequicor.visualization.engine.scene.sample.VisualOverride
  * matching the Canvas geometry exactly.
  */
 @Composable
-fun rememberDesignTextMeasurer(): DesignTextMeasurer {
+fun rememberDesignTextMeasurer(fontProvider: FontProvider = NoFonts): DesignTextMeasurer {
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    return remember(textMeasurer, density) { ComposeDesignTextMeasurer(textMeasurer, density) }
+    return remember(textMeasurer, density, fontProvider) {
+        ComposeDesignTextMeasurer(textMeasurer, density, fontProvider)
+    }
 }
 
 private val DebugAccent = Color(0xFF1E88FF)
@@ -57,12 +62,21 @@ fun SceneRenderer(
     viewport: CanvasViewport,
     modifier: Modifier = Modifier,
     debugOverlays: Boolean = true,
+    fontProvider: FontProvider = NoFonts,
+    /** Invoked when a tap lands on a text hyperlink (takes precedence over the pointer event). */
+    onLinkClick: ((io.aequicor.visualization.engine.ir.model.TextLink) -> Unit)? = null,
     onEvent: (SceneEvent) -> Unit = {},
 ) {
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val context = remember(textMeasurer, density) { DesignDrawContext(textMeasurer, density) }
+    val typography = remember(textMeasurer, density, fontProvider) {
+        ComposeTypographyMeasurer(textMeasurer, density, fontProvider)
+    }
+    val context = remember(typography) {
+        DesignDrawContext(textMeasurer, density, typography = typography)
+    }
     val currentOnEvent = rememberUpdatedState(onEvent)
+    val currentOnLinkClick = rememberUpdatedState(onLinkClick)
     val layers = renderModel.layers.sortedBy { it.zIndex }
 
     Canvas(
@@ -72,6 +86,13 @@ fun SceneRenderer(
                 val docX = viewport.toDocX(offset.x)
                 val docY = viewport.toDocY(offset.y)
                 val hit = target.snapshot.composed.root.hitTest(docX, docY) ?: return@detectTapGestures
+                // A hyperlink hit takes precedence over the plain pointer-click event.
+                currentOnLinkClick.value?.let { onLink ->
+                    linkAtPoint(hit, docX, docY, typography)?.let { link ->
+                        onLink(link)
+                        return@detectTapGestures
+                    }
+                }
                 currentOnEvent.value(SceneEvent.Pointer(PointerKind.Click, hit.node.selectableId))
             }
         },

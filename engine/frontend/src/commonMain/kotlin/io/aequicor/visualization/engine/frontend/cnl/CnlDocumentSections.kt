@@ -60,7 +60,7 @@ internal object CnlDocumentSections {
         val parsed = parseSlmYaml(yaml, diagnostics, heading.span.startLine)
         val value = (parsed as? YamlMap)?.entries?.get("variables") ?: return null
         val endLine = body.lastOrNull()?.span?.endLine ?: heading.span.endLine
-        return TypedEntry(TypedBlockKind.Variables, value, SlmSourceSpan(heading.span.startLine, endLine))
+        return TypedEntry(TypedBlockKind.Variables.key, value, SlmSourceSpan(heading.span.startLine, endLine))
     }
 
     private fun collectionYaml(
@@ -218,7 +218,7 @@ internal object CnlDocumentSections {
         }
         val endLine = body.lastOrNull()?.span?.endLine ?: heading.span.endLine
         return TypedEntry(
-            TypedBlockKind.Styles,
+            TypedBlockKind.Styles.key,
             yamlMap(styles, heading.span.startLine),
             SlmSourceSpan(heading.span.startLine, endLine),
         )

@@ -1,6 +1,8 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 
 /**
  * Editor workspace / view state, kept strictly separate from the design document
@@ -22,6 +24,8 @@ data class EditorWorkspaceState(
      */
     val mode: EditorMode = EditorMode.Canvas,
     val tool: EditorTool = EditorTool.Select,
+    /** The most recently used shape tool, shown in the toolbar's shape-flyout slot. */
+    val lastShapeTool: EditorTool = EditorTool.Rectangle,
     val deviceMode: DeviceMode = DeviceMode.Pc,
     val sourceTab: SourceTab = SourceTab.Layers,
     val inspectorTab: InspectorTab = InspectorTab.Design,
@@ -37,6 +41,14 @@ data class EditorWorkspaceState(
     val vectorSelectedPoint: VectorPointRef? = null,
     /** Selected element (vertex anchor or a bezier handle) in structural-network vector edit mode, or null. */
     val vectorSelectedVertex: VectorVertexRef? = null,
+    /**
+     * Paint-bucket sub-mode of vector edit: while active, a canvas press inside a network region
+     * fills that region with [vectorPaintBucketColor] instead of manipulating anchors/handles.
+     * View-only preference; never part of the document.
+     */
+    val vectorPaintBucket: Boolean = false,
+    /** Color the paint-bucket sub-mode applies to a clicked region. */
+    val vectorPaintBucketColor: DesignColor = DesignColor(0xFF4C6EF5),
     /** A pending fit-to request the canvas applies on its next layout pass. */
     val pendingFit: PendingFit = PendingFit.None,
     /**
@@ -47,6 +59,32 @@ data class EditorWorkspaceState(
     val pendingZoomTo: Float? = null,
     /** Recently committed colors (most-recent first), surfaced by the color picker. */
     val recentColors: List<DesignColor> = emptyList(),
+    /** Active caret/selection while editing text on the canvas; null when not editing text. */
+    val textSelection: TextSelection? = null,
+    /**
+     * Annotation ids currently expanded to cards. View state, never the document: the
+     * sidecar only carries the authored `defaultExpanded` hint, runtime expansion is a
+     * personal view preference (design-book document/workspace split).
+     */
+    val expandedAnnotationIds: Set<String> = emptySet(),
+    /** Selected annotation (inspector target), or "" when none. */
+    val selectedAnnotationId: String = "",
+    /** Active annotation authoring tool; a canvas press then creates that kind. */
+    val annotationTool: AnnotationTool = AnnotationTool.None,
+    /**
+     * IR node id of the diagram currently in edit mode (double-click / diagram toolbar),
+     * or "" when no diagram is being edited. Mirrors [vectorEditNodeId]: while set, the
+     * diagram overlay owns canvas gestures inside the node's box.
+     */
+    val diagramEditNodeId: String = "",
+    /** Active tool of the diagram canvas while a diagram node is being edited. */
+    val diagramTool: DiagramTool = DiagramTool.Select,
+    /**
+     * Selected diagram elements *inside* the selected diagram node (graph node/edge ids).
+     * A view concern like text selection — never part of the document — so undo/redo of
+     * graph edits cannot resurrect a stale selection.
+     */
+    val diagramSelection: DiagramSelection = DiagramSelection.Empty,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -58,6 +96,41 @@ data class EditorWorkspaceState(
 
     /** Whether the tool creates an object on canvas press. */
     val isCreationTool: Boolean get() = tool.creates != null
+}
+
+/**
+ * Text-edit caret/selection in the *rendered* string's offset space. A collapsed
+ * selection ([start] == [end]) is a caret; otherwise the ordered range covers
+ * `[min, max)`. Lives in workspace state — it is a view concern, never in the document.
+ */
+data class TextSelection(val nodeId: String, val start: Int, val end: Int) {
+    val min: Int get() = minOf(start, end)
+    val max: Int get() = maxOf(start, end)
+    val isCollapsed: Boolean get() = start == end
+}
+
+/**
+ * Diagram-canvas tools: [Select] manipulates existing elements; [AddNode] stamps a new
+ * element of [AddNode.payload] on press; [DrawEdge] drags a new connector between nodes.
+ */
+sealed interface DiagramTool {
+    data object Select : DiagramTool
+
+    data class AddNode(val payload: DiagramNodePayload) : DiagramTool
+
+    data class DrawEdge(val relation: DiagramRelation = DiagramRelation.Plain) : DiagramTool
+}
+
+/** Selected elements of the diagram graph being edited (ids are graph-local strings). */
+data class DiagramSelection(
+    val elementIds: Set<String> = emptySet(),
+    val edgeIds: Set<String> = emptySet(),
+) {
+    val isEmpty: Boolean get() = elementIds.isEmpty() && edgeIds.isEmpty()
+
+    companion object {
+        val Empty: DiagramSelection = DiagramSelection()
+    }
 }
 
 /** Reference to a single editable vector anchor. */
@@ -86,12 +159,31 @@ enum class EditorTool(val label: String, val creates: NewObjectKind?) {
     Select("Move", null),
     Frame("Frame", NewObjectKind.Frame),
     Rectangle("Rectangle", NewObjectKind.Rectangle),
-    Pen("Pen", NewObjectKind.Line),
+    Ellipse("Ellipse", NewObjectKind.Ellipse),
+    Polygon("Polygon", NewObjectKind.Polygon),
+    Star("Star", NewObjectKind.Star),
+    Line("Line", NewObjectKind.Line),
+    Arrow("Arrow", NewObjectKind.Arrow),
+    Pen("Pen", NewObjectKind.Vector),
     Text("Text", NewObjectKind.Text),
     Comment("Comment", null),
     Link("Link", null),
     Code("Code", null),
+    ;
+
+    /** A shape-drawing tool grouped under the toolbar's shape flyout. */
+    val isShapeTool: Boolean
+        get() = this == Rectangle || this == Ellipse || this == Polygon ||
+            this == Star || this == Line || this == Arrow
 }
+
+/**
+ * Annotation authoring tool (the comment toolbar flyout): `None` = not annotating,
+ * otherwise the [io.aequicor.visualization.subsystems.annotations.AnnotationKind] a
+ * canvas press creates. Modeled next to [EditorTool] but as its own axis — annotating
+ * overlays the review layer and never creates design objects.
+ */
+enum class AnnotationTool { None, Note, Issue }
 
 enum class SourceTab(val label: CompactLabel) {
     Markdown(CompactLabel("Semantic Layout Markdown", "Markdown", "SLM")),
@@ -135,7 +227,9 @@ enum class InspectorSection(val label: CompactLabel) {
 
 /** Minimum and maximum panel widths (dp) used by the splitter drag clamps. */
 object WorkspaceLimits {
-    const val MinPanelDp: Float = 220f
+    /** Keeps the project button and all three source-tab captions visible without ellipsis. */
+    const val MinSourceDp: Float = 240f
+    const val MinInspectorDp: Float = 220f
     const val MaxSourceDp: Float = 640f
     const val MaxInspectorDp: Float = 380f
     const val DefaultSourceDp: Float = 440f

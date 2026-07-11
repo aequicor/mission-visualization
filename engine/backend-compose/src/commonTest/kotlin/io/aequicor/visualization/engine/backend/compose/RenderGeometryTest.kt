@@ -7,10 +7,10 @@ import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
 import io.aequicor.visualization.engine.ir.model.MaskType
-import io.aequicor.visualization.engine.ir.model.ShapeType
-import io.aequicor.visualization.engine.ir.geometry.PathCommand
-import io.aequicor.visualization.engine.ir.geometry.PathGeometry
-import io.aequicor.visualization.engine.ir.model.VectorPath
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.subsystems.figures.PathCommand
+import io.aequicor.visualization.subsystems.figures.PathGeometry
+import io.aequicor.visualization.subsystems.figures.VectorPath
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
 import io.aequicor.visualization.engine.ir.resolve.ResolvedMask
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode

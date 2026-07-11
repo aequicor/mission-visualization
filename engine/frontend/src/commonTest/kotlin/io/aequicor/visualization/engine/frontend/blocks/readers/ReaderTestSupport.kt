@@ -41,7 +41,7 @@ internal fun parseEntries(markdown: String): Pair<List<TypedEntry>, DiagnosticCo
             val parsed = parseSlmYaml(sliceText, collector, startLine = i + 1)
             val value = (parsed as? YamlMap)?.entries?.get(key)
             if (value != null) {
-                entries += TypedEntry(kind, value, SlmSourceSpan(i + 1, j))
+                entries += TypedEntry(key, value, SlmSourceSpan(i + 1, j))
             }
         }
         i = j

@@ -7,11 +7,17 @@ import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.NewObjectKind
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
+import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
-import io.aequicor.visualization.engine.ir.model.ShapeType
+import io.aequicor.visualization.subsystems.figures.ShapeType
+import io.aequicor.visualization.engine.ir.model.DesignSize
+import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
+import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -393,6 +399,11 @@ class StructuralWriteBackTest {
         next.assertWroteBack(before)
         assertEquals(listOf(before.sources), next.previousSources, "source undo captured the pre-edit sources")
     }
+    // NOTE: a dropped origin/main test (`positionedReparentWritesStructureAndVisualGeometryAtomically`)
+    // reparented `overview_hero` — a node that only exists in the legacy Mission Overview fixture and
+    // carries an `ir` splice — and asserted the move + geometry persist atomically to the SLM source.
+    // Under CNL-only write-back, reparenting a non-heading-anchored / `ir`-splice node lands in-memory
+    // only (anti-corruption veto), so atomic CNL source persistence of that case is a tracked gap.
 
     @Test
     fun reparentCrossPageFallsBack() {

@@ -90,12 +90,17 @@ data class TypedAttributeBlock(
 /**
  * One reserved-key entry of a typed block; [value] is the YAML value under the key.
  * [span] covers the entry's full extent including same-line trailing comments.
+ * [key] is either a built-in reserved key (then [kind] resolves it) or the kind of
+ * a registered `TypedBlockExtension` (then [kind] is null).
  */
 data class TypedEntry(
-    val kind: TypedBlockKind,
+    val key: String,
     val value: YamlValue,
     val span: SlmSourceSpan,
-)
+) {
+    /** Built-in block kind, or null for a registry-extension entry. */
+    val kind: TypedBlockKind? get() = TypedBlockKind.fromKey(key)
+}
 
 /** Fenced ``` block; [content] is captured verbatim, starting at [contentStartLine]. */
 data class FencedCodeBlock(
