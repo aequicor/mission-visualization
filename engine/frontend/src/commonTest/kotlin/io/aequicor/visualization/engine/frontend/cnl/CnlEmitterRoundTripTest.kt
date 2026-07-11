@@ -3,9 +3,13 @@ package io.aequicor.visualization.engine.frontend.cnl
 import io.aequicor.visualization.engine.frontend.blocks.readers.slm
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
+import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.DesignExpression
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -463,20 +467,83 @@ class CnlEmitterRoundTripTest {
     // --- S28 sub-step 4: bindable grid track sizes + implicitRowMin round-trip through CNL ---
 
     @Test
-    fun gridFixedTrackTokenRef() =
+    fun gridFixedTrackTokenRef() {
+        assertEquals(
+            listOf(GridTrack.Fixed(Bindable.VarRef("col.width"))),
+            columnsOf("Frame grid columns (track \$col.width)"),
+        )
         assertLeafRoundTrips("Frame grid columns (track \$col.width)") { it is DesignNodeKind.Frame }
+    }
 
     @Test
-    fun gridFixedTrackDataBinding() =
+    fun gridFixedTrackDataBinding() {
+        assertEquals(
+            listOf(GridTrack.Fixed(Bindable.DataRef(DesignExpression("data.colWidth")))),
+            columnsOf("Frame grid columns (track {{data.colWidth}})"),
+        )
         assertLeafRoundTrips("Frame grid columns (track {{data.colWidth}})") { it is DesignNodeKind.Frame }
+    }
+
+    private fun columnsOf(sentence: String): List<GridTrack> =
+        leaf(sentence) { it is DesignNodeKind.Frame }.layout.columns
 
     @Test
-    fun gridFlexTrackTokenRef() =
-        assertLeafRoundTrips("Frame grid columns (track \$colWeightfr)") { it is DesignNodeKind.Frame }
+    fun gridFlexTrackTokenRef() {
+        // A token-bound Flex weight uses the braced `${id}fr` surface so it stays distinct from a
+        // Fixed ref whose id ends in `fr` (see gridFixedTrackTokenRefEndingInFr).
+        assertEquals(
+            listOf(GridTrack.Flex(Bindable.VarRef("colWeight"))),
+            columnsOf("Frame grid columns (track \${colWeight}fr)"),
+        )
+        assertLeafRoundTrips("Frame grid columns (track \${colWeight}fr)") { it is DesignNodeKind.Frame }
+    }
 
     @Test
-    fun gridFlexTrackDataBinding() =
+    fun gridFlexTrackPropRef() {
+        assertEquals(
+            listOf(GridTrack.Flex(Bindable.PropRef("weight"))),
+            columnsOf("Frame grid columns (track \${prop.weight}fr)"),
+        )
+        assertLeafRoundTrips("Frame grid columns (track \${prop.weight}fr)") { it is DesignNodeKind.Frame }
+    }
+
+    /** Regression: a Fixed track bound to a var whose id ends in `fr` must not read as Flex. */
+    @Test
+    fun gridFixedTrackTokenRefEndingInFr() {
+        assertEquals(
+            listOf(GridTrack.Fixed(Bindable.VarRef("railfr"))),
+            columnsOf("Frame grid columns (track \$railfr)"),
+        )
+        assertLeafRoundTrips("Frame grid columns (track \$railfr)") { it is DesignNodeKind.Frame }
+    }
+
+    /** Regression: a Fixed track bound to a prop whose name ends in `fr` must not read as Flex. */
+    @Test
+    fun gridFixedTrackPropRefEndingInFr() {
+        assertEquals(
+            listOf(GridTrack.Fixed(Bindable.PropRef("weightfr"))),
+            columnsOf("Frame grid columns (track \$prop.weightfr)"),
+        )
+        assertLeafRoundTrips("Frame grid columns (track \$prop.weightfr)") { it is DesignNodeKind.Frame }
+    }
+
+    /** A Fixed ref ending in `fr` and a Flex ref stripped of it must be two distinct tracks. */
+    @Test
+    fun gridFixedFrRefAndFlexRefStayDistinct() {
+        assertEquals(
+            listOf(GridTrack.Fixed(Bindable.VarRef("railfr")), GridTrack.Flex(Bindable.VarRef("rail"))),
+            columnsOf("Frame grid columns (tracks (\$railfr \${rail}fr))"),
+        )
+    }
+
+    @Test
+    fun gridFlexTrackDataBinding() {
+        assertEquals(
+            listOf(GridTrack.Flex(Bindable.DataRef(DesignExpression("data.colWeight")))),
+            columnsOf("Frame grid columns (track {{data.colWeight}}fr)"),
+        )
         assertLeafRoundTrips("Frame grid columns (track {{data.colWeight}}fr)") { it is DesignNodeKind.Frame }
+    }
 
     @Test
     fun gridImplicitRowMinTokenRef() =
@@ -487,8 +554,17 @@ class CnlEmitterRoundTripTest {
         assertLeafRoundTrips("Frame grid columns (count 12 track 1fr) rows (auto min {{data.rowMin}})") { it is DesignNodeKind.Frame }
 
     @Test
-    fun gridHeterogeneousTracksWithRefs() =
-        assertLeafRoundTrips("Frame grid columns (tracks (\$sidebar 1fr \$railfr))") { it is DesignNodeKind.Frame }
+    fun gridHeterogeneousTracksWithRefs() {
+        assertEquals(
+            listOf(
+                GridTrack.Fixed(Bindable.VarRef("sidebar")),
+                GridTrack.Flex(1.0.bindable()),
+                GridTrack.Flex(Bindable.VarRef("rail")),
+            ),
+            columnsOf("Frame grid columns (tracks (\$sidebar 1fr \${rail}fr))"),
+        )
+        assertLeafRoundTrips("Frame grid columns (tracks (\$sidebar 1fr \${rail}fr))") { it is DesignNodeKind.Frame }
+    }
 
     @Test
     fun guidesAndGrids() =

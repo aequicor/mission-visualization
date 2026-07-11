@@ -484,8 +484,22 @@ internal object CnlGrammar {
 
     private fun trackWord(track: GridTrack): String = when (track) {
         is GridTrack.Fixed -> numberToken(track.value) ?: num(0.0)
-        is GridTrack.Flex -> "${numberToken(track.value) ?: num(1.0)}fr"
+        is GridTrack.Flex -> flexWord(track.value)
         GridTrack.Hug -> "hug"
+    }
+
+    /**
+     * Flex-weight surface. The `fr` marker must follow a self-delimiting body so a re-read can tell
+     * it apart from a ref id that merely ends in `fr` (`$railfr` = Fixed ref to `railfr`): a literal
+     * (`1fr`), a `{{expr}}` binding (`{{w}}fr`), or a **braced** token ref (`${weight}fr` /
+     * `${prop.w}fr`). A bare `$weightfr` would be indistinguishable from a Fixed ref, so token refs
+     * are braced here — [io.aequicor.visualization.engine.frontend.blocks.readers.readTrack] mirrors this.
+     */
+    private fun flexWord(value: Bindable<Double>): String = when (value) {
+        is Bindable.Value -> "${num(value.value)}fr"
+        is Bindable.DataRef -> "{{${value.expression.raw}}}fr"
+        is Bindable.VarRef -> "\${${value.id}}fr"
+        is Bindable.PropRef -> "\${prop.${value.name}}fr"
     }
 
     private fun renderPlace(node: DesignNode): String? {

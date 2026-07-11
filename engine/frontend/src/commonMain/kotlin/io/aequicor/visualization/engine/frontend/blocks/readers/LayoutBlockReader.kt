@@ -265,20 +265,38 @@ private fun readTrackAxis(map: YamlMap, key: String, reading: BlockReading): Tra
 }
 
 /**
- * `1fr` -> Flex, `hug` -> Hug, otherwise Fixed. Each size accepts a literal, a `$token`/`$prop`
- * ref or a `{{expr}}` binding, so `1fr`, `$fr` (Flex ref), `$col` (Fixed ref) all parse; the
- * `fr` suffix is stripped before the ref/literal is read so refs survive the flex branch.
+ * `hug` -> Hug. A trailing `fr` marks a Flex track, but only when its body is self-delimiting so
+ * the `fr` cannot be mistaken for the tail of a ref id: a literal weight (`1fr`), a `{{expr}}`
+ * binding (`{{w}}fr`), or a **braced** token ref (`${weight}fr` / `${prop.w}fr`). A bare `$id` /
+ * `$prop.x` ref is always a Fixed track even when its id ends in `fr` (`$railfr` = Fixed ref to
+ * `railfr`) — braceless refs are never Flex. Everything else is a Fixed literal/ref. The emitter
+ * ([io.aequicor.visualization.engine.frontend.cnl.CnlGrammar]'s `flexWord`) mirrors this surface.
  */
 private fun readTrack(value: YamlValue, reading: BlockReading): GridTrack? {
     val raw = (value as? YamlScalar)?.value
     if (raw is String) {
         if (raw == "hug") return GridTrack.Hug
-        if (raw.endsWith("fr")) {
-            bindableDoubleFromText(raw.removeSuffix("fr"))?.let { return GridTrack.Flex(it) }
-        }
+        flexTrackBody(raw)?.let { body -> bindableDoubleFromText(body)?.let { return GridTrack.Flex(it) } }
     }
     bindableDouble(value, "track", reading)?.let { return GridTrack.Fixed(it) }
     return null
+}
+
+/**
+ * The weight body of a `…fr` Flex token, or null when [raw] is not a Flex token. A braced ref
+ * `${id}fr` / `${prop.x}fr` unwraps to the bare `$id` / `$prop.x` ref; a `{{expr}}fr` binding keeps
+ * its delimiters; a literal `1fr` yields `1`. A braceless `$id`fr / `$prop.x`fr is NOT a Flex token
+ * (the `fr` belongs to the ref id) -> null, so the caller reads the whole scalar as a Fixed ref.
+ */
+private fun flexTrackBody(raw: String): String? {
+    if (!raw.endsWith("fr")) return null
+    val body = raw.removeSuffix("fr")
+    return when {
+        body.startsWith("\${") && body.endsWith("}") -> "$" + body.substring(2, body.length - 1)
+        body.startsWith("{{") && body.endsWith("}}") -> body
+        body.startsWith("$") -> null
+        else -> body
+    }
 }
 
 /** Parses a bare `fr`-body: literal, `$token`/`$prop` ref or `{{expr}}` binding. */

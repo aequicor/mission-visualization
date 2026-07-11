@@ -58,7 +58,7 @@ Before returning an SLM document, scan it for these hard failures:
 | A container heading that starts with a property word (`## column …`) | The heading splitter reads the first token as the name. | Name it first: `## Panel column gap 16`. |
 | `characters «literal»` on a text node | `characters` is only for bindings; literal copy is the `«…»` text literal. | Put visible copy in `«…»`; use `characters $var` only for a bound value. |
 | `Instance of ds/Card` with no available `ds` component | Unknown instances render as placeholders or fail validation. | Define a local component or use primitive nodes. |
-| A bound flex grid track (`track $col fr`) | Edge #3: `$id fr` is ambiguous/unparseable on reparse. | Use a literal `fr` track (e.g. `track 1fr`) or a `$var` fixed track. |
+| A bound flex grid track written as bare `track $colfr` | A bare `$id`/`$prop.x` ref is always a **fixed** track (`$colfr` = fixed ref to var `colfr`). | For a bound **flex** weight use the braced form `track ${col}fr` / `track ${prop.col}fr`. |
 | A `$var`/`{{expr}}` focal point on a **fill** paint's `focus (x y)` | Edge #2: fill-paint focal binding is emitted as literal `0` (binding lost). | Use a literal focus, or put the media on an `Image` node's `media (… focus …)` where binds round-trip. |
 | `height (fill …)` regions without clipping | Content can overlap or escape its panel. | Add `clip` and `overflow (y auto)` with clear sizing. |
 | `absolute` children in auto layout without intent | They can overlap flow content. | Prefer normal flow; use `absolute` + `anchor (…)` / `position X Y` deliberately. |
@@ -247,8 +247,9 @@ the practical subset — the exhaustive catalog is the **CNL Phrase Reference** 
 | rows | `rows (…)` | `rows (auto track 80)` |
 | cell placement | `place (column N row N columnSpan N rowSpan N)` | `place (column 1 row 0 columnSpan 2)` |
 
-Track word: `N` (fixed px), `Nfr` (flex), `hug`. Prefer literal `fr` tracks — a **bound** flex
-track (`$id fr`) is ambiguous on reparse (edge #3).
+Track word: `N` (fixed px), `Nfr` (flex), `hug`. A **bound** flex weight uses the braced form
+`${id}fr` / `${prop.x}fr`; a bare `$id`/`$prop.x` is always a **fixed** ref (even when its id ends
+in `fr`), and `{{expr}}fr` binds a flex weight.
 
 ### Fills
 
@@ -395,9 +396,9 @@ path (falls to internal IR splice).
 
 `$var` (variable ref), `{{expr}}` (data/expression binding), and `$prop.x` (component prop ref)
 are accepted on `opacity`, `visible`, `characters`, effect `blur`/`spread`/`radius`/`offset`, grid
-`count`/`track`, corner `radius`, and media `asset`/`poster`/`focus`. Two caveats:
+`count`/`track`, corner `radius`, and media `asset`/`poster`/`focus`. A bound **flex** track takes
+the braced form `${id}fr` (a bare `$id` grid track is always fixed). One caveat:
 - A **fill** paint's `focus (x y)` binding is lost (emitted as literal `0`) — edge #2.
-- A **flex grid track** binding (`$id fr`) is ambiguous on reparse — edge #3.
 
 ## Colors, tokens, units
 
@@ -477,7 +478,7 @@ DO:
 - Start every element line with a known noun; start containers with `##`/`###` and **name first**.
 - Put visible text in `«…»` / `"…"`; use `characters $var`/`{{expr}}` only for bound content.
 - Use bare `#hex` for colors, `$token` for theme variables, `{{expr}}` for data bindings.
-- Prefer literal `fr` grid tracks and `Image`-node `media (… focus …)` for bound focal points.
+- Use the braced `${id}fr` form for a **bound** flex grid track; use `Image`-node `media (… focus …)` for bound focal points.
 
 DON'T:
 - Don't wrap an element onto a second line, and don't indent with tabs.
