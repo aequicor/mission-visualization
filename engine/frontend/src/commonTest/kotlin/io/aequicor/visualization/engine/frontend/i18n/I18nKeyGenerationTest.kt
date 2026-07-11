@@ -47,13 +47,7 @@ class I18nKeyGenerationTest {
             - Карточка для каждой {{mission in missions}}:
               - Название: {{mission.name}}
 
-            ## Component: Card
-            component:
-              name: ds/Card
-              properties:
-                title:
-                  type: text
-                  default: Заголовок карточки
+            ## Component: Card component-name ds/Card prop title (text default «Заголовок карточки»)
             """,
         )
         assertTrue(
@@ -113,23 +107,19 @@ class I18nKeyGenerationTest {
 
             # Экран
 
-            Основная кнопка [Создать миссию](/missions/new).
-
-            props:
-              i18nKey: custom.actions.create
+            Основная кнопка [Создать миссию](/missions/new) <!-- i18n:key=custom.actions.create -->.
 
             ## Раздел
-            text:
-              key: custom.section.title
-              defaultText: Явный текст
+
+            Text «Явный текст» key custom.section.title
 
             [Открыть](/orders) <!-- i18n:key=custom.actions.open -->
             """,
         )
         val bundle = bundle(result)
-        // props.i18nKey on the synthesized instance
+        // trailing i18n:key comment on the synthesized instance's link
         assertEquals("Создать миссию", bundle["custom.actions.create"])
-        // text.key on a typed block
+        // key phrase on a CNL text node
         assertEquals("Явный текст", bundle["custom.section.title"])
         // trailing <!-- i18n:key=... --> comment on a link
         assertEquals("Открыть", bundle["custom.actions.open"])
@@ -224,14 +214,12 @@ class I18nKeyGenerationTest {
             # Экран
 
             ## A
-            text:
-              key: dup.key
-              defaultText: Один
+
+            Text «Один» key dup.key
 
             ## B
-            text:
-              key: dup.key
-              defaultText: Два
+
+            Text «Два» key dup.key
             """,
         )
         assertTrue(
@@ -253,9 +241,8 @@ class I18nKeyGenerationTest {
             # Заголовок экрана
 
             ## Секция
-            text:
-              key: conf.title
-              defaultText: Другой текст
+
+            Text «Другой текст» key conf.title
             """,
         )
         val bundle = bundle(result)

@@ -10,11 +10,11 @@ import io.aequicor.visualization.engine.frontend.yaml.parseSlmYaml
 /**
  * Hand-rolled block-level SLM markdown parser: frontmatter split, ATX headings 1–6,
  * paragraphs, nested lists, blockquotes, standalone images, GFM tables, fenced code
- * blocks, HTML comments, and typed attribute blocks per the five detection rules
- * (reserved key at block start, anchor-indent match, group merging, blank-line group
- * closing, near-miss hint with prose fallback). Unfenced `ir:` is an error.
- * Keys of registered [SlmExtensionRegistry] extensions open typed entries exactly
- * like built-in reserved keys.
+ * blocks, HTML comments, and CNL element sentences. A leading reserved key or a registered
+ * [SlmExtensionRegistry] extension key (e.g. subsystem `diagram:`) opens a typed attribute
+ * block. Typed blocks are **internal desugar machinery** — CNL is the authoring surface and
+ * lowers each sentence into the same typed patches — but the parser still recognizes them so
+ * that CNL desugar output and self-contained subsystem block-readers round-trip.
  */
 class SlmMarkdownParser(
     private val diagnostics: DiagnosticCollector,
@@ -154,6 +154,7 @@ class SlmMarkdownParser(
         val heading = HeadingBlock(
             level = level,
             inlines = inlineParser.parseLine(name, line.number, line.columnOffset + contentStart),
+            cnlElement = split?.element,
             span = SlmSourceSpan(line.number, line.number),
         )
         val typed = split?.let {
@@ -189,37 +190,8 @@ class SlmMarkdownParser(
         val contentText = content.joinToString("\n") { it.text }
         val contentStartLine = open.number + 1
 
-        if (info == "ir") {
-            return FencedCodeBlock(info, contentText, contentStartLine, span) to next
-        }
-        val firstContent = content.firstOrNull { !it.isBlank }
-        if ((info == "yaml" || info.isEmpty()) && firstContent != null && typedKeyOf(firstContent) != null) {
-            return parseFencedTypedBlock(content, span) to next
-        }
         diagnostics.warning("Unsupported fenced code block `$info` is ignored", open.number)
         return FencedCodeBlock(info, contentText, contentStartLine, span) to next
-    }
-
-    /** Fenced `yaml`/bare fence whose first key is reserved: the fence delimits one group. */
-    private fun parseFencedTypedBlock(content: List<Line>, span: SlmSourceSpan): SlmBlock? {
-        val entries = mutableListOf<TypedEntry>()
-        var i = 0
-        while (i < content.size) {
-            val line = content[i]
-            when {
-                line.isBlank -> i++
-                typedKeyOf(line) != null -> {
-                    val (block, next) = parseTypedGroup(content, i)
-                    block?.let { entries += it.entries }
-                    i = next
-                }
-                else -> {
-                    diagnostics.warning("Unrecognized content in typed yaml block", line.number)
-                    i++
-                }
-            }
-        }
-        return if (entries.isEmpty()) null else TypedAttributeBlock(entries, span)
     }
 
     // --- blockquotes ---
@@ -446,63 +418,9 @@ class SlmMarkdownParser(
         return CnlElementBlock(element, SlmSourceSpan(line.number, line.number))
     }
 
-    // --- typed attribute blocks ---
-
-    /** Leading `word:` (colon followed by space or end) at column 0 of the window. */
-    private fun leadingWordColon(text: String): String? {
-        if (text.isEmpty() || !text[0].isLetter()) return null
-        var i = 0
-        while (i < text.length && (text[i].isLetterOrDigit() || text[i] == '_' || text[i] == '-')) i++
-        if (i >= text.length || text[i] != ':') return null
-        val after = text.getOrNull(i + 1)
-        if (after != null && after != ' ') return null
-        return text.take(i)
-    }
-
-    /** Reserved or extension key opening a typed entry at this line, incl. fenced-only `ir`. */
-    private fun typedKeyOf(line: Line): String? {
-        val word = leadingWordColon(line.text) ?: return null
-        return word.takeIf { it in TypedBlockKind.reservedKeys || it in extensions.kinds }
-    }
-
-    private fun parseTypedGroup(lines: List<Line>, start: Int): Pair<TypedAttributeBlock?, Int> {
-        val entries = mutableListOf<TypedEntry>()
-        val startLine = lines[start].number
-        var endLine = startLine
-        var i = start
-        while (i < lines.size) {
-            val line = lines[i]
-            if (line.isBlank) break
-            val key = typedKeyOf(line) ?: break
-            var j = i + 1
-            while (j < lines.size && !lines[j].isBlank && lines[j].text.first().isWhitespace()) j++
-            val sliceLines = lines.subList(i, j)
-            val entrySpan = SlmSourceSpan(line.number, sliceLines.last().number)
-            endLine = entrySpan.endLine
-            i = j
-            if (key == "ir") {
-                diagnostics.error("`ir` must be a fenced code block: use ```ir", line.number, blockPath = "ir")
-                continue
-            }
-            val sliceText = sliceLines.joinToString("\n") { " ".repeat(it.columnOffset) + it.text }
-            val parsed = parseSlmYaml(sliceText, diagnostics, startLine = line.number)
-            val value = (parsed as? YamlMap)?.entries?.get(key)
-            if (value == null) {
-                if (parsed != null && parsed !is YamlMap) {
-                    diagnostics.error("Malformed typed block entry `$key:`", line.number, blockPath = key)
-                }
-                continue
-            }
-            entries += TypedEntry(key, value, entrySpan)
-        }
-        val block = if (entries.isEmpty()) null else TypedAttributeBlock(entries, SlmSourceSpan(startLine, endLine))
-        return block to i
-    }
-
-    // --- paragraphs + near-miss hint ---
+    // --- paragraphs ---
 
     private fun parseParagraph(lines: List<Line>, start: Int): Pair<ParagraphBlock, Int> {
-        emitNearMissHint(lines[start])
         val inlines = mutableListOf<SlmInline>()
         var i = start
         while (i < lines.size) {
@@ -524,45 +442,62 @@ class SlmMarkdownParser(
             standaloneImageMatch(text) != null ||
             listMarkerOf(text) != null ||
             isTableStart(lines, i) ||
-            isCommentStart(text)
+            isCommentStart(text) ||
+            typedKeyOf(lines[i]) != null
     }
 
-    /**
-     * Rule 5: a paragraph-start word that is a case-insensitive or transposition-aware
-     * Levenshtein-1 near miss of a reserved key gets an info hint but stays prose.
-     */
-    private fun emitNearMissHint(line: Line) {
-        val word = leadingWordColon(line.text) ?: return
-        if (word in TypedBlockKind.reservedKeys || word in extensions.kinds) return
-        val lower = word.lowercase()
-        val nearest = (TypedBlockKind.entries.map { it.key } + extensions.kinds).firstOrNull { key ->
-            lower == key || isNearMiss(lower, key)
-        } ?: return
-        diagnostics.info(
-            "Did you mean typed block `$nearest:`? \"$word:\" is treated as prose.",
-            line.number,
-        )
+    // --- typed attribute blocks (internal desugar targets, not an authoring surface) ---
+    //
+    // A leading built-in reserved key (`node:`/`style:`/…) or a registered extension key
+    // (e.g. `diagram:`) opens a typed block: its indented YAML body is lowered to typed
+    // patches. Fenced-only `ir` is deliberately excluded here (it never opens an unfenced
+    // block). CNL is the authoring surface; these blocks exist for desugar and self-contained
+    // subsystem block-readers.
+
+    /** Leading `word:` (colon followed by space or line end) at column 0 of the window. */
+    private fun leadingWordColon(text: String): String? {
+        if (text.isEmpty() || !text[0].isLetter()) return null
+        var i = 0
+        while (i < text.length && (text[i].isLetterOrDigit() || text[i] == '_' || text[i] == '-')) i++
+        if (i >= text.length || text[i] != ':') return null
+        val after = text.getOrNull(i + 1)
+        if (after != null && after != ' ') return null
+        return text.take(i)
     }
 
-    private fun isNearMiss(a: String, b: String): Boolean {
-        if (a.length - b.length !in -1..1) return false
-        return osaDistance(a, b) == 1
+    /** A built-in reserved key or a registered extension key opening a typed entry, or null. */
+    private fun typedKeyOf(line: Line): String? {
+        val word = leadingWordColon(line.text) ?: return null
+        return word.takeIf { TypedBlockKind.fromKey(it) != null || it in extensions.kinds }
     }
 
-    /** Optimal string alignment distance (Levenshtein + adjacent transposition). */
-    private fun osaDistance(a: String, b: String): Int {
-        val d = Array(a.length + 1) { IntArray(b.length + 1) }
-        for (i in 0..a.length) d[i][0] = i
-        for (j in 0..b.length) d[0][j] = j
-        for (i in 1..a.length) {
-            for (j in 1..b.length) {
-                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                d[i][j] = minOf(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
-                if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) {
-                    d[i][j] = minOf(d[i][j], d[i - 2][j - 2] + 1)
+    private fun parseTypedGroup(lines: List<Line>, start: Int): Pair<TypedAttributeBlock?, Int> {
+        val entries = mutableListOf<TypedEntry>()
+        val startLine = lines[start].number
+        var endLine = startLine
+        var i = start
+        while (i < lines.size) {
+            val line = lines[i]
+            if (line.isBlank) break
+            val key = typedKeyOf(line) ?: break
+            var j = i + 1
+            while (j < lines.size && !lines[j].isBlank && lines[j].text.first().isWhitespace()) j++
+            val sliceLines = lines.subList(i, j)
+            val entrySpan = SlmSourceSpan(line.number, sliceLines.last().number)
+            endLine = entrySpan.endLine
+            i = j
+            val sliceText = sliceLines.joinToString("\n") { " ".repeat(it.columnOffset) + it.text }
+            val parsed = parseSlmYaml(sliceText, diagnostics, startLine = line.number)
+            val value = (parsed as? YamlMap)?.entries?.get(key)
+            if (value == null) {
+                if (parsed != null && parsed !is YamlMap) {
+                    diagnostics.error("Malformed typed block entry `$key:`", line.number, blockPath = key)
                 }
+                continue
             }
+            entries += TypedEntry(key, value, entrySpan)
         }
-        return d[a.length][b.length]
+        val block = if (entries.isEmpty()) null else TypedAttributeBlock(entries, SlmSourceSpan(startLine, endLine))
+        return block to i
     }
 }

@@ -23,6 +23,7 @@ import io.aequicor.visualization.engine.ir.model.DesignNodePatch
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.DesignRepeat
 import io.aequicor.visualization.engine.ir.model.DesignScroll
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
@@ -35,6 +36,7 @@ import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.GridPlacement
 import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.InstanceOverride
 import io.aequicor.visualization.engine.ir.model.JustifyContent
@@ -315,7 +317,7 @@ class DesignResolver(
             mask = resolveMask(node, scope),
             motion = node.motion,
             exportSettings = node.exportSettings,
-            layoutGrids = resolveLayoutGrids(node),
+            layoutGrids = resolveLayoutGrids(node, scope),
             guides = node.guides,
             annotation = (node.kind as? DesignNodeKind.Annotation)?.annotation,
             sourceMap = node.sourceMap,
@@ -474,7 +476,7 @@ class DesignResolver(
             mask = resolveMask(node, scope) ?: root.mask,
             motion = node.motion ?: root.motion,
             exportSettings = node.exportSettings.ifEmpty { root.exportSettings },
-            layoutGrids = resolveLayoutGrids(node).ifEmpty { root.layoutGrids },
+            layoutGrids = resolveLayoutGrids(node, scope).ifEmpty { root.layoutGrids },
             guides = node.guides.ifEmpty { root.guides },
             sourceMap = node.sourceMap ?: root.sourceMap,
             detached = instance.detach,
@@ -561,7 +563,9 @@ class DesignResolver(
         }
         val lowered = layout.copy(
             mode = LayoutMode.Grid,
-            columns = table.columns.ifEmpty { List(columnCount.coerceAtLeast(1)) { GridTrack.Flex(1.0) } },
+            columns = table.columns
+                .ifEmpty { List(columnCount.coerceAtLeast(1)) { GridTrack.Flex(1.0.bindable()) } }
+                .map { resolveTrack(it, scope) },
             rows = emptyList(),
             columnGap = resolveDouble(table.columnGap, scope, 0.0),
             rowGap = resolveDouble(table.rowGap, scope, 0.0),
@@ -571,15 +575,16 @@ class DesignResolver(
 
     /** Media lowers to an image/video placeholder fill plus a carried [ResolvedMedia]. */
     private fun resolveMedia(media: DesignMedia, scope: Scope): ResolvedMedia {
-        val asset = document.assets[media.assetId]
+        val assetId = resolveString(media.assetId, scope, "")
+        val asset = document.assets[assetId]
         return ResolvedMedia(
-            assetId = media.assetId,
+            assetId = assetId,
             url = asset?.url.orEmpty(),
             kind = media.kind,
             fillMode = media.fillMode,
-            focalPoint = media.focalPoint,
+            focalPoint = media.focalPoint?.let { resolvePoint(it, scope) },
             altText = media.alt?.let { resolveTextContent(it, scope) }.orEmpty(),
-            posterAssetId = media.posterAssetId,
+            posterAssetId = resolveString(media.posterAssetId, scope, ""),
             autoplay = media.autoplay,
             loop = media.loop,
             muted = media.muted,
@@ -603,13 +608,28 @@ class DesignResolver(
         return ResolvedMask(
             type = mask.type,
             appliesTo = mask.appliesTo.map { scope.idPrefix + it },
+            source = mask.source.takeIf { it.isNotEmpty() }?.let { scope.idPrefix + it }.orEmpty(),
         )
     }
 
-    private fun resolveLayoutGrids(node: DesignNode): List<LayoutGridDefinition> =
+    private fun resolveLayoutGrids(node: DesignNode, scope: Scope): List<LayoutGridDefinition> =
         node.layoutGrids.ifEmpty {
             (document.styles[node.gridStyleId] as? DesignStyle.Grid)?.value ?: emptyList()
-        }
+        }.map { resolveLayoutGrid(it, scope) }
+
+    /**
+     * A layout-grid overlay has no layout effect, so it is otherwise never resolved. This is the
+     * boundary that makes an overlay `$var`/`{{expr}}` a live binding: count/size/gutter/margin
+     * lower to concrete literal [Bindable]s (consistent with the [resolveTrack] pattern), so an
+     * overlay renderer reads a real value via `literalOrNull()`/`orZero`, not a dead ref.
+     */
+    private fun resolveLayoutGrid(def: LayoutGridDefinition, scope: Scope): LayoutGridDefinition =
+        def.copy(
+            count = def.count?.let { resolveInt(it, scope, 0).bindable() },
+            size = def.size?.let { resolveDouble(it, scope, 0.0).bindable() },
+            gutter = def.gutter?.let { resolveDouble(it, scope, 0.0).bindable() },
+            margin = def.margin?.let { resolveDouble(it, scope, 0.0).bindable() },
+        )
 
     /**
      * Logical anchors -> the physical position + constraints the layout engine already
@@ -632,8 +652,8 @@ class DesignResolver(
         val top = anchors.blockStart?.let { resolveDouble(it, scope, 0.0) }
         val bottom = anchors.blockEnd?.let { resolveDouble(it, scope, 0.0) }
 
-        var x = child.position?.x ?: 0.0
-        var y = child.position?.y ?: 0.0
+        var x = child.position?.x?.orZero ?: 0.0
+        var y = child.position?.y?.orZero ?: 0.0
         var width = child.size.width
         var height = child.size.height
         var sizing = child.sizing
@@ -801,18 +821,18 @@ class DesignResolver(
         return when (effect) {
             is DesignEffect.DropShadow -> ResolvedEffect.DropShadow(
                 color = resolveColor(effect.color, scope),
-                offset = effect.offset,
-                blur = effect.blur,
-                spread = effect.spread,
+                offset = resolvePoint(effect.offset, scope),
+                blur = resolveDouble(effect.blur, scope, 0.0),
+                spread = resolveDouble(effect.spread, scope, 0.0),
             )
             is DesignEffect.InnerShadow -> ResolvedEffect.InnerShadow(
                 color = resolveColor(effect.color, scope),
-                offset = effect.offset,
-                blur = effect.blur,
-                spread = effect.spread,
+                offset = resolvePoint(effect.offset, scope),
+                blur = resolveDouble(effect.blur, scope, 0.0),
+                spread = resolveDouble(effect.spread, scope, 0.0),
             )
-            is DesignEffect.LayerBlur -> ResolvedEffect.LayerBlur(effect.radius)
-            is DesignEffect.BackgroundBlur -> ResolvedEffect.BackgroundBlur(effect.radius)
+            is DesignEffect.LayerBlur -> ResolvedEffect.LayerBlur(resolveDouble(effect.radius, scope, 0.0))
+            is DesignEffect.BackgroundBlur -> ResolvedEffect.BackgroundBlur(resolveDouble(effect.radius, scope, 0.0))
             is DesignEffect.Unknown -> null
         }
     }
@@ -1022,16 +1042,35 @@ class DesignResolver(
             justifyContent = justifyContent,
             baseline = layout.baseline,
             clipsContent = layout.clipsContent,
-            columns = layout.columns,
-            rows = layout.rows,
+            columns = layout.columns.map { resolveTrack(it, scope) },
+            rows = layout.rows.map { resolveTrack(it, scope) },
             columnGap = layout.columnGap?.let { resolveDouble(it, scope, 0.0) } ?: fixedGap,
             rowGap = layout.rowGap?.let { resolveDouble(it, scope, 0.0) } ?: fixedGap,
-            implicitRows = layout.implicitRows,
-            implicitRowMin = layout.implicitRowMin,
+            implicitRows = layout.implicitRows?.let { resolveTrack(it, scope) },
+            implicitRowMin = layout.implicitRowMin?.let { resolveDouble(it, scope, 0.0).bindable() },
         )
     }
 
+    /**
+     * Resolves a grid track's size binding to a concrete literal so the pure, scope-less
+     * layout engine never sees a `$var`/`{{expr}}` ref. [GridTrack] is reused verbatim as the
+     * resolved type; only its [Bindable] value collapses to a [Bindable.Value].
+     */
+    private fun resolveTrack(track: GridTrack, scope: Scope): GridTrack =
+        when (track) {
+            is GridTrack.Fixed -> GridTrack.Fixed(resolveDouble(track.value, scope, 0.0).bindable())
+            is GridTrack.Flex -> GridTrack.Flex(resolveDouble(track.value, scope, 1.0).bindable())
+            GridTrack.Hug -> GridTrack.Hug
+        }
+
     // --- Scalar binding resolution -------------------------------------------
+
+    /** Resolves both axes so a `$var`/`{{expr}}` ref lowers to its concrete literal, not `0.0`. */
+    private fun resolvePoint(point: DesignPoint, scope: Scope): DesignPoint =
+        DesignPoint(
+            resolveDouble(point.x, scope, 0.0),
+            resolveDouble(point.y, scope, 0.0),
+        )
 
     private fun resolveDouble(bindable: Bindable<Double>, scope: Scope, fallback: Double): Double =
         when (bindable) {
@@ -1054,6 +1093,37 @@ class DesignResolver(
             }
             is Bindable.DataRef -> when (val value = evaluateBinding(bindable.expression, scope)) {
                 is DataValue.Num -> value.value
+                null -> fallback
+                else -> bindingMismatch(bindable.expression, "number", fallback)
+            }
+        }
+
+    /** Integer counterpart of [resolveDouble]; a number variable/prop/binding truncates to `Int`. */
+    private fun resolveInt(bindable: Bindable<Int>, scope: Scope, fallback: Int): Int =
+        when (bindable) {
+            is Bindable.Value -> bindable.value
+            is Bindable.VarRef -> when (val resolved = resolveVariable(bindable.id, scope)) {
+                is Int -> resolved
+                is Double -> resolved.toInt()
+                else -> {
+                    warn("Variable '${bindable.id}' did not resolve to a number")
+                    fallback
+                }
+            }
+            is Bindable.PropRef -> when (val prop = scope.props[bindable.name]) {
+                is PropValue.Number -> prop.value.toInt()
+                is PropValue.Data -> when (val value = evaluateBinding(prop.expression, scope)) {
+                    is DataValue.Num -> value.value.toInt()
+                    null -> fallback
+                    else -> bindingMismatch(prop.expression, "number", fallback)
+                }
+                else -> {
+                    warn("Prop '${bindable.name}' did not resolve to a number")
+                    fallback
+                }
+            }
+            is Bindable.DataRef -> when (val value = evaluateBinding(bindable.expression, scope)) {
+                is DataValue.Num -> value.value.toInt()
                 null -> fallback
                 else -> bindingMismatch(bindable.expression, "number", fallback)
             }

@@ -19,50 +19,17 @@ class SectionDeleteTest {
         sourceLocale: en-US
         ---
 
-        # Screen
+        # Screen id root name «Screen» column
 
-        node:
-          id: root
-          name: Screen
-        layout:
-          mode: column
+        ## Frame: Topbar id topbar
 
-        ## Frame: Topbar
+        ## Frame: Filters id filters
 
-        node:
-          type: frame
-          id: topbar
-          name: Topbar
+        ### Shape: Filter chip id filter_chip
 
-        ## Frame: Filters
+        ## Frame: Empty state id emptyState
 
-        node:
-          type: frame
-          id: filters
-          name: Filters
-
-        ### Shape: Filter chip
-
-        node:
-          type: shape
-          id: filter_chip
-          name: Filter chip
-        shape:
-          kind: rectangle
-
-        ## Frame: Empty state
-
-        node:
-          type: frame
-          id: emptyState
-          name: Empty state
-
-        ## Frame: Missions
-
-        node:
-          type: frame
-          id: missions
-          name: Missions
+        ## Frame: Missions id missions
     """.trimIndent() + "\n"
 
     @Test

@@ -163,10 +163,10 @@ data class SetTextStyle(
 ) : SlmEdit
 
 /**
- * Rewrites the node's whole `text.spans` list from the working node's [styleRanges] and
- * [links] (via [TextSpansYamlWriter]). Style ranges and links sharing a `[start, end)`
- * collapse to one span. The list is replaced wholesale (the working document owns the
- * authoritative set); an empty result removes the `spans:` key.
+ * Rewrites the node's whole rich-text spans from the working node's [styleRanges] and
+ * [links]. This edit is not surgically expressible, so [CnlWriter] regenerates the whole
+ * CNL sentence from the patched node (tier-3), re-emitting each `span (…)` / `link (…)`
+ * phrase; the list is replaced wholesale (the working document owns the authoritative set).
  *
  * Offsets are authored against the source-locale `defaultText`, so the caller must gate
  * this out (falling back in-memory) when the node's text is ICU-formatted or resolved in
@@ -237,9 +237,10 @@ data class SetCornerRadii(
  * Interactions accumulate as separate sibling `interaction:` blocks (the compiler appends rather
  * than last-wins), so unlike fills there is no single list to splice: every existing `interaction:`
  * entry bound to the node's anchor is removed and the list is re-emitted in order. An empty list
- * removes them all cleanly. Not expressible in place (→ the caller falls back in-memory, source
- * untouched) when any action uses `CubicBezier` easing, a `DesignAction.Unknown`, a bound
- * `SetVariable` value, or an overlay carrying `offset`/`background`; see [InteractionYamlWriter].
+ * removes them all cleanly. Persists via [CnlWriter]'s tier-3 whole-sentence re-emit on a
+ * CNL-authored node; not expressible (→ the caller falls back in-memory, source untouched) when
+ * any action uses `CubicBezier` easing, a `DesignAction.Unknown`, a `PropRef` `SetVariable` value,
+ * or an overlay with an unrenderable background — see [isInteractionExpressibleInSlm].
  */
 data class SetInteractions(
     override val nodeId: String,
@@ -260,7 +261,7 @@ data class SetMotion(
  * Structural edits that change the *set* of nodes (create/delete/move), not just their
  * attributes. Unlike the attribute edits they synthesize or remove whole `#`-heading
  * sections; they resolve differently in [applySlmEdit] (heading footprint arithmetic via
- * [SectionWriter], not [YamlPathWriter]). Every node whose id must survive a recompile is
+ * [SectionWriter], not the surgical [CnlWriter]). Every node whose id must survive a recompile is
  * addressed by an explicit `node: id:`, so ids never drift.
  */
 sealed interface StructuralSlmEdit : SlmEdit

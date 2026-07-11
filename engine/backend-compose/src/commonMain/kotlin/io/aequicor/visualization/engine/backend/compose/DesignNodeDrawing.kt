@@ -40,6 +40,7 @@ import io.aequicor.visualization.subsystems.figures.starGeometry
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.GradientKind
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.subsystems.figures.ShapeType
@@ -141,7 +142,7 @@ private fun DrawScope.drawDesignBoxContent(
     val outline = outlinePath(box, provider = context.vectorAssets)
 
     node.effects.filterIsInstance<ResolvedEffect.DropShadow>().forEach { shadow ->
-        translate(shadow.offset.x.toFloat(), shadow.offset.y.toFloat()) {
+        translate(shadow.offset.x.orZero.toFloat(), shadow.offset.y.orZero.toFloat()) {
             val alpha = (shadow.color.alpha / 255f) * 0.9f
             drawPath(outline, shadow.color.toComposeColor().copy(alpha = alpha))
         }
@@ -317,7 +318,7 @@ private fun DrawScope.drawInnerShadow(shadow: ResolvedEffect.InnerShadow, outlin
     val rim = ((shadow.blur + shadow.spread).coerceAtLeast(1.0) * 2).toFloat()
     val alpha = (shadow.color.alpha / 255f) * 0.9f
     clipPath(outline) {
-        translate(shadow.offset.x.toFloat(), shadow.offset.y.toFloat()) {
+        translate(shadow.offset.x.orZero.toFloat(), shadow.offset.y.orZero.toFloat()) {
             drawPath(
                 outline,
                 shadow.color.toComposeColor().copy(alpha = alpha),
@@ -348,8 +349,8 @@ private fun DrawScope.drawMediaPlaceholder(
     context: DesignDrawContext,
 ) {
     val bounds = RenderRect(box.x, box.y, box.width, box.height)
-    val focalX = media.focalPoint?.x ?: 0.5
-    val focalY = media.focalPoint?.y ?: 0.5
+    val focalX = media.focalPoint?.x?.orZero ?: 0.5
+    val focalY = media.focalPoint?.y?.orZero ?: 0.5
     clipPath(outline) {
         when (media.fillMode) {
             ImageScaleMode.Tile -> checkerDarkCells(bounds, MediaCheckerCell).forEach { cell ->
@@ -520,12 +521,12 @@ private fun DrawScope.drawTableDecorations(box: LayoutBox) {
 
 private fun ResolvedPaint.Gradient.toBrush(box: LayoutBox): Brush {
     val start = Offset(
-        (box.x + from.x * box.width).toFloat(),
-        (box.y + from.y * box.height).toFloat(),
+        (box.x + from.x.orZero * box.width).toFloat(),
+        (box.y + from.y.orZero * box.height).toFloat(),
     )
     val end = Offset(
-        (box.x + to.x * box.width).toFloat(),
-        (box.y + to.y * box.height).toFloat(),
+        (box.x + to.x.orZero * box.width).toFloat(),
+        (box.y + to.y.orZero * box.height).toFloat(),
     )
     val colorStops = stops
         .sortedBy { it.position }
@@ -741,7 +742,7 @@ private fun DrawScope.drawBooleanOperation(
     val merged = booleanOutline(box, provider) ?: return
 
     node.effects.filterIsInstance<ResolvedEffect.DropShadow>().forEach { shadow ->
-        translate(shadow.offset.x.toFloat(), shadow.offset.y.toFloat()) {
+        translate(shadow.offset.x.orZero.toFloat(), shadow.offset.y.orZero.toFloat()) {
             val alpha = (shadow.color.alpha / 255f) * 0.9f
             drawPath(merged, shadow.color.toComposeColor().copy(alpha = alpha))
         }

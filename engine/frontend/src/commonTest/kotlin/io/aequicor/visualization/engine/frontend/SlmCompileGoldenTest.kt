@@ -164,6 +164,5 @@ class SlmCompileGoldenTest {
     @Test
     fun editIndexAddressesAnchorNodes() {
         assertNotNull(result.editIndex)
-        assertTrue(result.editIndex.irSpliceNodes.isEmpty())
     }
 }

@@ -87,7 +87,7 @@ class Tier2WriteBackTest {
         val effect = next.document?.nodeById(nodeId)?.effects?.firstOrNull()
         assertTrue(effect is DesignEffect.DropShadow, "a drop shadow effect is added")
         val source = next.sourceOf(owningFile)
-        assertTrue("effects:" in source, "effects block created")
+        assertTrue("effect (dropShadow" in source, "effect phrase created")
         assertTrue("dropShadow" in source, "effect type written")
         next.assertWroteBack(before)
     }

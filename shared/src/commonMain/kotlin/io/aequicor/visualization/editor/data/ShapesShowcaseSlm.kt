@@ -1,11 +1,9 @@
 package io.aequicor.visualization.editor.data
 
 /**
- * Shapes Showcase screen: a labeled grid demonstrating the complex-shape / vector-component
- * pipeline — parametric primitives (star, polygon, ellipse), stroked open paths (arrow, line
- * with round caps), an editable structural vector network (curved-apex triangle), an even-odd
- * "donut" via inline paths, and a boolean union of two ellipses. Standalone document (its own
- * `variables:` collection, per the mission-doc convention).
+ * Shapes Showcase screen: the shipped demo is authored in CNL and covers parametric
+ * primitives, stroked open paths, an editable vector network, even-odd paths, and a
+ * boolean union of two ellipses.
  */
 val ShapesShowcaseSlm: String = missionSlm(
     """
@@ -13,715 +11,88 @@ val ShapesShowcaseSlm: String = missionSlm(
     screen: shapesShowcase
     page: Shapes Showcase
     sourceLocale: en-US
-    targetLocales:
-      - en-US
-      - ru-RU
+    targetLocales: [en-US, ru-RU]
     theme: light
     frame:
       width: 1440
       height: 1024
     ---
 
-    # Shapes Showcase
+    # Collection theme «Theme» (modes light dark default light)
 
-    node:
-      id: frame_showcase
-      name: Shapes Showcase
-      position:
-        x: 72
-        y: 72
-      constraints:
-        horizontal: left
-        vertical: top
-    layout:
-      mode: column
-      gap: §space
-      padding:
-        block: §padV
-        inline: §padH
-      align:
-        inline: start
-      clipContent: true
-    style:
-      radius: §radius
-      fills:
-        - token: color.surface
-      strokes:
-        - token: color.stroke
-          weight: 1
-          position: inside
+    Color color.surface light #FFFFFF dark #111827
+    Color color.text light #172033 dark #F9FAFB
+    Color color.muted light #5E6B7A dark #9CA3AF
+    Color color.accent light #1E88FF dark #60A5FA
+    Color color.placeholder light #E9EEF4 dark #1F2937
+    Color color.placeholderDeep light #D8DFE8 dark #374151
+    Color color.line light #DCE3EC dark #334155
+    Color color.stroke light §color.accent dark §color.accent
+    Number radius light 8 dark 8
+    Number space light 40 dark 40
+    Number padH light 56 dark 56
+    Number padV light 88 dark 88
 
-    variables:
-      collections:
-        - id: theme
-          name: Theme
-          modes: [light, dark]
-          defaultMode: light
-          variables:
-            color.surface:
-              type: color
-              values:
-                light: "#FFFFFF"
-                dark: "#111827"
-            color.text:
-              type: color
-              values:
-                light: "#172033"
-                dark: "#F9FAFB"
-            color.muted:
-              type: color
-              values:
-                light: "#5E6B7A"
-                dark: "#9CA3AF"
-            color.accent:
-              type: color
-              values:
-                light: "#1E88FF"
-                dark: "#60A5FA"
-            color.placeholder:
-              type: color
-              values:
-                light: "#E9EEF4"
-                dark: "#1F2937"
-            color.placeholderDeep:
-              type: color
-              values:
-                light: "#D8DFE8"
-                dark: "#374151"
-            color.line:
-              type: color
-              values:
-                light: "#DCE3EC"
-                dark: "#334155"
-            color.stroke:
-              type: color
-              values:
-                light: §color.accent
-                dark: §color.accent
-            radius:
-              type: number
-              values:
-                light: 8
-                dark: 8
-            space:
-              type: number
-              values:
-                light: 40
-                dark: 40
-            padH:
-              type: number
-              values:
-                light: 56
-                dark: 56
-            padV:
-              type: number
-              values:
-                light: 88
-                dark: 88
+    # Shapes Showcase id frame_showcase name «Shapes Showcase» 1440 by 1024 position 72 72 column gap §space padding §padV §padH color §color.surface stroke §color.stroke radius §radius clip
 
-    ## Text: Title
+    Text id showcase_title «Shapes & Vector Components» name «Title» color §color.text size 28 key shapesShowcase.title.heading bold font «Inter» autosize both
 
-    node:
-      type: text
-      id: showcase_title
-      name: Title
-    text:
-      key: shapesShowcase.title.heading
-      defaultText: Shapes & Vector Components
-      typography:
-        fontFamily: Inter
-        fontSize: 28
-        fontWeight: 700
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.text
+    ## Frame: Parametrics id showcase_parametrics width hug height hug row gap §space
 
-    ## Frame: Parametrics
+    ### Frame: Card Star id card_star width hug height hug column gap 12 align (inline center)
 
-    node:
-      type: frame
-      id: showcase_parametrics
-      name: Parametrics
-    layout:
-      mode: row
-      gap: §space
-      align:
-        block: start
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
+    Text id label_star «Star» name «Star Label» color §color.muted size 13 key shapesShowcase.label.star semibold font «Inter» autosize both
 
-    ### Frame: Card Star
+    Star id showcase_star name «Star» 160 by 160 color #4C6EF5 points 6 inner 0.45
 
-    node:
-      type: frame
-      id: card_star
-      name: Card Star
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
+    ### Frame: Card Polygon id card_polygon width hug height hug column gap 12 align (inline center)
 
-    #### Text: Star Label
+    Text id label_polygon «Polygon» name «Polygon Label» color §color.muted size 13 key shapesShowcase.label.polygon semibold font «Inter» autosize both
 
-    node:
-      type: text
-      id: label_star
-      name: Star Label
-    text:
-      key: shapesShowcase.label.star
-      defaultText: Star
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
+    Polygon id showcase_polygon name «Polygon» 160 by 160 color #F76707 points 5
 
-    #### Shape: Star
+    ### Frame: Card Ellipse id card_ellipse width hug height hug column gap 12 align (inline center)
 
-    node:
-      type: shape
-      id: showcase_star
-      name: Star
-    shape:
-      kind: star
-      pointCount: 6
-      innerRadius: 0.45
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 160
-        height:
-          type: fixed
-          value: 160
-    style:
-      fills:
-        - color: "#4C6EF5"
+    Text id label_ellipse «Ellipse» name «Ellipse Label» color §color.muted size 13 key shapesShowcase.label.ellipse semibold font «Inter» autosize both
 
-    ### Frame: Card Polygon
+    Ellipse id showcase_ellipse name «Ellipse» 200 by 160 color #12B886
 
-    node:
-      type: frame
-      id: card_polygon
-      name: Card Polygon
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
+    ## Frame: Strokes id showcase_strokes width hug height hug row gap §space
 
-    #### Text: Polygon Label
+    ### Frame: Card Arrow id card_arrow width hug height hug column gap 12 align (inline center)
 
-    node:
-      type: text
-      id: label_polygon
-      name: Polygon Label
-    text:
-      key: shapesShowcase.label.polygon
-      defaultText: Polygon
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
+    Text id label_arrow «Arrow» name «Arrow Label» color §color.muted size 13 key shapesShowcase.label.arrow semibold font «Inter» autosize both
 
-    #### Shape: Polygon
+    Arrow id showcase_arrow name «Arrow» 260 by 56 stroke (color #E8590C weight 6 cap round join round)
 
-    node:
-      type: shape
-      id: showcase_polygon
-      name: Polygon
-    shape:
-      kind: polygon
-      pointCount: 5
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 160
-        height:
-          type: fixed
-          value: 160
-    style:
-      fills:
-        - color: "#F76707"
+    ### Frame: Card Line id card_line width hug height hug column gap 12 align (inline center)
 
-    ### Frame: Card Ellipse
+    Text id label_line «Line (round caps)» name «Line Label» color §color.muted size 13 key shapesShowcase.label.line semibold font «Inter» autosize both
 
-    node:
-      type: frame
-      id: card_ellipse
-      name: Card Ellipse
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
+    Line id showcase_line name «Line» 260 by 24 stroke (color #7048E8 weight 10 cap round)
 
-    #### Text: Ellipse Label
+    ## Frame: Vectors id showcase_vectors width hug height hug row gap §space
 
-    node:
-      type: text
-      id: label_ellipse
-      name: Ellipse Label
-    text:
-      key: shapesShowcase.label.ellipse
-      defaultText: Ellipse
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
+    ### Frame: Card Network id card_network width hug height hug column gap 12 align (inline center)
 
-    #### Shape: Ellipse
+    Text id label_network «Vector network (editable)» name «Network Label» color §color.muted size 13 key shapesShowcase.label.network semibold font «Inter» autosize both
 
-    node:
-      type: shape
-      id: showcase_ellipse
-      name: Ellipse
-    shape:
-      kind: ellipse
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 200
-        height:
-          type: fixed
-          value: 160
-    style:
-      fills:
-        - color: "#12B886"
+    Vector id showcase_network name «Network» 160 by 160 color #2F9E44 viewbox (0 0 24 24) network (vertex (12 2 in (-7 -3) out (7 3) mirror angleAndLength) vertex (22 20 corner) vertex (2 20 corner) segment (0 1) segment (1 2) segment (2 0) region loops (0 1 2))
 
-    ## Frame: Strokes
+    ### Frame: Card Donut id card_donut width hug height hug column gap 12 align (inline center)
 
-    node:
-      type: frame
-      id: showcase_strokes
-      name: Strokes
-    layout:
-      mode: row
-      gap: §space
-      align:
-        block: start
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
+    Text id label_donut «Even-odd hole» name «Donut Label» color §color.muted size 13 key shapesShowcase.label.donut semibold font «Inter» autosize both
 
-    ### Frame: Card Arrow
+    Vector id showcase_donut name «Donut» 160 by 160 color #1098AD viewbox (0 0 100 100) path «M50 6 A44 44 0 1 0 50 94 A44 44 0 1 0 50 6 Z M50 30 A20 20 0 1 0 50 70 A20 20 0 1 0 50 30 Z» evenodd
 
-    node:
-      type: frame
-      id: card_arrow
-      name: Card Arrow
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
+    ### Frame: Card Boolean id card_boolean width hug height hug column gap 12 align (inline center)
 
-    #### Text: Arrow Label
+    Text id label_boolean «Boolean union» name «Boolean Label» color §color.muted size 13 key shapesShowcase.label.boolean semibold font «Inter» autosize both
 
-    node:
-      type: text
-      id: label_arrow
-      name: Arrow Label
-    text:
-      key: shapesShowcase.label.arrow
-      defaultText: Arrow
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
+    #### Vector: Union id showcase_union 160 by 160 color #E64980 boolean union
 
-    #### Shape: Arrow
+    Ellipse id union_a name «Union A» 90 by 90 position 12 40 absolute
 
-    node:
-      type: shape
-      id: showcase_arrow
-      name: Arrow
-    shape:
-      kind: arrow
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 260
-        height:
-          type: fixed
-          value: 56
-    style:
-      strokes:
-        - color: "#E8590C"
-          weight: 6
-          caps: round
-          joins: round
-
-    ### Frame: Card Line
-
-    node:
-      type: frame
-      id: card_line
-      name: Card Line
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
-
-    #### Text: Line Label
-
-    node:
-      type: text
-      id: label_line
-      name: Line Label
-    text:
-      key: shapesShowcase.label.line
-      defaultText: Line (round caps)
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
-
-    #### Shape: Line
-
-    node:
-      type: shape
-      id: showcase_line
-      name: Line
-    shape:
-      kind: line
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 260
-        height:
-          type: fixed
-          value: 24
-    style:
-      strokes:
-        - color: "#7048E8"
-          weight: 10
-          caps: round
-
-    ## Frame: Vectors
-
-    node:
-      type: frame
-      id: showcase_vectors
-      name: Vectors
-    layout:
-      mode: row
-      gap: §space
-      align:
-        block: start
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
-
-    ### Frame: Card Network
-
-    node:
-      type: frame
-      id: card_network
-      name: Card Network
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
-
-    #### Text: Network Label
-
-    node:
-      type: text
-      id: label_network
-      name: Network Label
-    text:
-      key: shapesShowcase.label.network
-      defaultText: Vector network (editable)
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
-
-    #### Vector: Network
-
-    node:
-      type: vector
-      id: showcase_network
-      name: Network
-    vector:
-      viewBox: [0, 0, 24, 24]
-      network:
-        vertices:
-          - x: 12
-            y: 2
-            out: [7, 3]
-            in: [-7, -3]
-            mirror: angleAndLength
-          - x: 22
-            y: 20
-            corner: true
-          - x: 2
-            y: 20
-            corner: true
-        segments:
-          - [0, 1]
-          - [1, 2]
-          - [2, 0]
-        regions:
-          - windingRule: nonzero
-            loops:
-              - [0, 1, 2]
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 160
-        height:
-          type: fixed
-          value: 160
-    style:
-      fills:
-        - color: "#2F9E44"
-
-    ### Frame: Card Donut
-
-    node:
-      type: frame
-      id: card_donut
-      name: Card Donut
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
-
-    #### Text: Donut Label
-
-    node:
-      type: text
-      id: label_donut
-      name: Donut Label
-    text:
-      key: shapesShowcase.label.donut
-      defaultText: Even-odd hole
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
-
-    #### Vector: Donut
-
-    node:
-      type: vector
-      id: showcase_donut
-      name: Donut
-    vector:
-      viewBox: [0, 0, 100, 100]
-      paths:
-        - windingRule: evenodd
-          d: "M50 6 A44 44 0 1 0 50 94 A44 44 0 1 0 50 6 Z M50 30 A20 20 0 1 0 50 70 A20 20 0 1 0 50 30 Z"
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 160
-        height:
-          type: fixed
-          value: 160
-    style:
-      fills:
-        - color: "#1098AD"
-
-    ### Frame: Card Boolean
-
-    node:
-      type: frame
-      id: card_boolean
-      name: Card Boolean
-    layout:
-      mode: column
-      gap: 12
-      align:
-        inline: center
-      sizing:
-        width:
-          type: hug
-        height:
-          type: hug
-
-    #### Text: Boolean Label
-
-    node:
-      type: text
-      id: label_boolean
-      name: Boolean Label
-    text:
-      key: shapesShowcase.label.boolean
-      defaultText: Boolean union
-      typography:
-        fontFamily: Inter
-        fontSize: 13
-        fontWeight: 600
-      resizing:
-        width: hug
-        height: hug
-    style:
-      fills:
-        - token: color.muted
-
-    #### Boolean: Union
-
-    node:
-      type: vector
-      id: showcase_union
-      name: Union
-    vector:
-      boolean:
-        op: union
-        children:
-          - union_a
-          - union_b
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 160
-        height:
-          type: fixed
-          value: 160
-    style:
-      fills:
-        - color: "#E64980"
-
-    ##### Shape: Union A
-
-    node:
-      type: shape
-      id: union_a
-      name: Union A
-      position:
-        mode: absolute
-        x: 12
-        y: 40
-    shape:
-      kind: ellipse
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 90
-        height:
-          type: fixed
-          value: 90
-
-    ##### Shape: Union B
-
-    node:
-      type: shape
-      id: union_b
-      name: Union B
-      position:
-        mode: absolute
-        x: 58
-        y: 40
-    shape:
-      kind: ellipse
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 90
-        height:
-          type: fixed
-          value: 90
+    Ellipse id union_b name «Union B» 90 by 90 position 58 40 absolute
     """,
 )

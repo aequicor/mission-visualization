@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.ir.resolve
 
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.serialization.DesignParseResult
 import io.aequicor.visualization.engine.ir.serialization.parseDesignDocument
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
@@ -353,6 +354,34 @@ class DesignResolverTest {
     }
 
     @Test
+    fun styleRangeRefResolvesSharedTextStyleOverBase() {
+        val (root, _) = resolveFirstFrame(
+            """
+            {
+              "styles": {
+                "sty_base": { "type": "text", "value": { "fontFamily": "Inter", "fontSize": 14, "fontWeight": 400 } },
+                "sty_strong": { "type": "text", "value": { "fontWeight": 700 } }
+              },
+              "pages": [ { "id": "p", "children": [
+                { "id": "root", "type": "frame", "children": [
+                  { "id": "t", "type": "text", "characters": "Hello world",
+                    "textStyleId": "sty_base",
+                    "styleRanges": [ { "start": 0, "end": 5, "styleRef": "sty_strong" } ] }
+                ] }
+              ] } ]
+            }
+            """.trimIndent(),
+        )
+        val text = assertNotNull(assertNotNull(root.findBySourceId("t")).text)
+        val range = assertNotNull(text.ranges.firstOrNull())
+        assertEquals(0, range.start)
+        assertEquals(5, range.end)
+        assertEquals(700, range.style.fontWeight, "range styleRef applies the named shared style")
+        assertEquals(14.0, range.style.fontSize, "unset range fields inherit the node base style")
+        assertEquals("Inter", range.style.fontFamily, "unset range fields inherit the node base style")
+    }
+
+    @Test
     fun styleRangeResolvesSharedRefUnderInlineOverride() {
         val (root, _) = resolveFirstFrame(
             """
@@ -377,6 +406,34 @@ class DesignResolverTest {
         assertEquals(false, range.style.italic, "inline range style wins over the shared ref")
         assertEquals("Inter", range.style.fontFamily, "base font family is inherited")
         assertEquals(16.0, range.style.fontSize, "base font size is inherited")
+    }
+
+    @Test
+    fun shadowOffsetRefResolvesToVariableValueNotZero() {
+        val (root, _) = resolveFirstFrame(
+            """
+            {
+              "variables": { "collections": { "col": {
+                "modes": ["light"], "defaultMode": "light",
+                "vars": {
+                  "var_dx": { "type": "number", "values": { "light": 12 } }
+                }
+              } } },
+              "pages": [ { "id": "p", "children": [
+                { "id": "root", "type": "frame", "children": [
+                  { "id": "s", "type": "frame",
+                    "effects": [ { "type": "dropShadow", "color": "#000000",
+                      "offset": { "x": { "${'$'}var": "var_dx" }, "y": 4 }, "blur": 8 } ] }
+                ] }
+              ] } ]
+            }
+            """.trimIndent(),
+        )
+        val shadow = assertIs<ResolvedEffect.DropShadow>(
+            assertNotNull(assertNotNull(root.findBySourceId("s")).effects.firstOrNull()),
+        )
+        assertEquals(12.0, shadow.offset.x.orZero, "a `\$var` offset.x resolves to the variable value, not 0.0")
+        assertEquals(4.0, shadow.offset.y.orZero, "literal offset.y is preserved")
     }
 
     @Test

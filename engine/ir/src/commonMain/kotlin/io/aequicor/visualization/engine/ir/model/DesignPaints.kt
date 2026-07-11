@@ -83,26 +83,26 @@ sealed interface DesignEffect {
     data class DropShadow(
         val color: Bindable<DesignColor>,
         val offset: DesignPoint = DesignPoint(),
-        val blur: Double = 0.0,
-        val spread: Double = 0.0,
+        val blur: Bindable<Double> = 0.0.bindable(),
+        val spread: Bindable<Double> = 0.0.bindable(),
         override val visible: Bindable<Boolean> = true.bindable(),
     ) : DesignEffect
 
     data class InnerShadow(
         val color: Bindable<DesignColor>,
         val offset: DesignPoint = DesignPoint(),
-        val blur: Double = 0.0,
-        val spread: Double = 0.0,
+        val blur: Bindable<Double> = 0.0.bindable(),
+        val spread: Bindable<Double> = 0.0.bindable(),
         override val visible: Bindable<Boolean> = true.bindable(),
     ) : DesignEffect
 
     data class LayerBlur(
-        val radius: Double,
+        val radius: Bindable<Double>,
         override val visible: Bindable<Boolean> = true.bindable(),
     ) : DesignEffect
 
     data class BackgroundBlur(
-        val radius: Double,
+        val radius: Bindable<Double>,
         override val visible: Bindable<Boolean> = true.bindable(),
     ) : DesignEffect
 

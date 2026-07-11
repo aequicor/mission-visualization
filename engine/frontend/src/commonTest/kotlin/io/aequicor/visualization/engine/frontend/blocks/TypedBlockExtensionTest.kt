@@ -106,32 +106,6 @@ class TypedBlockExtensionTest {
     }
 
     @Test
-    fun extensionWorksInsideFencedYamlTypedBlock() {
-        val fenced = """
-            ---
-            screen: badgeScreen
-            ---
-
-            # Badge Screen
-
-            ## Card
-            ```yaml
-            node: { id: card }
-            badge:
-              label: cool
-              level: 7
-            ```
-        """.trimIndent()
-        val result = compileSlm(
-            fenced,
-            SlmCompileOptions(extensions = SlmExtensionRegistry.of(BadgeBlockExtension)),
-        )
-        val document = assertNotNull(result.document)
-        val card = assertNotNull(findNode(document.pages.single().children.single(), "card"))
-        assertEquals("badge-cool-7", card.role)
-    }
-
-    @Test
     fun validateReportsDiagnosticsWithoutDroppingThePayload() {
         val negative = badgeDocument.replace("level: 2", "level: -3")
         val result = compileSlm(

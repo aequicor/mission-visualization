@@ -18,6 +18,8 @@ data class SemanticScreen(
     /** H1 heading; screen metadata + title resource, never a visible node. */
     val title: SemanticText? = null,
     val root: SemanticNode,
+    /** Document-scoped CNL sections lowered to typed patches; never visible nodes. */
+    val documentPatches: List<TypedEntry> = emptyList(),
     /** `Component:`-marked subtrees, lifted out of the visible tree. */
     val componentDefs: List<SemanticNode> = emptyList(),
     /** Mode values contributed by extraction rules (e.g. `density` -> `compact`). */
@@ -26,7 +28,7 @@ data class SemanticScreen(
 
 enum class SemanticKind {
     Screen, Section, Group, Text, Action, Instance, Media, Table, Callout, EmptyState,
-    Repeat, IrSplice,
+    Repeat,
 }
 
 data class SemanticNode(
@@ -47,7 +49,6 @@ data class SemanticNode(
     val explicitPatches: List<TypedEntry> = emptyList(),
     /** Patches contributed by extraction rules; explicit patches take precedence. */
     val semanticPatches: List<TypedPatch> = emptyList(),
-    val irSplice: IrSpliceBlock? = null,
     /** True when the node owns a markdown anchor element (edit-index addressable). */
     val isAnchor: Boolean = false,
     /** True when authored as a CNL element sentence; edits route through the CNL writer. */
@@ -56,6 +57,12 @@ data class SemanticNode(
     val isComponentDef: Boolean = false,
     val children: List<SemanticNode> = emptyList(),
     val span: SlmSourceSpan,
+    /**
+     * The single line of the CNL sentence/heading, when it differs from [span]. The screen root's
+     * [span] covers the whole document (frontmatter included), so its CNL owner must point at the
+     * H1 line instead; for every other node the heading line is [span] and this stays null.
+     */
+    val cnlSpan: SlmSourceSpan? = null,
 )
 
 /** Navigation intent extracted from a markdown link. */
@@ -110,12 +117,5 @@ data class SemanticText(
     val params: Map<String, SlmExpression> = emptyMap(),
     val explicitKey: String? = null,
     val keyHint: KeyHint = KeyHint.Plain,
-    val span: SlmSourceSpan,
-)
-
-/** Raw ```ir fence content; parsed by `escape/IrEscapeHatch`. */
-data class IrSpliceBlock(
-    val json: String,
-    val contentStartLine: Int,
     val span: SlmSourceSpan,
 )

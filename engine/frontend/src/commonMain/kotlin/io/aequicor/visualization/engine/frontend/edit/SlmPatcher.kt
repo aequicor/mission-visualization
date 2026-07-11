@@ -2,21 +2,11 @@ package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.SlmCompileResult
-import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.fnv1a64
-import io.aequicor.visualization.engine.frontend.yaml.YamlMap
-import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
-import io.aequicor.visualization.engine.frontend.yaml.YamlValue
-import io.aequicor.visualization.engine.ir.model.Bindable
-import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
-import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
-import io.aequicor.visualization.subsystems.figures.DesignViewBox
-import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
-import io.aequicor.visualization.engine.ir.model.SizingMode
-import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.engine.ir.model.DesignNode
 
 /**
  * Applies one surgical [SlmEdit] to the SLM source text (design section J). SLM
@@ -29,9 +19,14 @@ import io.aequicor.visualization.engine.ir.model.VerticalConstraint
  * hard ("Stale compile result"). After a successful apply the caller must
  * recompile — [SlmEditResult] deliberately carries no document.
  */
-fun applySlmEdit(source: String, edit: SlmEdit, compiled: SlmCompileResult): SlmEditResult {
+fun applySlmEdit(
+    source: String,
+    edit: SlmEdit,
+    compiled: SlmCompileResult,
+    patchedNode: DesignNode? = null,
+): SlmEditResult {
     staleResult(source, compiled)?.let { return it }
-    return applyResolved(source, edit, compiled.editIndex, DefaultFileName)
+    return applyResolved(source, edit, compiled.editIndex, DefaultFileName, patchedNode)
 }
 
 /**
@@ -47,6 +42,7 @@ fun applySlmEdits(
     edits: List<SlmEdit>,
     compiled: SlmCompileResult,
     options: SlmCompileOptions = SlmCompileOptions(),
+    patchedNode: DesignNode? = null,
 ): SlmEditResult {
     staleResult(source, compiled)?.let { return it }
     if (edits.isEmpty()) return SlmEditResult(source, null, emptyList())
@@ -54,7 +50,7 @@ fun applySlmEdits(
     var currentIndex = compiled.editIndex
     val diagnostics = mutableListOf<DesignDiagnostic>()
     edits.forEachIndexed { index, edit ->
-        val result = applyResolved(currentSource, edit, currentIndex, options.fileName)
+        val result = applyResolved(currentSource, edit, currentIndex, options.fileName, patchedNode)
         diagnostics += result.diagnostics
         currentSource = result.newSource
             ?: return SlmEditResult(newSource = null, appliedRange = null, diagnostics = diagnostics)
@@ -99,6 +95,7 @@ private fun applyResolved(
     edit: SlmEdit,
     editIndex: SlmEditIndex,
     fileName: String,
+    patchedNode: DesignNode? = null,
 ): SlmEditResult {
     val diagnostics = DiagnosticCollector(fileName)
 
@@ -107,52 +104,21 @@ private fun applyResolved(
 
     val lineIndex = LineIndex(source)
     // Structural edits (create/delete/move) synthesize or drop whole heading sections and
-    // resolve their footprint arithmetically; attribute edits patch a scalar/list in place.
+    // resolve their footprint arithmetically; attribute edits patch a CNL sentence in place.
     var anchorLine = 0
-    // CNL-authored nodes patch their sentence in place; an edit the sentence cannot express
-    // falls through to the typed-block path (which appends a typed block below the sentence).
+    // Every attribute edit routes through CnlWriter: a CNL-authored node patches its own sentence
+    // (tier-1 replace / tier-2 append / tier-3 whole-sentence re-emit from the patched node). The
+    // legacy YAML typed-block writers are gone, so a node that is NOT authored as a CNL sentence —
+    // or a CNL edit even tier-3 cannot express — fails cleanly to an in-memory fallback (the
+    // reducer's fidelity veto keeps it in-memory, source byte-identical, non-corrupting).
     val cnlSpan = if (edit !is StructuralSlmEdit) editIndex.cnlOwners[edit.nodeId] else null
-    val cnlPlan = cnlSpan?.let { CnlWriter.plan(source, it, edit, lineIndex) } as? WritePlan.Ops
-    val plan = if (cnlPlan != null && cnlSpan != null) {
+    val plan = if (cnlSpan != null) {
         anchorLine = cnlSpan.startLine
-        cnlPlan
+        CnlWriter.plan(source, cnlSpan, edit, lineIndex, patchedNode)
     } else if (edit is StructuralSlmEdit) {
         structuralPlan(edit, editIndex, source, lineIndex, fileName)
     } else {
-        val target = when (val resolution = resolveEditTarget(source, edit.nodeId, editIndex, lineIndex, fileName)) {
-            is EditTargetResolution.Failed -> {
-                diagnostics.error(resolution.message)
-                return failed()
-            }
-            is EditTargetResolution.Resolved -> resolution.target
-        }
-        anchorLine = target.anchorSpan.startLine
-        // Interaction/motion edits rewrite whole typed-block entries addressed by their line span
-        // (see typedBlockSetPlan); everything else merges a payload via YamlPathWriter.
-        when (edit) {
-            is SetInteractions -> {
-                val payloads = edit.interactions.map { InteractionYamlWriter.interaction(it) }
-                if (payloads.any { it == null }) {
-                    diagnostics.error("Interaction is not expressible in SLM", anchorLine)
-                    return failed()
-                }
-                typedBlockSetPlan(source, target, lineIndex, TypedBlockKind.Interaction, payloads.filterNotNull())
-            }
-            is SetMotion -> typedBlockSetPlan(
-                source, target, lineIndex, TypedBlockKind.Motion,
-                edit.motion?.let { listOf(MotionYamlWriter.motion(it)) } ?: emptyList(),
-            )
-            else -> {
-                val compiledEdit = when (val outcome = editPayload(edit, target)) {
-                    is PayloadOutcome.Invalid -> {
-                        diagnostics.error(outcome.message, anchorLine)
-                        return failed()
-                    }
-                    is PayloadOutcome.Ok -> outcome
-                }
-                YamlPathWriter(lineIndex).plan(target, compiledEdit.blockKind, compiledEdit.payload)
-            }
-        }
+        WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), anchorLine)
     }
     val ops = when (plan) {
         is WritePlan.Failed -> {
@@ -250,325 +216,3 @@ private fun diffRange(old: String, new: String): SlmTextRange? {
     while (suffix < shortest - prefix && old[old.length - 1 - suffix] == new[new.length - 1 - suffix]) suffix++
     return SlmTextRange(prefix, new.length - suffix)
 }
-
-// --- edit -> (block kind, payload) compilation ---
-
-private sealed interface PayloadOutcome {
-    class Ok(val blockKind: TypedBlockKind, val payload: YamlPayload) : PayloadOutcome
-
-    class Invalid(val message: String) : PayloadOutcome
-}
-
-private fun editPayload(edit: SlmEdit, target: EditTarget): PayloadOutcome = when (edit) {
-    is SetTypedBlockScalar -> PayloadOutcome.Ok(
-        edit.blockKind,
-        nestedPayload(edit.yamlPath, YamlPayload.Scalar(edit.scalar)),
-    )
-
-    is SetSizing -> sizingPayload(edit, target)
-
-    is SetNodePosition -> PayloadOutcome.Ok(
-        TypedBlockKind.Layout,
-        YamlPayload.Mapping(
-            listOf(
-                "position" to YamlPayload.Mapping(
-                    listOf(
-                        "mode" to scalar(YamlScalarValue.Str("absolute")),
-                        "x" to scalar(YamlScalarValue.Num(edit.x)),
-                        "y" to scalar(YamlScalarValue.Num(edit.y)),
-                    ),
-                ),
-            ),
-        ),
-    )
-
-    is SetNodeRotation -> PayloadOutcome.Ok(
-        TypedBlockKind.Node,
-        YamlPayload.Mapping(
-            listOf(
-                "position" to YamlPayload.Mapping(
-                    listOf("rotation" to scalar(YamlScalarValue.Num(edit.degrees))),
-                ),
-            ),
-        ),
-    )
-
-    is SetNodeConstraints -> constraintsPayload(edit)
-
-    is SetLayoutProperty -> PayloadOutcome.Ok(
-        TypedBlockKind.Layout,
-        nestedPayload(edit.property.yamlPath, YamlPayload.Scalar(edit.value)),
-    )
-
-    is SetStyleProperty -> when (edit.property) {
-        StyleProp.FirstFillToken -> PayloadOutcome.Ok(
-            TypedBlockKind.Style,
-            YamlPayload.Mapping(
-                listOf("fills" to YamlPayload.Sequence(listOf(YamlPayload.Scalar(edit.value)))),
-            ),
-        )
-        else -> PayloadOutcome.Ok(
-            TypedBlockKind.Style,
-            nestedPayload(edit.property.yamlPath, YamlPayload.Scalar(edit.value)),
-        )
-    }
-
-    is RenameNode -> renamePayload(edit, target)
-
-    is SetText -> PayloadOutcome.Ok(
-        TypedBlockKind.Text,
-        YamlPayload.Mapping(listOf("defaultText" to scalar(YamlScalarValue.Str(edit.defaultText)))),
-    )
-
-    is SetFills -> PayloadOutcome.Ok(
-        TypedBlockKind.Style,
-        YamlPayload.Mapping(listOf("fills" to StyleYamlWriter.fills(edit.fills))),
-    )
-
-    is SetStrokes -> PayloadOutcome.Ok(
-        TypedBlockKind.Style,
-        YamlPayload.Mapping(listOf("strokes" to StyleYamlWriter.strokes(edit.strokes))),
-    )
-
-    is SetEffects -> PayloadOutcome.Ok(
-        TypedBlockKind.Style,
-        YamlPayload.Mapping(listOf("effects" to StyleYamlWriter.effects(edit.effects))),
-    )
-
-    is SetTextStyle -> PayloadOutcome.Ok(
-        TypedBlockKind.Text,
-        YamlPayload.Mapping(
-            listOf(
-                "typography" to YamlPayload.Mapping(
-                    TypographyYamlWriter.typography(edit.style).entries +
-                        edit.clearKeys.map { it to YamlPayload.Remove },
-                ),
-            ),
-        ),
-    )
-
-    is SetTextSpans -> PayloadOutcome.Ok(
-        TypedBlockKind.Text,
-        YamlPayload.Mapping(listOf("spans" to TextSpansYamlWriter.spans(edit.styleRanges, edit.links))),
-    )
-
-    is SetTextAutoResize -> PayloadOutcome.Ok(
-        TypedBlockKind.Text,
-        YamlPayload.Mapping(listOf("resizing" to textResizingPayload(edit.mode))),
-    )
-
-    is SetTextTruncate -> PayloadOutcome.Ok(
-        TypedBlockKind.Text,
-        textTruncatePayload(edit.truncate),
-    )
-
-    is SetViewBox -> PayloadOutcome.Ok(
-        TypedBlockKind.Vector,
-        YamlPayload.Mapping(listOf("viewBox" to viewBoxPayload(edit.viewBox))),
-    )
-
-    is SetVectorNetwork -> PayloadOutcome.Ok(
-        TypedBlockKind.Vector,
-        YamlPayload.Mapping(listOf("network" to NetworkYamlWriter.network(edit.network, edit.regionFills))),
-    )
-
-    is SetBooleanOp -> PayloadOutcome.Ok(
-        TypedBlockKind.Vector,
-        YamlPayload.Mapping(
-            listOf(
-                "boolean" to YamlPayload.Mapping(
-                    listOf(
-                        "op" to scalar(YamlScalarValue.Str(booleanOpToken(edit.op))),
-                        "children" to YamlPayload.Sequence(
-                            edit.children.map { scalar(YamlScalarValue.Str(it)) },
-                            replaceWhole = true,
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    )
-
-    is SetCornerRadii -> PayloadOutcome.Ok(TypedBlockKind.Style, cornerRadiiPayload(edit.radius))
-
-    // Structural edits never reach here: they are dispatched to SectionWriter upstream.
-    is StructuralSlmEdit -> PayloadOutcome.Invalid("Structural edits do not compile to a typed-block payload")
-
-    // Interaction/motion edits never reach here: they are dispatched to typedBlockSetPlan upstream.
-    is SetInteractions, is SetMotion ->
-        PayloadOutcome.Invalid("Interaction/motion edits are dispatched via typedBlockSetPlan")
-}
-
-private fun textResizingPayload(mode: io.aequicor.visualization.engine.ir.model.TextAutoResize): YamlPayload {
-    val (width, height) = when (mode) {
-        io.aequicor.visualization.engine.ir.model.TextAutoResize.WidthAndHeight -> "hug" to "hug"
-        io.aequicor.visualization.engine.ir.model.TextAutoResize.Height -> "fixed" to "hug"
-        io.aequicor.visualization.engine.ir.model.TextAutoResize.None -> "fixed" to "fixed"
-    }
-    return YamlPayload.Mapping(
-        listOf(
-            "width" to scalar(YamlScalarValue.Str(width)),
-            "height" to scalar(YamlScalarValue.Str(height)),
-        ),
-    )
-}
-
-private fun textTruncatePayload(truncate: io.aequicor.visualization.engine.ir.model.TextTruncate?): YamlPayload =
-    if (truncate == null) {
-        // Drop authored truncation so the node recompiles to truncate == null.
-        YamlPayload.Mapping(listOf("maxLines" to YamlPayload.Remove, "overflow" to YamlPayload.Remove))
-    } else {
-        YamlPayload.Mapping(
-            listOf(
-                "maxLines" to scalar(YamlScalarValue.Num(truncate.maxLines.toDouble())),
-                "overflow" to scalar(YamlScalarValue.Str(if (truncate.ellipsis) "truncate" else "visible")),
-            ),
-        )
-    }
-
-private fun viewBoxPayload(viewBox: DesignViewBox): YamlPayload =
-    YamlPayload.Sequence(
-        listOf(viewBox.x, viewBox.y, viewBox.width, viewBox.height).map { scalar(YamlScalarValue.Num(it)) },
-        replaceWhole = true,
-    )
-
-/** Uniform radius -> single scalar; otherwise a per-corner map (the style reader accepts both). */
-private fun cornerRadiiPayload(radius: DesignCornerRadius): YamlPayload {
-    val corners = listOf(radius.topLeft, radius.topRight, radius.bottomRight, radius.bottomLeft)
-    val literals = corners.map { (it as? Bindable.Value)?.value }
-    val uniform = literals.all { it != null && it == literals.first() }
-    return if (uniform) {
-        YamlPayload.Mapping(listOf("radius" to scalar(YamlScalarValue.Num(literals.first() ?: 0.0))))
-    } else {
-        YamlPayload.Mapping(
-            listOf(
-                "radius" to YamlPayload.Mapping(
-                    listOf(
-                        "topLeft" to cornerScalar(radius.topLeft),
-                        "topRight" to cornerScalar(radius.topRight),
-                        "bottomRight" to cornerScalar(radius.bottomRight),
-                        "bottomLeft" to cornerScalar(radius.bottomLeft),
-                    ),
-                ),
-            ),
-        )
-    }
-}
-
-private fun cornerScalar(value: Bindable<Double>): YamlPayload = when (value) {
-    is Bindable.Value -> scalar(YamlScalarValue.Num(value.value))
-    is Bindable.VarRef -> scalar(YamlScalarValue.TokenRef(value.id))
-    else -> scalar(YamlScalarValue.Num(0.0))
-}
-
-private fun booleanOpToken(op: BooleanOperationKind): String = when (op) {
-    BooleanOperationKind.Union -> "union"
-    BooleanOperationKind.Subtract -> "subtract"
-    BooleanOperationKind.Intersect -> "intersect"
-    BooleanOperationKind.Exclude -> "exclude"
-}
-
-private fun sizingPayload(edit: SetSizing, target: EditTarget): PayloadOutcome {
-    if (edit.width == null && edit.height == null) {
-        return PayloadOutcome.Invalid("SetSizing requires at least one of width or height")
-    }
-    val axes = buildList {
-        edit.width?.let { spec ->
-            add("width" to sizingAxisPayload(spec, existingValueAt(target, TypedBlockKind.Layout, listOf("sizing", "width"))))
-        }
-        edit.height?.let { spec ->
-            add("height" to sizingAxisPayload(spec, existingValueAt(target, TypedBlockKind.Layout, listOf("sizing", "height"))))
-        }
-    }
-    return PayloadOutcome.Ok(
-        TypedBlockKind.Layout,
-        YamlPayload.Mapping(listOf("sizing" to YamlPayload.Mapping(axes))),
-    )
-}
-
-private fun constraintsPayload(edit: SetNodeConstraints): PayloadOutcome {
-    val axes = buildList {
-        edit.horizontal?.let { add("horizontal" to scalar(YamlScalarValue.Str(it.slmToken()))) }
-        edit.vertical?.let { add("vertical" to scalar(YamlScalarValue.Str(it.slmToken()))) }
-    }
-    if (axes.isEmpty()) {
-        return PayloadOutcome.Invalid("SetNodeConstraints requires at least one axis")
-    }
-    return PayloadOutcome.Ok(
-        TypedBlockKind.Node,
-        YamlPayload.Mapping(listOf("constraints" to YamlPayload.Mapping(axes))),
-    )
-}
-
-private fun HorizontalConstraint.slmToken(): String = when (this) {
-    HorizontalConstraint.Left -> "left"
-    HorizontalConstraint.Right -> "right"
-    HorizontalConstraint.Center -> "center"
-    HorizontalConstraint.LeftRight -> "left-right"
-    HorizontalConstraint.Scale -> "scale"
-}
-
-private fun VerticalConstraint.slmToken(): String = when (this) {
-    VerticalConstraint.Top -> "top"
-    VerticalConstraint.Bottom -> "bottom"
-    VerticalConstraint.Center -> "center"
-    VerticalConstraint.TopBottom -> "top-bottom"
-    VerticalConstraint.Scale -> "scale"
-}
-
-/**
- * One sizing axis. Mode-only specs keep or produce the scalar shorthand
- * (`width: fill`) unless the axis already exists as a map, where `type` is merged;
- * dimensioned specs always take map form (upgrading a shorthand scalar in place).
- */
-private fun sizingAxisPayload(spec: SizingSpec, existing: YamlValue?): YamlPayload {
-    val mode = YamlScalarValue.Str(sizingModeToken(spec.mode))
-    val dimensioned = spec.value != null || spec.min != null || spec.max != null
-    if (!dimensioned && (existing == null || existing is YamlScalar)) {
-        return YamlPayload.Scalar(mode)
-    }
-    return YamlPayload.Mapping(
-        buildList {
-            add("type" to scalar(mode))
-            spec.value?.let { add("value" to scalar(YamlScalarValue.Num(it))) }
-            spec.min?.let { add("min" to scalar(YamlScalarValue.Num(it))) }
-            spec.max?.let { add("max" to scalar(YamlScalarValue.Num(it))) }
-        },
-    )
-}
-
-private fun sizingModeToken(mode: SizingMode): String = when (mode) {
-    SizingMode.Fixed -> "fixed"
-    SizingMode.Hug -> "hug"
-    SizingMode.Fill -> "fill"
-}
-
-/** `node: frame` shorthand keeps its type when the rename upgrades it to a map. */
-private fun renamePayload(edit: RenameNode, target: EditTarget): PayloadOutcome {
-    val existing = existingValueAt(target, TypedBlockKind.Node, emptyList())
-    val shorthandType = (existing as? YamlScalar)?.value as? String
-    return PayloadOutcome.Ok(
-        TypedBlockKind.Node,
-        YamlPayload.Mapping(
-            buildList {
-                shorthandType?.let { add("type" to scalar(YamlScalarValue.Str(it))) }
-                add("name" to scalar(YamlScalarValue.Str(edit.name)))
-            },
-        ),
-    )
-}
-
-/** Existing YAML value at [path] inside the last bound [kind] entry, if any. */
-private fun existingValueAt(target: EditTarget, kind: TypedBlockKind, path: List<String>): YamlValue? {
-    var current: YamlValue = target.boundGroups
-        .flatMap { it.entries }
-        .lastOrNull { it.kind == kind }
-        ?.value
-        ?: return null
-    path.forEach { key ->
-        current = (current as? YamlMap)?.entries?.get(key) ?: return null
-    }
-    return current
-}
-
-private fun scalar(value: YamlScalarValue): YamlPayload = YamlPayload.Scalar(value)

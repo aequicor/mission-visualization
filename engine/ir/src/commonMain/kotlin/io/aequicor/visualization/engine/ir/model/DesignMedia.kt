@@ -4,7 +4,7 @@ enum class MediaKind { Image, Video }
 
 /** Payload of a `media` node: a placed image or video referencing an asset. */
 data class DesignMedia(
-    val assetId: String,
+    val assetId: Bindable<String>,
     val kind: MediaKind = MediaKind.Image,
     val fillMode: ImageScaleMode = ImageScaleMode.Fill,
     /** Normalized 0..1 crop focus inside the asset. */
@@ -13,7 +13,7 @@ data class DesignMedia(
     val replaceable: Boolean = false,
     val opacity: Bindable<Double> = 1.0.bindable(),
     val blendMode: String = "normal",
-    val posterAssetId: String = "",
+    val posterAssetId: Bindable<String> = "".bindable(),
     val autoplay: Boolean = false,
     val loop: Boolean = false,
     val muted: Boolean = true,

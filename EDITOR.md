@@ -26,29 +26,41 @@ pure renderer given an explicit `CanvasViewport`; all gestures live in the app l
 
 ### Persistence model (important)
 
-Property edits that SLM can express **write back into the owning `*.layout.md`** via
-`SlmPatcher` (recompile keeps the fingerprint chain valid, and the in-memory node is
-mirrored in lock-step) and are **saved locally** (browser `localStorage` on web, a file
-on desktop, SharedPreferences on Android) with debounced autosave + Save/Reset, restored
-on boot. Covered today, all through the `writeBackEdits` helper (`DesignEditorReducer`):
+Property edits that the source can express **write back into the owning `*.layout.md`**
+(recompile keeps the fingerprint chain valid, and the in-memory node is mirrored in
+lock-step) and are **saved locally** (browser `localStorage` on web, a file on desktop,
+SharedPreferences on Android) with debounced autosave + Save/Reset, restored on boot. The
+writer depends on how the node is authored: a **CNL-owned** node (the 4 demos are CNL-only)
+routes through `CnlWriter` (see "CNL write-back" below); a legacy YAML-authored source is
+patched by `SlmPatcher` and the YAML writers named below. Covered today, all through the
+`writeBackEdits` helper (`DesignEditorReducer`):
 
 - **Geometry / node contract:** resize, position, constraints, visibility, lock, rename.
 - **Layout / appearance scalars:** layout mode, gap, padding; opacity, corner radius; text.
-- **Style lists (Tier-2):** fills, strokes, effects — the whole list is re-serialized from
-  the IR via `StyleYamlWriter` (`SetFills`/`SetStrokes`/`SetEffects`), preserving `token:`
-  refs and `#hex` literals; `YamlPayload.Sequence.replaceWhole` rewrites the existing list.
+- **Style lists (Tier-2):** fills, strokes, effects — for CNL-owned nodes (the 4 demos, all
+  CNL-only) the whole stack re-emits as `color`/`stroke`/`effect` phrases via `CnlWriter` /
+  `CnlEmitter` (see "CNL write-back" below). For a legacy YAML-authored source the list is
+  re-serialized from the IR via `StyleYamlWriter` (`SetFills`/`SetStrokes`/`SetEffects`),
+  preserving `token:` refs and `#hex` literals; `YamlPayload.Sequence.replaceWhole` rewrites the
+  existing list. `StyleYamlWriter` is the YAML-source-only path (removed once no YAML sources remain).
 
 A non-anchor / in-memory-created node (no source span) falls back to an **in-memory-only**
 edit, so the canvas still reflects it. **Typography** and **structural** edits now write back too:
 
-- **Typography (`text:` style):** `SetTextStyle` re-serializes the merged `DesignTextStyle` into the
-  node's `text.typography` block via `TypographyYamlWriter` (the faithful inverse of the reader —
-  bare px vs `{unit: percent}` maps, `$token` refs for bound size/weight), through the same
-  `writeBackEdits` path.
-- **Structural (create / delete / duplicate / reorder / reparent) + new screens:** a dedicated
-  section emitter (`NodeSectionWriter` renders a fresh heading section with an **explicit minted id**;
-  `SectionWriter` deletes / relocates / relevels heading footprints) drives new IR-carrying edits
-  `InsertChildSubtree` / `DeleteSection` / `MoveSection`; a reorder persists as an `order:` scalar
+- **Typography (`text:` style):** `SetTextStyle` merges the `DesignTextStyle`; for a CNL-owned node
+  it writes back through `CnlWriter.textStylePlan` as tier-1/tier-2 typography phrases
+  (`size`/`font`/`weight`/`line-height`/`tracking`/`paragraph-spacing`/`text-align`/`text-valign`).
+  For a legacy YAML source it re-serializes into the node's `text.typography` block via
+  `TypographyYamlWriter` (the faithful inverse of the reader — bare px vs `{unit: percent}` maps,
+  `$token` refs for bound size/weight), through the same `writeBackEdits` path.
+  `TypographyYamlWriter` is the YAML-source-only path.
+- **Structural (create / delete / duplicate / reorder / reparent) + new screens:** for CNL-owned
+  sources the CNL analogue is `CnlEmitter.emitStableSubtree` / `emitStableHeadingLine` — a fresh
+  heading + one-sentence-per-node subtree carrying an **explicit minted id** for id-stable inserts.
+  A dedicated section emitter drives new IR-carrying edits `InsertChildSubtree` / `DeleteSection` /
+  `MoveSection` (`NodeSectionWriter` renders a fresh heading section with an **explicit minted id**;
+  `SectionWriter` deletes / relocates / relevels heading footprints — the YAML-source emitters);
+  a reorder persists as an `order:` scalar
   batch over the sibling run; a new screen appends its own `*.layout.md` via `ScreenSourceWriter`. The
   reducer wrapper `withStructuralSource` recompiles the single owning source and **vetoes** the patch
   (keeping the in-memory edit, every source byte-identical) whenever the recompiled node-id set drifts
@@ -63,6 +75,39 @@ subtrees the emitter can't round-trip. One caveat inherited from all write-back 
 revert sources** — `undo()`/`redo()` swap only the in-memory document, so after an undo the canvas
 reverts but the source keeps the last write-back. The working document remains the single source of
 truth within a session; samples still load and compile unchanged.
+
+#### CNL write-back (the demos' path)
+
+The 4 bundled demos are **CNL-only** (English-only, one sentence per node, at full IR parity), so a
+CNL-authored node routes its write-back through `CnlWriter` rather than the YAML writers above. A node
+is CNL-owned when its source span belongs to the CNL front-slice (`SlmEditIndex.cnlOwners`). `CnlWriter`
+patches the owning sentence in three tiers, cheapest first:
+
+- **Tier-1 — value span-replace** (`CnlWriter.surgicalPlan`): replace a single value token's span in
+  place (e.g. `opacity 0.6` → `opacity 0.8`, a `#hex`, a `position X Y` coordinate) without touching
+  the rest of the sentence.
+- **Tier-2 — phrase-append**: the property has no phrase yet, so append the missing phrase at the end
+  of the sentence (e.g. adding `radius 8`, a `bold`, or a `line-height 140%` phrase). Phrase order in
+  the emitted sentence is canonical (the `CnlGrammar` descriptor `order` field), but an appended phrase
+  is still parsed correctly regardless of position.
+- **Tier-3 — whole-sentence re-emit** (`CnlWriter.reemitPlan`): when neither surgical tier fits,
+  `CnlEmitter.emitSentence` (or `emitStableHeadingLine` for a container heading) regenerates the entire
+  sentence / heading line deterministically from the patched node, in canonical phrase order.
+
+A CNL-owned node **never falls back to a YAML typed block** — the typed blocks are internal desugar
+machinery, not an authoring surface. If even tier-3 is unavailable (no patched node to re-emit from),
+the edit stays in-memory only (`WritePlan.Failed`), and the canvas still reflects it.
+
+Structural CNL edits use the same `CnlEmitter` stable-subtree path noted above
+(`emitStableSubtree` / `emitStableHeadingLine`) with an **explicit minted `id`** so node identity
+survives recompile — the CNL analogue of `NodeSectionWriter`; new screens still append a fresh
+`*.layout.md` (CNL body) via `ScreenSourceWriter`.
+
+**Anti-corruption fidelity veto.** Every CNL write-back tier is guarded exactly like the structural
+`withStructuralSource` net: the reducer recompiles the single owning source after the patch and, if the
+recompiled node diverges from the intended node (id-set drift, or the patched node not matching the
+intended fields), **vetoes** the write — the source is left byte-identical and the edit is kept
+in-memory. So a CNL source is never corrupted by an edit it can't faithfully round-trip.
 
 ## What works
 
@@ -303,7 +348,10 @@ per-screen node ids — no cross-screen references.
   undo/redo, drag coalescing; the structural/typography cases also assert the owning
   source was rewritten (others byte-identical, source-undo captured).
 - `Tier1WriteBackTest` / `Tier2WriteBackTest` — property (rename/visible/lock/opacity/
-  radius/layout) and style-list (fills/strokes/effects) source write-back.
+  radius/layout) and style-list (fills/strokes/effects) source write-back (the YAML-source path).
+- CNL write-back lives in `:engine:frontend`: `CnlWriteBackTest` (+ `CnlWriter`) covers the
+  tier-1 span-replace / tier-2 phrase-append / tier-3 whole-sentence re-emit path and the
+  fidelity veto (`./gradlew :engine:frontend:jvmTest`).
 - `TypographyWriteBackReducerTest` — `text:` typography written into the owning source
   (px/percent line-height, align tokens, field-by-field merge).
 - `StructuralWriteBackTest` — create/delete/duplicate/reorder/reparent source write-back
@@ -333,9 +381,13 @@ Run: `./gradlew :shared:jvmTest` (engine: `:engine:ir:jvmTest`, `:engine:fronten
 - **Write-back coverage.** Geometry, node-contract, layout/appearance scalars, style lists
   (fills/strokes/effects), **typography** (`text:` style) and **structural** edits
   (create/delete/duplicate/reorder/reparent, plus new screens as their own `*.layout.md`) all
-  patch `*.layout.md` and persist locally. Structural write-back mints an explicit id,
-  synthesizes / removes / relevels heading sections and is guarded by a post-recompile
-  id-preservation veto (`withStructuralSource`). Remaining **in-memory-only fallbacks**
+  patch `*.layout.md` and persist locally. The 4 demos are **CNL-only**, so those nodes are
+  owned by `CnlWriter` (`SlmEditIndex.cnlOwners`) with the tier-1 span-replace / tier-2
+  phrase-append / tier-3 whole-sentence re-emit model plus the anti-corruption fidelity veto —
+  a CNL node never falls back to a YAML typed block. Structural write-back mints an explicit id,
+  synthesizes / removes / relevels heading sections (CNL: `CnlEmitter` stable-subtree re-emit)
+  and is guarded by a post-recompile id-preservation veto (`withStructuralSource`, which likewise
+  guards CNL structural re-emit). Remaining **in-memory-only fallbacks**
   (non-corrupting, sources untouched): multi-page delete, cross-page reparent, reparent past
   ATX depth 6, any op on a node without an addressable heading anchor (`ir` splice / prose
   sibling), and instance/media/vector-path subtrees.

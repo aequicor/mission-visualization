@@ -162,6 +162,7 @@ import io.aequicor.visualization.engine.ir.model.TextTruncate
 import io.aequicor.visualization.engine.ir.model.VariableValue
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.subsystems.typography.FontStyles
 import io.aequicor.visualization.subsystems.typography.compose.FontFamilyInfo
 import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
@@ -325,8 +326,8 @@ private fun PositionSection(state: MissionEditorStateHolder, node: DesignNode, b
     val positioned = document?.isCoordinatePositioned(nodeId) ?: false
     val locked = design.isNodeLocked(nodeId)
     val parentBox = state.artboardLayout?.let { root -> findParentBox(root, nodeId) }
-    val x = if (positioned) node.position?.x ?: 0.0 else (box?.x ?: 0.0) - (parentBox?.x ?: 0.0)
-    val y = if (positioned) node.position?.y ?: 0.0 else (box?.y ?: 0.0) - (parentBox?.y ?: 0.0)
+    val x = if (positioned) node.position?.x?.orZero ?: 0.0 else (box?.x ?: 0.0) - (parentBox?.x ?: 0.0)
+    val y = if (positioned) node.position?.y?.orZero ?: 0.0 else (box?.y ?: 0.0) - (parentBox?.y ?: 0.0)
 
     InspectorSubLabel("Alignment")
     AlignmentControls(state, enabled = positioned && !locked && state.artboardLayout != null)
@@ -402,8 +403,8 @@ private fun MultiPositionSection(state: MissionEditorStateHolder) {
     AlignmentControls(state, enabled = state.artboardLayout != null && ids.isNotEmpty())
     Spacer(Modifier.height(8.dp))
 
-    val x = sharedDouble { it.position?.x }
-    val y = sharedDouble { it.position?.y }
+    val x = sharedDouble { it.position?.x?.orZero }
+    val y = sharedDouble { it.position?.y?.orZero }
     InspectorSubLabel("Position")
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val fieldWidth = inspectorPairFieldWidth(maxWidth)
@@ -812,7 +813,7 @@ private fun GradientStops(
 
 /** Current gradient direction as an angle in degrees, derived from its from→to line. */
 private fun gradientAngleDegrees(gradient: DesignPaint.Gradient): Double =
-    atan2(gradient.to.y - gradient.from.y, gradient.to.x - gradient.from.x) * 180.0 / PI
+    atan2(gradient.to.y.orZero - gradient.from.y.orZero, gradient.to.x.orZero - gradient.from.x.orZero) * 180.0 / PI
 
 // --- Stroke ------------------------------------------------------------------
 
@@ -1368,9 +1369,9 @@ private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
             RemoveButton { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.RemoveAt(index))) }
         }
         if (effect is DesignEffect.DropShadow || effect is DesignEffect.InnerShadow) {
-            val dx = (effect as? DesignEffect.DropShadow)?.offset?.x ?: (effect as? DesignEffect.InnerShadow)?.offset?.x ?: 0.0
-            val dy = (effect as? DesignEffect.DropShadow)?.offset?.y ?: (effect as? DesignEffect.InnerShadow)?.offset?.y ?: 0.0
-            val blur = (effect as? DesignEffect.DropShadow)?.blur ?: (effect as? DesignEffect.InnerShadow)?.blur ?: 0.0
+            val dx = (effect as? DesignEffect.DropShadow)?.offset?.x?.orZero ?: (effect as? DesignEffect.InnerShadow)?.offset?.x?.orZero ?: 0.0
+            val dy = (effect as? DesignEffect.DropShadow)?.offset?.y?.orZero ?: (effect as? DesignEffect.InnerShadow)?.offset?.y?.orZero ?: 0.0
+            val blur = (effect as? DesignEffect.DropShadow)?.blur?.literalOrNull() ?: (effect as? DesignEffect.InnerShadow)?.blur?.literalOrNull() ?: 0.0
             Row(Modifier.padding(start = 26.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 InspectorNumberField("X", dx.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dx = it))) }
                 InspectorNumberField("Y", dy.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dy = it))) }
@@ -2964,8 +2965,8 @@ private fun alignSelection(state: MissionEditorStateHolder, alignment: Inspector
             nodeId = id,
             box = box,
             parent = parent,
-            currentX = node.position?.x ?: (box.x - (parent?.x ?: 0.0)),
-            currentY = node.position?.y ?: (box.y - (parent?.y ?: 0.0)),
+            currentX = node.position?.x?.orZero ?: (box.x - (parent?.x ?: 0.0)),
+            currentY = node.position?.y?.orZero ?: (box.y - (parent?.y ?: 0.0)),
         )
     }
     if (targets.isEmpty()) return
@@ -3007,8 +3008,8 @@ private fun bulkPosition(state: MissionEditorStateHolder, x: Double? = null, y: 
     selectedIds(state).forEach { id ->
         val node = document.nodeById(id) ?: return@forEach
         if (node.locked || !document.isCoordinatePositioned(id)) return@forEach
-        val currentX = node.position?.x ?: 0.0
-        val currentY = node.position?.y ?: 0.0
+        val currentX = node.position?.x?.orZero ?: 0.0
+        val currentY = node.position?.y?.orZero ?: 0.0
         state.dispatch(DesignEditorIntent.PositionNode(id, x = x ?: currentX, y = y ?: currentY))
     }
     state.dispatch(DesignEditorIntent.EndInteraction)

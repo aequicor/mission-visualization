@@ -10,8 +10,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Whole-document regeneration: compile a multi-section CNL screen into IR, emit the CNL body
- * back with [CnlEmitter.emitDocument], recompile, and assert the node tree (ids, types, and the
+ * Whole-body regeneration: compile a multi-section CNL screen into IR, emit the CNL body
+ * back with [CnlEmitter.emitDocumentBody], recompile, and assert the node tree (ids, types, and the
  * authored per-node fields) survives. This is the end-to-end "generate" capability the demo
  * migration (PM) is built on — the same emitter, but over a full heading tree instead of one node.
  */
@@ -53,7 +53,7 @@ class CnlDocumentRoundTripTest {
     @Test
     fun wholeScreenRegeneratesFaithfully() {
         val doc1 = compile("$frontmatter\n\n$body")
-        val emittedBody = CnlEmitter.emitDocument(doc1)
+        val emittedBody = CnlEmitter.emitDocumentBody(doc1)
         val doc2 = compile("$frontmatter\n\n$emittedBody")
 
         val nodes1 = doc1.pages.flatMap { it.allNodes() }
@@ -78,8 +78,28 @@ class CnlDocumentRoundTripTest {
     @Test
     fun emitDocumentIsIdempotent() {
         val doc1 = compile("$frontmatter\n\n$body")
-        val once = CnlEmitter.emitDocument(doc1)
+        val once = CnlEmitter.emitDocumentBody(doc1)
         val doc2 = compile("$frontmatter\n\n$once")
-        assertEquals(once, CnlEmitter.emitDocument(doc2), "emitDocument is a fixed point")
+        assertEquals(once, CnlEmitter.emitDocumentBody(doc2), "emitDocumentBody is a fixed point")
+    }
+
+    @Test
+    fun mixedContainerAndLeafSiblingsRegenerateFaithfully() {
+        val mixedBody = """
+            # Mission Overview
+
+            ## Frame: Parent id parent
+
+            ### Frame: Child Frame id child
+
+            ### Text: After Child id after characters «After child»
+        """.trimIndent()
+        val doc1 = compile("$frontmatter\n\n$mixedBody")
+        val doc2 = compile("$frontmatter\n\n${CnlEmitter.emitDocumentBody(doc1)}")
+
+        val parent1 = assertNotNull(doc1.pages.single().allNodes().firstOrNull { it.id == "parent" })
+        val parent2 = assertNotNull(doc2.pages.single().allNodes().firstOrNull { it.id == "parent" })
+        assertEquals(listOf("child", "after"), parent1.children.map { it.id })
+        assertEquals(parent1.children.map { it.id }, parent2.children.map { it.id })
     }
 }

@@ -24,9 +24,8 @@ class I18nPluralsTest {
             # Экран
 
             ## Счётчик
-            text:
-              key: missions.count
-              defaultText: "$icu"
+
+            Text «$icu» key missions.count
             """.trimIndent() + "\n",
         )
         val bundle = assertNotNull(result.resources[SlmLocale("ru-RU")])
@@ -70,9 +69,8 @@ class I18nPluralsTest {
             # Экран
 
             ## Счётчик
-            text:
-              key: missions.count
-              defaultText: "{count, plural, one {# миссия} other {# миссии}}"
+
+            Text «{count, plural, one {# миссия} other {# миссии}}» key missions.count
             """.trimIndent() + "\n",
         )
         val warning = result.diagnostics.single { "ICU plural" in it.message }
@@ -91,9 +89,8 @@ class I18nPluralsTest {
             # Screen
 
             ## Counter
-            text:
-              key: missions.count
-              defaultText: "{count, plural, one {# mission} other {# missions}}"
+
+            Text «{count, plural, one {# mission} other {# missions}}» key missions.count
             """.trimIndent() + "\n",
         )
         assertTrue(result.diagnostics.none { "ICU plural" in it.message })
@@ -111,9 +108,8 @@ class I18nPluralsTest {
             # Screen
 
             ## Counter
-            text:
-              key: broken.count
-              defaultText: "{count, plural, one {# mission other {# missions}}"
+
+            Text «{count, plural, one {# mission other {# missions}}» key broken.count
             """.trimIndent() + "\n",
         )
         assertTrue(result.diagnostics.any { "Unbalanced braces" in it.message && "broken.count" in it.message })

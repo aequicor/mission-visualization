@@ -16,11 +16,8 @@ class NeverTranslatedTest {
         val source = SpecRuDocument + """
 
 ![Схема](assets/icons/alert.svg)
-style:
-  fills:
-    - token: color.surface
-layout:
-  gap: ${'$'}space.4
+
+## Технический блок column gap ${'$'}space.4 color ${'$'}color.surface
 """
         val result = compileSlm(source)
         val values = result.resources.values.flatMap { it.values }

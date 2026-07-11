@@ -52,6 +52,27 @@ class FigureUndoRedoTest {
         assertEquals(after.document, redone.document, "Redo re-applies the edit")
     }
 
+    /**
+     * Document-level undo/redo for edits that land in-memory only (flatten / outline are
+     * multi-section structural rewrites the CNL patcher cannot express surgically, so the
+     * anti-corruption veto keeps them off the SLM source). The document history still round-trips;
+     * no source-undo entry is captured because the source did not change.
+     */
+    private fun assertDocumentUndoRedo(selecting: String, intent: DesignEditorIntent) {
+        val before = freshState(selecting)
+        val after = reduceDesignEditor(before, intent)
+
+        assertNotEquals(before.document, after.document, "edit must mutate the document")
+        assertEquals(before.document, after.undoStack.lastOrNull(), "pre-edit document pushed to history")
+
+        val undone = reduceDesignEditor(after, DesignEditorIntent.Undo)
+        assertEquals(before.document, undone.document, "one Undo restores the prior document")
+        assertTrue(undone.redoStack.isNotEmpty(), "Undo populated the redo stack")
+
+        val redone = reduceDesignEditor(undone, DesignEditorIntent.Redo)
+        assertEquals(after.document, redone.document, "Redo re-applies the edit")
+    }
+
     @Test
     fun setArcSweepIsUndoable() =
         assertUndoRedo("showcase_ellipse", DesignEditorIntent.SetArcSweep("showcase_ellipse", 270.0))
@@ -72,9 +93,9 @@ class FigureUndoRedoTest {
 
     @Test
     fun flattenNodeIsUndoable() =
-        assertUndoRedo("showcase_union", DesignEditorIntent.FlattenNode("showcase_union"))
+        assertDocumentUndoRedo("showcase_union", DesignEditorIntent.FlattenNode("showcase_union"))
 
     @Test
     fun outlineStrokeIsUndoable() =
-        assertUndoRedo("showcase_arrow", DesignEditorIntent.OutlineStroke("showcase_arrow"))
+        assertDocumentUndoRedo("showcase_arrow", DesignEditorIntent.OutlineStroke("showcase_arrow"))
 }

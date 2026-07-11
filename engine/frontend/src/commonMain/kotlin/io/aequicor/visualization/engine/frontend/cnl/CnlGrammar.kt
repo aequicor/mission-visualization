@@ -3,6 +3,8 @@ package io.aequicor.visualization.engine.frontend.cnl
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.DesignInsets
+import io.aequicor.visualization.engine.ir.model.InstanceOverride
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -57,7 +59,9 @@ import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.subsystems.figures.VectorRegion
 import io.aequicor.visualization.subsystems.figures.VectorVertex
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.engine.ir.model.orZero
 
 /**
  * The shared CNL grammar registry — the single source of truth that drives the emitter and
@@ -100,6 +104,57 @@ internal object CnlGrammar {
         fun byte(v: Int) = v.toString(16).uppercase().padStart(2, '0')
         val base = "#${byte(color.red)}${byte(color.green)}${byte(color.blue)}"
         return if (color.alpha == 255) base else base + byte(color.alpha)
+    }
+
+    /**
+     * Escapes a raw string for a `«…»` text literal: `\\`, `\»`, `\n`, `\r`. Inverse of the
+     * escape handling in [scanTextLiteral]; every emit site that interpolates free-form text
+     * into a literal must go through [quoteText] or the sentence breaks on reparse.
+     */
+    fun escapeText(value: String): String = buildString(value.length) {
+        for (c in value) when (c) {
+            '\\' -> append("\\\\")
+            '»' -> append("\\»")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            else -> append(c)
+        }
+    }
+
+    /** Renders a `«…»` text literal with [escapeText] applied. */
+    fun quoteText(value: String): String = "«${escapeText(value)}»"
+
+    /** Result of [scanTextLiteral]: unescaped text, index of the closing char, termination flag. */
+    data class TextScan(val text: String, val closeIndex: Int, val terminated: Boolean)
+
+    /**
+     * Scans a `«…»`/`"…"` literal body starting at [start] (the index just after the opener),
+     * honoring backslash escapes (`\<close>`, `\\`, `\n`, `\r`). Shared by every CNL tokenizer
+     * so escaping stays symmetric with [escapeText].
+     */
+    fun scanTextLiteral(line: String, start: Int, close: Char): TextScan {
+        val text = StringBuilder()
+        var i = start
+        while (i < line.length) {
+            val c = line[i]
+            if (c == '\\' && i + 1 < line.length) {
+                val decoded = when (val next = line[i + 1]) {
+                    close, '\\' -> next
+                    'n' -> '\n'
+                    'r' -> '\r'
+                    else -> null
+                }
+                if (decoded != null) {
+                    text.append(decoded)
+                    i += 2
+                    continue
+                }
+            }
+            if (c == close) break
+            text.append(c)
+            i++
+        }
+        return TextScan(text.toString(), i, i < line.length)
     }
 
     /** The canonical noun for [node], or null when the node type has no CNL noun yet. */
@@ -150,9 +205,13 @@ internal object CnlGrammar {
         Descriptor(CnlPropertyKind.Detach, "detach", 6, ::renderDetach),
         Descriptor(CnlPropertyKind.ResetOverrides, "reset", 7, ::renderResetOverrides),
         Descriptor(CnlPropertyKind.SlotOverride, "slot", 8, ::renderSlotOverrides),
+        Descriptor(CnlPropertyKind.SetOverride, "override", 9, ::renderSetOverrides),
         Descriptor(CnlPropertyKind.NestedOverride, "nested", 9, ::renderNestedOverrides),
+        Descriptor(CnlPropertyKind.NodeName, "name", 9, ::renderNodeName),
         Descriptor(CnlPropertyKind.Size, "size", 10, ::renderSize),
         Descriptor(CnlPropertyKind.Position, "position", 20, ::renderPosition),
+        Descriptor(CnlPropertyKind.Visible, "visible", 22, ::renderVisible),
+        Descriptor(CnlPropertyKind.Locked, "locked", 23, ::renderLocked),
         Descriptor(CnlPropertyKind.Rotation, "rotation", 24, ::renderRotation),
         Descriptor(CnlPropertyKind.Absolute, "absolute", 26, ::renderAbsolute),
         Descriptor(CnlPropertyKind.Anchor, "anchor", 27, ::renderAnchor),
@@ -181,8 +240,10 @@ internal object CnlGrammar {
         Descriptor(CnlPropertyKind.Place, "place", 57, ::renderPlace),
         Descriptor(CnlPropertyKind.Guides, "guides", 58, ::renderGuides),
         Descriptor(CnlPropertyKind.Grids, "grids", 59, ::renderGrids),
+        Descriptor(CnlPropertyKind.VariableModes, "modes", 60, ::renderVariableModes),
         Descriptor(CnlPropertyKind.FontSize, "size", 60, ::renderFontSize),
-        Descriptor(CnlPropertyKind.FontWeight, "", 62, ::renderFontWeight),
+        Descriptor(CnlPropertyKind.TextKey, "key", 61, ::renderTextKey),
+        Descriptor(CnlPropertyKind.FontWeight, "weight", 62, ::renderFontWeight),
         Descriptor(CnlPropertyKind.FontFamily, "font", 63, ::renderFontFamily),
         Descriptor(CnlPropertyKind.LineHeight, "line-height", 64, ::renderLineHeight),
         Descriptor(CnlPropertyKind.Tracking, "tracking", 65, ::renderTracking),
@@ -194,11 +255,13 @@ internal object CnlGrammar {
         Descriptor(CnlPropertyKind.Features, "features", 71, ::renderFeatures),
         Descriptor(CnlPropertyKind.Axes, "axes", 72, ::renderAxes),
         Descriptor(CnlPropertyKind.TextStyleRef, "text-style", 74, ::renderTextStyleRef),
+        Descriptor(CnlPropertyKind.Characters, "characters", 75, ::renderCharacters),
         Descriptor(CnlPropertyKind.AutoSize, "autosize", 76, ::renderAutoSize),
         Descriptor(CnlPropertyKind.Truncate, "truncate", 77, ::renderTruncate),
         Descriptor(CnlPropertyKind.MaxLines, "maxLines", 78, ::renderMaxLines),
         Descriptor(CnlPropertyKind.ListSettings, "list", 79, ::renderListSettings),
         Descriptor(CnlPropertyKind.Link, "link", 82, ::renderLinks),
+        Descriptor(CnlPropertyKind.Span, "span", 83, ::renderSpans),
         // Media / shape params / vector / boolean / mask (P6). Ties (Media 50 ↔ StyleRefs 50,
         // ShapePoints 52 ↔ ContainerAlign 52, Mask 70 ↔ TextDecoration 70) are harmless: renderers
         // are kind-gated, never co-occur, and sortedBy is stable.
@@ -230,8 +293,10 @@ internal object CnlGrammar {
 
     // --- renderers (IR field -> CNL phrase) ---
 
+    private fun renderNodeName(node: DesignNode): String? =
+        node.name.takeIf { it.isNotEmpty() }?.let { "name ${quoteText(it)}" }
+
     private fun renderSize(node: DesignNode): String? {
-        if (node.kind is DesignNodeKind.Text) return null
         val sizing = node.sizing
         if (sizing == null && node.minSize == null && node.maxSize == null) return null
         val wMode = sizing?.horizontal ?: SizingMode.Fixed
@@ -254,12 +319,12 @@ internal object CnlGrammar {
 
     private fun renderAxis(axis: String, mode: SizingMode, value: Double?, min: Double?, max: Double?): String? {
         if (mode == SizingMode.Fixed && min == null && max == null) return value?.let { "$axis ${num(it)}" }
-        if (min == null && max == null && (mode != SizingMode.Fixed || value == null)) {
+        if (min == null && max == null && value == null && mode != SizingMode.Fixed) {
             return "$axis ${sizingModeWord(mode)}"
         }
         val parts = buildList {
             add(sizingModeWord(mode))
-            if (mode == SizingMode.Fixed && value != null) add(num(value))
+            value?.let { add(num(it)) }
             min?.let { add("min ${num(it)}") }
             max?.let { add("max ${num(it)}") }
         }
@@ -273,6 +338,15 @@ internal object CnlGrammar {
     }
 
     private fun renderAbsolute(node: DesignNode): String? = if (node.layoutChild.absolute) "absolute" else null
+
+    private fun renderVisible(node: DesignNode): String? = when (val visible = node.visible) {
+        is Bindable.Value -> if (visible.value) null else "visible no"
+        is Bindable.VarRef -> "visible \$${visible.id}"
+        is Bindable.DataRef -> "visible {{${visible.expression.raw}}}"
+        is Bindable.PropRef -> "visible \$prop.${visible.name}"
+    }
+
+    private fun renderLocked(node: DesignNode): String? = if (node.locked) "locked yes" else null
 
     private fun renderAnchor(node: DesignNode): String? {
         val anchors = node.anchors ?: return null
@@ -299,8 +373,8 @@ internal object CnlGrammar {
     private fun renderGapAxes(node: DesignNode): String? {
         if (node.layout.rowGap == null && node.layout.columnGap == null) return null
         val parts = buildList {
-            node.layout.rowGap?.literalOrNull()?.let { add("row ${num(it)}") }
-            node.layout.columnGap?.literalOrNull()?.let { add("column ${num(it)}") }
+            node.layout.rowGap?.let { value -> numberToken(value)?.let { add("row $it") } }
+            node.layout.columnGap?.let { value -> numberToken(value)?.let { add("column $it") } }
         }
         return if (parts.isEmpty()) null else "gap (" + parts.joinToString(" ") + ")"
     }
@@ -358,10 +432,12 @@ internal object CnlGrammar {
     private fun renderScroll(node: DesignNode): String? {
         val overflow = node.scroll.overflow
         val fixed = node.scroll.fixedChildren
-        if (overflow == ScrollOverflow.None && fixed.isEmpty()) return null
+        val sticky = node.scroll.sticky
+        if (overflow == ScrollOverflow.None && fixed.isEmpty() && !sticky) return null
         val parts = buildList {
             if (overflow != ScrollOverflow.None) add("direction ${scrollWord(overflow)}")
             if (fixed.isNotEmpty()) add("fixedChildren (" + fixed.joinToString(" ") + ")")
+            if (sticky) add("sticky")
         }
         return "scroll (" + parts.joinToString(" ") + ")"
     }
@@ -373,12 +449,12 @@ internal object CnlGrammar {
         ScrollOverflow.Both -> "both"
     }
 
-    // Grid gap is owned by renderGapAxes (order 36); heterogeneous tracks are a reader gap → null.
+    // Grid gap is owned by renderGapAxes (order 36).
     private fun renderColumns(node: DesignNode): String? {
         val tracks = node.layout.columns
         if (tracks.isEmpty()) return null
         val first = tracks.first()
-        if (tracks.any { it != first }) return null
+        if (tracks.any { it != first }) return "columns (tracks (" + tracks.joinToString(" ") { trackWord(it) } + "))"
         val parts = buildList {
             if (tracks.size > 1) add("count ${tracks.size}")
             add("track ${trackWord(first)}")
@@ -390,7 +466,7 @@ internal object CnlGrammar {
         val tracks = node.layout.rows
         if (tracks.isNotEmpty()) {
             val first = tracks.first()
-            if (tracks.any { it != first }) return null
+            if (tracks.any { it != first }) return "rows (tracks (" + tracks.joinToString(" ") { trackWord(it) } + "))"
             val parts = buildList {
                 if (tracks.size > 1) add("count ${tracks.size}")
                 add("track ${trackWord(first)}")
@@ -398,17 +474,17 @@ internal object CnlGrammar {
             return "rows (" + parts.joinToString(" ") + ")"
         }
         val implicit = node.layout.implicitRows ?: return null
-        if (implicit != GridTrack.Flex(1.0)) return null
         val parts = buildList {
             add("auto")
-            node.layout.implicitRowMin?.let { add("min ${num(it)}") }
+            if (implicit != GridTrack.Flex(1.0.bindable())) add("track ${trackWord(implicit)}")
+            node.layout.implicitRowMin?.let { min -> numberToken(min)?.let { add("min $it") } }
         }
         return "rows (" + parts.joinToString(" ") + ")"
     }
 
     private fun trackWord(track: GridTrack): String = when (track) {
-        is GridTrack.Fixed -> num(track.value)
-        is GridTrack.Flex -> "${num(track.value)}fr"
+        is GridTrack.Fixed -> numberToken(track.value) ?: num(0.0)
+        is GridTrack.Flex -> "${numberToken(track.value) ?: num(1.0)}fr"
         GridTrack.Hug -> "hug"
     }
 
@@ -441,10 +517,10 @@ internal object CnlGrammar {
     private fun gridGroup(grid: LayoutGridDefinition): String {
         val parts = buildList {
             add(gridTypeWord(grid.type))
-            grid.count?.let { add("count $it") }
-            grid.size?.let { add("size ${num(it)}") }
-            if (grid.gutter != 0.0) add("gutter ${num(grid.gutter)}")
-            if (grid.margin != 0.0) add("margin ${num(grid.margin)}")
+            grid.count?.let { c -> intToken(c)?.let { add("count $it") } }
+            grid.size?.let { s -> numberToken(s)?.let { add("size $it") } }
+            grid.gutter?.let { g -> if (g.literalOrNull() != 0.0) numberToken(g)?.let { add("gutter $it") } }
+            grid.margin?.let { m -> if (m.literalOrNull() != 0.0) numberToken(m)?.let { add("margin $it") } }
             if (grid.alignment != LayoutGridAlignment.Stretch) add("alignment ${gridAlignWord(grid.alignment)}")
             grid.color?.let { add("color ${hex(it)}") }
             if (!grid.visible) add("visible false")
@@ -475,7 +551,7 @@ internal object CnlGrammar {
 
     private fun renderPosition(node: DesignNode): String? {
         val point = node.position ?: return null
-        return "position ${num(point.x)} ${num(point.y)}"
+        return "position ${num(point.x.orZero)} ${num(point.y.orZero)}"
     }
 
     private fun renderRotation(node: DesignNode): String? =
@@ -492,24 +568,31 @@ internal object CnlGrammar {
         if (node.layout.rowGap != null || node.layout.columnGap != null) return null // → renderGapAxes
         return when (val gap = node.layout.gap) {
             is DesignGap.Auto -> "gap auto"
-            is DesignGap.Fixed -> gap.value.literalOrNull()?.takeIf { it != 0.0 }?.let { "gap ${num(it)}" }
+            is DesignGap.Fixed -> {
+                if ((gap.value as? Bindable.Value)?.value == 0.0) null else numberToken(gap.value)?.let { "gap $it" }
+            }
         }
     }
 
     private fun renderPadding(node: DesignNode): String? {
-        val logical = node.layout.paddingLogical ?: return null
-        val blockStart = logical.blockStart?.literalOrNull()
-        val inlineEnd = logical.inlineEnd?.literalOrNull()
-        val blockEnd = logical.blockEnd?.literalOrNull()
-        val inlineStart = logical.inlineStart?.literalOrNull()
+        val layout = node.layout
+        val logical = layout.paddingLogical
+        // Prefer the direction-aware form; fall back to physical `padding` (an ir-authored node has
+        // no logical insets) mapped LTR — blockStart←top, inlineEnd←right, blockEnd←bottom, inlineStart←left.
+        val blockStart = logical?.blockStart ?: layout.padding.top.takeIf { logical == null }
+        val inlineEnd = logical?.inlineEnd ?: layout.padding.right.takeIf { logical == null }
+        val blockEnd = logical?.blockEnd ?: layout.padding.bottom.takeIf { logical == null }
+        val inlineStart = logical?.inlineStart ?: layout.padding.left.takeIf { logical == null }
         if (blockStart == null || inlineEnd == null || blockEnd == null || inlineStart == null) return null
+        fun token(value: Bindable<Double>): String? = numberToken(value)
         return when {
             blockStart == inlineEnd && inlineEnd == blockEnd && blockEnd == inlineStart ->
-                if (blockStart == 0.0) null else "padding ${num(blockStart)}"
+                if ((blockStart as? Bindable.Value)?.value == 0.0) null else "padding ${token(blockStart) ?: return null}"
             blockStart == blockEnd && inlineStart == inlineEnd ->
-                "padding ${num(blockStart)} ${num(inlineEnd)}"
+                "padding ${token(blockStart) ?: return null} ${token(inlineEnd) ?: return null}"
             else ->
-                "padding ${num(blockStart)} ${num(inlineEnd)} ${num(blockEnd)} ${num(inlineStart)}"
+                "padding ${token(blockStart) ?: return null} ${token(inlineEnd) ?: return null} " +
+                    "${token(blockEnd) ?: return null} ${token(inlineStart) ?: return null}"
         }
     }
 
@@ -534,8 +617,8 @@ internal object CnlGrammar {
             }
             val inner = buildList {
                 add(gradientWord(paint.gradientType))
-                if (paint.from != DesignPoint(0.0, 0.0)) add("from (${num(paint.from.x)} ${num(paint.from.y)})")
-                if (paint.to != DesignPoint(0.0, 1.0)) add("to (${num(paint.to.x)} ${num(paint.to.y)})")
+                if (paint.from != DesignPoint(0.0, 0.0)) add("from (${num(paint.from.x.orZero)} ${num(paint.from.y.orZero)})")
+                if (paint.to != DesignPoint(0.0, 1.0)) add("to (${num(paint.to.x.orZero)} ${num(paint.to.y.orZero)})")
                 if (stops.isNotEmpty()) add("stops " + stops.joinToString(" "))
                 addAll(fillPropsWords(paint.opacity, paint.blendMode, paint.visible))
             }
@@ -543,9 +626,9 @@ internal object CnlGrammar {
         }
         is DesignPaint.Image -> {
             val inner = buildList {
-                add("asset «${paint.assetId}»")
+                add("asset ${quoteText(paint.assetId)}")
                 fillModeWord(paint.scaleMode)?.let { add(it) }
-                paint.focalPoint?.let { add("focus (${num(it.x)} ${num(it.y)})") }
+                paint.focalPoint?.let { add("focus (${num(it.x.orZero)} ${num(it.y.orZero)})") }
                 if (paint.replaceable) add("replaceable")
                 addAll(fillPropsWords(paint.opacity, paint.blendMode, paint.visible))
             }
@@ -553,10 +636,10 @@ internal object CnlGrammar {
         }
         is DesignPaint.Video -> {
             val inner = buildList {
-                add("asset «${paint.assetId}»")
+                add("asset ${quoteText(paint.assetId)}")
                 fillModeWord(paint.scaleMode)?.let { add(it) }
-                paint.focalPoint?.let { add("focus (${num(it.x)} ${num(it.y)})") }
-                if (paint.posterAssetId.isNotEmpty()) add("poster «${paint.posterAssetId}»")
+                paint.focalPoint?.let { add("focus (${num(it.x.orZero)} ${num(it.y.orZero)})") }
+                if (paint.posterAssetId.isNotEmpty()) add("poster ${quoteText(paint.posterAssetId)}")
                 if (paint.autoplay) add("autoplay")
                 if (paint.loop) add("loop")
                 if (!paint.muted) add("muted no")
@@ -596,12 +679,15 @@ internal object CnlGrammar {
     private fun renderStroke(node: DesignNode): String? {
         val strokes = node.strokes ?: return null
         if (strokes.paints.isEmpty()) return null
-        if (strokes.weightPerSide != null) return null // reader gap → ir-splice
+        // The flat `stroke #hex [N] [align]` form only fits a single plain solid with default
+        // paint props; a paint stack, non-solid paint, per-paint props, dash/cap/join or
+        // per-side weight uses the record form.
         val trivial = strokes.paints.size == 1 && strokes.dashPattern.isEmpty() &&
-            strokes.cap == "butt" && strokes.join == "miter"
+            strokes.cap == "butt" && strokes.join == "miter" && strokes.weightPerSide == null &&
+            isPlainSolid(strokes.paints[0])
         if (trivial) {
-            val paint = strokes.paints[0] as? DesignPaint.Solid ?: return renderStrokeRecord(strokes)
-            val token = colorToken(paint.color) ?: return null
+            val paint = strokes.paints[0] as DesignPaint.Solid
+            val token = colorToken(paint.color) ?: return renderStrokeRecord(strokes)
             val parts = mutableListOf("stroke", token)
             strokes.weight.literalOrNull()?.takeIf { it != 1.0 }?.let { parts += num(it) }
             when (strokes.align) {
@@ -614,11 +700,21 @@ internal object CnlGrammar {
         return renderStrokeRecord(strokes)
     }
 
+    /** A single-solid paint at every default (opacity 1, blend normal, visible) — the flat form. */
+    private fun isPlainSolid(paint: DesignPaint): Boolean {
+        val solid = paint as? DesignPaint.Solid ?: return false
+        return solid.opacity.literalOrNull() == 1.0 && solid.blendMode == "normal" &&
+            solid.visible.literalOrNull() != false
+    }
+
     private fun renderStrokeRecord(strokes: DesignStrokes): String? {
-        val colors = strokes.paints.map { strokePaintColor(it) ?: return null }
+        // Each layer is a full fill-style paint phrase (color/gradient/image/video with props).
+        val layers = strokes.paints.map { renderPaint(it) ?: return null }
+        val perSide = strokes.weightPerSide?.let { perSideClause(it) ?: return null }
         val parts = buildList {
-            colors.forEach { add("color $it") }
+            addAll(layers)
             strokes.weight.literalOrNull()?.takeIf { it != 1.0 }?.let { add("weight ${num(it)}") }
+            perSide?.let { add(it) }
             when (strokes.align) {
                 StrokeAlign.Inside -> {}
                 StrokeAlign.Outside -> add("align outside")
@@ -631,8 +727,14 @@ internal object CnlGrammar {
         return "stroke (" + parts.joinToString(" ") + ")"
     }
 
-    private fun strokePaintColor(paint: DesignPaint): String? =
-        (paint as? DesignPaint.Solid)?.let { colorToken(it.color) }
+    /** `weight-per-side (T R B L)` from literal insets; null when any side is a non-literal binding. */
+    private fun perSideClause(insets: DesignInsets): String? {
+        val top = insets.top.literalOrNull() ?: return null
+        val right = insets.right.literalOrNull() ?: return null
+        val bottom = insets.bottom.literalOrNull() ?: return null
+        val left = insets.left.literalOrNull() ?: return null
+        return "weight-per-side (${num(top)} ${num(right)} ${num(bottom)} ${num(left)})"
+    }
 
     private fun renderEffects(node: DesignNode): String? {
         if (node.effects.isEmpty()) return null
@@ -647,8 +749,8 @@ internal object CnlGrammar {
                 "dropShadow" + (shadowTail(effect.color, effect.offset, effect.blur, effect.spread) ?: return null)
             is DesignEffect.InnerShadow ->
                 "innerShadow" + (shadowTail(effect.color, effect.offset, effect.blur, effect.spread) ?: return null)
-            is DesignEffect.LayerBlur -> "layerBlur ${num(effect.radius)}"
-            is DesignEffect.BackgroundBlur -> "backgroundBlur ${num(effect.radius)}"
+            is DesignEffect.LayerBlur -> "layerBlur ${numberToken(effect.radius) ?: return null}"
+            is DesignEffect.BackgroundBlur -> "backgroundBlur ${numberToken(effect.radius) ?: return null}"
             is DesignEffect.Unknown -> effect.rawType
         }
     }
@@ -656,31 +758,50 @@ internal object CnlGrammar {
     private fun shadowTail(
         color: Bindable<DesignColor>,
         offset: DesignPoint,
-        blur: Double,
-        spread: Double,
+        blur: Bindable<Double>,
+        spread: Bindable<Double>,
     ): String? {
         val colorTok = colorToken(color) ?: return null
         val parts = buildList {
             add("color $colorTok")
-            if (offset.x != 0.0 || offset.y != 0.0) add("offset (${num(offset.x)} ${num(offset.y)})")
-            if (blur != 0.0) add("blur ${num(blur)}")
-            if (spread != 0.0) add("spread ${num(spread)}")
+            // A ref axis has no literal (`literalOrNull() == null`), so it emits even though `orZero` is 0.
+            if (offset.x.literalOrNull() != 0.0 || offset.y.literalOrNull() != 0.0) {
+                add("offset (${numberToken(offset.x) ?: return null} ${numberToken(offset.y) ?: return null})")
+            }
+            if (blur.literalOrNull() != 0.0) add("blur ${numberToken(blur) ?: return null}")
+            if (spread.literalOrNull() != 0.0) add("spread ${numberToken(spread) ?: return null}")
         }
         return " " + parts.joinToString(" ")
     }
 
     private fun renderRadius(node: DesignNode): String? {
         val radius = node.cornerRadius ?: return null
-        val tl = radius.topLeft.literalOrNull()
-        val tr = radius.topRight.literalOrNull()
-        val br = radius.bottomRight.literalOrNull()
-        val bl = radius.bottomLeft.literalOrNull()
-        if (tl == null || tr == null || br == null || bl == null) return null
+        val tl = radius.topLeft
+        val tr = radius.topRight
+        val br = radius.bottomRight
+        val bl = radius.bottomLeft
+        fun token(value: Bindable<Double>): String? = numberToken(value)
         return if (tl == tr && tr == br && br == bl) {
-            if (tl == 0.0) null else "radius ${num(tl)}"
+            if ((tl as? Bindable.Value)?.value == 0.0) null else "radius ${token(tl) ?: return null}"
         } else {
-            "radius (${num(tl)} ${num(tr)} ${num(br)} ${num(bl)})"
+            "radius (${token(tl) ?: return null} ${token(tr) ?: return null} " +
+                "${token(br) ?: return null} ${token(bl) ?: return null})"
         }
+    }
+
+    private fun numberToken(value: Bindable<Double>): String? = when (value) {
+        is Bindable.Value -> num(value.value)
+        is Bindable.VarRef -> "\$${value.id}"
+        is Bindable.DataRef -> "{{${value.expression.raw}}}"
+        is Bindable.PropRef -> "\$prop.${value.name}"
+    }
+
+    /** Integer counterpart of [numberToken]: a literal count, or `$id`/`{{expr}}`/`$prop.x` for refs. */
+    private fun intToken(value: Bindable<Int>): String? = when (value) {
+        is Bindable.Value -> value.value.toString()
+        is Bindable.VarRef -> "\$${value.id}"
+        is Bindable.DataRef -> "{{${value.expression.raw}}}"
+        is Bindable.PropRef -> "\$prop.${value.name}"
     }
 
     private fun renderCornerSmoothing(node: DesignNode): String? {
@@ -694,6 +815,7 @@ internal object CnlGrammar {
     private fun renderStyleRefs(node: DesignNode): String? {
         val parts = buildList {
             node.fillStyleId.takeIf { it.isNotEmpty() }?.let { add("fill $it") }
+            node.strokeStyleId.takeIf { it.isNotEmpty() }?.let { add("stroke $it") }
             (node.kind as? DesignNodeKind.Text)?.textStyleId?.takeIf { it.isNotEmpty() }?.let { add("text $it") }
             node.effectStyleId.takeIf { it.isNotEmpty() }?.let { add("effect $it") }
             node.gridStyleId.takeIf { it.isNotEmpty() }?.let { add("grid $it") }
@@ -705,7 +827,7 @@ internal object CnlGrammar {
         is Bindable.Value -> if (o.value == 1.0) null else "opacity ${num(o.value)}"
         is Bindable.VarRef -> "opacity \$${o.id}"
         is Bindable.DataRef -> "opacity {{${o.expression.raw}}}"
-        is Bindable.PropRef -> null // reader gap: $prop unreachable via typed-block YAML
+        is Bindable.PropRef -> "opacity \$prop.${o.name}"
     }
 
     private fun renderAlign(node: DesignNode): String? {
@@ -726,18 +848,24 @@ internal object CnlGrammar {
         return "size ${num(size)}"
     }
 
+    private fun renderTextKey(node: DesignNode): String? {
+        val text = node.kind as? DesignNodeKind.Text ?: return null
+        return text.content?.key?.takeIf { it.isNotEmpty() }?.let { "key $it" }
+    }
+
     private fun renderFontWeight(node: DesignNode): String? {
         val text = node.kind as? DesignNodeKind.Text ?: return null
-        return when (text.textStyle?.fontWeight?.literalOrNull()) {
+        val weight = text.textStyle?.fontWeight?.literalOrNull() ?: return null
+        return when (weight) {
             700.0 -> "bold"
             600.0 -> "semibold"
             300.0 -> "thin"
-            else -> null // arbitrary weights get `weight N` in a later phase
+            else -> "weight ${num(weight)}"
         }
     }
 
     private fun renderFontFamily(node: DesignNode): String? =
-        textStyleOf(node)?.fontFamily?.takeIf { it.isNotEmpty() }?.let { "font «$it»" }
+        textStyleOf(node)?.fontFamily?.takeIf { it.isNotEmpty() }?.let { "font ${quoteText(it)}" }
 
     private fun renderLineHeight(node: DesignNode): String? =
         textStyleOf(node)?.lineHeight?.let { "line-height ${unit(it)}" }
@@ -798,6 +926,22 @@ internal object CnlGrammar {
     private fun renderTextStyleRef(node: DesignNode): String? =
         asText(node)?.textStyleId?.takeIf { it.isNotEmpty() }?.let { "text-style $$it" }
 
+    private fun renderCharacters(node: DesignNode): String? {
+        val characters = asText(node)?.characters ?: return null
+        return when (characters) {
+            is Bindable.Value -> null
+            is Bindable.VarRef -> "characters \$${characters.id}"
+            is Bindable.DataRef -> "characters {{${characters.expression.raw}}}"
+            is Bindable.PropRef -> "characters \$prop.${characters.name}"
+        }
+    }
+
+    private fun renderVariableModes(node: DesignNode): String? {
+        if (node.variableModes.isEmpty()) return null
+        val pairs = node.variableModes.entries.sortedBy { it.key }.joinToString(" ") { "${it.key} ${it.value}" }
+        return "modes ($pairs)"
+    }
+
     private fun renderAutoSize(node: DesignNode): String? = when (asText(node)?.autoResize) {
         TextAutoResize.Height -> "autosize height"
         TextAutoResize.WidthAndHeight -> "autosize both"
@@ -814,9 +958,19 @@ internal object CnlGrammar {
         val links = asText(node)?.links?.takeIf { it.isNotEmpty() } ?: return null
         return links.sortedWith(compareBy({ it.start }, { it.end }))
             .joinToString(" ") { link ->
-                val target = if (link.url.isNotEmpty()) "url «${link.url}»" else "to ${link.nodeTarget}"
+                val target = if (link.url.isNotEmpty()) "url ${quoteText(link.url)}" else "to ${link.nodeTarget}"
                 "link (range (${link.start} ${link.end}) $target)"
             }
+    }
+
+    private fun renderSpans(node: DesignNode): String? {
+        // Emit in IR list order (a faithful inverse of the parser/merger, which preserve authored
+        // order). Sorting here would reorder unsorted authored spans on round-trip and flip overlap
+        // precedence — the IR list order is load-bearing for both fidelity and write-back veto.
+        val ranges = asText(node)?.styleRanges?.filter { it.styleRef.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: return null
+        return ranges.joinToString(" ") { range ->
+            "span (range (${range.start} ${range.end}) style ${range.styleRef})"
+        }
     }
 
     private fun renderListSettings(node: DesignNode): String? {
@@ -873,11 +1027,11 @@ internal object CnlGrammar {
     private fun renderNestedOverrides(node: DesignNode): String? {
         val instance = asInstance(node) ?: return null
         val phrases = instance.overrides.mapNotNull { override ->
-            if (override.slotContent != null) return@mapNotNull null
+            // Slot fills render via `slot`; property-group overrides (with their variant/props)
+            // render via `override` — this phrase covers pure variant/props nested overrides.
+            if (override.slotContent != null || override.hasSetGroups()) return@mapNotNull null
             val variant = override.variant
             val props = override.props
-            // Anything else (fills/opacity/visible/characters/textStyle/cornerRadius set) is the
-            // overrides.set reader gap → skip so the node falls through to ir-splice.
             if (variant.isNullOrEmpty() && props.isNullOrEmpty()) return@mapNotNull null
             val target = override.target.joinToString("/")
             val propsPart = if (props.isNullOrEmpty()) null else (propsPhrase(props) ?: return null)
@@ -888,6 +1042,67 @@ internal object CnlGrammar {
             "nested $target (" + inner.joinToString(" ") + ")"
         }
         return phrases.takeIf { it.isNotEmpty() }?.joinToString(" ")
+    }
+
+    private fun InstanceOverride.hasSetGroups(): Boolean =
+        fills != null || strokes != null || opacity != null || visible != null ||
+            characters != null || textStyle != null || cornerRadius != null
+
+    /** The property-group kinds an `override ( … )` group may carry, in canonical order. */
+    private val overrideBucketKinds = setOf(
+        CnlPropertyKind.Fill, CnlPropertyKind.FillComplex,
+        CnlPropertyKind.Stroke, CnlPropertyKind.StrokeComplex,
+        CnlPropertyKind.Radius, CnlPropertyKind.Opacity, CnlPropertyKind.Visible, CnlPropertyKind.Characters,
+        CnlPropertyKind.FontFamily, CnlPropertyKind.FontSize, CnlPropertyKind.FontWeight,
+        CnlPropertyKind.LineHeight, CnlPropertyKind.Tracking, CnlPropertyKind.ParagraphSpacing,
+        CnlPropertyKind.TextAlign, CnlPropertyKind.TextValign, CnlPropertyKind.TextCase,
+        CnlPropertyKind.TextDecoration, CnlPropertyKind.Features, CnlPropertyKind.Axes,
+    )
+    private val overrideBucketDescriptors by lazy {
+        descriptors.filter { it.kind in overrideBucketKinds }.sortedBy { it.order }
+    }
+
+    /** `override <target> ( … )` — one phrase per [InstanceOverride] with property groups set. */
+    private fun renderSetOverrides(node: DesignNode): String? {
+        val instance = asInstance(node) ?: return null
+        val phrases = instance.overrides.mapNotNull { override ->
+            if (override.slotContent != null || !override.hasSetGroups()) return@mapNotNull null
+            val target = override.target.joinToString("/").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            val proxy = overrideProxy(override)
+            val inner = mutableListOf<String>()
+            overrideBucketDescriptors.forEach { descriptor -> descriptor.render(proxy)?.let { inner += it } }
+            // Values the node renderers treat as defaults and skip, but an override states explicitly.
+            if ((override.visible as? Bindable.Value)?.value == true) inner += "visible yes"
+            if ((override.opacity as? Bindable.Value)?.value == 1.0) inner += "opacity 1"
+            (override.characters as? Bindable.Value)?.let { inner += "characters ${quoteText(it.value)}" }
+            if (override.cornerRadius != null && renderRadius(proxy) == null) inner += "radius 0"
+            override.variant?.takeIf { it.isNotEmpty() }?.let { inner += "variant (" + variantWords(it) + ")" }
+            override.props?.takeIf { it.isNotEmpty() }?.let { inner += propsPhrase(it) ?: return null }
+            // Empty groups (e.g. `fills: []`) have no phrase form: the whole sentence is unexpressible.
+            if (inner.isEmpty()) return null
+            "override $target (" + inner.joinToString(" ") + ")"
+        }
+        return phrases.takeIf { it.isNotEmpty() }?.joinToString(" ")
+    }
+
+    /** A synthetic node carrying just the override's property groups, so bucket renderers apply. */
+    private fun overrideProxy(override: InstanceOverride): DesignNode {
+        val textish = override.characters != null || override.textStyle != null
+        val kind = if (textish) {
+            DesignNodeKind.Text(characters = override.characters ?: "".bindable(), textStyle = override.textStyle)
+        } else {
+            DesignNodeKind.Frame
+        }
+        return DesignNode(
+            id = "",
+            type = if (textish) "text" else "frame",
+            kind = kind,
+            fills = override.fills,
+            strokes = override.strokes,
+            opacity = override.opacity ?: 1.0.bindable(),
+            visible = override.visible ?: true.bindable(),
+            cornerRadius = override.cornerRadius,
+        )
     }
 
     private fun slotFillPhrase(fill: DesignNode): String? {
@@ -914,12 +1129,12 @@ internal object CnlGrammar {
     }
 
     private fun propWord(name: String, value: PropValue): String? = when (value) {
-        is PropValue.Text -> "$name «${value.value}»"
+        is PropValue.Text -> "$name ${quoteText(value.value)}"
         is PropValue.Bool -> "$name ${value.value}"
         is PropValue.Number -> "$name ${num(value.value)}"
         is PropValue.Data -> "$name {{${value.expression.raw}}}"
         is PropValue.Reference -> "$name (swap ${value.value})"
-        is PropValue.Content -> "$name (text «${value.content.defaultText}» key ${value.content.key})"
+        is PropValue.Content -> "$name (text ${quoteText(value.content.defaultText)} key ${value.content.key})"
         is PropValue.SlotContent -> null // authored via `slot`, not inline props
     }
 
@@ -928,16 +1143,19 @@ internal object CnlGrammar {
     private fun renderMedia(node: DesignNode): String? {
         val m = (node.kind as? DesignNodeKind.Media)?.media ?: return null
         val inner = buildList {
-            if (m.assetId.isNotEmpty()) add("asset ${m.assetId}")
+            mediaIdWord("asset", m.assetId)?.let { add(it) }
             if (m.kind == MediaKind.Video) add("video")
             fillModeWord(m.fillMode)?.let { add(it) }
             m.focalPoint?.let { fp ->
-                add(if (fp.x == 0.5 && fp.y == 0.5) "focus center" else "focus (${num(fp.x)} ${num(fp.y)})")
+                add(
+                    if (fp.x.literalOrNull() == 0.5 && fp.y.literalOrNull() == 0.5) "focus center"
+                    else "focus (${numberToken(fp.x) ?: return null} ${numberToken(fp.y) ?: return null})",
+                )
             }
-            m.alt?.let { alt -> if (alt.key.isEmpty() && alt.defaultText.isNotEmpty()) add("alt «${alt.defaultText}»") }
+            m.alt?.let { alt -> if (alt.key.isEmpty() && alt.defaultText.isNotEmpty()) add("alt ${quoteText(alt.defaultText)}") }
             m.opacity.literalOrNull()?.takeIf { it != 1.0 }?.let { add("opacity ${num(it)}") }
             if (m.blendMode != "normal") add("blend ${m.blendMode}")
-            if (m.posterAssetId.isNotEmpty()) add("poster ${m.posterAssetId}")
+            mediaIdWord("poster", m.posterAssetId)?.let { add(it) }
             if (m.autoplay) add("autoplay")
             if (m.loop) add("loop")
             if (m.replaceable) add("replaceable")
@@ -945,6 +1163,20 @@ internal object CnlGrammar {
         }
         if (inner.isEmpty()) return null // a bare, all-default Media node emits just `Image`
         return "media (" + inner.joinToString(" ") + ")"
+    }
+
+    /** `asset <id>` / `poster <id>` — a literal id, `$var`, or `{{expr}}`; empty literal is omitted. */
+    private fun mediaIdWord(word: String, value: Bindable<String>): String? {
+        val literal = value.literalOrNull()
+        if (literal != null) return if (literal.isEmpty()) null else "$word $literal"
+        return "$word ${stringToken(value)}"
+    }
+
+    private fun stringToken(value: Bindable<String>): String = when (value) {
+        is Bindable.Value -> value.value
+        is Bindable.VarRef -> "\$${value.id}"
+        is Bindable.DataRef -> "{{${value.expression.raw}}}"
+        is Bindable.PropRef -> "\$prop.${value.name}"
     }
 
     private fun renderShapePoints(node: DesignNode): String? =
@@ -973,7 +1205,7 @@ internal object CnlGrammar {
 
     private fun renderVectorPaths(node: DesignNode): String? {
         val paths = (node.kind as? DesignNodeKind.Shape)?.paths?.takeIf { it.isNotEmpty() } ?: return null
-        return paths.joinToString(" ") { p -> "path «${p.d}»" + if (p.windingRule == "evenodd") " evenodd" else "" }
+        return paths.joinToString(" ") { p -> "path ${quoteText(p.d)}" + if (p.windingRule == "evenodd") " evenodd" else "" }
     }
 
     private fun renderNetwork(node: DesignNode): String? {
@@ -1049,10 +1281,18 @@ internal object CnlGrammar {
             MaskType.Luminance -> "luminance"
         }
         val clips = mk.appliesTo.takeIf { it.isNotEmpty() }?.let { " clips (${it.joinToString(" ")})" }.orEmpty()
-        return "mask $typeWord$clips"
+        val from = mk.source.takeIf { it.isNotEmpty() }?.let { " from $it" }.orEmpty()
+        return "mask $typeWord$clips$from"
     }
 
     // --- interactions & motion (P7) ---
+
+    /**
+     * Whether [interaction] renders to a CNL phrase (i.e. survives structural re-emit). `false`
+     * mirrors [renderInteraction] returning `null` — the interaction is not expressible in CNL and
+     * a subtree carrying it must stay in-memory rather than persist a behavior-stripped section.
+     */
+    fun canRenderInteraction(interaction: DesignInteraction): Boolean = renderInteraction(interaction) != null
 
     private fun renderInteractions(node: DesignNode): String? {
         if (node.interactions.isEmpty()) return null
@@ -1142,7 +1382,7 @@ internal object CnlGrammar {
         val backgroundToken = if (background != null) colorToken(background) ?: return null else null
         val parts = buildList {
             if (overlay.position != OverlayPosition.Center) add("position ${overlayPositionWord(overlay.position)}")
-            overlay.offset?.let { add("offset (${num(it.x)} ${num(it.y)})") }
+            overlay.offset?.let { add("offset (${num(it.x.orZero)} ${num(it.y.orZero)})") }
             if (!overlay.closeOnOutsideClick) add("closeOnOutside (false)")
             backgroundToken?.let { add("background $it") }
         }
@@ -1159,9 +1399,8 @@ internal object CnlGrammar {
 
     private fun renderMotion(node: DesignNode): String? {
         val motion = node.motion ?: return null
-        if (motion.ref.isEmpty()) return null // empty ref has no clean surface → ir-splice
-        val head = "motion (${motion.ref})"
-        val fallback = motion.fallback ?: return head
+        val head = if (motion.ref.isEmpty()) "motion" else "motion (${motion.ref})"
+        val fallback = motion.fallback ?: return if (motion.ref.isEmpty()) null else head
         // Frame property keys outside the known 5 are droppable by the emitter → ir-splice rather than lose them.
         if (fallback.frames.any { frame -> frame.properties.keys.any { it !in motionFrameOrder } }) return null
         val parts = buildList {
@@ -1241,7 +1480,7 @@ internal object CnlGrammar {
             val inner = buildString {
                 append(exportFormatWord(s.format))
                 if (s.scale != 1.0) append(" at ${num(s.scale)}")
-                if (s.suffix.isNotEmpty()) append(" «${s.suffix}»")
+                if (s.suffix.isNotEmpty()) append(" ${quoteText(s.suffix)}")
             }
             "($inner)"
         }

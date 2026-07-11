@@ -22,6 +22,8 @@ internal object CnlVocabulary {
         "button" to CnlNoun("text", role = "button"),
         "frame" to node("frame"), "container" to node("frame"),
         "group" to node("group"),
+        "section" to node("section"),
+        "screen" to node("screen"),
         "image" to node("media"),
         "icon" to node("vector"), "vector" to node("vector"),
         "instance" to node("instance"),
@@ -49,10 +51,16 @@ internal object CnlVocabulary {
         "size" to CnlPropertyKind.Size,
         "position" to CnlPropertyKind.Position,
         "opacity" to CnlPropertyKind.Opacity,
+        "visible" to CnlPropertyKind.Visible,
+        "locked" to CnlPropertyKind.Locked,
+        "modes" to CnlPropertyKind.VariableModes,
+        "variablemodes" to CnlPropertyKind.VariableModes,
         "align" to CnlPropertyKind.AlignParent,
         "id" to CnlPropertyKind.Id,
+        "name" to CnlPropertyKind.NodeName,
         // Typography-deep (Text nodes).
         "font" to CnlPropertyKind.FontFamily,
+        "weight" to CnlPropertyKind.FontWeight,
         "line-height" to CnlPropertyKind.LineHeight,
         "tracking" to CnlPropertyKind.Tracking,
         "paragraph-spacing" to CnlPropertyKind.ParagraphSpacing,
@@ -68,7 +76,9 @@ internal object CnlVocabulary {
         "key" to CnlPropertyKind.TextKey,
         "text-style" to CnlPropertyKind.TextStyleRef,
         "list" to CnlPropertyKind.ListSettings,
+        "characters" to CnlPropertyKind.Characters,
         "link" to CnlPropertyKind.Link,
+        "span" to CnlPropertyKind.Span,
         // Layout-deep.
         "wrap" to CnlPropertyKind.Wrap,
         "clip" to CnlPropertyKind.Clip,
@@ -84,7 +94,7 @@ internal object CnlVocabulary {
         "place" to CnlPropertyKind.Place,
         "guides" to CnlPropertyKind.Guides,
         "grids" to CnlPropertyKind.Grids,
-        // Components (instance side). Group sub-words (axis names, swap/text/key/data, min/max/allow)
+        // Components. Group sub-words (axis names, swap/text/key/data, min/max/allow)
         // resolve locally inside the consumers, never here (group-scoping keystone).
         "of" to CnlPropertyKind.ComponentRef,
         "library" to CnlPropertyKind.LibraryRef,
@@ -94,6 +104,12 @@ internal object CnlVocabulary {
         "reset" to CnlPropertyKind.ResetOverrides,
         "slot" to CnlPropertyKind.SlotOverride,
         "nested" to CnlPropertyKind.NestedOverride,
+        "override" to CnlPropertyKind.SetOverride,
+        "component-name" to CnlPropertyKind.ComponentName,
+        "componentname" to CnlPropertyKind.ComponentName,
+        "set" to CnlPropertyKind.ComponentSet,
+        "axis" to CnlPropertyKind.ComponentAxis,
+        "prop" to CnlPropertyKind.ComponentPropDefinition,
         // Media / shape params / vector / mask (P6). Group-internal words (asset, focus, video, crop, vertex,
         // segment, region, in, out, mirror, corner, loops, evenodd, alpha, subtract, clips, from…) resolve
         // LOCALLY inside consumers — do NOT add them here. "icon" is ALSO a noun; that is fine (nouns are only

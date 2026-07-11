@@ -120,12 +120,12 @@ class LayoutBlockReaderTest {
         assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
         val layout = assertIs<LayoutPatch>(patch)
         assertEquals(LayoutMode.Grid, layout.mode)
-        assertEquals(List(12) { GridTrack.Flex(1.0) }, layout.gridColumns)
+        assertEquals(List(12) { GridTrack.Flex(1.0.bindable()) }, layout.gridColumns)
         assertEquals(Bindable.VarRef("space.4"), layout.columnGap)
         assertEquals(Bindable.VarRef("space.4"), layout.rowGap)
         assertEquals(null, layout.gridRows)
-        assertEquals(GridTrack.Flex(1.0), layout.implicitRows)
-        assertEquals(96.0, layout.implicitRowMin)
+        assertEquals(GridTrack.Flex(1.0.bindable()), layout.implicitRows)
+        assertEquals(96.0.bindable(), layout.implicitRowMin)
         assertEquals(
             GridPlacement(column = 1, row = 1, columnSpan = 8, rowSpan = 2),
             layout.placement,
@@ -190,9 +190,9 @@ class LayoutBlockReaderTest {
                 grids = listOf(
                     LayoutGridDefinition(
                         type = LayoutGridType.Columns,
-                        count = 12,
-                        gutter = 24.0,
-                        margin = 72.0,
+                        count = 12.bindable(),
+                        gutter = 24.0.bindable(),
+                        margin = 72.0.bindable(),
                         alignment = LayoutGridAlignment.Stretch,
                     ),
                 ),

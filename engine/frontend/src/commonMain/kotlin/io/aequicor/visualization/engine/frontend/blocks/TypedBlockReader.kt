@@ -15,6 +15,7 @@ import io.aequicor.visualization.engine.frontend.blocks.readers.readOverridesBlo
 import io.aequicor.visualization.engine.frontend.blocks.readers.readPropsBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readResponsiveBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readStyleBlock
+import io.aequicor.visualization.engine.frontend.blocks.readers.readStylesBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readTextBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readVariablesBlock
 import io.aequicor.visualization.engine.frontend.blocks.readers.readVectorBlock
@@ -53,6 +54,7 @@ object TypedBlockReader {
             TypedBlockKind.Motion -> readMotionBlock(entry.value, reading)
             TypedBlockKind.Responsive -> readResponsiveBlock(entry.value, reading)
             TypedBlockKind.Variables -> readVariablesBlock(entry.value, reading)
+            TypedBlockKind.Styles -> readStylesBlock(entry.value, reading)
             TypedBlockKind.Handoff -> readHandoffBlock(entry.value, reading)
             TypedBlockKind.Export -> readExportBlock(entry.value, reading)
             null -> extensions.find(entry.key)?.let { readWith(it, entry.value, reading) }

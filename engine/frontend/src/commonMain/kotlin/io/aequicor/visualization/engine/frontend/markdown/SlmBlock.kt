@@ -32,6 +32,7 @@ sealed interface SlmBlock {
 data class HeadingBlock(
     val level: Int,
     val inlines: List<SlmInline>,
+    val cnlElement: CnlElement? = null,
     override val span: SlmSourceSpan,
 ) : SlmBlock
 

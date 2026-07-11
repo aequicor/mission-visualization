@@ -19,7 +19,7 @@ internal fun readMediaBlock(value: YamlValue, reading: BlockReading): MediaPatch
     }
     map.warnUnknownKeys(knownKeys, reading)
     return MediaPatch(
-        asset = map.string("asset", reading),
+        asset = map.value("asset")?.let { bindableString(it, "asset", reading) },
         kind = map.enum("kind", ReaderEnums.mediaKind, reading),
         fillMode = map.enum("fillMode", ReaderEnums.fillMode, reading),
         focalPoint = readFocalPoint(map.value("focalPoint"), reading),
@@ -27,7 +27,7 @@ internal fun readMediaBlock(value: YamlValue, reading: BlockReading): MediaPatch
         replaceable = map.boolean("replaceable", reading),
         opacity = map.bindableDouble("opacity", reading),
         blendMode = map.string("blendMode", reading),
-        poster = map.string("poster", reading),
+        poster = map.value("poster")?.let { bindableString(it, "poster", reading) },
         autoplay = map.boolean("autoplay", reading),
         loop = map.boolean("loop", reading),
         muted = map.boolean("muted", reading),

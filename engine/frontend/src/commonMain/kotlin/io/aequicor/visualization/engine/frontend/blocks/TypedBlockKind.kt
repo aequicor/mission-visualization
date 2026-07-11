@@ -1,10 +1,9 @@
 package io.aequicor.visualization.engine.frontend.blocks
 
 /**
- * Reserved top-level keys of typed attribute blocks. `overrides` is included by design
- * decision (the spec's reserved-key table omits it but uses it in examples). `ir` is
- * reserved as well but is only valid as a fenced code block, so it is not listed here;
- * an unfenced `ir:` entry is an error.
+ * Typed attribute-block kinds — the lowering targets that CNL desugar produces (via
+ * [fromKey]). `overrides` is included by design decision (the spec's reserved-key table
+ * omits it but uses it in examples).
  */
 enum class TypedBlockKind(val key: String) {
     Node("node"),
@@ -23,6 +22,7 @@ enum class TypedBlockKind(val key: String) {
     Motion("motion"),
     Responsive("responsive"),
     Variables("variables"),
+    Styles("styles"),
     Handoff("handoff"),
     Export("export"),
     ;
@@ -30,7 +30,11 @@ enum class TypedBlockKind(val key: String) {
     companion object {
         fun fromKey(key: String): TypedBlockKind? = entries.firstOrNull { it.key == key }
 
-        /** All reserved keys, including fenced-only `ir`. */
+        /**
+         * All built-in reserved keys, including fenced-only `ir`. Used to validate that a
+         * registered [io.aequicor.visualization.engine.frontend.blocks.TypedBlockExtension]
+         * key does not collide with a built-in kind.
+         */
         val reservedKeys: Set<String> = entries.map { it.key }.toSet() + "ir"
     }
 }

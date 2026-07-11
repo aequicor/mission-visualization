@@ -12,6 +12,7 @@ import io.aequicor.visualization.engine.frontend.blocks.MotionPatch
 import io.aequicor.visualization.engine.frontend.blocks.NodePatch
 import io.aequicor.visualization.engine.frontend.blocks.NodePositionMode
 import io.aequicor.visualization.engine.frontend.blocks.OverridesPatch
+import io.aequicor.visualization.engine.frontend.blocks.SetOverridePatch
 import io.aequicor.visualization.engine.frontend.blocks.PropsPatch
 import io.aequicor.visualization.engine.frontend.blocks.ExtensionPatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
@@ -19,6 +20,7 @@ import io.aequicor.visualization.engine.frontend.blocks.ResponsiveVariantPatch
 import io.aequicor.visualization.engine.frontend.blocks.ShapeBlockExtension
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
+import io.aequicor.visualization.engine.frontend.blocks.StylesPatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
 import io.aequicor.visualization.engine.frontend.blocks.VariablesPatch
@@ -37,6 +39,7 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignNodePatch
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignTable
@@ -187,15 +190,15 @@ class PatchMerger(
                 exportSettings = if (patch.enabled == false) emptyList() else patch.settings,
             )
             // Document-level patches are lifted by the normalizer, not applied to nodes.
-            is VariablesPatch, is HandoffPatch -> node
+            is VariablesPatch, is StylesPatch, is HandoffPatch -> node
         }
     }
 
     private fun applyNode(node: DesignNode, patch: NodePatch): DesignNode {
         val position = if (patch.x != null || patch.y != null) {
             DesignPoint(
-                x = patch.x ?: node.position?.x ?: 0.0,
-                y = patch.y ?: node.position?.y ?: 0.0,
+                x = patch.x ?: node.position?.x?.orZero ?: 0.0,
+                y = patch.y ?: node.position?.y?.orZero ?: 0.0,
             )
         } else {
             node.position
@@ -208,6 +211,7 @@ class PatchMerger(
             visible = patch.visible ?: node.visible,
             locked = patch.locked ?: node.locked,
             order = patch.order ?: node.order,
+            variableModes = patch.variableModes?.let { node.variableModes + it } ?: node.variableModes,
             rotation = patch.rotation ?: node.rotation,
             position = position,
             constraints = DesignConstraints(
@@ -286,6 +290,7 @@ class PatchMerger(
         patch.overflowX?.let { scroll = scroll.copy(overflowX = it) }
         patch.overflowY?.let { scroll = scroll.copy(overflowY = it) }
         patch.scrollDirection?.let { scroll = scroll.copy(overflow = it) }
+        patch.scrollSticky?.let { scroll = scroll.copy(sticky = it) }
         patch.scrollFixedChildren?.let { scroll = scroll.copy(fixedChildren = it) }
 
         val absolute = patch.ignoreAutoLayout == true ||
@@ -311,8 +316,8 @@ class PatchMerger(
         }
         val position = if (patch.positionX != null || patch.positionY != null) {
             DesignPoint(
-                x = patch.positionX ?: node.position?.x ?: 0.0,
-                y = patch.positionY ?: node.position?.y ?: 0.0,
+                x = patch.positionX ?: node.position?.x?.orZero ?: 0.0,
+                y = patch.positionY ?: node.position?.y?.orZero ?: 0.0,
             )
         } else {
             node.position
@@ -365,6 +370,7 @@ class PatchMerger(
             strokes = patch.strokes ?: node.strokes,
             effects = patch.effects ?: node.effects,
             fillStyleId = patch.fillStyle ?: node.fillStyleId,
+            strokeStyleId = patch.strokeStyle ?: node.strokeStyleId,
             effectStyleId = patch.effectStyle ?: node.effectStyleId,
             gridStyleId = patch.gridStyle ?: node.gridStyleId,
         )
@@ -426,6 +432,7 @@ class PatchMerger(
         return node.copy(
             type = if (node.kind is DesignNodeKind.Text) node.type else "text",
             kind = kind.copy(
+                characters = patch.characters ?: kind.characters,
                 content = content,
                 textStyleId = patch.styleRef ?: kind.textStyleId,
                 textStyle = patch.typography
@@ -495,6 +502,7 @@ class PatchMerger(
                 },
             )
         }
+        patch.sets?.forEach { set -> overrides += setOverride(set) }
         patch.nestedInstances?.forEach { (targetId, nested) ->
             overrides += InstanceOverride(
                 target = listOf(targetId),
@@ -508,9 +516,36 @@ class PatchMerger(
         )
     }
 
+    /**
+     * Reads a [SetOverridePatch]'s property groups back into an [InstanceOverride]. The style/node
+     * fields map straight across; typography merges into a [DesignTextStyle] via the shared
+     * [applyText]. Only the groups the patch actually carried become non-null.
+     */
+    private fun setOverride(set: SetOverridePatch): InstanceOverride {
+        val text = set.text
+        val characters = when {
+            text?.characters != null -> text.characters
+            text?.defaultText != null -> text.defaultText.bindable()
+            else -> null
+        }
+        val textStyle = text?.typography?.let {
+            (applyText(DesignNode(id = "", type = "text", kind = DesignNodeKind.Text()), text).kind as DesignNodeKind.Text).textStyle
+        }
+        return InstanceOverride(
+            target = set.target,
+            fills = set.style?.fills,
+            strokes = set.style?.strokes,
+            opacity = set.style?.opacity,
+            visible = set.node?.visible,
+            characters = characters,
+            textStyle = textStyle,
+            cornerRadius = set.style?.radius,
+        )
+    }
+
     private fun applyMedia(node: DesignNode, patch: MediaPatch): DesignNode {
         val kind = node.kind as? DesignNodeKind.Media
-            ?: DesignNodeKind.Media(DesignMedia(assetId = ""))
+            ?: DesignNodeKind.Media(DesignMedia(assetId = "".bindable()))
         val media = kind.media
         return node.copy(
             type = if (node.kind is DesignNodeKind.Media) node.type else "media",
@@ -535,12 +570,7 @@ class PatchMerger(
 
     private fun applyVector(node: DesignNode, patch: VectorPatch, line: Int): DesignNode {
         if (patch.boolean != null) {
-            diagnostics.info(
-                "`vector.boolean` child refs (${patch.boolean.children.joinToString()}) " +
-                    "are resolved by a later stage",
-                line,
-                blockPath = "vector",
-            )
+            // Operands are the node's nested children; the operation carries only its kind.
             return node.copy(
                 type = "vector",
                 kind = DesignNodeKind.BooleanOperation(patch.boolean.op),
@@ -562,21 +592,14 @@ class PatchMerger(
         )
     }
 
-    private fun applyMask(node: DesignNode, patch: MaskPatch, line: Int): DesignNode {
-        if (!patch.source.isNullOrEmpty() && patch.source != node.id) {
-            diagnostics.info(
-                "`mask.source` \"${patch.source}\" differs from the anchor node \"${node.id}\"",
-                line,
-                blockPath = "mask",
-            )
-        }
-        return node.copy(
+    private fun applyMask(node: DesignNode, patch: MaskPatch, line: Int): DesignNode =
+        node.copy(
             mask = DesignMask(
                 type = patch.type ?: MaskType.Alpha,
                 appliesTo = patch.appliesTo ?: emptyList(),
+                source = patch.source?.takeIf { it != node.id }.orEmpty(),
             ),
         )
-    }
 
     /** Responsive variant sub-patches -> IR [DesignNodePatch] via a probe node. */
     private fun toNodePatch(variant: ResponsiveVariantPatch): DesignNodePatch {
@@ -664,7 +687,7 @@ internal fun kindForType(type: String, current: DesignNodeKind): DesignNodeKind 
     "vector" -> current as? DesignNodeKind.Shape ?: DesignNodeKind.Shape(shape = ShapeType.Vector)
     "instance" -> current as? DesignNodeKind.Instance
         ?: DesignNodeKind.Instance(componentId = "".bindable())
-    "media" -> current as? DesignNodeKind.Media ?: DesignNodeKind.Media(DesignMedia(assetId = ""))
+    "media" -> current as? DesignNodeKind.Media ?: DesignNodeKind.Media(DesignMedia(assetId = "".bindable()))
     "table" -> current as? DesignNodeKind.Table ?: DesignNodeKind.Table(DesignTable())
     "slot" -> current as? DesignNodeKind.Slot ?: DesignNodeKind.Slot("")
     "annotation" -> current as? DesignNodeKind.Annotation

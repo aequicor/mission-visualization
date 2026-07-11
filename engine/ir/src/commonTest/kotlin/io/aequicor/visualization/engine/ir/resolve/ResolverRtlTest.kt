@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.ir.resolve
 
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
@@ -97,14 +98,14 @@ class ResolverRtlTest {
     fun anchorsMapToConstraintsAndOffsetsByDirection() {
         val ltrPin = assertNotNull(resolveFirst(anchorsJson).children.firstOrNull())
         assertEquals(HorizontalConstraint.Right, ltrPin.constraints.horizontal, "LTR: inlineEnd -> right")
-        assertEquals(156.0, assertNotNull(ltrPin.position).x, "x measured from the parent's right edge")
+        assertEquals(156.0, assertNotNull(ltrPin.position).x.orZero, "x measured from the parent's right edge")
         assertEquals(VerticalConstraint.Top, ltrPin.constraints.vertical)
-        assertEquals(10.0, assertNotNull(ltrPin.position).y)
+        assertEquals(10.0, assertNotNull(ltrPin.position).y.orZero)
         assertTrue(ltrPin.layoutChild.absolute, "anchored children go out of flow")
 
         val rtlPin = assertNotNull(resolveFirst(anchorsJson, ResolveContext(locale = "ar")).children.firstOrNull())
         assertEquals(HorizontalConstraint.Left, rtlPin.constraints.horizontal, "RTL: inlineEnd -> left")
-        assertEquals(4.0, assertNotNull(rtlPin.position).x)
+        assertEquals(4.0, assertNotNull(rtlPin.position).x.orZero)
     }
 
     @Test
@@ -115,7 +116,7 @@ class ResolverRtlTest {
         )
         val pin = assertNotNull(resolveFirst(json).children.firstOrNull())
         assertEquals(HorizontalConstraint.LeftRight, pin.constraints.horizontal)
-        assertEquals(10.0, assertNotNull(pin.position).x)
+        assertEquals(10.0, assertNotNull(pin.position).x.orZero)
         assertEquals(160.0, pin.size.width, "width = parent width - both inline offsets")
     }
 }

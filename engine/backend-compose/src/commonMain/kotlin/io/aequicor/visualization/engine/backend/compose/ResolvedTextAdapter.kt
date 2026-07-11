@@ -10,6 +10,7 @@ import io.aequicor.visualization.engine.ir.model.TextCase
 import io.aequicor.visualization.engine.ir.model.TextDecorationKind
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.TextScriptPosition
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
 import io.aequicor.visualization.engine.ir.resolve.ResolvedText
 import io.aequicor.visualization.engine.ir.resolve.ResolvedTextStyle
@@ -156,7 +157,7 @@ internal fun ResolvedPaint.toTextFill(): TextFill? = when (this) {
             // Angular/diamond glyph fills approximate as a linear ramp along from->to.
             else -> TextFill.LinearGradient(
                 stops = gradientStops,
-                angleDeg = atan2(to.y - from.y, to.x - from.x) * 180.0 / PI,
+                angleDeg = atan2(to.y.orZero - from.y.orZero, to.x.orZero - from.x.orZero) * 180.0 / PI,
             )
         }
     }

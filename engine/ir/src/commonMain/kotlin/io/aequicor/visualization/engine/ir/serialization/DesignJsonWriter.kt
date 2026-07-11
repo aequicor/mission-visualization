@@ -109,6 +109,7 @@ import io.aequicor.visualization.engine.ir.model.VariableType
 import io.aequicor.visualization.engine.ir.model.VariableValue
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.engine.ir.model.bindable
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -456,7 +457,7 @@ private fun JsonObjectBuilder.putInstanceKindFields(kind: DesignNodeKind.Instanc
 }
 
 private fun writeMedia(media: DesignMedia): JsonObject = buildJsonObject {
-    put("assetId", media.assetId)
+    put("assetId", stringJson(media.assetId))
     if (media.kind != MediaKind.Image) put("kind", "video")
     if (media.fillMode != ImageScaleMode.Fill) put("fillMode", imageScaleModeName(media.fillMode))
     media.focalPoint?.let { put("focalPoint", writePoint(it)) }
@@ -464,7 +465,7 @@ private fun writeMedia(media: DesignMedia): JsonObject = buildJsonObject {
     if (media.replaceable) put("replaceable", true)
     if (media.opacity != 1.0.bindable()) put("opacity", doubleJson(media.opacity))
     if (media.blendMode != "normal") put("blendMode", media.blendMode)
-    if (media.posterAssetId.isNotEmpty()) put("posterAssetId", media.posterAssetId)
+    if (media.posterAssetId != "".bindable()) put("posterAssetId", stringJson(media.posterAssetId))
     if (media.autoplay) put("autoplay", true)
     if (media.loop) put("loop", true)
     if (!media.muted) put("muted", false)
@@ -473,8 +474,8 @@ private fun writeMedia(media: DesignMedia): JsonObject = buildJsonObject {
 private fun writeTable(table: DesignTable): JsonObject = buildJsonObject {
     if (table.columns.isNotEmpty()) put("columns", JsonArray(table.columns.map(::writeGridTrack)))
     if (table.headerRows != 1) put("headerRows", table.headerRows)
-    if (table.rowGap != 0.0.bindable()) put("rowGap", doubleJson(table.rowGap))
-    if (table.columnGap != 0.0.bindable()) put("columnGap", doubleJson(table.columnGap))
+    if (table.rowGap.differsFrom(0.0)) put("rowGap", doubleJson(table.rowGap))
+    if (table.columnGap.differsFrom(0.0)) put("columnGap", doubleJson(table.columnGap))
 }
 
 private fun writeAnnotation(annotation: DesignAnnotation): JsonObject = buildJsonObject {
@@ -497,6 +498,7 @@ private fun writeMask(mask: DesignMask): JsonObject = buildJsonObject {
         )
     }
     if (mask.appliesTo.isNotEmpty()) put("appliesTo", stringArrayJson(mask.appliesTo))
+    if (mask.source.isNotEmpty()) put("source", mask.source)
 }
 
 // --- Text content and styles --------------------------------------------------
@@ -539,6 +541,7 @@ private fun writeStyleRange(range: TextStyleRange): JsonObject = buildJsonObject
         range.fills?.let { fills -> put("fills", JsonArray(fills.map(::writePaint))) }
     }
     if (style.isNotEmpty()) put("style", style)
+    if (range.styleRef.isNotEmpty()) put("styleRef", range.styleRef)
 }
 
 private fun writeTextLink(link: TextLink): JsonObject = buildJsonObject {
@@ -686,7 +689,7 @@ private fun writeAutoLayout(layout: DesignAutoLayout): JsonObject = buildJsonObj
             },
         )
         gap is DesignGap.Auto -> put("gap", "auto")
-        gap is DesignGap.Fixed && gap.value != 0.0.bindable() -> put("gap", doubleJson(gap.value))
+        gap is DesignGap.Fixed && gap.value.differsFrom(0.0) -> put("gap", doubleJson(gap.value))
     }
     layout.crossGap?.let { put("crossGap", doubleJson(it)) }
     if (layout.wrap) put("wrap", true)
@@ -716,7 +719,7 @@ private fun writeAutoLayout(layout: DesignAutoLayout): JsonObject = buildJsonObj
                 layout.implicitRows?.let { implicit ->
                     put("auto", if (implicit == GridTrack.Hug) JsonPrimitive(true) else writeGridTrack(implicit))
                 }
-                layout.implicitRowMin?.let { put("min", it) }
+                layout.implicitRowMin?.let { put("min", doubleJson(it)) }
             },
         )
     }
@@ -732,10 +735,10 @@ private fun paddingJson(padding: DesignInsets): JsonElement? {
 }
 
 private fun writeInsets(insets: DesignInsets): JsonObject = buildJsonObject {
-    if (insets.top != 0.0.bindable()) put("top", doubleJson(insets.top))
-    if (insets.right != 0.0.bindable()) put("right", doubleJson(insets.right))
-    if (insets.bottom != 0.0.bindable()) put("bottom", doubleJson(insets.bottom))
-    if (insets.left != 0.0.bindable()) put("left", doubleJson(insets.left))
+    if (insets.top.differsFrom(0.0)) put("top", doubleJson(insets.top))
+    if (insets.right.differsFrom(0.0)) put("right", doubleJson(insets.right))
+    if (insets.bottom.differsFrom(0.0)) put("bottom", doubleJson(insets.bottom))
+    if (insets.left.differsFrom(0.0)) put("left", doubleJson(insets.left))
 }
 
 private fun writeLogicalInsets(insets: DesignLogicalInsets): JsonObject = buildJsonObject {
@@ -756,11 +759,11 @@ private fun writeGridTrack(track: GridTrack): JsonObject = buildJsonObject {
     when (track) {
         is GridTrack.Fixed -> {
             put("type", "fixed")
-            put("value", track.value)
+            put("value", doubleJson(track.value))
         }
         is GridTrack.Flex -> {
             put("type", "flex")
-            put("value", track.value)
+            put("value", doubleJson(track.value))
         }
         GridTrack.Hug -> put("type", "hug")
     }
@@ -911,23 +914,23 @@ private fun writeEffect(effect: DesignEffect): JsonObject = buildJsonObject {
             put("type", "dropShadow")
             put("color", colorJson(effect.color))
             if (effect.offset != DesignPoint()) put("offset", writePoint(effect.offset))
-            if (effect.blur != 0.0) put("blur", effect.blur)
-            if (effect.spread != 0.0) put("spread", effect.spread)
+            if (effect.blur.differsFrom(0.0)) put("blur", doubleJson(effect.blur))
+            if (effect.spread.differsFrom(0.0)) put("spread", doubleJson(effect.spread))
         }
         is DesignEffect.InnerShadow -> {
             put("type", "innerShadow")
             put("color", colorJson(effect.color))
             if (effect.offset != DesignPoint()) put("offset", writePoint(effect.offset))
-            if (effect.blur != 0.0) put("blur", effect.blur)
-            if (effect.spread != 0.0) put("spread", effect.spread)
+            if (effect.blur.differsFrom(0.0)) put("blur", doubleJson(effect.blur))
+            if (effect.spread.differsFrom(0.0)) put("spread", doubleJson(effect.spread))
         }
         is DesignEffect.LayerBlur -> {
             put("type", "layerBlur")
-            put("radius", effect.radius)
+            put("radius", doubleJson(effect.radius))
         }
         is DesignEffect.BackgroundBlur -> {
             put("type", "backgroundBlur")
-            put("radius", effect.radius)
+            put("radius", doubleJson(effect.radius))
         }
         is DesignEffect.Unknown -> put("type", effect.rawType)
     }
@@ -942,10 +945,10 @@ private fun cornerRadiusJson(radius: DesignCornerRadius): JsonElement {
         radius.bottomLeft == topLeft
     if (uniform) return doubleJson(topLeft)
     return buildJsonObject {
-        if (radius.topLeft != 0.0.bindable()) put("topLeft", doubleJson(radius.topLeft))
-        if (radius.topRight != 0.0.bindable()) put("topRight", doubleJson(radius.topRight))
-        if (radius.bottomRight != 0.0.bindable()) put("bottomRight", doubleJson(radius.bottomRight))
-        if (radius.bottomLeft != 0.0.bindable()) put("bottomLeft", doubleJson(radius.bottomLeft))
+        if (radius.topLeft.differsFrom(0.0)) put("topLeft", doubleJson(radius.topLeft))
+        if (radius.topRight.differsFrom(0.0)) put("topRight", doubleJson(radius.topRight))
+        if (radius.bottomRight.differsFrom(0.0)) put("bottomRight", doubleJson(radius.bottomRight))
+        if (radius.bottomLeft.differsFrom(0.0)) put("bottomLeft", doubleJson(radius.bottomLeft))
     }
 }
 
@@ -958,10 +961,10 @@ private fun writeLayoutGrid(grid: LayoutGridDefinition): JsonObject = buildJsonO
             LayoutGridType.Grid -> "grid"
         },
     )
-    grid.count?.let { put("count", it) }
-    grid.size?.let { put("size", it) }
-    if (grid.gutter != 0.0) put("gutter", grid.gutter)
-    if (grid.margin != 0.0) put("margin", grid.margin)
+    grid.count?.let { put("count", intJson(it)) }
+    grid.size?.let { put("size", doubleJson(it)) }
+    grid.gutter?.let { put("gutter", doubleJson(it)) }
+    grid.margin?.let { put("margin", doubleJson(it)) }
     if (grid.alignment != LayoutGridAlignment.Stretch) {
         put(
             "alignment",
@@ -1521,6 +1524,8 @@ private fun <T> Bindable<T>.toJson(literal: (T) -> JsonPrimitive): JsonElement =
 
 private fun doubleJson(value: Bindable<Double>): JsonElement = value.toJson(::JsonPrimitive)
 
+private fun intJson(value: Bindable<Int>): JsonElement = value.toJson(::JsonPrimitive)
+
 private fun stringJson(value: Bindable<String>): JsonElement = value.toJson(::JsonPrimitive)
 
 private fun booleanJson(value: Bindable<Boolean>): JsonElement = value.toJson(::JsonPrimitive)
@@ -1537,9 +1542,19 @@ private fun DesignColor.toHexString(): String {
     }
 }
 
+/**
+ * IEEE-consistent default omission for a [Bindable] Double: a literal equal to [default] — treating
+ * `-0.0` as `0.0`, unlike boxed-Double total order — is omitted, while any ref always serializes.
+ * Guards must use this instead of `!= default.bindable()`, whose data-class equality writes `-0.0`.
+ */
+private fun Bindable<Double>.differsFrom(default: Double): Boolean {
+    val literal = literalOrNull() ?: return true
+    return literal != default
+}
+
 private fun writePoint(point: DesignPoint): JsonObject = buildJsonObject {
-    if (point.x != 0.0) put("x", point.x)
-    if (point.y != 0.0) put("y", point.y)
+    if (point.x.differsFrom(0.0)) put("x", doubleJson(point.x))
+    if (point.y.differsFrom(0.0)) put("y", doubleJson(point.y))
 }
 
 private fun stringMapJson(map: Map<String, String>): JsonObject = buildJsonObject {

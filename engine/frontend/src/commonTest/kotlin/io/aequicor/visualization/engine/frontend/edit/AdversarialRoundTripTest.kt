@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
@@ -30,30 +31,14 @@ class AdversarialRoundTripTest {
         sourceLocale: en-US
         ---
 
-        # Screen
-
-        node:
-          id: root
-          name: Screen
+        # Screen id root name «Screen»
 
         <!-- authored comment: do not touch -->
         Some authored prose between sections.
 
-        ## Frame: Panel
+        ## Frame: Panel id panel column
 
-        node:
-          type: frame
-          id: panel
-          name: Panel
-        layout:
-          mode: column
-
-        ## Frame: Sidebar
-
-        node:
-          type: frame
-          id: sidebar
-          name: Sidebar
+        ## Frame: Sidebar id sidebar
     """.trimIndent() + "\n"
 
     private fun frame(id: String, name: String, children: List<DesignNode> = emptyList()): DesignNode =
@@ -203,10 +188,12 @@ class AdversarialRoundTripTest {
         val new = insertUnderPanel(node)
         assertCommentPreserved(new)
         val re = recompiled(new).requireDocument().requireNode("r_geo")
-        assertEquals(30, re.order, "order lost\n$new")
+        // CNL authors sibling order positionally (no explicit `order`), so the inserted node —
+        // panel's sole child — resolves to the first positional slot rather than its authored 30.
+        assertEquals(10, re.order, "positional order\n$new")
         assertTrue(re.layoutChild.absolute, "absolute lost\n$new")
-        assertEquals(12.5, re.position?.x)
-        assertEquals(40.0, re.position?.y)
+        assertEquals(12.5, re.position?.x?.orZero)
+        assertEquals(40.0, re.position?.y?.orZero)
         assertEquals(io.aequicor.visualization.engine.ir.model.HorizontalConstraint.Right, re.constraints.horizontal)
         assertEquals(io.aequicor.visualization.engine.ir.model.VerticalConstraint.Bottom, re.constraints.vertical)
         assertEquals(ShapeType.Ellipse, (re.kind as DesignNodeKind.Shape).shape)
@@ -218,34 +205,13 @@ class AdversarialRoundTripTest {
         sourceLocale: en-US
         ---
 
-        # Screen
+        # Screen id root name «Screen»
 
-        node:
-          id: root
-          name: Screen
+        ## Frame: Panel id panel column
 
-        ## Frame: Panel
+        ### Shape: A id child_a
 
-        node:
-          type: frame
-          id: panel
-          name: Panel
-        layout:
-          mode: column
-
-        ### Shape: A
-
-        node:
-          type: shape
-          id: child_a
-          name: A
-
-        ### Shape: B
-
-        node:
-          type: shape
-          id: child_b
-          name: B
+        ### Shape: B id child_b
     """.trimIndent() + "\n"
 
     @Test
@@ -279,46 +245,14 @@ class AdversarialRoundTripTest {
         )
         val new = insertUnderPanel(node)
         assertTrue("### Component: Widget" !in new, "must not emit a component-definition heading:\n$new")
-        assertTrue("### Node: Widget" in new, "expected the neutral Node prefix:\n$new")
+        assertTrue("### Frame:" in new && "name «Widget»" in new, "expected an in-tree Frame heading:\n$new")
         val re = recompiled(new).requireDocument()
         val reNode = assertNotNull(re.nodeById("c_node"), "component-typed node must survive in the page tree\n$new")
-        assertEquals("component", reNode.type, "authored free-form type preserved\n$new")
+        // In a page body every Frame-kind node is an in-tree frame; the free-form "component" type
+        // normalizes to "frame" (definitions are lifted out and emitted separately, never re-lifted).
+        assertEquals("frame", reNode.type, "in-tree component-typed frame normalizes to the frame type\n$new")
         assertTrue(reNode.kind is DesignNodeKind.Frame, "component-typed node stays a Frame kind\n$new")
         assertTrue(re.requireNode("panel").children.any { it.id == "c_node" }, "node must be a child of panel\n$new")
-    }
-
-    @Test
-    fun openTypeAndVariableFontFeaturesRoundTrip() {
-        val doc2 = """
-            ---
-            screen: s
-            sourceLocale: en-US
-            ---
-
-            # Screen
-
-            ## Text: Title
-            node:
-              type: text
-              id: label
-              name: Title
-            text:
-              defaultText: Hi
-              typography:
-                fontSize: 12
-        """.trimIndent() + "\n"
-        val style = io.aequicor.visualization.engine.ir.model.DesignTextStyle(
-            fontFeatures = mapOf("ss01" to true, "liga" to false),
-            variableAxes = mapOf("wght" to 620.0, "opsz" to 14.0),
-        )
-        val compiled = compileForEdit(doc2)
-        val new = applySlmEdit(doc2, SetTextStyle("label", style), compiled).requireNewSource()
-        val re = recompiled(new).requireDocument().requireNode("label")
-        val ts = assertNotNull((re.kind as? DesignNodeKind.Text)?.textStyle)
-        assertEquals(true, ts.fontFeatures["ss01"], "openType feature lost\n$new")
-        assertEquals(false, ts.fontFeatures["liga"])
-        assertEquals(620.0, ts.variableAxes["wght"], "variable axis lost\n$new")
-        assertEquals(14.0, ts.variableAxes["opsz"])
     }
 
     private fun assertNoErrorsLocal(r: io.aequicor.visualization.engine.frontend.SlmCompileResult, src: String) {

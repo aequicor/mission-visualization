@@ -17,7 +17,7 @@ import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.bindable
 
 private val knownKeys = setOf(
-    "key", "defaultText", "style", "typography", "resizing", "maxLines", "overflow",
+    "key", "defaultText", "characters", "style", "typography", "resizing", "maxLines", "overflow",
     "spans", "list",
 )
 
@@ -51,6 +51,7 @@ internal fun readTextBlock(value: YamlValue, reading: BlockReading): TextPatch? 
     return TextPatch(
         key = map.string("key", reading),
         defaultText = defaultText,
+        characters = map.value("characters")?.let { bindableString(it, "characters", reading) },
         styleRef = map.string("style", reading),
         typography = readTypography(map, reading),
         resizingWidth = resizing?.enum("width", ReaderEnums.sizingMode, reading),

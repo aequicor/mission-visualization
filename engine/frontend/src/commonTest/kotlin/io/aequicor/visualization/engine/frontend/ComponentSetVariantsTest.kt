@@ -34,46 +34,13 @@ class ComponentSetVariantsTest {
 
         # Wire Board
 
-        ## Component: Wire Tile
-        node:
-          type: component
-          id: cmpWireTile
-        component:
-          name: WireTile
-          variants:
-            kind:
-              values: [default, highlight]
-          variant:
-            kind: default
-        style:
-          fills:
-            - "#FFFFFF"
+        ## Component: Wire Tile id cmpWireTile component-name WireTile set cmpWireTileSet axis kind (default highlight) variant (kind default) color #FFFFFF
 
-        ## Component: Wire Tile
-        node:
-          type: component
-          id: cmpWireTileHighlight
-        component:
-          name: WireTile
-          variant:
-            kind: highlight
-        style:
-          fills:
-            - "#E97155"
+        ## Component: Wire Tile id cmpWireTileHighlight component-name WireTile set cmpWireTileSet axis kind (default highlight) variant (kind highlight) color #E97155
 
-        ## Board
-        node:
-          type: frame
-          id: board
+        ## Board id board
 
-        ### Tile: Active
-        node:
-          type: instance
-          id: activeTile
-        component:
-          ref: WireTile
-          variant:
-            kind: highlight
+        Instance id activeTile of WireTile variant (kind highlight)
         """,
     ) + "\n"
 
@@ -138,32 +105,11 @@ class ComponentSetVariantsTest {
 
         # Solo Board
 
-        ## Component: Solo Tile
-        node:
-          type: component
-          id: cmpSoloTile
-        component:
-          name: SoloTile
-          variants:
-            kind:
-              values: [default, highlight]
-        style:
-          fills:
-            - "#143A66"
+        ## Component: Solo Tile id cmpSoloTile component-name SoloTile set cmpSoloTileSet axis kind (default highlight) color #143A66
 
-        ## Board
-        node:
-          type: frame
-          id: board
+        ## Board id board
 
-        ### Tile: Default
-        node:
-          type: instance
-          id: defaultTile
-        component:
-          ref: cmpSoloTileSet
-          variant:
-            kind: default
+        Instance id defaultTile of cmpSoloTileSet variant (kind default)
         """,
     ) + "\n"
 

@@ -1,7 +1,6 @@
 package io.aequicor.visualization.engine.frontend.semantics
 
 import io.aequicor.visualization.engine.frontend.SlmLocale
-import io.aequicor.visualization.engine.frontend.ast.IrSpliceBlock
 import io.aequicor.visualization.engine.frontend.ast.KeyHint
 import io.aequicor.visualization.engine.frontend.ast.SemanticAction
 import io.aequicor.visualization.engine.frontend.ast.SemanticKind
@@ -11,8 +10,11 @@ import io.aequicor.visualization.engine.frontend.ast.SemanticText
 import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
 import io.aequicor.visualization.engine.frontend.blocks.MediaPatch
 import io.aequicor.visualization.engine.frontend.blocks.NodePatch
+import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
+import io.aequicor.visualization.engine.frontend.cnl.CnlDocumentSections
 import io.aequicor.visualization.engine.frontend.cnl.CnlParser
+import io.aequicor.visualization.engine.frontend.cnl.CnlVocabulary
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.expr.SlmExpression
 import io.aequicor.visualization.engine.frontend.frontmatter.SlmFrontmatter
@@ -35,8 +37,11 @@ import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 import io.aequicor.visualization.engine.frontend.markdown.TableBlock
 import io.aequicor.visualization.engine.frontend.markdown.TextRun
 import io.aequicor.visualization.engine.frontend.markdown.TypedAttributeBlock
+import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
 import io.aequicor.visualization.engine.frontend.normalize.latinizeToCamelCase
 import io.aequicor.visualization.engine.ir.model.JustifyContent
+import io.aequicor.visualization.engine.ir.model.bindable
+import io.aequicor.visualization.subsystems.figures.ShapeType
 
 /**
  * Locale-neutral structural markers used when extraction runs without a full
@@ -102,9 +107,9 @@ private class SemanticExtractor(
         var condition: SlmExpression? = null
         var componentRef: String? = null
         var variant: Map<String, String> = emptyMap()
-        var irSplice: IrSpliceBlock? = null
         var isAnchor = false
         var isCnlElement = false
+        var cnlSpan: SlmSourceSpan? = null
         var isComponentDef = false
         val propBindings = LinkedHashMap<String, SlmExpression>()
         val explicitPatches = mutableListOf<io.aequicor.visualization.engine.frontend.markdown.TypedEntry>()
@@ -134,12 +139,12 @@ private class SemanticExtractor(
                 propBindings = propBindings.toMap(),
                 explicitPatches = explicitPatches.toList(),
                 semanticPatches = semanticPatches.toList(),
-                irSplice = irSplice,
                 isAnchor = isAnchor,
                 isCnlElement = isCnlElement,
                 isComponentDef = isComponentDef,
                 children = builtChildren,
                 span = span,
+                cnlSpan = cnlSpan,
             )
         }
     }
@@ -153,6 +158,7 @@ private class SemanticExtractor(
 
     private lateinit var root: NodeBuilder
     private var title: SemanticText? = null
+    private val documentPatches = mutableListOf<TypedEntry>()
     private val screenModes = LinkedHashMap<String, String>()
     private var tableCount = 0
 
@@ -176,6 +182,11 @@ private class SemanticExtractor(
         while (index < blocks.size) {
             val block = blocks[index]
             if (block is HeadingBlock) {
+                val nextIndex = tryConsumeDocumentSection(blocks, index, block, state)
+                if (nextIndex != null) {
+                    index = nextIndex
+                    continue
+                }
                 handleHeading(block, stack, state)
                 index++
                 continue
@@ -195,6 +206,7 @@ private class SemanticExtractor(
             sourceLocale = sourceLocale,
             title = title,
             root = builtRoot,
+            documentPatches = documentPatches.toList(),
             componentDefs = defs,
             modes = screenModes.toMap(),
         )
@@ -204,6 +216,36 @@ private class SemanticExtractor(
         stack.drop(1).map { (_, builder) -> builder.pathElement }
 
     // --- headings ---
+
+    private fun tryConsumeDocumentSection(
+        blocks: List<SlmBlock>,
+        index: Int,
+        heading: HeadingBlock,
+        state: WalkState,
+    ): Int? {
+        // Document dictionaries are top-level only (the emitter writes them at H1); a deeper
+        // `## Styles`/`## Collection …` is a regular UI section, not a document section.
+        if (heading.level != 1) return null
+        val headingText = readInlineText(heading.inlines).text
+        if (!CnlDocumentSections.isDocumentHeading(headingText)) return null
+        if (state.pendingCondition != null) {
+            diagnostics.warning("Condition paragraph is not followed by any visible block", heading.span)
+            state.pendingCondition = null
+        }
+        var end = index + 1
+        while (end < blocks.size) {
+            val next = blocks[end]
+            if (next is HeadingBlock && next.level <= heading.level) break
+            end++
+        }
+        CnlDocumentSections.parseDocumentPatch(
+            headingText = headingText,
+            heading = heading,
+            body = blocks.subList(index + 1, end),
+            diagnostics = diagnostics,
+        )?.let { documentPatches += it }
+        return end
+    }
 
     private fun handleHeading(
         block: HeadingBlock,
@@ -222,12 +264,20 @@ private class SemanticExtractor(
             state.pendingKey = null
             // Typed blocks after the H1 bind to the screen root.
             root.isAnchor = true
+            if (block.cnlElement != null) {
+                root.isCnlElement = true
+                // The root's own span is the whole document; its CNL sentence is the H1 line.
+                root.cnlSpan = block.span
+            }
             state.anchor = root
             return
         }
         while (stack.size > 1 && stack.last().first >= block.level) stack.removeLast()
         val parent = stack.last().second
-        val section = NodeBuilder(SemanticKind.Section, block.span).apply { isAnchor = true }
+        val section = NodeBuilder(SemanticKind.Section, block.span).apply {
+            isAnchor = true
+            isCnlElement = block.cnlElement != null
+        }
         applyHeadingName(section, inline, block.span, sectionPath(stack))
         state.pendingCondition?.let {
             section.condition = it
@@ -253,6 +303,15 @@ private class SemanticExtractor(
             isSingleWordPrefix && prefix.lowercase() in lexicon.componentMarkers -> {
                 section.isComponentDef = true
                 section.name = text.drop(colon + 1).trim()
+                section.semanticPatches += NodePatch(type = "component")
+            }
+            isSingleWordPrefix && CnlVocabulary.nouns[prefix.lowercase()] != null -> {
+                val noun = CnlVocabulary.nouns.getValue(prefix.lowercase())
+                section.name = text.drop(colon + 1).trim()
+                section.semanticPatches += NodePatch(type = noun.nodeType, role = noun.role)
+                noun.shapeKind?.let { shapeKind ->
+                    shapeTypeOf(shapeKind)?.let { section.semanticPatches += ShapePatch(kind = it) }
+                }
             }
             isSingleWordPrefix -> section.name = text.drop(colon + 1).trim()
             else -> {
@@ -266,6 +325,17 @@ private class SemanticExtractor(
                 )
             }
         }
+    }
+
+    private fun shapeTypeOf(kind: String): ShapeType? = when (kind) {
+        "rectangle" -> ShapeType.Rectangle
+        "ellipse" -> ShapeType.Ellipse
+        "line" -> ShapeType.Line
+        "star" -> ShapeType.Star
+        "polygon" -> ShapeType.Polygon
+        "arrow" -> ShapeType.Arrow
+        "vector" -> ShapeType.Vector
+        else -> null
     }
 
     // --- non-heading blocks ---
@@ -306,12 +376,7 @@ private class SemanticExtractor(
                 state.anchor = table
             }
 
-            is FencedCodeBlock -> if (block.info == "ir") {
-                val splice = NodeBuilder(SemanticKind.IrSplice, block.span).apply {
-                    irSplice = IrSpliceBlock(block.content, block.contentStartLine, block.span)
-                }
-                attach(container, state, splice)
-            }
+            is FencedCodeBlock -> {} // Unsupported fenced blocks are warned at parse time and ignored.
 
             is HtmlCommentBlock -> i18nKeyOf(block.text)?.let { state.pendingKey = it }
 
@@ -342,7 +407,10 @@ private class SemanticExtractor(
         state: WalkState,
         path: List<String>,
     ) {
-        val section = NodeBuilder(SemanticKind.Section, block.span).apply { isAnchor = true }
+        val section = NodeBuilder(SemanticKind.Section, block.span).apply {
+            isAnchor = true
+            isCnlElement = block.cnlElement != null
+        }
         applyHeadingName(section, readInlineText(block.inlines), block.span, path)
         attach(container, state, section)
         state.anchor = section
@@ -1004,7 +1072,7 @@ private class SemanticExtractor(
         NodeBuilder(SemanticKind.Media, block.span).apply {
             isAnchor = true
             name = block.alt
-            semanticPatches += MediaPatch(asset = block.path)
+            semanticPatches += MediaPatch(asset = block.path.bindable())
             if (block.alt.isNotBlank()) {
                 text = SemanticText(
                     defaultText = block.alt,

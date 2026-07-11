@@ -1,10 +1,16 @@
 package io.aequicor.visualization.engine.ir.serialization
 
+import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignExpression
 import io.aequicor.visualization.engine.ir.model.DesignI18n
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignEffect
+import io.aequicor.visualization.engine.ir.model.DesignMedia
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPage
+import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.subsystems.figures.ShapeType
@@ -12,6 +18,7 @@ import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.bindable
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -138,6 +145,75 @@ class DesignJsonWriterTest {
 
         val minimalDocument = writeDesignDocument(DesignDocument())
         assertEquals(setOf("schemaVersion"), minimalDocument.keys)
+    }
+
+    @Test
+    fun writerNormalizesNegativeZeroCoordinates() {
+        // A -0.0 coordinate must be omitted like 0.0 (IEEE), not written via boxed-Double total
+        // order — otherwise widening DesignPoint.x/y to Bindable<Double> silently changes output.
+        val node = DesignNode(
+            id = "n",
+            type = "frame",
+            kind = DesignNodeKind.Frame,
+            effects = listOf(
+                DesignEffect.DropShadow(
+                    color = DesignColor(0xFF000000L).bindable(),
+                    offset = DesignPoint(x = -0.0, y = 0.0),
+                ),
+            ),
+        )
+        val serialized = writeDesignNode(node).toJsonString()
+        assertTrue("-0.0" !in serialized, "negative-zero coordinate must not be serialized: $serialized")
+
+        val reparsed = assertIs<DesignNodeParseResult.Success>(parseDesignNode(serialized)).node
+        val offset = (reparsed.effects.single() as DesignEffect.DropShadow).offset
+        assertEquals(0.0, offset.x.literalOrNull())
+        assertEquals(0.0, offset.y.literalOrNull())
+    }
+
+    @Test
+    fun shadowOffsetAndFocalPointRefsRoundTripThroughJson() {
+        // A `$var` axis and a `{{expr}}` axis on both point-valued slots must survive JSON serde.
+        val shadowNode = DesignNode(
+            id = "s",
+            type = "frame",
+            kind = DesignNodeKind.Frame,
+            effects = listOf(
+                DesignEffect.DropShadow(
+                    color = DesignColor(0xFF000000L).bindable(),
+                    offset = DesignPoint(
+                        x = Bindable.VarRef("shadow.x"),
+                        y = Bindable.DataRef(DesignExpression("data.dy")),
+                    ),
+                ),
+            ),
+        )
+        val reparsedShadow = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode(writeDesignNode(shadowNode).toJsonString()),
+        ).node
+        val offset = (reparsedShadow.effects.single() as DesignEffect.DropShadow).offset
+        assertEquals(Bindable.VarRef("shadow.x"), offset.x)
+        assertEquals(Bindable.DataRef(DesignExpression("data.dy")), offset.y)
+
+        val mediaNode = DesignNode(
+            id = "m",
+            type = "media",
+            kind = DesignNodeKind.Media(
+                DesignMedia(
+                    assetId = "media/hero".bindable(),
+                    focalPoint = DesignPoint(
+                        x = Bindable.VarRef("crop.x"),
+                        y = Bindable.DataRef(DesignExpression("data.fy")),
+                    ),
+                ),
+            ),
+        )
+        val reparsedMedia = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode(writeDesignNode(mediaNode).toJsonString()),
+        ).node
+        val focal = assertNotNull((reparsedMedia.kind as DesignNodeKind.Media).media.focalPoint)
+        assertEquals(Bindable.VarRef("crop.x"), focal.x)
+        assertEquals(Bindable.DataRef(DesignExpression("data.fy")), focal.y)
     }
 
     @Test
@@ -286,7 +362,7 @@ private val FullFeaturedDocument = """
           "textStyle": { "fontSize": 24, "fontWeight": { "${'$'}var": "var_space" } },
           "autoResize": "height",
           "truncate": { "maxLines": 2, "ellipsis": false },
-          "styleRanges": [ { "start": 0, "end": 4, "style": {
+          "styleRanges": [ { "start": 0, "end": 4, "styleRef": "sty_h", "style": {
             "fontWeight": 700, "textDecoration": "underline",
             "fills": [ { "type": "solid", "color": "#E97155" } ]
           } } ],

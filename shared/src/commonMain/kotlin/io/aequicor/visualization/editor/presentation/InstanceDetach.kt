@@ -177,10 +177,10 @@ private fun ResolvedCornerRadius.toDesignOrNull(): DesignCornerRadius? =
     }
 
 private fun ResolvedEffect.toDesign(): DesignEffect = when (this) {
-    is ResolvedEffect.DropShadow -> DesignEffect.DropShadow(color.bindable(), offset, blur, spread)
-    is ResolvedEffect.InnerShadow -> DesignEffect.InnerShadow(color.bindable(), offset, blur, spread)
-    is ResolvedEffect.LayerBlur -> DesignEffect.LayerBlur(radius)
-    is ResolvedEffect.BackgroundBlur -> DesignEffect.BackgroundBlur(radius)
+    is ResolvedEffect.DropShadow -> DesignEffect.DropShadow(color.bindable(), offset, blur.bindable(), spread.bindable())
+    is ResolvedEffect.InnerShadow -> DesignEffect.InnerShadow(color.bindable(), offset, blur.bindable(), spread.bindable())
+    is ResolvedEffect.LayerBlur -> DesignEffect.LayerBlur(radius.bindable())
+    is ResolvedEffect.BackgroundBlur -> DesignEffect.BackgroundBlur(radius.bindable())
 }
 
 private fun ResolvedTextStyle.toDesign(): DesignTextStyle = DesignTextStyle(

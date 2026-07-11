@@ -282,7 +282,7 @@ private fun readHandleOffset(element: JsonElement?): HandleOffset? {
 private fun DesignDocumentReader.readMedia(obj: JsonObject, pointer: String): DesignMedia {
     val media = obj["media"] as? JsonObject ?: obj
     return DesignMedia(
-        assetId = media.stringOrDefault("assetId"),
+        assetId = readBindableString(media["assetId"], ""),
         kind = readEnum(
             media["kind"], "$pointer/kind", MediaKind.Image,
             mapOf("image" to MediaKind.Image, "video" to MediaKind.Video),
@@ -293,7 +293,7 @@ private fun DesignDocumentReader.readMedia(obj: JsonObject, pointer: String): De
         replaceable = media.booleanOrDefault("replaceable", false),
         opacity = readBindableDouble(media["opacity"], 1.0),
         blendMode = media.stringOrDefault("blendMode", "normal"),
-        posterAssetId = media.stringOrDefault("posterAssetId"),
+        posterAssetId = readBindableString(media["posterAssetId"], ""),
         autoplay = media.booleanOrDefault("autoplay", false),
         loop = media.booleanOrDefault("loop", false),
         muted = media.booleanOrDefault("muted", true),
@@ -332,6 +332,7 @@ internal fun DesignDocumentReader.readMask(obj: JsonObject, pointer: String): De
             ),
         ),
         appliesTo = obj["appliesTo"].asArray("$pointer/appliesTo").map { it.asStringOrEmpty() },
+        source = obj.stringOrDefault("source"),
     )
 
 // --- Data directives ------------------------------------------------------

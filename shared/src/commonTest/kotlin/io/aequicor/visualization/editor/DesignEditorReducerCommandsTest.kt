@@ -17,6 +17,7 @@ import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
@@ -38,7 +39,18 @@ import kotlin.test.assertTrue
 class DesignEditorReducerCommandsTest {
 
     private fun freshState(): DesignEditorState =
-        createDesignEditorState(legacyMissionDocuments())
+        createDesignEditorState(missionDemoDocuments())
+
+    /** The id of any auto-layout (row/column/grid) frame's first flow child in the demo bundle. */
+    private fun DesignEditorState.autoLayoutFlowChildId(): String {
+        val doc = assertNotNull(document)
+        val flowParent = assertNotNull(
+            doc.pages.flatMap { it.allNodes() }
+                .firstOrNull { it.kind is DesignNodeKind.Frame && it.layout.mode != LayoutMode.None && it.children.isNotEmpty() },
+            "demo bundle has an auto-layout frame with children",
+        )
+        return flowParent.children.first().id
+    }
 
     private fun DesignEditorState.rootFrameId(): String =
         assertNotNull(document?.pageById(selectedPageId)?.children?.firstOrNull()?.id, "no root frame")
@@ -98,8 +110,8 @@ class DesignEditorReducerCommandsTest {
         val strokesBefore = state.document?.nodeById(root)?.strokes
         state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(root), dx = 10.0, dy = -5.0))
         val after = assertNotNull(state.document?.nodeById(root)?.position)
-        assertEquals(before.x + 10.0, after.x)
-        assertEquals(before.y - 5.0, after.y)
+        assertEquals(before.x.orZero + 10.0, after.x.orZero)
+        assertEquals(before.y.orZero - 5.0, after.y.orZero)
         assertEquals(sizeBefore, state.document?.nodeById(root)?.size)
         assertEquals(fillsBefore, state.document?.nodeById(root)?.fills)
         assertEquals(strokesBefore, state.document?.nodeById(root)?.strokes)
@@ -120,8 +132,7 @@ class DesignEditorReducerCommandsTest {
         // design-book §18 "Auto layout boundary": free positioning only applies to
         // free/absolute children — a flow child's `position` must not change via MoveNodes.
         var state = freshState()
-        val root = state.rootFrameId()
-        val flowChild = assertNotNull(state.document?.nodeById(root)?.children?.firstOrNull()?.id, "root has a flow child")
+        val flowChild = state.autoLayoutFlowChildId()
         val before = state.document?.nodeById(flowChild)?.position
         state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(flowChild), dx = 25.0, dy = 25.0))
         assertEquals(before, state.document?.nodeById(flowChild)?.position)
@@ -130,21 +141,20 @@ class DesignEditorReducerCommandsTest {
     @Test
     fun setAbsolutePositionDetachesAnAutoLayoutChildFromTheFlow() {
         var state = freshState()
-        val root = state.rootFrameId()
-        val flowChild = assertNotNull(state.document?.nodeById(root)?.children?.firstOrNull()?.id, "root has a flow child")
+        val flowChild = state.autoLayoutFlowChildId()
         assertFalse(state.document?.nodeById(flowChild)?.layoutChild?.absolute ?: true)
 
         state = reduceDesignEditor(state, DesignEditorIntent.SetAbsolutePosition(flowChild, x = 12.0, y = 34.0))
 
         val node = assertNotNull(state.document?.nodeById(flowChild))
         assertTrue(node.layoutChild.absolute)
-        assertEquals(12.0, node.position?.x)
-        assertEquals(34.0, node.position?.y)
+        assertEquals(12.0, node.position?.x?.orZero)
+        assertEquals(34.0, node.position?.y?.orZero)
 
         // Now that it's absolute, MoveNodes takes effect (isCoordinatePositioned is true).
         state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(flowChild), dx = 1.0, dy = 1.0))
-        assertEquals(13.0, state.document?.nodeById(flowChild)?.position?.x)
-        assertEquals(35.0, state.document?.nodeById(flowChild)?.position?.y)
+        assertEquals(13.0, state.document?.nodeById(flowChild)?.position?.x?.orZero)
+        assertEquals(35.0, state.document?.nodeById(flowChild)?.position?.y?.orZero)
     }
 
     // --- Visibility / lock ---
@@ -247,10 +257,16 @@ class DesignEditorReducerCommandsTest {
         val state = reduceDesignEditor(before, DesignEditorIntent.ReorderNode(first, ZOrderMove.ToFront))
         assertEquals(first, state.document?.nodeById(root)?.children?.last()?.id)
 
-        // The whole top-level run is heading-anchored → the reorder persists as `order:` scalars
-        // across the siblings in the owning source (others byte-identical).
+        // The whole top-level run is heading-anchored → the reorder persists as a heading-section
+        // relocation in the owning source (others byte-identical): the moved node's section now
+        // trails its former sibling (z-order = document order in CNL).
         state.assertWroteBackToOneSource(before)
-        assertTrue(state.sources.any { "order:" in it.content }, "order scalars written to a source")
+        val second = assertNotNull(children.getOrNull(1)?.id, "root has a second child")
+        val owning = state.sources.first { "id $first" in it.content }.content
+        assertTrue(
+            owning.indexOf("id $first") > owning.indexOf("id $second"),
+            "moved node's section relocated behind its former sibling",
+        )
     }
 
     @Test
@@ -384,15 +400,17 @@ class DesignEditorReducerCommandsTest {
             before.document?.pages?.flatMap { it.allNodes() }?.firstOrNull { it.kind is DesignNodeKind.Text }?.id,
             "sample has a text node",
         )
-        val state = reduceDesignEditor(before, DesignEditorIntent.UpdateTypography(textId, TypographyPatch(fontSize = 24.0, fontWeight = 700.0)))
+        // The demo's first text node is authored at size 24 bold, so pick distinct values to force
+        // a real rewrite (a no-op patch would write back nothing).
+        val state = reduceDesignEditor(before, DesignEditorIntent.UpdateTypography(textId, TypographyPatch(fontSize = 28.0, fontWeight = 600.0)))
         val kind = state.document?.nodeById(textId)?.kind as? DesignNodeKind.Text
-        assertEquals(24.0, kind?.textStyle?.fontSize?.literalOrNull())
-        assertEquals(700.0, kind?.textStyle?.fontWeight?.literalOrNull())
+        assertEquals(28.0, kind?.textStyle?.fontSize?.literalOrNull())
+        assertEquals(600.0, kind?.textStyle?.fontWeight?.literalOrNull())
 
-        // The merged text style is serialized into the node's `text.typography` block in the owning
-        // source (others byte-identical).
+        // The merged text style is serialized into the node's CNL sentence in the owning source
+        // (others byte-identical).
         state.assertWroteBackToOneSource(before)
-        assertTrue(state.sources.any { "fontSize: 24" in it.content }, "fontSize written to a source")
+        assertTrue(state.sources.any { "size 28" in it.content }, "font size written to a CNL source")
     }
 
     // --- Undo / redo ---
@@ -419,7 +437,7 @@ class DesignEditorReducerCommandsTest {
         state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
         repeat(20) { state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(root), 2.0, 1.0)) }
         state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
-        assertEquals((before?.x ?: 0.0) + 40.0, state.document?.nodeById(root)?.position?.x)
+        assertEquals((before?.x?.orZero ?: 0.0) + 40.0, state.document?.nodeById(root)?.position?.x?.orZero)
         // One undo reverts the whole drag.
         state = reduceDesignEditor(state, DesignEditorIntent.Undo)
         assertEquals(before, state.document?.nodeById(root)?.position)
@@ -504,7 +522,7 @@ class DesignEditorReducerCommandsTest {
         state = reduceDesignEditor(state, DesignEditorIntent.Undo)
         assertTrue(state.redoStack.isNotEmpty(), "undo populated redo")
         // A resize write-back must fork history so a later Redo can't restore a stale doc.
-        state = reduceDesignEditor(state, DesignEditorIntent.ResizeNode("tile_1", width = 300.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.ResizeNode("win_bg", width = 300.0))
         assertTrue(state.redoStack.isEmpty(), "resize cleared the redo stack")
     }
 

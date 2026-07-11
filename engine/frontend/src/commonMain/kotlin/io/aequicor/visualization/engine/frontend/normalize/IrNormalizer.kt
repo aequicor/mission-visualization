@@ -22,6 +22,7 @@ import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
+import io.aequicor.visualization.engine.frontend.blocks.StylesPatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockReader
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
@@ -29,7 +30,6 @@ import io.aequicor.visualization.engine.frontend.blocks.VariablesPatch
 import io.aequicor.visualization.engine.frontend.blocks.VectorPatch
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.edit.SlmEditIndex
-import io.aequicor.visualization.engine.frontend.escape.IrEscapeHatch
 import io.aequicor.visualization.engine.frontend.expr.ComparisonOp
 import io.aequicor.visualization.engine.frontend.expr.SlmExpression
 import io.aequicor.visualization.engine.frontend.i18n.TextEntry
@@ -53,6 +53,7 @@ import io.aequicor.visualization.engine.ir.model.DesignRepeat
 import io.aequicor.visualization.engine.ir.model.DesignScreenMeta
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.DesignTable
 import io.aequicor.visualization.engine.ir.model.DesignVariables
 import io.aequicor.visualization.engine.ir.model.FramePreset
@@ -100,23 +101,21 @@ private class Normalization(
     private val slugGenerator = SlugGenerator(diagnostics)
     private val merger = PatchMerger(diagnostics, screen.sourceLocale.tag, fileName)
     private val lifter = ComponentLifter(diagnostics)
-    private val escapeHatch = IrEscapeHatch(diagnostics, fileName)
     private val textEntries = mutableListOf<TextEntry>()
     private val anchorOwners = mutableMapOf<String, SlmSourceSpan>()
     private val cnlOwners = mutableMapOf<String, SlmSourceSpan>()
-    private val irSpliceNodes = mutableSetOf<String>()
     private val variableCollections = LinkedHashMap<String, VariableCollection>()
     private val prototypeVariables = LinkedHashMap<String, PrototypeVariable>()
+    private val documentStyles = LinkedHashMap<String, DesignStyle>()
     private var handoff = DesignHandoff()
 
     fun run(): NormalizedScreen {
         val frontmatter = screen.frontmatter
-        var root = checkNotNull(materialize(screen.root, isRoot = true)) {
-            "The screen root is never an ir splice"
-        }
+        liftDocumentPatches(readDocumentPatches())
+        var root = materialize(screen.root, isRoot = true)
 
-        val defs = screen.componentDefs.mapNotNull { def ->
-            val defRoot = materialize(def, isRoot = false) ?: return@mapNotNull null
+        val defs = screen.componentDefs.map { def ->
+            val defRoot = materialize(def, isRoot = false)
             // Re-read without the shared collector: materialize already reported
             // this node's block diagnostics.
             val componentPatch = def.explicitPatches
@@ -144,6 +143,7 @@ private class Normalization(
             pages = listOf(page),
             components = lifter.components,
             componentSets = lifter.componentSets,
+            styles = documentStyles,
             variables = DesignVariables(collections = variableCollections),
             prototypeVariables = prototypeVariables,
             screen = DesignScreenMeta(
@@ -175,15 +175,13 @@ private class Normalization(
         return NormalizedScreen(
             document = document,
             textEntries = textEntries.toList(),
-            editIndex = SlmEditIndex(anchorOwners.toMap(), irSpliceNodes.toSet(), cnlOwners.toMap()),
+            editIndex = SlmEditIndex(anchorOwners.toMap(), cnlOwners.toMap()),
         )
     }
 
     // --- node materialization ---
 
-    /** Null only when an ```ir splice fails to parse (the node is skipped). */
-    private fun materialize(node: SemanticNode, isRoot: Boolean): DesignNode? {
-        if (node.kind == SemanticKind.IrSplice) return splice(node)
+    private fun materialize(node: SemanticNode, isRoot: Boolean): DesignNode {
         val explicit = readPatches(node)
         val semantic = node.semanticPatches.map {
             AppliedPatch(it, blockKeyOf(it), node.span.startLine)
@@ -221,7 +219,7 @@ private class Normalization(
             }
         }
 
-        val children = node.children.mapNotNull { materialize(it, isRoot = false) }
+        val children = node.children.map { materialize(it, isRoot = false) }
         val ordered = resolveOrder(children, diagnostics, parentLabel = id, line = node.span.startLine)
 
         val blockSourceMaps = node.explicitPatches.associate { entry ->
@@ -234,19 +232,11 @@ private class Normalization(
         )
 
         if (node.isAnchor) anchorOwners[id] = node.span
-        if (node.isCnlElement) cnlOwners[id] = node.span
+        // The CNL owner is the sentence/heading LINE; for the screen root that is the H1 line
+        // ([SemanticNode.cnlSpan]), not its whole-document [span].
+        if (node.isCnlElement) cnlOwners[id] = node.cnlSpan ?: node.span
         collectNodeTexts(node, id, explicit, i18nKeyProp)
         return design
-    }
-
-    private fun splice(node: SemanticNode): DesignNode? {
-        val block = node.irSplice ?: return null
-        var spliced = escapeHatch.splice(block, slugGenerator) ?: return null
-        irSpliceNodes += spliced.id
-        node.condition?.let {
-            spliced = spliced.copy(condition = DesignCondition(DesignExpression(renderExpression(it))))
-        }
-        return spliced
     }
 
     /**
@@ -356,7 +346,6 @@ private class Normalization(
         SemanticKind.Media -> "media"
         SemanticKind.Table -> "table"
         SemanticKind.Callout, SemanticKind.EmptyState, SemanticKind.Repeat -> "frame"
-        SemanticKind.IrSplice -> "ir"
     }
 
     private fun defaultRole(kind: SemanticKind): String = when (kind) {
@@ -376,7 +365,6 @@ private class Normalization(
         SemanticKind.Media -> "media"
         SemanticKind.Table -> "table"
         SemanticKind.Repeat -> "repeat"
-        SemanticKind.IrSplice -> "ir"
     }
 
     private fun kindOf(node: SemanticNode): DesignNodeKind = when (node.kind) {
@@ -396,12 +384,11 @@ private class Normalization(
         )
         SemanticKind.Media -> DesignNodeKind.Media(
             DesignMedia(
-                assetId = "",
+                assetId = "".bindable(),
                 alt = node.text?.let(::contentOf),
             ),
         )
         SemanticKind.Table -> DesignNodeKind.Table(DesignTable())
-        SemanticKind.IrSplice -> DesignNodeKind.Unknown("ir")
         else -> DesignNodeKind.Frame
     }
 
@@ -439,6 +426,9 @@ private class Normalization(
             }
         }
 
+    private fun readDocumentPatches(): List<TypedPatch> =
+        screen.documentPatches.mapNotNull { TypedBlockReader.read(it, diagnostics) }
+
     /** `variables`/`handoff` blocks contribute to the document, wherever anchored. */
     private fun liftDocumentPatches(patches: List<TypedPatch>) {
         patches.forEach { patch ->
@@ -451,6 +441,7 @@ private class Normalization(
                         prototypeVariables[name] = variable
                     }
                 }
+                is StylesPatch -> documentStyles.putAll(patch.styles)
                 is HandoffPatch -> handoff = DesignHandoff(
                     annotations = handoff.annotations + patch.handoff.annotations,
                     measurements = handoff.measurements + patch.handoff.measurements,
@@ -491,6 +482,7 @@ internal fun blockKeyOf(patch: TypedPatch): String = when (patch) {
     is MotionPatch -> "motion"
     is ResponsivePatch -> "responsive"
     is VariablesPatch -> "variables"
+    is StylesPatch -> "styles"
     is HandoffPatch -> "handoff"
     is ExportPatch -> "export"
     is ExtensionPatch -> patch.kind

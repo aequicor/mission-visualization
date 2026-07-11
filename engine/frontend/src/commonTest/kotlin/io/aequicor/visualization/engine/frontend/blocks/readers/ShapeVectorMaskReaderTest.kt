@@ -108,10 +108,7 @@ class ShapeVectorMaskReaderTest {
         assertEquals(
             VectorPatch(
                 paths = listOf(VectorPath(windingRule = "nonzero", d = "M12 2L22 20H2L12 2Z")),
-                boolean = BooleanOpPatch(
-                    op = BooleanOperationKind.Union,
-                    children = listOf("triangleBase", "alertCutout"),
-                ),
+                boolean = BooleanOpPatch(op = BooleanOperationKind.Union),
             ),
             patch,
         )

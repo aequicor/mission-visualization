@@ -101,6 +101,7 @@ import io.aequicor.visualization.subsystems.figures.strokeOutline
 import io.aequicor.visualization.subsystems.figures.toSvgPathData
 import io.aequicor.visualization.subsystems.figures.translateSvgPoint
 import io.aequicor.visualization.engine.ir.model.bindable
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
 import io.aequicor.visualization.subsystems.annotations.addAnnotationReference
@@ -162,7 +163,7 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         // --- Position / size / transform ---
         is DesignEditorIntent.UpdatePosition -> state.editUnlockedNode(intent.nodeId) { node ->
             val current = node.position ?: DesignPoint()
-            node.copy(position = DesignPoint(intent.x ?: current.x, intent.y ?: current.y))
+            node.copy(position = DesignPoint(intent.x ?: current.x.orZero, intent.y ?: current.y.orZero))
         }
         is DesignEditorIntent.PositionNode -> state.positionNodeWriteBack(intent)
         is DesignEditorIntent.UpdateSize -> state.editUnlockedNode(intent.nodeId) { node ->
@@ -545,7 +546,7 @@ private fun DesignEditorState.moveNodes(intent: DesignEditorIntent.MoveNodes): D
     val moved = movable.fold(document) { doc, id ->
         doc.updateNode(id) { node ->
             val p = node.position ?: DesignPoint()
-            node.copy(position = DesignPoint(p.x + intent.dx, p.y + intent.dy))
+            node.copy(position = DesignPoint(p.x.orZero + intent.dx, p.y.orZero + intent.dy))
         }
     }
     return commitDocument(document, moved)
@@ -631,7 +632,7 @@ private fun DesignEditorState.duplicationPlan(ids: Set<String>): List<Duplicatio
         ids.forEach { id ->
             val original = working.nodeById(id) ?: return@forEach
             val clone = original.deepCopyWithFreshIds(working)
-            val offset = clone.copy(position = clone.position?.let { DesignPoint(it.x + 16, it.y + 16) })
+            val offset = clone.copy(position = clone.position?.let { DesignPoint(it.x.orZero + 16, it.y.orZero + 16) })
             val siblings = working.siblingsOf(id)
             val insertIndex = siblings.indexOfFirst { it.id == id }.let { if (it < 0) -1 else it + 1 }
             val parentId = working.parentNodeOf(id)?.id ?: working.topLevelOwnerPage(id)?.id ?: return@forEach
@@ -686,13 +687,13 @@ private fun DesignEditorState.duplicateNodesWriteBack(ids: Set<String>): DesignE
 
 /**
  * Reorders [intent.nodeId] among its siblings in the working document (the authority + fallback)
- * and, when the whole sibling run is heading-addressable in one owning SLM source, mirrors the new
- * z-order into that source by writing an explicit `order:` scalar over every sibling in its new
- * visual order (10, 20, 30, ...). A reorder never changes the node set, so [withStructuralSource]
- * runs with the owning page's id set unchanged (the corruption net still discards any drift). An
- * ir-splice / prose sibling (e.g. `card_2`) has no addressable heading anchor and aborts the whole
- * `order:` batch, so a reorder among that run keeps the in-memory move with every source
- * byte-identical — non-corrupting by construction (see [withStructuralSource]).
+ * and, when the move is expressible as a same-parent heading relocation, mirrors the new z-order
+ * into the owning SLM source by relocating the node's section after its new preceding sibling
+ * ([MoveSection]) — z-order is document order in CNL (there is no `order:` scalar). A reorder never
+ * changes the node set, so [withStructuralSource] runs with the owning page's id set unchanged plus
+ * a parent-unchanged check. A prose sibling (no addressable heading anchor), a top-level (page)
+ * parent, a non-expressible subtree, or a front-of-siblings landing keeps the move in-memory with
+ * every source byte-identical — non-corrupting by construction (see [withStructuralSource]).
  */
 private fun DesignEditorState.reorderNodeWriteBack(intent: DesignEditorIntent.ReorderNode): DesignEditorState {
     val document = document ?: return this
@@ -710,22 +711,30 @@ private fun DesignEditorState.reorderNodeWriteBack(intent: DesignEditorIntent.Re
     // Defensive: an inert move (never happens once target != current) writes nothing.
     if (inMemory === this) return this
 
-    // Persist the new z-order: rewrite `order:` across the whole sibling run in its new visual
-    // order so a recompile's stable order-sort reproduces exactly the in-memory arrangement.
-    // Every sibling must be one owning source's heading anchor; any unaddressable sibling aborts
-    // the batch and the reorder stays in-memory.
-    val newSiblings = inMemory.document?.siblingsOf(intent.nodeId) ?: return inMemory
+    // Persist the new z-order by physically relocating the heading section after the sibling that
+    // now precedes it (mirrors reparent's [MoveSection]) — z-order is document order in CNL. The
+    // move stays in-memory (every source byte-identical) when: the moved subtree isn't faithfully
+    // expressible (instance / media / vector-path); the parent is a page (top-level child); the
+    // node lands at the front among siblings (only an after-sibling relocation is expressible); or
+    // any anchor is unaddressable (a prose / ir-splice sibling) — non-corrupting by construction.
+    val moving = document.nodeById(intent.nodeId) ?: return inMemory
+    if (!moving.isStructurallyExpressible()) return inMemory
+    val parentId = document.parentNodeOf(intent.nodeId)?.id ?: return inMemory
     val owner = owningSourceIndex(intent.nodeId) ?: return inMemory
-    val expected = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
-    val edits = newSiblings.mapIndexed { index, sibling ->
-        SetTypedBlockScalar(
-            nodeId = sibling.id,
-            blockKind = TypedBlockKind.Node,
-            yamlPath = listOf("order"),
-            scalar = YamlScalarValue.Num((index + 1) * 10.0),
-        )
+    if (owningSourceIndex(parentId) != owner) return inMemory
+    val newSiblings = inMemory.document?.siblingsOf(intent.nodeId) ?: return inMemory
+    val movedIndex = newSiblings.indexOfFirst { it.id == intent.nodeId }
+    if (movedIndex < 0) return inMemory
+    val afterSiblingId = when {
+        movedIndex == 0 && newSiblings.size == 1 -> null
+        movedIndex == 0 -> return inMemory
+        else -> newSiblings[movedIndex - 1].id
     }
-    return withStructuralSource(intent.nodeId, edits, inMemory, expected)
+    val expected = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
+    val edit = MoveSection(intent.nodeId, parentId, afterSiblingId)
+    return withStructuralSource(intent.nodeId, listOf(edit), inMemory, expected) { recompiled ->
+        recompiled.parentNodeOf(intent.nodeId)?.id == parentId
+    }
 }
 
 /**
@@ -785,7 +794,7 @@ private fun DesignEditorState.reparentNodeWriteBack(intent: DesignEditorIntent.R
     val edits = buildList {
         add(MoveSection(intent.nodeId, intent.newParentId, afterSiblingId))
         intent.position?.let {
-            add(SetNodePosition(intent.nodeId, it.x, it.y))
+            add(SetNodePosition(intent.nodeId, it.x.orZero, it.y.orZero))
             add(SetNodeConstraints(intent.nodeId, HorizontalConstraint.Left, VerticalConstraint.Top))
         }
         intent.size?.let { size ->
@@ -922,10 +931,10 @@ private fun DesignEditorState.flip(ids: Set<String>, horizontal: Boolean): Desig
     val document = document ?: return this
     val nodes = ids.mapNotNull { document.nodeById(it) }.filter { it.position != null && !it.locked }
     if (nodes.size < 2) return this
-    val lefts = nodes.map { it.position!!.x }
-    val rights = nodes.map { it.position!!.x + (it.size.width ?: 0.0) }
-    val tops = nodes.map { it.position!!.y }
-    val bottoms = nodes.map { it.position!!.y + (it.size.height ?: 0.0) }
+    val lefts = nodes.map { it.position!!.x.orZero }
+    val rights = nodes.map { it.position!!.x.orZero + (it.size.width ?: 0.0) }
+    val tops = nodes.map { it.position!!.y.orZero }
+    val bottoms = nodes.map { it.position!!.y.orZero + (it.size.height ?: 0.0) }
     val minX = lefts.min(); val maxX = rights.max()
     val minY = tops.min(); val maxY = bottoms.max()
     val next = nodes.fold(document) { doc, node ->
@@ -933,7 +942,7 @@ private fun DesignEditorState.flip(ids: Set<String>, horizontal: Boolean): Desig
             val p = n.position ?: DesignPoint()
             val w = n.size.width ?: 0.0
             val h = n.size.height ?: 0.0
-            val np = if (horizontal) DesignPoint(minX + maxX - p.x - w, p.y) else DesignPoint(p.x, minY + maxY - p.y - h)
+            val np = if (horizontal) DesignPoint(minX + maxX - p.x.orZero - w, p.y.orZero) else DesignPoint(p.x.orZero, minY + maxY - p.y.orZero - h)
             n.copy(position = np)
         }
     }
@@ -1075,10 +1084,14 @@ private fun DesignEditorState.writeBackEdits(
         return inMemory()
     }
     var preferredFailure: List<DesignDiagnostic> = emptyList()
+    // The fully patched node feeds CnlWriter's tier-3 re-emit: an edit a CNL sentence cannot
+    // express surgically regenerates the whole sentence rather than falling back to YAML.
+    val patchedNode = document.nodeById(nodeId)?.let(patchNode)
+    val intended = document.updateNode(nodeId, patchNode)
     candidateSourceIndices(nodeId).forEachIndexed { attempt, index ->
         val source = sources[index]
         val options = editorSlmCompileOptions(source.fileName)
-        val result = applySlmEdits(source.content, edits, compiledResults[index], options)
+        val result = applySlmEdits(source.content, edits, compiledResults[index], options, patchedNode)
         val newSource = result.newSource
         if (newSource == null) {
             if (attempt == 0) preferredFailure = result.diagnostics
@@ -1089,10 +1102,28 @@ private fun DesignEditorState.writeBackEdits(
             if (attempt == 0) preferredFailure = recompiled.diagnostics
             return@forEachIndexed
         }
+        // Fidelity veto: the patched source must recompile to the SAME node the edit intends —
+        // same page-tree id set and same authored fingerprint at [nodeId]. A tier-3 whole-sentence
+        // re-emit that recompiles cleanly but drops an inexpressible phrase (interaction / effect /
+        // stroke / role) or strips a line prefix and reparents the node would otherwise silently
+        // corrupt the source; here it is rejected and the edit stays in-memory (the same
+        // anti-corruption contract as [withStructuralSource]). Compare SINGLE-source to single-source:
+        // the in-memory [document] is the merged multi-file tree, so its id set / node would never
+        // match a one-source recompile.
+        val sourceDoc = compiledResults[index].document
+        val recompiledDoc = recompiled.document
+        val intendedNode = sourceDoc?.nodeById(nodeId)?.let(patchNode)
+        val faithful = recompiledDoc != null && sourceDoc != null &&
+            recompiledDoc.pageTreeIds() == sourceDoc.pageTreeIds() &&
+            recompiledDoc.nodeById(nodeId)?.identityFingerprint() == intendedNode?.identityFingerprint()
+        if (!faithful) {
+            if (attempt == 0) preferredFailure = result.diagnostics
+            return@forEachIndexed
+        }
         val newSources = sources.toMutableList().apply { this[index] = source.copy(content = newSource) }.toList()
         val newCompiled = compiledResults.toMutableList().apply { this[index] = recompiled }.toList()
         return copy(
-            document = document.updateNode(nodeId, patchNode),
+            document = intended,
             diagnostics = result.diagnostics,
             sources = newSources,
             compiledResults = newCompiled,
@@ -1489,20 +1520,45 @@ private fun DesignDocument.pageTreeIds(): Set<String> =
 private fun DesignNode.identityFingerprint(): List<Any?> = listOf(
     name,
     type,
+    role,
     size.width,
     size.height,
     kindFingerprint(kind),
-    // Authored behavior must survive a structural rewrite: a section that recompiles without its
+    // Authored behavior must survive a rewrite: a section that recompiles without its
     // interactions/motion diverges here and the veto keeps the edit in-memory. Source maps differ
     // between the intended tree and a recompile, so compare interactions without them.
     interactions.map { it.copy(sourceMap = null) },
     motion,
+    // Authored appearance the emitter is expected to round-trip. A whole-sentence re-emit (tier-3
+    // write-back) or a fresh structural section that silently drops a non-CNL-expressible
+    // fill/stroke/effect (a hidden paint, `weightPerSide`, a hidden effect) or a shared-style ref
+    // diverges here, so the veto keeps the faithful in-memory edit instead of persisting a loss.
+    fills,
+    strokes,
+    effects,
+    cornerRadius,
+    opacity,
+    visible,
+    locked,
+    rotation,
+    blendMode,
+    fillStyleId,
+    strokeStyleId,
+    effectStyleId,
+    gridStyleId,
+    variableModes,
+    mask,
 )
 
 /** Kind discriminator for [identityFingerprint]: enough to tell same-name/size nodes of different kinds apart. */
 private fun kindFingerprint(kind: DesignNodeKind): Any? = when (kind) {
     DesignNodeKind.Frame -> "frame"
-    is DesignNodeKind.Text -> listOf("text", kind.content?.defaultText ?: kind.characters.literalOrNull())
+    is DesignNodeKind.Text -> listOf(
+        "text",
+        kind.content?.defaultText ?: kind.characters.literalOrNull(),
+        kind.styleRanges,
+        kind.links,
+    )
     is DesignNodeKind.Shape ->
         listOf("shape", kind.shape.name, kind.pointCount, kind.innerRadius, kind.paths.map { it.windingRule to it.d })
     is DesignNodeKind.Instance -> listOf("instance", kind.componentId.literalOrNull())
@@ -1741,8 +1797,8 @@ private fun DesignNode.applyEffectOp(op: EffectOp): DesignNode {
         }
         is EffectOp.SetBlurRadius -> if (op.index in effects.indices) {
             effects[op.index] = when (val e = effects[op.index]) {
-                is DesignEffect.LayerBlur -> e.copy(radius = op.radius.coerceAtLeast(0.0))
-                is DesignEffect.BackgroundBlur -> e.copy(radius = op.radius.coerceAtLeast(0.0))
+                is DesignEffect.LayerBlur -> e.copy(radius = op.radius.coerceAtLeast(0.0).bindable())
+                is DesignEffect.BackgroundBlur -> e.copy(radius = op.radius.coerceAtLeast(0.0).bindable())
                 else -> e
             }
         }
@@ -1751,23 +1807,24 @@ private fun DesignNode.applyEffectOp(op: EffectOp): DesignNode {
 }
 
 private fun defaultEffect(type: EffectType): DesignEffect = when (type) {
-    EffectType.DropShadow -> DesignEffect.DropShadow(color = DefaultShadowColor.bindable(), offset = DesignPoint(0.0, 4.0), blur = 12.0, spread = 0.0)
-    EffectType.InnerShadow -> DesignEffect.InnerShadow(color = DefaultShadowColor.bindable(), offset = DesignPoint(0.0, 2.0), blur = 8.0, spread = 0.0)
-    EffectType.LayerBlur -> DesignEffect.LayerBlur(radius = 8.0)
-    EffectType.BackgroundBlur -> DesignEffect.BackgroundBlur(radius = 12.0)
+    EffectType.DropShadow -> DesignEffect.DropShadow(color = DefaultShadowColor.bindable(), offset = DesignPoint(0.0, 4.0), blur = 12.0.bindable(), spread = 0.0.bindable())
+    EffectType.InnerShadow -> DesignEffect.InnerShadow(color = DefaultShadowColor.bindable(), offset = DesignPoint(0.0, 2.0), blur = 8.0.bindable(), spread = 0.0.bindable())
+    EffectType.LayerBlur -> DesignEffect.LayerBlur(radius = 8.0.bindable())
+    EffectType.BackgroundBlur -> DesignEffect.BackgroundBlur(radius = 12.0.bindable())
 }
 
 private fun updateShadow(effect: DesignEffect, op: EffectOp.UpdateShadow): DesignEffect = when (effect) {
     is DesignEffect.DropShadow -> effect.copy(
-        offset = DesignPoint(op.dx ?: effect.offset.x, op.dy ?: effect.offset.y),
-        blur = op.blur?.coerceAtLeast(0.0) ?: effect.blur,
-        spread = op.spread ?: effect.spread,
+        // A null axis edit preserves the existing bindable (keeps a `$var`/`{{expr}}` ref intact).
+        offset = DesignPoint(op.dx?.bindable() ?: effect.offset.x, op.dy?.bindable() ?: effect.offset.y),
+        blur = op.blur?.coerceAtLeast(0.0)?.bindable() ?: effect.blur,
+        spread = op.spread?.bindable() ?: effect.spread,
         color = op.color?.bindable() ?: effect.color,
     )
     is DesignEffect.InnerShadow -> effect.copy(
-        offset = DesignPoint(op.dx ?: effect.offset.x, op.dy ?: effect.offset.y),
-        blur = op.blur?.coerceAtLeast(0.0) ?: effect.blur,
-        spread = op.spread ?: effect.spread,
+        offset = DesignPoint(op.dx?.bindable() ?: effect.offset.x, op.dy?.bindable() ?: effect.offset.y),
+        blur = op.blur?.coerceAtLeast(0.0)?.bindable() ?: effect.blur,
+        spread = op.spread?.bindable() ?: effect.spread,
         color = op.color?.bindable() ?: effect.color,
     )
     else -> effect
@@ -2030,8 +2087,8 @@ private fun DesignEditorState.flattenNode(nodeId: String): DesignEditorState {
     val w = node.size.width ?: return this
     val h = node.size.height ?: return this
     val childGeoms = node.children.mapNotNull { child ->
-        val cx = child.position?.x ?: 0.0
-        val cy = child.position?.y ?: 0.0
+        val cx = child.position?.x?.orZero ?: 0.0
+        val cy = child.position?.y?.orZero ?: 0.0
         val cw = child.size.width ?: return@mapNotNull null
         val ch = child.size.height ?: return@mapNotNull null
         shapeGeometryInRect(child, RectD(cx, cy, cx + cw, cy + ch))

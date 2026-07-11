@@ -11,6 +11,7 @@ import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignInsets
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.GradientStop
 import io.aequicor.visualization.engine.ir.model.StrokeAlign
@@ -18,7 +19,7 @@ import io.aequicor.visualization.engine.ir.model.bindable
 
 private val knownKeys = setOf(
     "opacity", "blendMode", "radius", "cornerSmoothing", "fill", "fills", "stroke", "strokes",
-    "effects", "fillStyle", "textStyle", "effectStyle", "gridStyle",
+    "effects", "fillStyle", "strokeStyle", "textStyle", "effectStyle", "gridStyle",
 )
 
 /** `style:` block — opacity/blend, radius, fills, strokes, effects, shared style refs. */
@@ -37,6 +38,7 @@ internal fun readStyleBlock(value: YamlValue, reading: BlockReading): StylePatch
         strokes = readStrokes(map, reading),
         effects = effects?.effects,
         fillStyle = map.string("fillStyle", reading),
+        strokeStyle = map.string("strokeStyle", reading),
         textStyle = map.string("textStyle", reading),
         effectStyle = map.string("effectStyle", reading) ?: effects?.styleRef,
         gridStyle = map.string("gridStyle", reading),
@@ -194,7 +196,11 @@ internal fun readPoint(value: YamlValue?, reading: BlockReading): DesignPoint? {
 internal fun readFocalPoint(value: YamlValue?, reading: BlockReading): DesignPoint? {
     if (value == null) return null
     if ((value as? YamlScalar)?.value == "center") return DesignPoint(0.5, 0.5)
-    return readPoint(value, reading)
+    val map = value as? YamlMap ?: return null
+    return DesignPoint(
+        x = map.bindableDouble("x", reading) ?: 0.0.bindable(),
+        y = map.bindableDouble("y", reading) ?: 0.0.bindable(),
+    )
 }
 
 // --- strokes ---
@@ -211,24 +217,28 @@ private fun readStrokes(map: YamlMap, reading: BlockReading): DesignStrokes? {
     var dash: List<Double>? = null
     var cap: String? = null
     var join: String? = null
+    var perSide: DesignInsets? = null
+    // A stroke item is a paint (any fill-style paint: solid/gradient/image/video with
+    // opacity/blend/visible) plus, on any item, the shared stroke attributes hoisted here.
     val paints = items.mapNotNull { item ->
-        when (item) {
-            is YamlScalar -> bindableColor(item, "stroke", reading)?.let { DesignPaint.Solid(it) }
-            is YamlMap -> {
-                item.bindableDouble("weight", reading)?.let { weight = it }
-                item.enum("position", ReaderEnums.strokeAlign, reading)?.let { align = it }
-                (item.value("dash") as? YamlList)?.let { d ->
-                    dash = d.items.mapNotNull { (it as? YamlScalar)?.value as? Double }
-                }
-                item.string("caps", reading)?.let { cap = it }
-                item.string("joins", reading)?.let { join = it }
-                paintColor(item, reading)?.let { DesignPaint.Solid(it) }
+        (item as? YamlMap)?.let { m ->
+            m.bindableDouble("weight", reading)?.let { weight = it }
+            m.enum("position", ReaderEnums.strokeAlign, reading)?.let { align = it }
+            (m.value("dash") as? YamlList)?.let { d ->
+                dash = d.items.mapNotNull { (it as? YamlScalar)?.value as? Double }
             }
-            else -> {
-                reading.warning("`strokes` items must be maps or color scalars", item)
-                null
+            (m.value("weightPerSide") as? YamlMap)?.let { p ->
+                perSide = DesignInsets(
+                    top = p.bindableDouble("top", reading) ?: 0.0.bindable(),
+                    right = p.bindableDouble("right", reading) ?: 0.0.bindable(),
+                    bottom = p.bindableDouble("bottom", reading) ?: 0.0.bindable(),
+                    left = p.bindableDouble("left", reading) ?: 0.0.bindable(),
+                )
             }
+            m.string("caps", reading)?.let { cap = it }
+            m.string("joins", reading)?.let { join = it }
         }
+        readPaint(item, reading)
     }
     return DesignStrokes(
         paints = paints,
@@ -237,6 +247,7 @@ private fun readStrokes(map: YamlMap, reading: BlockReading): DesignStrokes? {
         dashPattern = dash ?: emptyList(),
         cap = cap ?: "butt",
         join = join ?: "miter",
+        weightPerSide = perSide,
     )
 }
 
@@ -271,29 +282,29 @@ private fun readEffect(effect: YamlMap, reading: BlockReading): DesignEffect? {
         "dropShadow" -> DesignEffect.DropShadow(
             color = effectColor(effect, reading) ?: return null,
             offset = DesignPoint(
-                x = effect.double("x", reading) ?: 0.0,
-                y = effect.double("y", reading) ?: 0.0,
+                x = effect.bindableDouble("x", reading) ?: 0.0.bindable(),
+                y = effect.bindableDouble("y", reading) ?: 0.0.bindable(),
             ),
-            blur = effect.double("blur", reading) ?: 0.0,
-            spread = effect.double("spread", reading) ?: 0.0,
+            blur = effect.bindableDouble("blur", reading) ?: 0.0.bindable(),
+            spread = effect.bindableDouble("spread", reading) ?: 0.0.bindable(),
             visible = visible,
         )
         "innerShadow" -> DesignEffect.InnerShadow(
             color = effectColor(effect, reading) ?: return null,
             offset = DesignPoint(
-                x = effect.double("x", reading) ?: 0.0,
-                y = effect.double("y", reading) ?: 0.0,
+                x = effect.bindableDouble("x", reading) ?: 0.0.bindable(),
+                y = effect.bindableDouble("y", reading) ?: 0.0.bindable(),
             ),
-            blur = effect.double("blur", reading) ?: 0.0,
-            spread = effect.double("spread", reading) ?: 0.0,
+            blur = effect.bindableDouble("blur", reading) ?: 0.0.bindable(),
+            spread = effect.bindableDouble("spread", reading) ?: 0.0.bindable(),
             visible = visible,
         )
         "layerBlur" -> DesignEffect.LayerBlur(
-            radius = effect.double("blur", reading) ?: effect.double("radius", reading) ?: 0.0,
+            radius = effect.bindableDouble("blur", reading) ?: effect.bindableDouble("radius", reading) ?: 0.0.bindable(),
             visible = visible,
         )
         "backgroundBlur" -> DesignEffect.BackgroundBlur(
-            radius = effect.double("blur", reading) ?: effect.double("radius", reading) ?: 0.0,
+            radius = effect.bindableDouble("blur", reading) ?: effect.bindableDouble("radius", reading) ?: 0.0.bindable(),
             visible = visible,
         )
         null -> {

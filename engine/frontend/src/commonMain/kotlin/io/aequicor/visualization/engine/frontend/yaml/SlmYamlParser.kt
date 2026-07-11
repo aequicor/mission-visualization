@@ -495,6 +495,7 @@ private class YamlSubsetParser(
                         when (val esc = token[i + 1]) {
                             'n' -> '\n'
                             't' -> '\t'
+                            'r' -> '\r'
                             '"' -> '"'
                             '\\' -> '\\'
                             else -> esc
