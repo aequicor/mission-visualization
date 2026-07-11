@@ -342,8 +342,8 @@ internal class DesignDocumentReader {
 
     fun readPoint(obj: JsonObject, pointer: String): DesignPoint =
         DesignPoint(
-            x = obj.plainDouble("x", pointer, 0.0),
-            y = obj.plainDouble("y", pointer, 0.0),
+            x = readBindableDouble(obj["x"], 0.0),
+            y = readBindableDouble(obj["y"], 0.0),
         )
 
     fun readSize(element: JsonElement?, pointer: String): DesignSize {
@@ -370,6 +370,9 @@ internal class DesignDocumentReader {
 
     fun readBindableDouble(element: JsonElement?, fallback: Double): Bindable<Double> =
         readBindable(element) { primitive -> primitive.doubleOrNull } ?: fallback.bindable()
+
+    fun readBindableInt(element: JsonElement?, fallback: Int): Bindable<Int> =
+        readBindable(element) { primitive -> primitive.intOrNull } ?: fallback.bindable()
 
     fun readBindableString(element: JsonElement?, fallback: String): Bindable<String> =
         readBindable(element) { primitive -> primitive.content.takeIf { primitive.isString } }

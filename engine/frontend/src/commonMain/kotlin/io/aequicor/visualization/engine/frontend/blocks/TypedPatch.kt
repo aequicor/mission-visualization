@@ -114,7 +114,7 @@ data class LayoutPatch(
     val gridColumns: List<GridTrack>? = null,
     val gridRows: List<GridTrack>? = null,
     val implicitRows: GridTrack? = null,
-    val implicitRowMin: Double? = null,
+    val implicitRowMin: Bindable<Double>? = null,
     val placement: GridPlacement? = null,
     val guides: List<GuideLine>? = null,
     val grids: List<LayoutGridDefinition>? = null,
@@ -198,15 +198,28 @@ data class NestedInstancePatch(
     val props: Map<String, PropValue>? = null,
 )
 
-/** `overrides:` block — slot fills and nested-instance overrides. */
+/**
+ * One `overrides.sets` entry: property groups patched at an id [target] path. The groups are
+ * carried as the same sub-patches node blocks use, so the merger applies them to a bare node
+ * and reads the resulting appearance back into an [io.aequicor.visualization.engine.ir.model.InstanceOverride].
+ */
+data class SetOverridePatch(
+    val target: List<String>,
+    val style: StylePatch? = null,
+    val text: TextPatch? = null,
+    val node: NodePatch? = null,
+)
+
+/** `overrides:` block — slot fills, id-path property sets, and nested-instance overrides. */
 data class OverridesPatch(
     val slots: Map<String, List<SlotOverridePatch>>? = null,
+    val sets: List<SetOverridePatch>? = null,
     val nestedInstances: Map<String, NestedInstancePatch>? = null,
 ) : TypedPatch
 
 /** `media:` block — image/video convenience layer. */
 data class MediaPatch(
-    val asset: String? = null,
+    val asset: Bindable<String>? = null,
     val kind: MediaKind? = null,
     val fillMode: ImageScaleMode? = null,
     val focalPoint: DesignPoint? = null,
@@ -214,7 +227,7 @@ data class MediaPatch(
     val replaceable: Boolean? = null,
     val opacity: Bindable<Double>? = null,
     val blendMode: String? = null,
-    val poster: String? = null,
+    val poster: Bindable<String>? = null,
     val autoplay: Boolean? = null,
     val loop: Boolean? = null,
     val muted: Boolean? = null,
@@ -232,7 +245,6 @@ data class ShapePatch(
 /** `vector.boolean` — boolean operation over sibling nodes referenced by id. */
 data class BooleanOpPatch(
     val op: BooleanOperationKind,
-    val children: List<String>,
 )
 
 /** `vector:` block — icon/path refs, inline paths, structural network, boolean ops. */

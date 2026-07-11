@@ -226,24 +226,6 @@ class SlmMarkdownParserTest {
     // --- fenced code blocks ---
 
     @Test
-    fun parsesIrFenceVerbatim() {
-        val doc = parse(
-            """
-            ```ir
-            {
-              "type": "vector"
-            }
-            ```
-            """.trimIndent(),
-        )
-        val fence = doc.block<FencedCodeBlock>(0)
-        assertEquals("ir", fence.info)
-        assertEquals("{\n  \"type\": \"vector\"\n}", fence.content)
-        assertEquals(2, fence.contentStartLine)
-        assertEquals(SlmSourceSpan(1, 5), fence.span)
-    }
-
-    @Test
     fun unknownFenceInfoWarnsButKeepsBlock() {
         val collector = DiagnosticCollector()
         val doc = parse("```js\nconsole.log(1)\n```", collector)

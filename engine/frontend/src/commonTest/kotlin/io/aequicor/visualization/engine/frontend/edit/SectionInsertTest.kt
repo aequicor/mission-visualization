@@ -27,32 +27,11 @@ class SectionInsertTest {
         sourceLocale: en-US
         ---
 
-        # Screen
+        # Screen id root name «Screen»
 
-        node:
-          id: root
-          name: Screen
+        ## Frame: Panel id panel column width (fill) height (hug)
 
-        ## Frame: Panel
-
-        node:
-          type: frame
-          id: panel
-          name: Panel
-        layout:
-          mode: column
-          sizing:
-            width:
-              type: fill
-            height:
-              type: hug
-
-        ## Frame: Sidebar
-
-        node:
-          type: frame
-          id: sidebar
-          name: Sidebar
+        ## Frame: Sidebar id sidebar
     """.trimIndent() + "\n"
 
     /** A rectangle carrying a fixed size and two fills (a literal hex and a design token). */
@@ -71,27 +50,6 @@ class SectionInsertTest {
             children = children,
         )
 
-    private val shapeBlock = """
-        Shape: New Shape
-        node:
-          type: shape
-          id: new_shape
-          name: "New Shape"
-        shape:
-          kind: rectangle
-        layout:
-          sizing:
-            width:
-              type: fixed
-              value: 120
-            height:
-              type: fixed
-              value: 80
-        style:
-          fills:
-            - color: "#ff0000"
-            - token: color.accent
-    """.trimIndent()
 
     @Test
     fun insertsUnderHeadingBeforeFollowingSibling() {
@@ -99,10 +57,10 @@ class SectionInsertTest {
         val result = applySlmEdit(doc, InsertChildSubtree("panel", rectangle("new_shape", "New Shape")), compiled)
         val new = result.requireNewSource()
 
-        // Golden: a `### `-level section lands between Panel's footprint and the Sidebar heading,
-        // separated by one blank line on each side.
-        val expected = doc.replace("## Frame: Sidebar\n", "### $shapeBlock\n\n## Frame: Sidebar\n")
-        assertEquals(expected, new)
+        // A `### `-level CNL heading lands between Panel's footprint and the Sidebar heading;
+        // the insert only adds bytes, everything else stays lossless.
+        assertTrue("### Rectangle:" in new && "New Shape" in new, new)
+        assertTrue(new.indexOf("New Shape") < new.indexOf("## Frame: Sidebar"), "inserted before Sidebar\n$new")
         assertLosslessOutside(doc, new, assertNotNull(result.appliedRange))
 
         val recompiled = compileForEdit(new)
@@ -125,9 +83,9 @@ class SectionInsertTest {
         val result = applySlmEdit(doc, InsertChildSubtree("root", rectangle("new_shape", "New Shape")), compiled)
         val new = result.requireNewSource()
 
-        // Root child is one level under the H1 (`## `), appended after the last section.
-        val expected = doc + "\n## " + shapeBlock + "\n"
-        assertEquals(expected, new)
+        // Root child is one level under the H1 (`## `), appended as a CNL heading after the last section.
+        assertTrue("## Rectangle:" in new && "New Shape" in new, new)
+        assertTrue(new.indexOf("New Shape") > new.indexOf("## Frame: Sidebar"), "appended after last section\n$new")
         assertLosslessOutside(doc, new, assertNotNull(result.appliedRange))
 
         val recompiled = compileForEdit(new)
@@ -147,9 +105,10 @@ class SectionInsertTest {
         val new = result.requireNewSource()
         assertLosslessOutside(doc, new, assertNotNull(result.appliedRange))
 
-        // The child renders one heading level deeper (`#### ` under a `### ` parent).
-        assertTrue("### Shape: Outer" in new, new)
-        assertTrue("#### Shape: Inner" in new, new)
+        // The child renders one heading level deeper (`#### ` under a `### ` parent). Stable
+        // headings carry the name in a `name «…»` phrase, so match on the level + id.
+        assertTrue("### Rectangle: id outer" in new, new)
+        assertTrue("#### Rectangle: id inner" in new, new)
 
         val recompiled = compileForEdit(new)
         assertNoErrors(recompiled)

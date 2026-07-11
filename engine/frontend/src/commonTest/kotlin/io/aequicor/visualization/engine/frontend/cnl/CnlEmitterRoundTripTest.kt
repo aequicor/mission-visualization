@@ -50,6 +50,7 @@ class CnlEmitterRoundTripTest {
         assertEquals(a.locked, b.locked, "locked")
         assertEquals(a.fills, b.fills, "fills")
         assertEquals(a.strokes, b.strokes, "strokes")
+        assertEquals(a.effects, b.effects, "effects")
         assertEquals(a.cornerRadius, b.cornerRadius, "cornerRadius")
         assertEquals(a.opacity, b.opacity, "opacity")
         assertEquals(a.variableModes, b.variableModes, "variableModes")
@@ -106,6 +107,7 @@ class CnlEmitterRoundTripTest {
             assertEquals(textA?.list, textB?.list, "list")
             assertEquals(textA?.textStyleId, textB?.textStyleId, "textStyleId")
             assertEquals(textA?.links, textB?.links, "links")
+            assertEquals(textA?.styleRanges, textB?.styleRanges, "styleRanges")
         }
         val shapeA = a.kind as? DesignNodeKind.Shape
         val shapeB = b.kind as? DesignNodeKind.Shape
@@ -258,6 +260,22 @@ class CnlEmitterRoundTripTest {
         assertLeafRoundTrips("Rectangle 40 by 40 stroke (color #111827 dash (6 3) cap round)") { it is DesignNodeKind.Shape }
 
     @Test
+    fun strokePerSideWeight() =
+        assertLeafRoundTrips("Rectangle 40 by 40 stroke (color #111827 weight-per-side (1 2 3 4))") { it is DesignNodeKind.Shape }
+
+    @Test
+    fun strokeSolidWithPaintProps() =
+        assertLeafRoundTrips("Rectangle 40 by 40 stroke (color (#111827 opacity 0.5 blend multiply visible no))") { it is DesignNodeKind.Shape }
+
+    @Test
+    fun strokeGradientPaint() =
+        assertLeafRoundTrips("Rectangle 40 by 40 stroke (gradient (linear stops (#4F46E5 at 0) (#9333EA at 1) opacity 0.8) weight 2 align outside)") { it is DesignNodeKind.Shape }
+
+    @Test
+    fun strokeMultiLayerStack() =
+        assertLeafRoundTrips("Rectangle 40 by 40 stroke (gradient (linear stops (#4F46E5 at 0) (#9333EA at 1)) color (#111827 visible no) weight 2)") { it is DesignNodeKind.Shape }
+
+    @Test
     fun dropShadowEffect() =
         assertLeafRoundTrips("Rectangle 40 by 40 color #FFFFFF effect (dropShadow color #00000040 offset (0 2) blur 8)") {
             it is DesignNodeKind.Shape
@@ -272,6 +290,50 @@ class CnlEmitterRoundTripTest {
     @Test
     fun strokeAndLayerBlur() =
         assertLeafRoundTrips("Rectangle 40 by 40 stroke (color #111827) effect (layerBlur 6)") { it is DesignNodeKind.Shape }
+
+    // --- S28a: bindable effect scalars (blur / spread / radius) round-trip through CNL ---
+
+    @Test
+    fun dropShadowBlurTokenRef() =
+        assertLeafRoundTrips("Rectangle 40 by 40 effect (dropShadow color #00000040 blur \$shadow.blur spread \$shadow.spread)") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
+    fun dropShadowBlurDataBinding() =
+        assertLeafRoundTrips("Rectangle 40 by 40 effect (dropShadow color #00000040 blur {{data.blur}} spread {{data.spread}})") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
+    fun layerBlurRadiusTokenRef() =
+        assertLeafRoundTrips("Rectangle 40 by 40 effect (layerBlur \$blur.token)") { it is DesignNodeKind.Shape }
+
+    @Test
+    fun backgroundBlurRadiusDataBinding() =
+        assertLeafRoundTrips("Rectangle 40 by 40 effect (backgroundBlur {{data.radius}})") { it is DesignNodeKind.Shape }
+
+    // --- S28b: bindable point axes (shadow offset / media focalPoint) round-trip through CNL ---
+
+    @Test
+    fun dropShadowOffsetTokenRef() =
+        assertLeafRoundTrips("Rectangle 40 by 40 effect (dropShadow color #00000040 offset (\$shadow.x \$shadow.y) blur 8)") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
+    fun dropShadowOffsetDataBinding() =
+        assertLeafRoundTrips("Rectangle 40 by 40 effect (dropShadow color #00000040 offset ({{data.dx}} {{data.dy}}) blur 8)") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
+    fun mediaFocalPointTokenRef() =
+        assertLeafRoundTrips("Image media (asset media/hero focus (\$crop.x \$crop.y))") { it is DesignNodeKind.Media }
+
+    @Test
+    fun mediaFocalPointDataBinding() =
+        assertLeafRoundTrips("Image media (asset media/hero focus ({{data.fx}} {{data.fy}}))") { it is DesignNodeKind.Media }
 
     @Test
     fun typographyDeep() =
@@ -369,9 +431,46 @@ class CnlEmitterRoundTripTest {
     fun gridChildPlacement() =
         assertLeafRoundTrips("Rectangle place (column 1 row 1 columnSpan 8 rowSpan 2)") { it is DesignNodeKind.Shape }
 
+    // --- S28 sub-step 4: bindable grid track sizes + implicitRowMin round-trip through CNL ---
+
+    @Test
+    fun gridFixedTrackTokenRef() =
+        assertLeafRoundTrips("Frame grid columns (track \$col.width)") { it is DesignNodeKind.Frame }
+
+    @Test
+    fun gridFixedTrackDataBinding() =
+        assertLeafRoundTrips("Frame grid columns (track {{data.colWidth}})") { it is DesignNodeKind.Frame }
+
+    @Test
+    fun gridFlexTrackTokenRef() =
+        assertLeafRoundTrips("Frame grid columns (track \$colWeightfr)") { it is DesignNodeKind.Frame }
+
+    @Test
+    fun gridFlexTrackDataBinding() =
+        assertLeafRoundTrips("Frame grid columns (track {{data.colWeight}}fr)") { it is DesignNodeKind.Frame }
+
+    @Test
+    fun gridImplicitRowMinTokenRef() =
+        assertLeafRoundTrips("Frame grid columns (count 12 track 1fr) rows (auto min \$row.min)") { it is DesignNodeKind.Frame }
+
+    @Test
+    fun gridImplicitRowMinDataBinding() =
+        assertLeafRoundTrips("Frame grid columns (count 12 track 1fr) rows (auto min {{data.rowMin}})") { it is DesignNodeKind.Frame }
+
+    @Test
+    fun gridHeterogeneousTracksWithRefs() =
+        assertLeafRoundTrips("Frame grid columns (tracks (\$sidebar 1fr \$railfr))") { it is DesignNodeKind.Frame }
+
     @Test
     fun guidesAndGrids() =
         assertLeafRoundTrips("Frame guides (vertical 72) (horizontal 120) grids (columns count 12 gutter 24 margin 72 alignment stretch color #EEEEEE)") {
+            it is DesignNodeKind.Frame
+        }
+
+    /** S28 final: a bindable overlay — `$var` count and `{{expr}}`/`$var` size/gutter/margin survive. */
+    @Test
+    fun gridOverlaySlotBindings() =
+        assertLeafRoundTrips("Frame grids (columns count \$gcols size {{data.cell}} gutter \$ggut margin {{data.gm}})") {
             it is DesignNodeKind.Frame
         }
 
@@ -386,6 +485,44 @@ class CnlEmitterRoundTripTest {
     @Test
     fun textWithMultipleLinks() =
         assertLeafRoundTrips("Text «Read the terms and privacy» link (range (4 9) url «https://a.co/terms») link (range (14 21) to privacy)") {
+            it is DesignNodeKind.Text
+        }
+
+    @Test
+    fun textWithStyleSpan() =
+        assertLeafRoundTrips("Text «Read the terms» span (range (9 14) style typography.title)") { it is DesignNodeKind.Text }
+
+    @Test
+    fun textWithMultipleStyleSpans() =
+        assertLeafRoundTrips("Text «Bold and italic» span (range (0 4) style typography.body.strong) span (range (9 15) style typography.body.em)") {
+            it is DesignNodeKind.Text
+        }
+
+    @Test
+    fun textWithStyleSpanAndLink() =
+        assertLeafRoundTrips("Text «Read the terms» span (range (0 4) style typography.body.strong) link (range (9 14) url «https://a.co/terms»)") {
+            it is DesignNodeKind.Text
+        }
+
+    @Test
+    fun textWithStyleSpanAtBoundaries() =
+        assertLeafRoundTrips("Text «Terms» span (range (0 5) style typography.title.heading)") { it is DesignNodeKind.Text }
+
+    @Test
+    fun textWithDottedStyleRef() =
+        assertLeafRoundTrips("Text «Read the terms» span (range (9 14) style typography.title.heading.lg)") { it is DesignNodeKind.Text }
+
+    /** Authored in reverse (start, end) order — emit must preserve list order, not re-sort. */
+    @Test
+    fun textWithUnsortedStyleSpans() =
+        assertLeafRoundTrips("Text «Read the terms» span (range (9 14) style typography.title) span (range (0 4) style typography.body.strong)") {
+            it is DesignNodeKind.Text
+        }
+
+    /** Overlapping spans: authored precedence in the overlap region must survive the round-trip. */
+    @Test
+    fun textWithOverlappingStyleSpans() =
+        assertLeafRoundTrips("Text «Read the terms» span (range (0 10) style typography.body.strong) span (range (0 5) style typography.title.heading)") {
             it is DesignNodeKind.Text
         }
 
@@ -497,6 +634,24 @@ class CnlEmitterRoundTripTest {
     fun imageMediaFitMode() =
         assertLeafRoundTrips("Image media (asset icons/avatar fit)") { it is DesignNodeKind.Media }
 
+    // --- S28c: bindable media string slots (assetId / posterAssetId) round-trip through CNL ---
+
+    @Test
+    fun imageMediaAssetTokenRef() =
+        assertLeafRoundTrips("Image media (asset \$hero.asset)") { it is DesignNodeKind.Media }
+
+    @Test
+    fun imageMediaAssetDataBinding() =
+        assertLeafRoundTrips("Image media (asset {{data.hero}})") { it is DesignNodeKind.Media }
+
+    @Test
+    fun videoMediaPosterTokenRef() =
+        assertLeafRoundTrips("Image media (asset media/promo video poster \$hero.thumb)") { it is DesignNodeKind.Media }
+
+    @Test
+    fun videoMediaPosterDataBinding() =
+        assertLeafRoundTrips("Image media (asset media/promo video poster {{data.thumb}})") { it is DesignNodeKind.Media }
+
     @Test
     fun starPointsInner() =
         assertLeafRoundTrips("Star points 5 inner 0.45") { it is DesignNodeKind.Shape }
@@ -532,6 +687,10 @@ class CnlEmitterRoundTripTest {
     @Test
     fun maskAlphaClips() =
         assertLeafRoundTrips("Rectangle mask alpha clips (title_bar hero_image)") { it is DesignNodeKind.Shape }
+
+    @Test
+    fun maskWithSource() =
+        assertLeafRoundTrips("Rectangle mask alpha clips (avatar) from avatar_mask") { it is DesignNodeKind.Shape }
 
     @Test
     fun maskLuminance() =

@@ -6,6 +6,7 @@ import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.DesignStyle
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.engine.ir.resolve.ResolvedNode
 import io.aequicor.visualization.engine.ir.resolve.ResolvedPaint
@@ -75,7 +76,7 @@ class CnlSharedStylesDocumentTest {
         assertEquals(DesignColor.fromHex("#FFFFFF"), fill.color)
         assertEquals(1, panel.effects.size)
         assertEquals(1, panel.layoutGrids.size)
-        assertEquals(12, panel.layoutGrids.single().count)
+        assertEquals(12, panel.layoutGrids.single().count?.literalOrNull())
 
         val label = assertNotNull(findResolved(resolved, "label"))
         val text = assertNotNull(label.text)
@@ -96,5 +97,18 @@ class CnlSharedStylesDocumentTest {
         assertTrue(emitted.contains("# Styles"))
         assertTrue(emitted.contains("Paint color.surface color #FFFFFF"))
         assertTrue(emitted.contains("TextStyle type.body"))
+    }
+
+    @Test
+    fun nestedStylesHeadingStaysAUiSection() {
+        // Document dictionaries are H1-only; a `## Styles` inside a screen is a UI section,
+        // and its child sentences must stay visible nodes instead of being consumed.
+        val source = "$frontmatter\n\n# Style Demo\n\n## Styles\n\nRectangle id swatch 24 by 24 color #FF0000"
+        val document = compile(source)
+
+        assertTrue(document.styles.isEmpty(), "no document styles from a nested heading")
+        val root = document.pages.single().children.single()
+        val section = assertNotNull(root.children.firstOrNull { it.name == "Styles" }, "Styles section node")
+        assertEquals("swatch", assertNotNull(section.children.singleOrNull()).id)
     }
 }

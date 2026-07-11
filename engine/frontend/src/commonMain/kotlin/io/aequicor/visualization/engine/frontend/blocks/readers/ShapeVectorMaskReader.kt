@@ -177,12 +177,11 @@ private fun readVectorPaths(map: YamlMap, reading: BlockReading): List<VectorPat
 
 private fun readBooleanOp(map: YamlMap, reading: BlockReading): BooleanOpPatch? {
     val boolean = map.mapValue("boolean", reading) ?: return null
+    // Operands are the node's nested child sections; a legacy `children:` id-list is tolerated but
+    // ignored (the operation carries only its kind).
     boolean.warnUnknownKeys(setOf("op", "children"), reading)
     val op = boolean.enum("op", ReaderEnums.booleanOp, reading) ?: return null
-    return BooleanOpPatch(
-        op = op,
-        children = boolean.stringList("children", reading) ?: emptyList(),
-    )
+    return BooleanOpPatch(op = op)
 }
 
 /** `mask:` block. */

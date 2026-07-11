@@ -60,6 +60,8 @@ data class TextStyleRange(
     val end: Int,
     val style: DesignTextStyle = DesignTextStyle(),
     val fills: List<DesignPaint>? = null,
+    /** Reference to a shared/named text style token applied over this range. */
+    val styleRef: String = "",
 )
 
 /** Exactly one of [url] (external) or [nodeTarget] (internal navigation) is set. */

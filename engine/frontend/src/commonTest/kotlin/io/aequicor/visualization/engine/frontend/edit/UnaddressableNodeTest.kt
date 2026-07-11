@@ -23,7 +23,9 @@ class UnaddressableNodeTest {
     }
 
     @Test
-    fun irSplicedNodeRedirectsToTheEmbeddedJson() {
+    fun ignoredIrFenceNodeIsUnaddressable() {
+        // ```ir is no longer an authoring surface: the fence is ignored, so no node is
+        // produced and any edit targeting its would-be id degrades to the generic message.
         val doc = """
             ---
             screen: s
@@ -44,7 +46,6 @@ class UnaddressableNodeTest {
             ```
         """.trimIndent() + "\n"
         val compiled = compileForEdit(doc)
-        assertTrue("customAlertIcon" in compiled.editIndex.irSpliceNodes)
         val result = applySlmEdit(
             doc,
             SetSizing("customAlertIcon", width = SizingSpec(SizingMode.Fixed, value = 24.0)),
@@ -52,7 +53,7 @@ class UnaddressableNodeTest {
         )
         assertFalse(result.isApplied)
         val message = result.diagnostics.single().message
-        assertTrue("```ir" in message, message)
-        assertTrue("edit the embedded JSON directly" in message, message)
+        assertTrue("no addressable source anchor" in message, message)
+        assertTrue("promote" in message, message)
     }
 }

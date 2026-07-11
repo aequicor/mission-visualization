@@ -3,6 +3,8 @@ package io.aequicor.visualization.engine.ir.layout
 import io.aequicor.visualization.engine.ir.geometry.RectD
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
+import io.aequicor.visualization.engine.ir.model.orZero
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.GridTrack
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.JustifyContent
@@ -150,7 +152,7 @@ class DesignLayoutEngine(
                         node.layout.columnGap * (columns.size - 1).coerceAtLeast(0)
                 }
                 LayoutMode.None -> fixed ?: (node.children.maxOfOrNull { child ->
-                    (child.position?.x ?: 0.0) + naturalWidth(child)
+                    (child.position?.x?.orZero ?: 0.0) + naturalWidth(child)
                 } ?: 0.0)
             }
         }
@@ -170,7 +172,7 @@ class DesignLayoutEngine(
                 LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
                     layoutChildren(node, width, null).contentHeight
                 LayoutMode.None -> fixed ?: (node.children.maxOfOrNull { child ->
-                    (child.position?.y ?: 0.0) + naturalHeight(child, naturalWidth(child))
+                    (child.position?.y?.orZero ?: 0.0) + naturalHeight(child, naturalWidth(child))
                 } ?: 0.0)
             }
         }
@@ -271,7 +273,7 @@ class DesignLayoutEngine(
             }
             val (cx, cw) = remapHorizontal(
                 child.constraints.horizontal,
-                child.position?.x ?: 0.0,
+                child.position?.x?.orZero ?: 0.0,
                 childAuthoredWidth,
                 authoredWidth,
                 parentWidth,
@@ -282,7 +284,7 @@ class DesignLayoutEngine(
             }
             val (cy, ch) = remapVertical(
                 child.constraints.vertical,
-                child.position?.y ?: 0.0,
+                child.position?.y?.orZero ?: 0.0,
                 childAuthoredHeight,
                 authoredHeight,
                 parentHeight,
@@ -707,7 +709,7 @@ class DesignLayoutEngine(
     // --- Grid ------------------------------------------------------------------
 
     private fun gridColumns(node: ResolvedNode): List<GridTrack> =
-        node.layout.columns.ifEmpty { listOf(GridTrack.Flex(1.0)) }
+        node.layout.columns.ifEmpty { listOf(GridTrack.Flex(1.0.bindable())) }
 
     private data class GridCell(
         val child: ResolvedNode,
@@ -806,7 +808,7 @@ class DesignLayoutEngine(
                     naturalHeight(cell.child, childWidth)
                 } ?: 0.0
         }
-        val implicitMin = layout.implicitRowMin.takeIf { implicitTemplate != null }
+        val implicitMin = layout.implicitRowMin?.orZero?.takeIf { implicitTemplate != null }
         val rowHeights = if (implicitMin != null) {
             resolvedRowHeights.map { it.coerceAtLeast(implicitMin) }
         } else {
@@ -852,9 +854,9 @@ class DesignLayoutEngine(
         var flexTotal = 0.0
         tracks.forEachIndexed { index, track ->
             when (track) {
-                is GridTrack.Fixed -> sizes[index] = track.value
+                is GridTrack.Fixed -> sizes[index] = track.value.orZero
                 GridTrack.Hug -> sizes[index] = hugSize(index)
-                is GridTrack.Flex -> flexTotal += track.value
+                is GridTrack.Flex -> flexTotal += track.value.orZero
             }
         }
         if (flexTotal > 0.0) {
@@ -867,7 +869,7 @@ class DesignLayoutEngine(
             tracks.forEachIndexed { index, track ->
                 if (track is GridTrack.Flex) {
                     sizes[index] = if (available != null) {
-                        remaining * track.value / flexTotal
+                        remaining * track.value.orZero / flexTotal
                     } else {
                         hugSize(index)
                     }

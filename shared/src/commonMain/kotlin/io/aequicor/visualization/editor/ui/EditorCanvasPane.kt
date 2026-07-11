@@ -177,6 +177,7 @@ import io.aequicor.visualization.engine.ir.geometry.meetFit
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.ShapeType
@@ -2423,7 +2424,7 @@ private fun applyResize(
     // in absolute origin equals the change in authored position.
     val originPos = target.originPosition
     if (originPos != null && (result.dx != 0.0 || result.dy != 0.0)) {
-        state.dispatch(DesignEditorIntent.UpdatePosition(target.nodeId, x = originPos.x + result.dx, y = originPos.y + result.dy))
+        state.dispatch(DesignEditorIntent.UpdatePosition(target.nodeId, x = originPos.x.orZero + result.dx, y = originPos.y.orZero + result.dy))
     }
     // Dispatch size only on an axis that actually changed, so a blocked-direction drag is a true
     // no-op and an edge-only drag doesn't pin the untouched axis' sizing to Fixed (the reducer
@@ -2461,7 +2462,7 @@ private fun applyGroupResize(
     val transformed = transformedTargets(targets, baseline, result)
     transformed.forEach { item ->
         item.target.originPosition?.let { origin ->
-            state.dispatch(DesignEditorIntent.UpdatePosition(item.target.nodeId, x = origin.x + item.dx, y = origin.y + item.dy))
+            state.dispatch(DesignEditorIntent.UpdatePosition(item.target.nodeId, x = origin.x.orZero + item.dx, y = origin.y.orZero + item.dy))
         }
         state.dispatch(DesignEditorIntent.UpdateSize(item.target.nodeId, width = item.width, height = item.height))
     }
@@ -2486,7 +2487,7 @@ private fun commitResizeWriteBack(
     )
     val originPos = target.originPosition
     if (originPos != null && (result.dx != 0.0 || result.dy != 0.0)) {
-        state.dispatch(DesignEditorIntent.PositionNode(target.nodeId, x = originPos.x + result.dx, y = originPos.y + result.dy))
+        state.dispatch(DesignEditorIntent.PositionNode(target.nodeId, x = originPos.x.orZero + result.dx, y = originPos.y.orZero + result.dy))
     }
     val widthChanged = result.width != baseline.width
     val heightChanged = result.height != baseline.height
@@ -2521,7 +2522,7 @@ private fun commitGroupResizeWriteBack(
     transformedTargets(targets, baseline, result).forEach { item ->
         item.target.originPosition?.let { origin ->
             if (item.dx != 0.0 || item.dy != 0.0) {
-                state.dispatch(DesignEditorIntent.PositionNode(item.target.nodeId, x = origin.x + item.dx, y = origin.y + item.dy))
+                state.dispatch(DesignEditorIntent.PositionNode(item.target.nodeId, x = origin.x.orZero + item.dx, y = origin.y.orZero + item.dy))
             }
         }
         state.dispatch(DesignEditorIntent.ResizeNode(item.target.nodeId, width = item.width, height = item.height))
@@ -2567,7 +2568,7 @@ private fun commitMovedPositions(
     startPositions.forEach { (nodeId, start) ->
         val current = document.nodeById(nodeId)?.position ?: return@forEach
         if (current.x != start.x || current.y != start.y) {
-            state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = current.x, y = current.y))
+            state.dispatch(DesignEditorIntent.PositionNode(nodeId, x = current.x.orZero, y = current.y.orZero))
         }
     }
 }

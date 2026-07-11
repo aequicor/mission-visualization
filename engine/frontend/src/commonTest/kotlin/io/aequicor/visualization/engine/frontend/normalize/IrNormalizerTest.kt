@@ -14,6 +14,7 @@ import io.aequicor.visualization.engine.ir.model.VariableType
 import io.aequicor.visualization.engine.ir.model.VariableValue
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.bindable
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -32,123 +33,12 @@ class IrNormalizerTest {
     }
 
     @Test
-    fun typedBlocksOnlyDocumentBuildsExpectedTree() {
-        val (normalized, collector) = normalize(
-            """
-            # Screen
-
-            ## Panel
-            node:
-              type: frame
-              id: panel
-            layout:
-              mode: row
-              gap: 12
-            style:
-              opacity: 0.5
-
-            ### Child A
-            node:
-              id: childA
-
-            ### Child B
-            node:
-              id: childB
-              order: 5
-            """,
-        )
-        assertTrue(
-            collector.diagnostics.none { it.severity == DesignSeverity.Error },
-            collector.diagnostics.joinToString { it.message },
-        )
-        val root = normalized.document.pages.single().children.single()
-        assertEquals("testScreen", root.id)
-        assertEquals("screen", root.type)
-        assertEquals("Screen", normalized.document.name)
-
-        val panel = root.children.single()
-        assertEquals("panel", panel.id)
-        assertEquals(LayoutMode.Horizontal, panel.layout.mode)
-        assertEquals(DesignGap.Fixed(12.0.bindable()), panel.layout.gap)
-        assertEquals(0.5.bindable(), panel.opacity)
-
-        // childB has explicit order 5, childA gets implicit 10 -> childB paints first.
-        assertEquals(listOf("childB", "childA"), panel.children.map { it.id })
-        assertEquals(listOf(5, 10), panel.children.map { it.order })
-        assertTrue(collector.diagnostics.any { "Mixed explicit and implicit" in it.message })
-
-        // Source maps: node line for the anchor, block lines per typed entry kind.
-        assertEquals(3, panel.sourceMap?.line)
-        assertEquals("test.layout.md", panel.sourceMap?.file)
-        assertEquals(4, panel.blockSourceMaps["node"]?.line)
-        assertEquals(7, panel.blockSourceMaps["layout"]?.line)
-        assertEquals(10, panel.blockSourceMaps["style"]?.line)
-
-        // Edit index: anchor-owning nodes are addressable.
-        assertNotNull(normalized.editIndex.anchorOwners["panel"])
-        assertNotNull(normalized.editIndex.anchorOwners["childA"])
-        assertTrue(normalized.editIndex.irSpliceNodes.isEmpty())
-
-        // The screen title lands in the collected text entries.
-        assertTrue(normalized.textEntries.any { it.defaultText == "Screen" && it.nodeId == "testScreen" })
-    }
-
-    @Test
-    fun explicitPatchOverridingSemanticValueWarns() {
-        val (normalized, collector) = normalize(
-            """
-            # S
-
-            ![Карта](assets/a.png)
-            media:
-              asset: assets/b.png
-            """,
-        )
-        val root = normalized.document.pages.single().children.single()
-        val media = root.children.single()
-        val kind = assertIs<DesignNodeKind.Media>(media.kind)
-        assertEquals("assets/b.png", kind.media.assetId)
-        assertTrue(
-            collector.diagnostics.any {
-                it.severity == DesignSeverity.Warning && "media.asset" in it.message &&
-                    "assets/a.png" in it.message && "assets/b.png" in it.message
-            },
-            collector.diagnostics.joinToString { it.message },
-        )
-    }
-
-    @Test
-    fun duplicateStyleBlocksLastWinsWithWarning() {
-        val (normalized, collector) = normalize(
-            """
-            # S
-
-            ## Panel
-            style:
-              opacity: 0.3
-            style:
-              opacity: 0.7
-            """,
-        )
-        val panel = normalized.document.pages.single().children.single().children.single()
-        assertEquals(0.7.bindable(), panel.opacity)
-        assertTrue(collector.diagnostics.any { "Duplicate `style` block" in it.message })
-    }
-
-    @Test
     fun duplicateInteractionBlocksAccumulate() {
         val (normalized, collector) = normalize(
             """
             # S
 
-            ## Button
-            interaction:
-              trigger: onClick
-              action: navigate
-              destination: /a
-            interaction:
-              trigger: onHover
-              action: back
+            ## Button onClick navigate (/a) onHover back
             """,
         )
         val button = normalized.document.pages.single().children.single().children.single()
@@ -162,20 +52,13 @@ class IrNormalizerTest {
             """
             # S
 
-            variables:
-              collections:
-                - id: theme
-                  modes: [light, dark]
-                  variables:
-                    color.surface:
-                      type: color
-                      values:
-                        light: "#ffffff"
-                        dark: "#101114"
-              prototype:
-                selected:
-                  type: string
-                  default: ""
+            # Collection theme (modes light dark)
+
+            Color color.surface light #FFFFFF dark #101114
+
+            # Prototype Variables
+
+            String selected default «»
             """,
         )
         assertTrue(

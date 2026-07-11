@@ -20,6 +20,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.engine.ir.resolve.ResolvedInteraction
 
@@ -38,8 +39,8 @@ data class CanvasViewport(val zoom: Float, val panX: Float, val panY: Float) {
 
 internal fun LayoutBox.withRootDocumentOrigin(): LayoutBox {
     val position = node.position ?: return this
-    if (position.x == 0.0 && position.y == 0.0) return this
-    return translateBy(position.x, position.y)
+    if (position.x.orZero == 0.0 && position.y.orZero == 0.0) return this
+    return translateBy(position.x.orZero, position.y.orZero)
 }
 
 private fun LayoutBox.translateBy(dx: Double, dy: Double): LayoutBox =

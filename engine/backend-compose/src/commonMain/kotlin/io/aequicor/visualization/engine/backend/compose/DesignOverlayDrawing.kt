@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.TextUnit
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.GuideOrientation
 import io.aequicor.visualization.engine.ir.model.LayoutGridType
+import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.engine.ir.model.orZero
 
 private val GuideColor = Color(0xFF00B5FF)
 private val LayoutGridDefaultColor = Color(0xFFFF0000)
@@ -74,10 +76,10 @@ private fun DrawScope.drawLayoutGrids(box: LayoutBox, hairline: Float) {
             LayoutGridType.Columns -> layoutGridSlices(
                 offset = box.x,
                 extent = box.width,
-                count = definition.count,
-                size = definition.size,
-                gutter = definition.gutter,
-                margin = definition.margin,
+                count = definition.count?.literalOrNull(),
+                size = definition.size?.literalOrNull(),
+                gutter = definition.gutter?.orZero ?: 0.0,
+                margin = definition.margin?.orZero ?: 0.0,
                 alignment = definition.alignment,
             ).forEach { slice ->
                 drawRect(
@@ -90,10 +92,10 @@ private fun DrawScope.drawLayoutGrids(box: LayoutBox, hairline: Float) {
             LayoutGridType.Rows -> layoutGridSlices(
                 offset = box.y,
                 extent = box.height,
-                count = definition.count,
-                size = definition.size,
-                gutter = definition.gutter,
-                margin = definition.margin,
+                count = definition.count?.literalOrNull(),
+                size = definition.size?.literalOrNull(),
+                gutter = definition.gutter?.orZero ?: 0.0,
+                margin = definition.margin?.orZero ?: 0.0,
                 alignment = definition.alignment,
             ).forEach { slice ->
                 drawRect(
@@ -104,7 +106,7 @@ private fun DrawScope.drawLayoutGrids(box: LayoutBox, hairline: Float) {
                 )
             }
             LayoutGridType.Grid -> {
-                val step = definition.size ?: return@forEach
+                val step = definition.size?.literalOrNull() ?: return@forEach
                 gridLinePositions(box.x, box.width, step).forEach { x ->
                     drawLine(
                         color = color,

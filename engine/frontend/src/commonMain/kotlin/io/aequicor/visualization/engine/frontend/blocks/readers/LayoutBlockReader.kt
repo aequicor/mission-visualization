@@ -7,8 +7,10 @@ import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
 import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.DesignExpression
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.GridPlacement
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.GridTrack
 import io.aequicor.visualization.engine.ir.model.GuideLine
 import io.aequicor.visualization.engine.ir.model.GuideOrientation
@@ -238,7 +240,7 @@ private class TrackAxis(
     val tracks: List<GridTrack>?,
     val gap: Bindable<Double>?,
     val implicitTrack: GridTrack?,
-    val min: Double?,
+    val min: Bindable<Double>?,
 )
 
 private fun readTrackAxis(map: YamlMap, key: String, reading: BlockReading): TrackAxis? {
@@ -250,33 +252,45 @@ private fun readTrackAxis(map: YamlMap, key: String, reading: BlockReading): Tra
     val auto = axis.boolean("auto", reading) ?: false
     val tracks = when {
         trackList != null -> trackList
-        count != null && count > 0 -> List(count) { track ?: GridTrack.Flex(1.0) }
+        count != null && count > 0 -> List(count) { track ?: GridTrack.Flex(1.0.bindable()) }
         track != null && !auto -> listOf(track)
         else -> null
     }
     return TrackAxis(
         tracks = tracks,
         gap = axis.bindableDouble("gap", reading),
-        implicitTrack = if (auto) track ?: GridTrack.Flex(1.0) else null,
-        min = axis.double("min", reading),
+        implicitTrack = if (auto) track ?: GridTrack.Flex(1.0.bindable()) else null,
+        min = axis.bindableDouble("min", reading),
     )
 }
 
-/** `1fr` -> Flex, number -> Fixed, `hug` -> Hug. */
+/**
+ * `1fr` -> Flex, `hug` -> Hug, otherwise Fixed. Each size accepts a literal, a `$token`/`$prop`
+ * ref or a `{{expr}}` binding, so `1fr`, `$fr` (Flex ref), `$col` (Fixed ref) all parse; the
+ * `fr` suffix is stripped before the ref/literal is read so refs survive the flex branch.
+ */
 private fun readTrack(value: YamlValue, reading: BlockReading): GridTrack? {
-    val scalar = value as? YamlScalar
-    when (val raw = scalar?.value) {
-        is Double -> return GridTrack.Fixed(raw)
-        is String -> {
-            if (raw == "hug") return GridTrack.Hug
-            if (raw.endsWith("fr")) {
-                raw.removeSuffix("fr").toDoubleOrNull()?.let { return GridTrack.Flex(it) }
-            }
+    val raw = (value as? YamlScalar)?.value
+    if (raw is String) {
+        if (raw == "hug") return GridTrack.Hug
+        if (raw.endsWith("fr")) {
+            bindableDoubleFromText(raw.removeSuffix("fr"))?.let { return GridTrack.Flex(it) }
         }
-        else -> {}
     }
-    reading.warning("`track` must be a number, `Nfr` or `hug`", value)
+    bindableDouble(value, "track", reading)?.let { return GridTrack.Fixed(it) }
     return null
+}
+
+/** Parses a bare `fr`-body: literal, `$token`/`$prop` ref or `{{expr}}` binding. */
+private fun bindableDoubleFromText(text: String): Bindable<Double>? {
+    val trimmed = text.trim()
+    return when {
+        trimmed.startsWith("\$prop.") -> trimmed.removePrefix("\$prop.").takeIf { it.isNotEmpty() }?.let { Bindable.PropRef(it) }
+        trimmed.startsWith("\$prop:") -> trimmed.removePrefix("\$prop:").takeIf { it.isNotEmpty() }?.let { Bindable.PropRef(it) }
+        trimmed.startsWith("$") -> trimmed.drop(1).takeIf { it.isNotEmpty() }?.let { Bindable.VarRef(it) }
+        else -> expressionBody(trimmed)?.let { Bindable.DataRef(DesignExpression(it)) }
+            ?: trimmed.toDoubleOrNull()?.bindable()
+    }
 }
 
 private fun readPlacement(map: YamlMap, reading: BlockReading): GridPlacement? {
@@ -320,10 +334,10 @@ private fun readGrids(map: YamlMap, reading: BlockReading): List<LayoutGridDefin
         val type = grid.enum("type", ReaderEnums.gridType, reading) ?: return@mapNotNull null
         LayoutGridDefinition(
             type = type,
-            count = grid.int("count", reading),
-            size = grid.double("size", reading),
-            gutter = grid.double("gutter", reading) ?: 0.0,
-            margin = grid.double("margin", reading) ?: 0.0,
+            count = grid.bindableInt("count", reading),
+            size = grid.bindableDouble("size", reading),
+            gutter = grid.bindableDouble("gutter", reading),
+            margin = grid.bindableDouble("margin", reading),
             alignment = grid.enum("alignment", ReaderEnums.gridAlignment, reading)
                 ?: LayoutGridAlignment.Stretch,
             color = grid.bindableColor("color", reading)

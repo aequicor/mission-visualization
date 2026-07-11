@@ -1,6 +1,8 @@
 package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.cnl.CnlElement
+import io.aequicor.visualization.engine.frontend.cnl.CnlEmitter
+import io.aequicor.visualization.engine.frontend.cnl.CnlGrammar
 import io.aequicor.visualization.engine.frontend.cnl.CnlParser
 import io.aequicor.visualization.engine.frontend.cnl.CnlProperty
 import io.aequicor.visualization.engine.frontend.cnl.CnlPropertyKind
@@ -10,6 +12,7 @@ import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
+import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
@@ -21,13 +24,30 @@ import io.aequicor.visualization.engine.ir.model.literalOrNull
 
 /**
  * Surgical write-back into a CNL element sentence. Mirrors the typed-block patcher's
- * re-parse-on-demand design: given the sentence span, re-parse it, locate the property's
- * value token via its span, and replace it in place (or append a phrase when the property
- * is absent). Edits CNL cannot express return [WritePlan.Failed] so the patcher falls back
- * to inserting a typed block below the sentence (mixed authoring) or an in-memory edit.
+ * re-parse-on-demand design in three tiers: tier-1 replaces a property's value token in place
+ * (minimal diff), tier-2 appends a missing property phrase, and tier-3 regenerates the whole
+ * sentence from the patched [DesignNode] via [CnlEmitter] when neither surgical form fits. A
+ * CNL-owned node therefore never falls back to a YAML typed block; if even tier-3 is
+ * unavailable (no patched node), the edit returns [WritePlan.Failed] for an in-memory fallback.
  */
 internal object CnlWriter {
-    fun plan(source: String, sentenceSpan: SlmSourceSpan, edit: SlmEdit, lineIndex: LineIndex): WritePlan {
+    fun plan(
+        source: String,
+        sentenceSpan: SlmSourceSpan,
+        edit: SlmEdit,
+        lineIndex: LineIndex,
+        patchedNode: DesignNode? = null,
+    ): WritePlan {
+        val surgical = surgicalPlan(sentenceSpan, edit, lineIndex)
+        if (surgical is WritePlan.Ops) return surgical
+        // Tier-3: regenerate the sentence from the patched node. Only reached when the edit
+        // is not surgically expressible; the caller's recompile-success gate vetoes a bad re-emit.
+        patchedNode?.let { return reemitPlan(sentenceSpan, it, lineIndex) }
+        return surgical
+    }
+
+    /** Tiers 1-2: replace a value in place or append a phrase; [WritePlan.Failed] otherwise. */
+    private fun surgicalPlan(sentenceSpan: SlmSourceSpan, edit: SlmEdit, lineIndex: LineIndex): WritePlan {
         val line = sentenceSpan.startLine
         val text = lineIndex.lineText(line)
         val element = parseCnlElement(text, line)
@@ -50,6 +70,27 @@ internal object CnlWriter {
             is SetTextStyle -> textStylePlan(element, edit.style, lineIndex, line)
             else -> failed(line)
         }
+    }
+
+    /** Tier-3: replace the whole sentence line with [CnlEmitter]'s regeneration of [node]. */
+    private fun reemitPlan(sentenceSpan: SlmSourceSpan, node: DesignNode, lineIndex: LineIndex): WritePlan {
+        val line = sentenceSpan.startLine
+        val text = lineIndex.lineText(line)
+        val heading = headingMatch(text)
+        val sentence = if (heading != null) {
+            CnlEmitter.emitStableHeadingLine(node, level = heading.first, includeId = true)
+        } else {
+            CnlEmitter.emitSentence(node, includeId = true)
+        }
+        // A no-op (regenerated line equals the current one) is legitimate when a prior edit in a
+        // multi-edit batch already wrote the whole re-emitted sentence; report an empty op. The
+        // inexpressible case (the emitter genuinely cannot represent the edit, so the line does not
+        // change) is caught downstream by the reducer's fidelity veto, which recompiles and keeps
+        // the edit in-memory when the source diverges from the intended node.
+        if (sentence == text) return WritePlan.Ops(emptyList())
+        val start = lineIndex.offsetOf(line, 1)
+        val end = lineIndex.offsetOf(line, text.length + 1)
+        return WritePlan.Ops(listOf(TextOp(start, end, sentence)))
     }
 
     // --- per-edit plans ---
@@ -151,7 +192,8 @@ internal object CnlWriter {
 
     private fun textPlan(element: CnlElement, defaultText: String, lineIndex: LineIndex, line: Int): WritePlan {
         val literal = element.textLiteral ?: return failed(line)
-        return replace(literal.span, defaultText, lineIndex)
+        // The literal span covers the raw inner text of «…», so the new value must be re-escaped.
+        return replace(literal.span, CnlGrammar.escapeText(defaultText), lineIndex)
     }
 
     private fun textStylePlan(element: CnlElement, style: DesignTextStyle, lineIndex: LineIndex, line: Int): WritePlan {
@@ -176,9 +218,18 @@ internal object CnlWriter {
             }
         }
 
-        style.fontFamily?.takeIf { it.isNotEmpty() }?.let {
-            if ('»' in it || '\n' in it || '\r' in it) return failed(line)
-            addValue(CnlPropertyKind.FontFamily, "font", it, "«$it»")
+        style.fontFamily?.takeIf { it.isNotEmpty() }?.let { family ->
+            val property = element.property(CnlPropertyKind.FontFamily)
+            if (property != null) {
+                // A bare-token value span (`font Inter`) cannot absorb spaces or keywords;
+                // rewrite it as a «…» literal unless the span already sits inside one.
+                val span = property.values.first().span
+                val quoted = isQuotedLiteral(lineIndex.lineText(line), span)
+                val replacement = if (quoted) CnlGrammar.escapeText(family) else CnlGrammar.quoteText(family)
+                ops += op(span, replacement, lineIndex)
+            } else {
+                appendPhrases += "font ${CnlGrammar.quoteText(family)}"
+            }
         }
         style.fontSize?.literalOrNull()?.let { addValue(CnlPropertyKind.FontSize, "size", formatNumber(it)) }
         style.fontWeight?.literalOrNull()?.let { addPhrase(CnlPropertyKind.FontWeight, fontWeightPhrase(it)) }
@@ -205,6 +256,13 @@ internal object CnlWriter {
 
     private fun CnlElement.property(kind: CnlPropertyKind): CnlProperty? =
         properties.firstOrNull { it.kind == kind }
+
+    /** True when [span] is the inner region of a `«…»`/`"…"` literal (opener right before it). */
+    private fun isQuotedLiteral(lineText: String, span: CnlSpan): Boolean {
+        val openerIndex = span.startColumn - 2
+        val opener = lineText.getOrNull(openerIndex) ?: return false
+        return opener == '«' || opener == '"'
+    }
 
     private fun replace(span: CnlSpan, text: String, lineIndex: LineIndex): WritePlan =
         WritePlan.Ops(listOf(op(span, text, lineIndex)))

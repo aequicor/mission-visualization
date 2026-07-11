@@ -1,7 +1,6 @@
 package io.aequicor.visualization.engine.frontend.semantics
 
 import io.aequicor.visualization.engine.frontend.SlmLocale
-import io.aequicor.visualization.engine.frontend.ast.IrSpliceBlock
 import io.aequicor.visualization.engine.frontend.ast.KeyHint
 import io.aequicor.visualization.engine.frontend.ast.SemanticAction
 import io.aequicor.visualization.engine.frontend.ast.SemanticKind
@@ -41,6 +40,7 @@ import io.aequicor.visualization.engine.frontend.markdown.TypedAttributeBlock
 import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
 import io.aequicor.visualization.engine.frontend.normalize.latinizeToCamelCase
 import io.aequicor.visualization.engine.ir.model.JustifyContent
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.ShapeType
 
 /**
@@ -107,9 +107,9 @@ private class SemanticExtractor(
         var condition: SlmExpression? = null
         var componentRef: String? = null
         var variant: Map<String, String> = emptyMap()
-        var irSplice: IrSpliceBlock? = null
         var isAnchor = false
         var isCnlElement = false
+        var cnlSpan: SlmSourceSpan? = null
         var isComponentDef = false
         val propBindings = LinkedHashMap<String, SlmExpression>()
         val explicitPatches = mutableListOf<io.aequicor.visualization.engine.frontend.markdown.TypedEntry>()
@@ -139,12 +139,12 @@ private class SemanticExtractor(
                 propBindings = propBindings.toMap(),
                 explicitPatches = explicitPatches.toList(),
                 semanticPatches = semanticPatches.toList(),
-                irSplice = irSplice,
                 isAnchor = isAnchor,
                 isCnlElement = isCnlElement,
                 isComponentDef = isComponentDef,
                 children = builtChildren,
                 span = span,
+                cnlSpan = cnlSpan,
             )
         }
     }
@@ -223,6 +223,9 @@ private class SemanticExtractor(
         heading: HeadingBlock,
         state: WalkState,
     ): Int? {
+        // Document dictionaries are top-level only (the emitter writes them at H1); a deeper
+        // `## Styles`/`## Collection …` is a regular UI section, not a document section.
+        if (heading.level != 1) return null
         val headingText = readInlineText(heading.inlines).text
         if (!CnlDocumentSections.isDocumentHeading(headingText)) return null
         if (state.pendingCondition != null) {
@@ -261,7 +264,11 @@ private class SemanticExtractor(
             state.pendingKey = null
             // Typed blocks after the H1 bind to the screen root.
             root.isAnchor = true
-            if (block.cnlElement != null) root.isCnlElement = true
+            if (block.cnlElement != null) {
+                root.isCnlElement = true
+                // The root's own span is the whole document; its CNL sentence is the H1 line.
+                root.cnlSpan = block.span
+            }
             state.anchor = root
             return
         }
@@ -369,12 +376,7 @@ private class SemanticExtractor(
                 state.anchor = table
             }
 
-            is FencedCodeBlock -> if (block.info == "ir") {
-                val splice = NodeBuilder(SemanticKind.IrSplice, block.span).apply {
-                    irSplice = IrSpliceBlock(block.content, block.contentStartLine, block.span)
-                }
-                attach(container, state, splice)
-            }
+            is FencedCodeBlock -> {} // Unsupported fenced blocks are warned at parse time and ignored.
 
             is HtmlCommentBlock -> i18nKeyOf(block.text)?.let { state.pendingKey = it }
 
@@ -1070,7 +1072,7 @@ private class SemanticExtractor(
         NodeBuilder(SemanticKind.Media, block.span).apply {
             isAnchor = true
             name = block.alt
-            semanticPatches += MediaPatch(asset = block.path)
+            semanticPatches += MediaPatch(asset = block.path.bindable())
             if (block.alt.isNotBlank()) {
                 text = SemanticText(
                     defaultText = block.alt,

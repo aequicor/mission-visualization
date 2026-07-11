@@ -84,7 +84,7 @@ internal fun DesignDocumentReader.readAutoLayout(obj: JsonObject?, pointer: Stri
         columnGap = gapObject?.get("column")?.let { readBindableDouble(it, 0.0) },
         rowGap = gapObject?.get("row")?.let { readBindableDouble(it, 0.0) },
         implicitRows = implicitRowsObject?.let { readImplicitRows(it["auto"]) },
-        implicitRowMin = (implicitRowsObject?.get("min") as? JsonPrimitive)?.doubleOrNull,
+        implicitRowMin = implicitRowsObject?.get("min")?.let { readBindableDouble(it, 0.0) },
     )
 }
 
@@ -100,8 +100,8 @@ private fun DesignDocumentReader.readImplicitRows(element: JsonElement?): GridTr
 internal fun DesignDocumentReader.readGridTrack(element: JsonElement): GridTrack? {
     val obj = element as? JsonObject ?: return null
     return when (obj.stringOrDefault("type", "hug")) {
-        "fixed" -> GridTrack.Fixed(obj.doubleOrDefault("value", 0.0))
-        "flex" -> GridTrack.Flex(obj.doubleOrDefault("value", 1.0))
+        "fixed" -> GridTrack.Fixed(readBindableDouble(obj["value"], 0.0))
+        "flex" -> GridTrack.Flex(readBindableDouble(obj["value"], 1.0))
         else -> GridTrack.Hug
     }
 }

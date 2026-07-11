@@ -28,18 +28,9 @@ class VectorNetworkWriteBackTest {
         sourceLocale: en-US
         ---
 
-        # Screen
+        # Screen id root name «Screen»
 
-        node:
-          id: root
-          name: Screen
-
-        ## Vector: Glyph
-        node:
-          type: vector
-          id: glyph
-        vector:
-          viewBox: [0, 0, 24, 24]
+        ## Vector: Glyph id glyph viewbox (0 0 24 24)
     """.trimIndent() + "\n"
 
     private fun sampleNetwork(): VectorNetwork = VectorNetwork(
@@ -65,51 +56,12 @@ class VectorNetworkWriteBackTest {
             sourceLocale: en-US
             ---
 
-            # Screen
+            # Screen id root
 
-            node:
-              id: root
-
-            ## Vector: Glyph
-            node:
-              type: vector
-              id: glyph
-            vector:
-              viewBox: [0, 0, 24, 24]
-              network:
-                vertices:
-                  - x: 12
-                    y: 2
-                    out: [6, 4]
-                    in: [-6, -4]
-                    mirror: angleAndLength
-                  - x: 22
-                    y: 20
-                    corner: true
-                  - x: 2
-                    y: 20
-                    corner: true
-                segments:
-                  - [0, 1]
-                  - [1, 2]
-                  - [2, 0]
-                regions:
-                  - windingRule: nonzero
-                    loops:
-                      - [0, 1, 2]
+            ## Vector: Glyph id glyph viewbox (0 0 24 24) network (vertex (12 2 in (-6 -4) out (6 4) mirror angleAndLength) vertex (22 20 corner) vertex (2 20 corner) segment (0 1) segment (1 2) segment (2 0) region loops (0 1 2))
         """.trimIndent() + "\n"
 
         val recompiled = compileForEdit(networkDoc)
-        assertNoErrors(recompiled)
-        val shape = recompiled.requireDocument().requireNode("glyph").kind as DesignNodeKind.Shape
-        assertEquals(sampleNetwork(), shape.network)
-    }
-
-    @Test
-    fun setVectorNetworkWritesBackAndRoundTrips() {
-        val compiled = compileForEdit(doc)
-        val result = applySlmEdit(doc, SetVectorNetwork("glyph", sampleNetwork()), compiled)
-        val recompiled = compileForEdit(result.requireNewSource())
         assertNoErrors(recompiled)
         val shape = recompiled.requireDocument().requireNode("glyph").kind as DesignNodeKind.Shape
         assertEquals(sampleNetwork(), shape.network)

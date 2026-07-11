@@ -4,6 +4,7 @@ import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.GridPlacement
 import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.MaskType
@@ -108,7 +109,7 @@ class ResolverLoweringTest {
         """.trimIndent()
         val (table, resolver) = resolveFirst(json)
         assertEquals(LayoutMode.Grid, table.layout.mode)
-        assertEquals(List(3) { GridTrack.Flex(1.0) }, table.layout.columns, "one flex track per widest row")
+        assertEquals(List(3) { GridTrack.Flex(1.0.bindable()) }, table.layout.columns, "one flex track per widest row")
         assertEquals(4.0, table.layout.rowGap)
         assertEquals(8.0, table.layout.columnGap)
         assertEquals(
@@ -146,7 +147,7 @@ class ResolverLoweringTest {
             }
         """.trimIndent()
         val (table, _) = resolveFirst(json)
-        assertEquals(listOf(GridTrack.Fixed(120.0), GridTrack.Flex(1.0)), table.layout.columns)
+        assertEquals(listOf(GridTrack.Fixed(120.0.bindable()), GridTrack.Flex(1.0.bindable())), table.layout.columns)
     }
 
     @Test

@@ -8,16 +8,16 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 
 /**
  * Computes the [TextOp]s for structural edits (subtree insert, section delete) against a FRESH
- * parse of [source] — the same throwaway-parse strategy as [resolveEditTarget], guarded by the
- * fingerprint check upstream so the recorded anchor spans line up with this CST.
+ * throwaway parse of [source], guarded by the fingerprint check upstream so the recorded anchor
+ * spans line up with this CST.
  *
  * A heading section's *footprint* runs from its `#` line down to (but excluding) the next
  * same-or-shallower heading, or to end-of-source when it is the last section. Deletes drop that
  * whole range (the leading blank line before the heading stays, keeping siblings separated);
- * inserts frame the rendered subtree ([NodeSectionWriter]) with exactly one blank line on each
- * side so the parser never absorbs the `node:` line as prose (risk noted in [EditTargetResolver]).
- * Column-0 typed blocks bind by proximity to the nearest preceding anchor, so no block needs to
- * move — only heading lines and their contiguous blocks are relocated.
+ * inserts frame the rendered subtree ([NodeSectionWriter], CNL sentences) with exactly one blank
+ * line on each side so the parser keeps it as its own block instead of folding it into an adjacent
+ * paragraph (risk noted in [EditTargetResolver]). Only heading lines and their contiguous blocks
+ * are relocated.
  */
 internal class SectionWriter(
     private val source: String,

@@ -49,7 +49,7 @@ data class DesignAutoLayout(
     /** Template for implicit rows (`rows.auto: true`) when [rows] is empty. */
     val implicitRows: GridTrack? = null,
     /** Minimum implicit row size (`rows.min`). */
-    val implicitRowMin: Double? = null,
+    val implicitRowMin: Bindable<Double>? = null,
 )
 
 /** Direction-aware insets: inline = reading direction, block = perpendicular. */
@@ -71,9 +71,9 @@ data class DesignAnchors(
 enum class BaselineAlign { First, Last }
 
 sealed interface GridTrack {
-    data class Fixed(val value: Double) : GridTrack
+    data class Fixed(val value: Bindable<Double>) : GridTrack
 
-    data class Flex(val value: Double) : GridTrack
+    data class Flex(val value: Bindable<Double>) : GridTrack
 
     data object Hug : GridTrack
 }
@@ -110,13 +110,17 @@ data class DesignScroll(
     val fixedChildren: List<String> = emptyList(),
 )
 
-/** Layout grid overlay definition (frame prop or grid style); no layout effect. */
+/**
+ * Layout grid overlay definition (frame prop or grid style); no layout effect. The count,
+ * size, gutter and margin are [Bindable]s so an overlay slot can carry a `$var`/`{{expr}}`
+ * reference; the resolver ([DesignResolver.resolveLayoutGrid]) lowers each to a literal.
+ */
 data class LayoutGridDefinition(
     val type: LayoutGridType,
-    val count: Int? = null,
-    val size: Double? = null,
-    val gutter: Double = 0.0,
-    val margin: Double = 0.0,
+    val count: Bindable<Int>? = null,
+    val size: Bindable<Double>? = null,
+    val gutter: Bindable<Double>? = null,
+    val margin: Bindable<Double>? = null,
     val alignment: LayoutGridAlignment = LayoutGridAlignment.Stretch,
     val color: DesignColor? = null,
     val visible: Boolean = true,

@@ -3,6 +3,7 @@ package io.aequicor.visualization.engine.ir.resolve
 import io.aequicor.visualization.engine.ir.geometry.PathGeometry
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
+import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
@@ -136,6 +137,8 @@ data class ResolvedMask(
     val type: MaskType = MaskType.Alpha,
     /** Resolved ids clipped by this mask. Empty = legacy Figma semantics (following siblings). */
     val appliesTo: List<String> = emptyList(),
+    /** Resolved id of the node providing the mask geometry; empty = the carrying node is its own source. */
+    val source: String = "",
 )
 
 data class ResolvedAutoLayout(
@@ -159,8 +162,8 @@ data class ResolvedAutoLayout(
     val rowGap: Double = 0.0,
     /** Template for implicit grid rows when [rows] is empty. */
     val implicitRows: GridTrack? = null,
-    /** Minimum implicit row size. */
-    val implicitRowMin: Double? = null,
+    /** Minimum implicit row size; a resolved literal so the layout engine reads it via `.orZero`. */
+    val implicitRowMin: Bindable<Double>? = null,
 )
 
 sealed interface ResolvedPaint {

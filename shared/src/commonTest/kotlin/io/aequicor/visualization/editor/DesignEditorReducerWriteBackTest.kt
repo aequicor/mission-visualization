@@ -5,6 +5,7 @@ import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
@@ -21,12 +22,12 @@ import kotlin.test.assertTrue
  */
 class DesignEditorReducerWriteBackTest {
 
-    /** `tile_1` is authored with an explicit `node: id:` anchor in mission-overview.layout.md. */
-    private val nodeId = "tile_1"
+    /** `win_bg` is authored with an explicit CNL `id` anchor in mission-overview.layout.md. */
+    private val nodeId = "win_bg"
     private val owningFile = "mission-overview.layout.md"
 
     private fun freshState(): DesignEditorState =
-        createDesignEditorState(legacyMissionDocuments())
+        createDesignEditorState(missionDemoDocuments())
 
     private fun DesignEditorState.sourceContent(fileName: String): String =
         assertNotNull(sources.firstOrNull { it.fileName == fileName }, "missing source $fileName").content
@@ -95,8 +96,8 @@ class DesignEditorReducerWriteBackTest {
         val next = reduceDesignEditor(state, DesignEditorIntent.PositionNode(nodeId, x = 123.0, y = 456.0))
 
         val node = assertNotNull(next.document?.nodeById(nodeId), "$nodeId present after write-back")
-        assertEquals(123.0, node.position?.x)
-        assertEquals(456.0, node.position?.y)
+        assertEquals(123.0, node.position?.x?.orZero)
+        assertEquals(456.0, node.position?.y?.orZero)
         assertNotEquals(state.sourceContent(owningFile), next.sourceContent(owningFile), "owning source rewritten")
         before.filterNot { it.fileName == owningFile }.forEach { source ->
             assertEquals(source.content, next.sourceContent(source.fileName), "${source.fileName} must stay byte-identical")
@@ -123,9 +124,9 @@ class DesignEditorReducerWriteBackTest {
         assertEquals(HorizontalConstraint.Right, node.constraints.horizontal)
         assertEquals(VerticalConstraint.Bottom, node.constraints.vertical)
         assertNotEquals(state.sourceContent(owningFile), next.sourceContent(owningFile), "owning source rewritten")
-        assertTrue("constraints:" in next.sourceContent(owningFile), "constraints block written")
-        assertTrue("horizontal: right" in next.sourceContent(owningFile), "horizontal constraint written")
-        assertTrue("vertical: bottom" in next.sourceContent(owningFile), "vertical constraint written")
+        assertTrue("constraints (" in next.sourceContent(owningFile), "constraints phrase written")
+        assertTrue("horizontal right" in next.sourceContent(owningFile), "horizontal constraint written")
+        assertTrue("vertical bottom" in next.sourceContent(owningFile), "vertical constraint written")
         before.filterNot { it.fileName == owningFile }.forEach { source ->
             assertEquals(source.content, next.sourceContent(source.fileName), "${source.fileName} must stay byte-identical")
         }
@@ -139,8 +140,8 @@ class DesignEditorReducerWriteBackTest {
         val index = state.sources.indexOfFirst { it.fileName == owningFile }
         assertTrue(index >= 0, "missing source $owningFile")
         val edited = state.sources[index].content.replaceFirst(
-            "name: Mission Overview",
-            "name: Mission Overview Edited",
+            "name «Mission Overview»",
+            "name «Mission Overview Edited»",
         )
 
         val next = reduceDesignEditor(state, DesignEditorIntent.EditSource(index, edited))

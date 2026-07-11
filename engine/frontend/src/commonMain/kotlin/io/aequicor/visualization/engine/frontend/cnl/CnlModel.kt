@@ -47,12 +47,16 @@ enum class CnlPropertyKind {
     AutoSize, Truncate, MaxLines, TextKey, TextStyleRef, ListSettings, Characters,
     /** A `link ( … )` rich-text span, pre-lowered to a `text.spans[]` item. */
     Link,
+    /** A `span ( … )` shared-text-style rich-text span, pre-lowered to a `text.spans[]` item. */
+    Span,
     // Layout-deep.
     Wrap, Clip, Absolute, Distribute, Anchor, Constraints, ContainerAlign,
     // Layout-deep P4b: grid tracks + placement + guides + grid overlays + overflow + scroll.
     Overflow, Scroll, Columns, Rows, Place, Guides, Grids,
     // Components: instance side plus definition-side name/set/axes/property declarations.
     ComponentRef, LibraryRef, Variant, Props, Detach, ResetOverrides, SlotOverride, NestedOverride,
+    /** `override <target> ( … )` — property groups patched at an id path (`overrides.set`). */
+    SetOverride,
     ComponentName, ComponentSet, ComponentAxis, ComponentPropDefinition,
     // P6: media record / shape point+inner / vector viewBox·iconRef·pathRef·paths·network / boolean op / mask block.
     Media, ShapePoints, ShapeInner, ViewBox, IconRef, PathRef, VectorPaths, VectorNetwork, BooleanOp, Mask,

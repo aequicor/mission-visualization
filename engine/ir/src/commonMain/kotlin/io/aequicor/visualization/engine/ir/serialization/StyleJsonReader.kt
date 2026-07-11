@@ -224,19 +224,19 @@ internal fun DesignDocumentReader.readEffect(element: JsonElement, pointer: Stri
         "dropShadow" -> DesignEffect.DropShadow(
             color = readBindableColor(obj["color"], "$pointer/color"),
             offset = (obj["offset"] as? JsonObject)?.let { readPoint(it, "$pointer/offset") } ?: DesignPoint(),
-            blur = obj.plainDouble("blur", pointer, 0.0),
-            spread = obj.plainDouble("spread", pointer, 0.0),
+            blur = readBindableDouble(obj["blur"], 0.0),
+            spread = readBindableDouble(obj["spread"], 0.0),
             visible = visible,
         )
         "innerShadow" -> DesignEffect.InnerShadow(
             color = readBindableColor(obj["color"], "$pointer/color"),
             offset = (obj["offset"] as? JsonObject)?.let { readPoint(it, "$pointer/offset") } ?: DesignPoint(),
-            blur = obj.plainDouble("blur", pointer, 0.0),
-            spread = obj.plainDouble("spread", pointer, 0.0),
+            blur = readBindableDouble(obj["blur"], 0.0),
+            spread = readBindableDouble(obj["spread"], 0.0),
             visible = visible,
         )
-        "layerBlur" -> DesignEffect.LayerBlur(obj.plainDouble("radius", pointer, 0.0), visible)
-        "backgroundBlur" -> DesignEffect.BackgroundBlur(obj.plainDouble("radius", pointer, 0.0), visible)
+        "layerBlur" -> DesignEffect.LayerBlur(readBindableDouble(obj["radius"], 0.0), visible)
+        "backgroundBlur" -> DesignEffect.BackgroundBlur(readBindableDouble(obj["radius"], 0.0), visible)
         else -> {
             warn(pointer, "Unknown effect type '$type' ignored")
             DesignEffect.Unknown(type, visible)
@@ -277,10 +277,10 @@ internal fun DesignDocumentReader.readLayoutGrids(
                     "grid" to LayoutGridType.Grid,
                 ),
             ),
-            count = (obj["count"] as? JsonPrimitive)?.intOrNull,
-            size = (obj["size"] as? JsonPrimitive)?.doubleOrNull,
-            gutter = obj.doubleOrDefault("gutter", 0.0),
-            margin = obj.doubleOrDefault("margin", 0.0),
+            count = obj["count"]?.let { readBindableInt(it, 0) },
+            size = obj["size"]?.let { readBindableDouble(it, 0.0) },
+            gutter = obj["gutter"]?.let { readBindableDouble(it, 0.0) },
+            margin = obj["margin"]?.let { readBindableDouble(it, 0.0) },
             alignment = readEnum(
                 obj["alignment"], "$pointer/$index/alignment", LayoutGridAlignment.Stretch,
                 mapOf(

@@ -29,10 +29,10 @@ import kotlin.test.assertTrue
  */
 class AuthoredScenePlaysTest {
 
-    private val nodeId = "overview_wide"
+    private val nodeId = "win_bg"
 
     private fun freshDocument(): DesignDocument =
-        assertNotNull(createDesignEditorState(legacyMissionDocuments()).document)
+        assertNotNull(createDesignEditorState(missionDemoDocuments()).document)
 
     private fun runtimeFor(document: DesignDocument): Pair<SceneRuntime, SceneProjection> {
         val composer = ScreenComposer(document, DesignLayoutEngine(ApproximateTextMeasurer()))
@@ -41,7 +41,7 @@ class AuthoredScenePlaysTest {
 
     @Test
     fun interactionAuthoredInInspectorPlaysInScene() {
-        val state = createDesignEditorState(legacyMissionDocuments())
+        val state = createDesignEditorState(missionDemoDocuments())
         val authored = reduceDesignEditor(state, DesignEditorIntent.InteractionCommand(nodeId, InteractionOp.Add))
         val document = assertNotNull(authored.document)
 
@@ -56,7 +56,7 @@ class AuthoredScenePlaysTest {
 
     @Test
     fun motionPresetAuthoredInInspectorPlaysInScene() {
-        val state = createDesignEditorState(legacyMissionDocuments())
+        val state = createDesignEditorState(missionDemoDocuments())
         val authored = reduceDesignEditor(state, DesignEditorIntent.MotionCommand(nodeId, MotionOp.SetPreset(MotionPreset.Pulse)))
         val document = assertNotNull(authored.document)
 

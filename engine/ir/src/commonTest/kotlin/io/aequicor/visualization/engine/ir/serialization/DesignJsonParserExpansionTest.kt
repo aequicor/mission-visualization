@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.ir.serialization
 
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignEasing
@@ -8,8 +9,10 @@ import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.GuideOrientation
 import io.aequicor.visualization.engine.ir.model.ImageScaleMode
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
 import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
 import io.aequicor.visualization.engine.ir.model.LayoutGridType
@@ -120,14 +123,14 @@ class DesignJsonParserExpansionTest {
         assertEquals(0, success.diagnostics.size, "expected no diagnostics: ${success.diagnostics}")
         val node = assertNotNull(success.document.nodeById("hero"))
         val media = assertIs<DesignNodeKind.Media>(node.kind).media
-        assertEquals("asset_video", media.assetId)
+        assertEquals("asset_video", media.assetId.literalOrNull())
         assertEquals(MediaKind.Video, media.kind)
         assertEquals(ImageScaleMode.Crop, media.fillMode)
-        assertEquals(0.3, media.focalPoint?.x)
-        assertEquals(0.7, media.focalPoint?.y)
+        assertEquals(0.3, media.focalPoint?.x?.orZero)
+        assertEquals(0.7, media.focalPoint?.y?.orZero)
         assertEquals("hero.alt", media.alt?.key)
         assertEquals("Intro clip", media.alt?.defaultText)
-        assertEquals("asset_poster", media.posterAssetId)
+        assertEquals("asset_poster", media.posterAssetId.literalOrNull())
         assertTrue(media.autoplay)
         assertTrue(media.loop)
         assertEquals(false, media.muted)
@@ -355,8 +358,8 @@ class DesignJsonParserExpansionTest {
         assertEquals("style_grid", board.gridStyleId)
         val layoutGrid = board.layoutGrids.single()
         assertEquals(LayoutGridType.Columns, layoutGrid.type)
-        assertEquals(12, layoutGrid.count)
-        assertEquals(16.0, layoutGrid.gutter)
+        assertEquals(12, layoutGrid.count?.literalOrNull())
+        assertEquals(16.0, layoutGrid.gutter?.literalOrNull())
         assertEquals(LayoutGridAlignment.Center, layoutGrid.alignment)
         assertNotNull(layoutGrid.color)
         val guide = board.guides.single()
@@ -365,11 +368,11 @@ class DesignJsonParserExpansionTest {
 
         val gridStyle = assertIs<DesignStyle.Grid>(assertNotNull(success.document.styles["style_grid"]))
         assertEquals(LayoutGridType.Rows, gridStyle.value.single().type)
-        assertEquals(8.0, gridStyle.value.single().size)
+        assertEquals(8.0, gridStyle.value.single().size?.literalOrNull())
 
         val tableNode = assertNotNull(success.document.nodeById("tbl"))
         val table = assertIs<DesignNodeKind.Table>(tableNode.kind).table
-        assertEquals(listOf(GridTrack.Fixed(120.0), GridTrack.Flex(1.0)), table.columns)
+        assertEquals(listOf(GridTrack.Fixed(120.0.bindable()), GridTrack.Flex(1.0.bindable())), table.columns)
         assertEquals(2, table.headerRows)
         assertEquals(4.0, (table.rowGap as Bindable.Value<Double>).value)
         assertEquals(8.0, (table.columnGap as Bindable.Value<Double>).value)

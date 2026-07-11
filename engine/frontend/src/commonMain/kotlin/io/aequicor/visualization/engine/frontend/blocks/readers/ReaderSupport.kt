@@ -186,6 +186,30 @@ internal fun YamlMap.bindableDouble(key: String, reading: BlockReading): Bindabl
     return bindableDouble(value, key, reading)
 }
 
+/**
+ * An integer-valued [Bindable]: literal number (truncated to `Int`, like the plain [int] reader),
+ * a `$token` / `{variable:|token:}` ref, a `$prop` ref, or a `{{expr}}` data binding. Mirrors
+ * [bindableDouble] exactly; the precedence is propRef -> varRef -> `{{expr}}` -> Int literal.
+ */
+internal fun bindableInt(value: YamlValue, key: String, reading: BlockReading): Bindable<Int>? {
+    propRefOf(value)?.let { return Bindable.PropRef(it) }
+    varRefOf(value)?.let { return Bindable.VarRef(it) }
+    val scalar = value as? YamlScalar
+    when (val raw = scalar?.value) {
+        is Int -> return raw.bindable()
+        is Double -> return raw.toInt().bindable()
+        is String -> expressionBody(raw)?.let { return Bindable.DataRef(DesignExpression(it)) }
+        else -> {}
+    }
+    reading.warning("`$key` must be an integer, \$token ref or {{expr}}", value)
+    return null
+}
+
+internal fun YamlMap.bindableInt(key: String, reading: BlockReading): Bindable<Int>? {
+    val value = entries[key] ?: return null
+    return bindableInt(value, key, reading)
+}
+
 internal fun YamlMap.bindableBoolean(key: String, reading: BlockReading): Bindable<Boolean>? {
     val value = entries[key] ?: return null
     propRefOf(value)?.let { return Bindable.PropRef(it) }

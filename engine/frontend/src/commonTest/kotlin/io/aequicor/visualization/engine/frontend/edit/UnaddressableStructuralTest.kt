@@ -9,8 +9,8 @@ import kotlin.test.assertTrue
 
 /**
  * Structural edits degrade cleanly (no source mutation) for nodes that have no addressable heading
- * anchor — prose segments, ```ir splices, the screen root — so the caller can fall back to an
- * in-memory edit. Mirrors [UnaddressableNodeTest] for the attribute path.
+ * anchor — prose segments, the screen root, ids with no produced node — so the caller can fall back
+ * to an in-memory edit. Mirrors [UnaddressableNodeTest] for the attribute path.
  */
 class UnaddressableStructuralTest {
     private val leaf = DesignNode(id = "new_frame", type = "frame", kind = DesignNodeKind.Frame, name = "New frame")
@@ -27,7 +27,9 @@ class UnaddressableStructuralTest {
     }
 
     @Test
-    fun deleteIrSplicedNodeRedirectsToTheEmbeddedJson() {
+    fun deleteIgnoredIrFenceNodeIsUnaddressable() {
+        // ```ir is no longer an authoring surface: the fence is ignored, so no node is
+        // produced and deleting its would-be id degrades to the generic message.
         val doc = """
             ---
             screen: s
@@ -48,12 +50,11 @@ class UnaddressableStructuralTest {
             ```
         """.trimIndent() + "\n"
         val compiled = compileForEdit(doc)
-        assertTrue("customAlertIcon" in compiled.editIndex.irSpliceNodes)
         val result = applySlmEdit(doc, DeleteSection("customAlertIcon"), compiled)
         assertFalse(result.isApplied)
         val message = result.diagnostics.single().message
-        assertTrue("```ir" in message, message)
-        assertTrue("edit the embedded JSON directly" in message, message)
+        assertTrue("no addressable source anchor" in message, message)
+        assertTrue("promote" in message, message)
     }
 
     @Test

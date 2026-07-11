@@ -81,6 +81,20 @@ class MediaAssetChecksTest {
         ).assertHas("IR-ASSET-001", DesignSeverity.Error, messagePart = "missing")
     }
 
+    /** S28c: a `$var`-typed assetId resolves at runtime, so static validation must not flag it. */
+    @Test
+    fun refTypedAssetIdIsNotCheckedAgainstTheAssetTable() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "hero", "type": "media",
+                "media": { "assetId": { "${'$'}var": "hero_asset" },
+                           "posterAssetId": { "${'$'}data": "{{data.thumb}}" } } }
+            ] } ] }
+            """.trimIndent(),
+        ).assertNone("IR-ASSET-001")
+    }
+
     @Test
     fun malformedVectorPathIsAnError() {
         validate(

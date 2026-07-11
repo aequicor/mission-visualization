@@ -4,6 +4,7 @@ import io.aequicor.visualization.engine.frontend.blocks.ComponentPatch
 import io.aequicor.visualization.engine.frontend.blocks.NestedInstancePatch
 import io.aequicor.visualization.engine.frontend.blocks.OverridesPatch
 import io.aequicor.visualization.engine.frontend.blocks.PropsPatch
+import io.aequicor.visualization.engine.frontend.blocks.SetOverridePatch
 import io.aequicor.visualization.engine.frontend.blocks.SlotOverridePatch
 import io.aequicor.visualization.engine.frontend.yaml.YamlMap
 import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
@@ -55,13 +56,27 @@ internal fun readPropsBlock(value: YamlValue, reading: BlockReading): PropsPatch
     return PropsPatch(readProps(map, reading))
 }
 
-/** `overrides:` block — slot fills and nested-instance overrides. */
+/** `overrides:` block — slot fills, id-path property sets, and nested-instance overrides. */
 internal fun readOverridesBlock(value: YamlValue, reading: BlockReading): OverridesPatch? {
     val map = value as? YamlMap ?: run {
         reading.error("`overrides` must be a map", value)
         return null
     }
-    map.warnUnknownKeys(setOf("slots", "nestedInstances"), reading)
+    map.warnUnknownKeys(setOf("slots", "sets", "nestedInstances"), reading)
+    val sets = (map.value("sets") as? io.aequicor.visualization.engine.frontend.yaml.YamlList)?.items?.mapNotNull { item ->
+        val entry = item as? YamlMap ?: run {
+            reading.warning("Override set entry must be a map", item)
+            return@mapNotNull null
+        }
+        entry.warnUnknownKeys(setOf("target", "style", "text", "node"), reading)
+        val target = readOverrideTarget(entry, reading) ?: return@mapNotNull null
+        SetOverridePatch(
+            target = target,
+            style = entry.mapValue("style", reading)?.let { readStyleBlock(it, reading) },
+            text = entry.mapValue("text", reading)?.let { readTextBlock(it, reading) },
+            node = entry.mapValue("node", reading)?.let { readNodeBlock(it, reading) },
+        )
+    }
     val slots = map.mapValue("slots", reading)?.entries?.mapValues { (slotName, fills) ->
         val list = fills as? io.aequicor.visualization.engine.frontend.yaml.YamlList ?: run {
             reading.warning("Slot \"$slotName\" must be a list of instances", fills)
@@ -93,7 +108,26 @@ internal fun readOverridesBlock(value: YamlValue, reading: BlockReading): Overri
             props = overrideMap.mapValue("props", reading)?.let { readProps(it, reading) },
         )
     }
-    return OverridesPatch(slots = slots, nestedInstances = nested)
+    return OverridesPatch(slots = slots, sets = sets?.takeIf { it.isNotEmpty() }, nestedInstances = nested)
+}
+
+/** An override `target` — a scalar id or a list of id-path segments. */
+private fun readOverrideTarget(entry: YamlMap, reading: BlockReading): List<String>? {
+    val value = entry.value("target") ?: run {
+        reading.warning("Override set entry needs a `target`", entry)
+        return null
+    }
+    val segments = when (value) {
+        is YamlScalar -> listOfNotNull((value.value as? String)?.takeIf { it.isNotEmpty() })
+        is io.aequicor.visualization.engine.frontend.yaml.YamlList ->
+            value.items.mapNotNull { (it as? YamlScalar)?.value as? String }
+        else -> emptyList()
+    }
+    if (segments.isEmpty()) {
+        reading.warning("Override set entry has an empty `target`", value)
+        return null
+    }
+    return segments
 }
 
 // --- shared prop value reading ---

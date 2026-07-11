@@ -20,6 +20,9 @@ fun <T> T.bindable(): Bindable<T> = Bindable.Value(this)
 
 fun <T> Bindable<T>.literalOrNull(): T? = (this as? Bindable.Value<T>)?.value
 
+/** Reads a `Bindable<Double>` as a plain literal, treating any non-literal binding as `0.0`. */
+val Bindable<Double>.orZero: Double get() = literalOrNull() ?: 0.0
+
 /** ARGB color; parsed from `#RRGGBB` or `#RRGGBBAA` hex strings. */
 data class DesignColor(val argb: Long) {
     val alpha: Int get() = ((argb shr 24) and 0xFF).toInt()
@@ -52,9 +55,11 @@ data class DesignColor(val argb: Long) {
 }
 
 data class DesignPoint(
-    val x: Double = 0.0,
-    val y: Double = 0.0,
-)
+    val x: Bindable<Double>,
+    val y: Bindable<Double>,
+) {
+    constructor(x: Double = 0.0, y: Double = 0.0) : this(x.bindable(), y.bindable())
+}
 
 data class DesignSize(
     val width: Double? = null,

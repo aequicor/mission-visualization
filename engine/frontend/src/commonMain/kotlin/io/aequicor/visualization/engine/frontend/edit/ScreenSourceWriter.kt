@@ -1,5 +1,6 @@
 package io.aequicor.visualization.engine.frontend.edit
 
+import io.aequicor.visualization.engine.frontend.cnl.CnlEmitter
 import io.aequicor.visualization.engine.ir.model.DesignPage
 
 /**
@@ -35,10 +36,10 @@ object ScreenSourceWriter {
         val body = if (root == null) {
             listOf("# ${page.name}")
         } else {
-            // Reuse the node-section renderer for node/layout/style; swap its decorative
-            // `# Frame: …` heading for the plain screen-root H1 (which names the screen, not a
-            // section — a prefix-less lower-level heading would mint a spurious SectionTitle).
-            listOf("# ${page.name}") + NodeSectionWriter.emit(root, level = 1).drop(1)
+            // The CNL body: the screen root's H1 carries the page name as its plain title (so the
+            // extractor records a screen title, not a spurious SectionTitle) with the root's
+            // properties as inline phrases; children (if any) follow as sub-headings.
+            CnlEmitter.emitStableSubtree(root, level = 1, includeId = true, titleOverride = page.name)
         }
         return buildString {
             append("---\n")

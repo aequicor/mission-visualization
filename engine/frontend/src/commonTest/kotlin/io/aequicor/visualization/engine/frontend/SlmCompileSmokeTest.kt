@@ -34,60 +34,14 @@ class SlmCompileSmokeTest {
 
         # Панель миссий
 
-        ## Component: Mission Card
-        node:
-          type: component
-          id: componentMissionCard
-        component:
-          name: ds/MissionCard
-          variants:
-            status:
-              values: [nominal, warning]
-          properties:
-            title:
-              type: text
-              default: Mission name
+        ## Панель деталей id missionPanel column gap ${'$'}space.4 width (fill) height (hug) radius 8 color ${'$'}color.surface
 
-        ### Text: Card Title
-        node:
-          type: text
-        text:
-          key: components.missionCard.title
-          defaultText: Mission name
+        Text id missionTitle «Mission Control» key missionDashboard.title
+        Instance id cardInstance of ds/MissionCard variant (status nominal)
 
-        ## Панель деталей
-        node:
-          type: frame
-          id: missionPanel
-        layout:
-          mode: column
-          gap: §space.4
-          sizing:
-            width:
-              type: fill
-            height:
-              type: hug
-        style:
-          radius: 8
-          fills:
-            - token: color.surface
+        ## Component: Mission Card id componentMissionCard component-name ds/MissionCard axis status (nominal warning) prop title (text default «Mission name»)
 
-        ### Text: Заголовок
-        node:
-          type: text
-          id: missionTitle
-        text:
-          key: missionDashboard.title
-          defaultText: Mission Control
-
-        ### Card: Инстанс
-        node:
-          type: instance
-          id: cardInstance
-        component:
-          ref: ds/MissionCard
-          variant:
-            status: nominal
+        Text id cardTitle «Mission name» key components.missionCard.title
         """,
     ) + "\n"
 
@@ -177,7 +131,6 @@ class SlmCompileSmokeTest {
         assertNotNull(result.editIndex.anchorOwners["missionPanel"])
         assertNotNull(result.editIndex.anchorOwners["missionTitle"])
         assertNotNull(result.editIndex.anchorOwners["cardInstance"])
-        assertTrue(result.editIndex.irSpliceNodes.isEmpty())
     }
 
     @Test

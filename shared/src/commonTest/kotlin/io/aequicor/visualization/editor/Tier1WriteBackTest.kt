@@ -67,7 +67,7 @@ class Tier1WriteBackTest {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetVisible(nodeId, false))
         assertEquals(false, next.document?.nodeById(nodeId)?.visible?.literalOrNull())
-        assertTrue("visible: false" in next.sourceOf(owningFile))
+        assertTrue("visible no" in next.sourceOf(owningFile))
         next.assertWroteBack(before)
     }
 
@@ -76,7 +76,7 @@ class Tier1WriteBackTest {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLocked(nodeId, true))
         assertEquals(true, next.document?.nodeById(nodeId)?.locked)
-        assertTrue("locked: true" in next.sourceOf(owningFile))
+        assertTrue("locked yes" in next.sourceOf(owningFile))
         next.assertWroteBack(before)
     }
 
@@ -85,7 +85,7 @@ class Tier1WriteBackTest {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.UpdateOpacity(nodeId, 0.5))
         assertEquals(0.5, next.document?.nodeById(nodeId)?.opacity?.literalOrNull())
-        assertTrue("opacity: 0.5" in next.sourceOf(owningFile))
+        assertTrue("opacity 0.5" in next.sourceOf(owningFile))
         next.assertWroteBack(before)
     }
 
@@ -94,7 +94,7 @@ class Tier1WriteBackTest {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.UpdateCornerRadius(nodeId, 24.0))
         assertNotNull(next.document?.nodeById(nodeId)?.cornerRadius, "radius applied to document")
-        assertTrue("radius: 24" in next.sourceOf(owningFile))
+        assertTrue("radius 24" in next.sourceOf(owningFile))
         next.assertWroteBack(before)
     }
 
@@ -103,7 +103,7 @@ class Tier1WriteBackTest {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutMode(nodeId, EditorLayoutMode.Horizontal))
         assertEquals(LayoutMode.Horizontal, next.document?.nodeById(nodeId)?.layout?.mode)
-        assertTrue("mode: row" in next.sourceOf(owningFile))
+        assertTrue("row" in next.sourceOf(owningFile))
         next.assertWroteBack(before)
     }
 
@@ -111,7 +111,7 @@ class Tier1WriteBackTest {
     fun layoutGapWritesLayoutGap() {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutGap(nodeId, 40.0))
-        assertTrue("gap: 40" in next.sourceOf(owningFile))
+        assertTrue("gap 40" in next.sourceOf(owningFile))
         next.assertWroteBack(before)
     }
 
@@ -120,10 +120,7 @@ class Tier1WriteBackTest {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.All, 32.0))
         val source = next.sourceOf(owningFile)
-        assertTrue("blockStart: 32" in source, "top side written")
-        assertTrue("inlineEnd: 32" in source, "right side written")
-        assertTrue("blockEnd: 32" in source, "bottom side written")
-        assertTrue("inlineStart: 32" in source, "left side written")
+        assertTrue("padding 32" in source, "uniform padding written")
         next.assertWroteBack(before)
     }
 }

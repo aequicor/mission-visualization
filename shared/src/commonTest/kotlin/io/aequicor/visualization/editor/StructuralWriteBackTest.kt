@@ -23,14 +23,16 @@ import kotlin.test.assertTrue
  * Structural delete write-back through the reducer: [DesignEditorIntent.DeleteNodes] drops the
  * owning heading section from the SLM source (surviving ids intact) while the in-memory document
  * stays the authority. Cross-page selections and any drift-inducing delete fall back to an
- * in-memory-only delete with every source byte-identical — the id-preservation net.
+ * in-memory-only delete with every source byte-identical — the id-preservation net. Drives the
+ * shipped CNL demos (`mission-overview.layout.md` is a Free-layout wireframe: `win_bg` window,
+ * `src_panel` / `cv_panel` / `in_panel` panels).
  */
 class StructuralWriteBackTest {
 
     private val owningFile = "mission-overview.layout.md"
 
     private fun freshState(): DesignEditorState =
-        createDesignEditorState(legacyMissionDocuments())
+        createDesignEditorState(missionDemoDocuments())
 
     private fun DesignEditorState.sourceOf(fileName: String): String =
         assertNotNull(sources.firstOrNull { it.fileName == fileName }, "missing source $fileName").content
@@ -55,20 +57,20 @@ class StructuralWriteBackTest {
 
     @Test
     fun deleteWritesBackAndSurvivorsIntact() {
-        val before = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode("overview_wide"))
+        val before = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode("win_bg"))
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(setOf("overview_wide")))
+        val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(setOf("win_bg")))
 
         // Document mirrors the delete; every sibling id survives the recompile.
-        assertNull(next.document?.nodeById("overview_wide"), "deleted node gone from document")
-        listOf("frame_overview", "overview_hero", "overview_tiles", "tile_1", "overview_cards", "card_1").forEach { id ->
+        assertNull(next.document?.nodeById("win_bg"), "deleted node gone from document")
+        listOf("frame_overview", "src_panel", "cv_panel", "in_panel", "src_menu").forEach { id ->
             assertNotNull(next.document?.nodeById(id), "survivor $id kept its id")
         }
 
-        // The owning source dropped the whole `## Shape: Wide block` section.
+        // The owning source dropped the whole `## Rectangle: … win_bg` section.
         val source = next.sourceOf(owningFile)
-        assertTrue("overview_wide" !in source, "wide-block section removed from source")
-        assertTrue("Wide block" !in source, "wide-block heading removed from source")
+        assertTrue("win_bg" !in source, "window section removed from source")
+        assertTrue("«Window»" !in source, "window heading removed from source")
         next.assertWroteBack(before)
         assertEquals(listOf(before.sources), next.previousSources, "source undo captured the pre-edit sources")
     }
@@ -77,15 +79,15 @@ class StructuralWriteBackTest {
     fun deleteSectionWithDescendantsRemovesSubtreeFromSource() {
         val before = freshState()
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(setOf("overview_tiles")))
+        val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(setOf("src_menu")))
 
-        // The container and every descendant instance leave both the document and the source.
-        listOf("overview_tiles", "tile_1", "tile_2", "tile_3").forEach { id ->
+        // The container and every descendant rectangle leave both the document and the source.
+        listOf("src_menu", "src_menu_l1", "src_menu_l2", "src_menu_l3").forEach { id ->
             assertNull(next.document?.nodeById(id), "$id removed with its section")
             assertTrue(id !in next.sourceOf(owningFile), "$id removed from source")
         }
         // Untouched siblings survive.
-        listOf("overview_hero", "overview_wide", "overview_cards").forEach { id ->
+        listOf("src_title", "src_save", "win_bg", "cv_panel").forEach { id ->
             assertNotNull(next.document?.nodeById(id), "sibling $id survives")
         }
         next.assertWroteBack(before)
@@ -96,7 +98,7 @@ class StructuralWriteBackTest {
         val before = freshState()
         // Two heading-anchored nodes on different pages: a single-source patch can't express the
         // two-file transaction, so the delete stays in-memory with every source untouched.
-        val ids = setOf("overview_hero", "telemetry_header")
+        val ids = setOf("win_bg", "telemetry_header")
         assertNotNull(before.document?.nodeById("telemetry_header"), "telemetry_header present")
 
         val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(ids))
@@ -112,44 +114,33 @@ class StructuralWriteBackTest {
 
     @Test
     fun idPreservationVetoDiscardsPatchedSource() {
-        // Two same-named frames with no explicit id compile to "panel" and "panel-2". Deleting the
-        // first would let the survivor recompile back to "panel" — a drift the veto must catch.
+        // Two heading frames with no explicit id take positional ids "section1"/"section2".
+        // Deleting the first would let the survivor recompile back to "section1" — a drift the veto
+        // must catch (the source patch is discarded, the in-memory delete stands).
         val drift = """
             ---
             screen: drift
             sourceLocale: en-US
             ---
 
-            # Screen
+            # Screen id root name «Screen»
 
-            node:
-              id: root
-              name: Screen
+            ## Frame: name «Panel»
 
-            ## Frame: Panel
-
-            node:
-              type: frame
-              name: Panel
-
-            ## Frame: Panel
-
-            node:
-              type: frame
-              name: Panel
+            ## Frame: name «Panel»
         """.trimIndent() + "\n"
         val before = createDesignEditorState(
             compileMissionDocuments(listOf(MissionDocumentSource("drift.layout.md", drift))),
         )
-        // Sanity: the generated ids are exactly the drift-prone pair.
-        assertNotNull(before.document?.nodeById("panel"), "first Panel -> panel")
-        assertNotNull(before.document?.nodeById("panel-2"), "second Panel -> panel-2")
+        // Sanity: the generated ids are exactly the drift-prone positional pair.
+        assertNotNull(before.document?.nodeById("section1"), "first Panel -> section1")
+        assertNotNull(before.document?.nodeById("section2"), "second Panel -> section2")
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(setOf("panel")))
+        val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(setOf("section1")))
 
-        // The in-memory delete stands: "panel" gone, "panel-2" survives.
-        assertNull(next.document?.nodeById("panel"), "selected node deleted in-memory")
-        assertNotNull(next.document?.nodeById("panel-2"), "sibling survives in-memory")
+        // The in-memory delete stands: "section1" gone, "section2" survives.
+        assertNull(next.document?.nodeById("section1"), "selected node deleted in-memory")
+        assertNotNull(next.document?.nodeById("section2"), "sibling survives in-memory")
         // But the veto discarded the patched source — the source is byte-identical, no undo entry.
         assertEquals(before.sources, next.sources, "drift-inducing patch discarded, source intact")
         assertTrue(next.previousSources.isEmpty(), "vetoed write-back records no source undo entry")
@@ -182,7 +173,6 @@ class StructuralWriteBackTest {
         // IR faithfully round-trips the new node's kind and size.
         val source = next.sourceOf(owningFile)
         assertTrue(mintedId in source, "minted id written to source")
-        assertTrue("Shape:" in source, "shape heading section written to source")
         val recompiled = assertNotNull(next.compiledDocumentOf(owningFile), "owning source recompiled")
         val recompiledNode = assertNotNull(recompiled.nodeById(mintedId), "minted node present after recompile")
         assertEquals(ShapeType.Rectangle, (recompiledNode.kind as DesignNodeKind.Shape).shape)
@@ -198,21 +188,21 @@ class StructuralWriteBackTest {
     @Test
     fun duplicateWritesCloneWithFreshExplicitIds() {
         val before = freshState()
-        // overview_hero is a pure Shape (faithfully expressible), so its duplicate writes back.
-        assertNotNull(before.document?.nodeById("overview_hero"), "original present")
+        // win_bg is a pure Shape (faithfully expressible), so its duplicate writes back.
+        assertNotNull(before.document?.nodeById("win_bg"), "original present")
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.DuplicateNodes(setOf("overview_hero")))
+        val next = reduceDesignEditor(before, DesignEditorIntent.DuplicateNodes(setOf("win_bg")))
 
         // A single clone with a fresh id is selected; the original keeps its id (id stability).
         assertEquals(1, next.selectedNodeIds.size)
         val cloneId = next.selectedNodeIds.first()
-        assertNotEquals("overview_hero", cloneId, "clone got a fresh id")
-        assertNotNull(next.document?.nodeById("overview_hero"), "original id preserved")
+        assertNotEquals("win_bg", cloneId, "clone got a fresh id")
+        assertNotNull(next.document?.nodeById("win_bg"), "original id preserved")
         val clone = assertNotNull(next.document?.nodeById(cloneId), "clone in document")
         assertTrue(clone.kind is DesignNodeKind.Shape)
         // The clone is a sibling of the original under the same parent.
         assertTrue(
-            next.document?.nodeById("frame_overview")?.children?.map { it.id }?.containsAll(listOf("overview_hero", cloneId)) == true,
+            next.document?.nodeById("frame_overview")?.children?.map { it.id }?.containsAll(listOf("win_bg", cloneId)) == true,
             "clone sits beside the original",
         )
 
@@ -220,7 +210,7 @@ class StructuralWriteBackTest {
         assertTrue(cloneId in next.sourceOf(owningFile), "clone id written to source")
         val recompiled = assertNotNull(next.compiledDocumentOf(owningFile), "owning source recompiled")
         assertNotNull(recompiled.nodeById(cloneId), "clone present after recompile")
-        assertNotNull(recompiled.nodeById("overview_hero"), "original survives recompile")
+        assertNotNull(recompiled.nodeById("win_bg"), "original survives recompile")
         next.assertWroteBack(before)
     }
 
@@ -234,35 +224,11 @@ class StructuralWriteBackTest {
             sourceLocale: en-US
             ---
 
-            # Screen
+            # Screen id root name «Screen»
 
-            node:
-              id: root
-              name: Screen
+            ## Frame: id card name «Card»
 
-            ## Frame: Card
-
-            node:
-              type: frame
-              id: card
-              name: Card
-
-            ### Shape: Body
-
-            node:
-              type: shape
-              id: body
-              name: Body
-            shape:
-              kind: rectangle
-            layout:
-              sizing:
-                width:
-                  type: fixed
-                  value: 40
-                height:
-                  type: fixed
-                  value: 40
+            ### Rectangle: id body name «Body» 40 by 40
         """.trimIndent() + "\n"
         val before = createDesignEditorState(
             compileMissionDocuments(listOf(MissionDocumentSource("nested.layout.md", nested))),
@@ -296,37 +262,41 @@ class StructuralWriteBackTest {
     // --- Reorder -----------------------------------------------------------------
 
     @Test
-    fun reorderWritesOrderScalarsOverRun() {
+    fun reorderRelocatesSectionOverAddressableRun() {
         val before = freshState()
-        // frame_overview's four top-level children are all heading-anchored -> the whole run is
-        // addressable, so a reorder persists as explicit `order:` scalars.
+        // frame_overview's four top-level children are all heading-anchored -> the moved node's
+        // new after-sibling anchor is addressable, so a reorder persists as a section relocation.
         assertEquals(
-            listOf("overview_hero", "overview_tiles", "overview_wide", "overview_cards"),
+            listOf("win_bg", "src_panel", "cv_panel", "in_panel"),
             before.document?.nodeById("frame_overview")?.children?.map { it.id },
             "authored top-level order",
         )
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.ReorderNode("overview_hero", ZOrderMove.ToFront))
+        val next = reduceDesignEditor(before, DesignEditorIntent.ReorderNode("win_bg", ZOrderMove.ToFront))
 
-        val expectedOrder = listOf("overview_tiles", "overview_wide", "overview_cards", "overview_hero")
+        val expectedOrder = listOf("src_panel", "cv_panel", "in_panel", "win_bg")
         // The in-memory document is the authority for z-order.
         assertEquals(
             expectedOrder,
             next.document?.nodeById("frame_overview")?.children?.map { it.id },
-            "in-memory reorder moved hero to the front (last child paints on top)",
+            "in-memory reorder moved the window to the front (last child paints on top)",
         )
-        // The owning source gained explicit order scalars across the run, and the recompiled IR's
-        // stable order-sort reproduces exactly the in-memory arrangement with zero id drift.
+        // The owning source relocated the window's heading section to the back of the run, and the
+        // recompiled IR (z-order = document order in CNL) reproduces the in-memory arrangement with
+        // zero id drift.
         val source = next.sourceOf(owningFile)
-        assertTrue("order: 40" in source, "hero written to the back of the paint order (order 40)")
+        assertTrue(
+            source.indexOf("id win_bg") > source.indexOf("id in_panel"),
+            "window's section relocated to the back of the paint order (after in_panel)",
+        )
         val recompiled = assertNotNull(next.compiledDocumentOf(owningFile), "owning source recompiled")
         assertEquals(
             expectedOrder,
             recompiled.nodeById("frame_overview")?.children?.map { it.id },
-            "recompiled order-sort matches the in-memory reorder",
+            "recompiled document order matches the in-memory reorder",
         )
         // Every id survives the recompile (the id-preservation net accepted the write).
-        listOf("overview_hero", "overview_tiles", "overview_wide", "overview_cards").forEach { id ->
+        listOf("win_bg", "src_panel", "cv_panel", "in_panel").forEach { id ->
             assertNotNull(recompiled.nodeById(id), "survivor $id kept its id")
         }
         next.assertWroteBack(before)
@@ -334,27 +304,46 @@ class StructuralWriteBackTest {
     }
 
     @Test
-    fun reorderWithIrSpliceSiblingFallsBack() {
-        val before = freshState()
-        // overview_cards compiles to [card_1, card_2, card_3]; card_2 is defined by an ```ir fence
-        // with no heading anchor, so the order-scalar batch can't address it and the whole write aborts.
-        assertEquals(
-            listOf("card_1", "card_2", "card_3"),
-            before.document?.nodeById("overview_cards")?.children?.map { it.id },
-            "authored card order",
-        )
+    fun reorderWithProseSiblingFallsBack() {
+        // `deck` compiles to [<prose text>, first, third]: the bare prose paragraph child is a
+        // paragraph-segment node with no heading anchor. Stepping `third` back lands it right after
+        // that prose child, so the section move's after-sibling anchor is the unaddressable prose
+        // node and the write aborts to an in-memory-only reorder (re-expresses the former
+        // `ir`-splice sibling case now that CNL is the sole authoring format).
+        val prose = """
+            ---
+            screen: prose
+            sourceLocale: en-US
+            ---
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.ReorderNode("card_1", ZOrderMove.Forward))
+            # Screen id root name «Screen»
+
+            ## Frame: id deck name «Deck» column
+
+            A floating annotation.
+
+            ### Rectangle: id first name «First» 40 by 40
+
+            ### Rectangle: id third name «Third» 40 by 40
+        """.trimIndent() + "\n"
+        val before = createDesignEditorState(
+            compileMissionDocuments(listOf(MissionDocumentSource("prose.layout.md", prose))),
+        )
+        val deckChildren = before.document?.nodeById("deck")?.children?.map { it.id }
+        assertEquals(3, deckChildren?.size, "deck has a prose child plus two rectangles: $deckChildren")
+        assertEquals(listOf("first", "third"), deckChildren?.drop(1), "the two heading-anchored rects follow the prose child")
+
+        val next = reduceDesignEditor(before, DesignEditorIntent.ReorderNode("third", ZOrderMove.Backward))
 
         // The canvas reflects the move (document is the authority + fallback)...
         assertEquals(
-            listOf("card_2", "card_1", "card_3"),
-            next.document?.nodeById("overview_cards")?.children?.map { it.id },
-            "in-memory reorder applied",
+            "third",
+            next.document?.nodeById("deck")?.children?.get(1)?.id,
+            "in-memory reorder applied (third stepped back past first, landing after the prose child)",
         )
-        // ...but the unaddressable sibling forced an in-memory fallback: every source byte-identical.
+        // ...but the unaddressable prose sibling forced an in-memory fallback: every source byte-identical.
         before.sources.forEach { source ->
-            assertEquals(source.content, next.sourceOf(source.fileName), "${source.fileName} untouched by ir-splice reorder")
+            assertEquals(source.content, next.sourceOf(source.fileName), "${source.fileName} untouched by prose-sibling reorder")
         }
         assertTrue(next.previousSources.isEmpty(), "in-memory fallback records no source undo entry")
     }
@@ -364,42 +353,42 @@ class StructuralWriteBackTest {
     @Test
     fun reparentSamePageWritesBack() {
         val before = freshState()
-        // overview_hero (a Shape, faithfully expressible) starts as a direct child of frame_overview;
-        // overview_tiles is a sibling frame on the same page. Both are heading-anchored -> the move
-        // re-levels the hero section under Tiles and writes back.
+        // win_bg (a Shape, faithfully expressible) starts as a direct child of frame_overview;
+        // src_panel is a sibling frame on the same page. Both are heading-anchored -> the move
+        // re-levels the window section under Source and writes back.
         assertTrue(
-            before.document?.nodeById("frame_overview")?.children?.any { it.id == "overview_hero" } == true,
-            "hero starts under the root frame",
+            before.document?.nodeById("frame_overview")?.children?.any { it.id == "win_bg" } == true,
+            "window starts under the root frame",
         )
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.ReparentNode("overview_hero", "overview_tiles"))
+        val next = reduceDesignEditor(before, DesignEditorIntent.ReparentNode("win_bg", "src_panel"))
 
-        // The in-memory document is the authority: hero moved under Tiles, gone from the root frame.
+        // The in-memory document is the authority: window moved under Source, gone from the root frame.
         assertTrue(
-            next.document?.nodeById("overview_tiles")?.children?.any { it.id == "overview_hero" } == true,
-            "hero reparented under Tiles in the document",
+            next.document?.nodeById("src_panel")?.children?.any { it.id == "win_bg" } == true,
+            "window reparented under Source in the document",
         )
         assertTrue(
-            next.document?.nodeById("frame_overview")?.children?.none { it.id == "overview_hero" } == true,
-            "hero left the root frame's children",
+            next.document?.nodeById("frame_overview")?.children?.none { it.id == "win_bg" } == true,
+            "window left the root frame's children",
         )
 
-        // The owning source moved and re-leveled the hero section; the recompile reproduces the new
+        // The owning source moved and re-leveled the window section; the recompile reproduces the new
         // parent/child topology with every id preserved (the id + parent-of veto both passed).
-        assertTrue("overview_hero" in next.sourceOf(owningFile), "hero id still in source")
+        assertTrue("win_bg" in next.sourceOf(owningFile), "window id still in source")
         val recompiled = assertNotNull(next.compiledDocumentOf(owningFile), "owning source recompiled")
         assertTrue(
-            recompiled.nodeById("overview_tiles")?.children?.any { it.id == "overview_hero" } == true,
-            "recompiled tree parents hero under Tiles",
+            recompiled.nodeById("src_panel")?.children?.any { it.id == "win_bg" } == true,
+            "recompiled tree parents window under Source",
         )
         assertEquals(
-            next.document?.nodeById("overview_tiles")?.children?.map { it.id },
-            recompiled.nodeById("overview_tiles")?.children?.map { it.id },
+            next.document?.nodeById("src_panel")?.children?.map { it.id },
+            recompiled.nodeById("src_panel")?.children?.map { it.id },
             "recompiled child order matches the in-memory reorder",
         )
         assertNull(
-            recompiled.nodeById("frame_overview")?.children?.firstOrNull { it.id == "overview_hero" },
-            "recompiled root frame no longer parents hero",
+            recompiled.nodeById("frame_overview")?.children?.firstOrNull { it.id == "win_bg" },
+            "recompiled root frame no longer parents window",
         )
         next.assertWroteBack(before)
         assertEquals(listOf(before.sources), next.previousSources, "source undo captured the pre-edit sources")
@@ -408,16 +397,16 @@ class StructuralWriteBackTest {
     @Test
     fun reparentCrossPageFallsBack() {
         val before = freshState()
-        // overview_hero lives on the Overview page; frame_telemetry roots the Telemetry page. A
+        // win_bg lives on the Overview page; frame_telemetry roots the Telemetry page. A
         // cross-page reparent is a two-source transaction a single-source patch can't express.
         assertNotNull(before.document?.nodeById("frame_telemetry"), "telemetry root present")
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.ReparentNode("overview_hero", "frame_telemetry"))
+        val next = reduceDesignEditor(before, DesignEditorIntent.ReparentNode("win_bg", "frame_telemetry"))
 
         // The canvas reflects the cross-page move (document is authority + fallback)...
         assertTrue(
-            next.document?.nodeById("frame_telemetry")?.children?.any { it.id == "overview_hero" } == true,
-            "hero moved under the telemetry root in-memory",
+            next.document?.nodeById("frame_telemetry")?.children?.any { it.id == "win_bg" } == true,
+            "window moved under the telemetry root in-memory",
         )
         // ...but no source was rewritten and no source-undo entry recorded.
         before.sources.forEach { source ->
@@ -436,55 +425,19 @@ class StructuralWriteBackTest {
             sourceLocale: en-US
             ---
 
-            # Screen
+            # Screen id root name «Screen»
 
-            node:
-              id: root
-              name: Screen
+            ## Frame: id a name «A»
 
-            ## Frame: A
+            ### Frame: id b name «B»
 
-            node:
-              type: frame
-              id: a
-              name: A
+            #### Frame: id c name «C»
 
-            ### Frame: B
+            ##### Frame: id d name «D»
 
-            node:
-              type: frame
-              id: b
-              name: B
+            ## Frame: id panel name «Panel»
 
-            #### Frame: C
-
-            node:
-              type: frame
-              id: c
-              name: C
-
-            ##### Frame: D
-
-            node:
-              type: frame
-              id: d
-              name: D
-
-            ## Frame: Panel
-
-            node:
-              type: frame
-              id: panel
-              name: Panel
-
-            ### Shape: Chip
-
-            node:
-              type: shape
-              id: chip
-              name: Chip
-            shape:
-              kind: rectangle
+            ### Rectangle: id chip name «Chip» 40 by 40
         """.trimIndent() + "\n"
         val before = createDesignEditorState(
             compileMissionDocuments(listOf(MissionDocumentSource("deep.layout.md", deep))),
@@ -505,15 +458,15 @@ class StructuralWriteBackTest {
     @Test
     fun duplicateInstanceFallsBackInMemory() {
         val before = freshState()
-        // tile_1 is a component instance — the section writer can't round-trip its component ref,
+        // t_tile_1 is a component instance — the section writer can't round-trip its component ref,
         // so the duplicate stays in-memory with every source byte-identical.
-        assertTrue(before.document?.nodeById("tile_1")?.kind is DesignNodeKind.Instance, "tile_1 is an instance")
+        assertTrue(before.document?.nodeById("t_tile_1")?.kind is DesignNodeKind.Instance, "t_tile_1 is an instance")
 
-        val next = reduceDesignEditor(before, DesignEditorIntent.DuplicateNodes(setOf("tile_1")))
+        val next = reduceDesignEditor(before, DesignEditorIntent.DuplicateNodes(setOf("t_tile_1")))
 
         // The clone exists in the working document (canvas reflects the duplicate)...
         val cloneId = next.selectedNodeIds.first()
-        assertNotEquals("tile_1", cloneId)
+        assertNotEquals("t_tile_1", cloneId)
         assertTrue(next.document?.nodeById(cloneId)?.kind is DesignNodeKind.Instance, "clone is still an instance")
         // ...but no source was rewritten and no source-undo entry was recorded.
         before.sources.forEach { source ->

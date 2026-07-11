@@ -78,6 +78,7 @@ internal object CnlVocabulary {
         "list" to CnlPropertyKind.ListSettings,
         "characters" to CnlPropertyKind.Characters,
         "link" to CnlPropertyKind.Link,
+        "span" to CnlPropertyKind.Span,
         // Layout-deep.
         "wrap" to CnlPropertyKind.Wrap,
         "clip" to CnlPropertyKind.Clip,
@@ -103,6 +104,7 @@ internal object CnlVocabulary {
         "reset" to CnlPropertyKind.ResetOverrides,
         "slot" to CnlPropertyKind.SlotOverride,
         "nested" to CnlPropertyKind.NestedOverride,
+        "override" to CnlPropertyKind.SetOverride,
         "component-name" to CnlPropertyKind.ComponentName,
         "componentname" to CnlPropertyKind.ComponentName,
         "set" to CnlPropertyKind.ComponentSet,

@@ -27,6 +27,7 @@ internal object CnlDocumentSections {
     private val stylesHeading = Regex("""^Styles\s*$""", RegexOption.IGNORE_CASE)
     private val styleRow = Regex("""^(Paint|TextStyle|Effect|Grid)\s+(\S+)(?:\s+(.*))?\s*$""", RegexOption.IGNORE_CASE)
     private val numberRegex = Regex("""-?\d+(\.\d+)?([eE][+-]?\d+)?""")
+    private val whitespaceRegex = Regex("""\s+""")
 
     fun isDocumentHeading(text: String): Boolean =
         collectionHeading.matches(text.trim()) ||
@@ -127,7 +128,7 @@ internal object CnlDocumentSections {
 
     private fun parseCollectionOptions(raw: String): CollectionOptions {
         if (raw.isBlank()) return CollectionOptions(emptyList(), null)
-        val tokens = raw.trim().split(Regex("""\s+""")).filter { it.isNotEmpty() }
+        val tokens = raw.trim().split(whitespaceRegex).filter { it.isNotEmpty() }
         val modes = mutableListOf<String>()
         var defaultMode: String? = null
         var index = 0
@@ -376,26 +377,20 @@ internal object CnlDocumentSections {
             val char = text[index]
             when (char) {
                 '«' -> {
-                    val close = text.indexOf('»', index + 1)
-                    if (close < 0) {
+                    val scan = CnlGrammar.scanTextLiteral(text, index + 1, '»')
+                    if (!scan.terminated) {
                         diagnostics.warning("Unterminated text literal in variable row", line, blockPath = "variables")
-                        tokens += text.substring(index + 1)
-                        index = text.length
-                    } else {
-                        tokens += text.substring(index + 1, close)
-                        index = close + 1
                     }
+                    tokens += scan.text
+                    index = if (scan.terminated) scan.closeIndex + 1 else text.length
                 }
                 '"', '\'' -> {
-                    val close = findQuotedEnd(text, index, char)
-                    if (close < 0) {
+                    val scan = CnlGrammar.scanTextLiteral(text, index + 1, char)
+                    if (!scan.terminated) {
                         diagnostics.warning("Unterminated quoted value in variable row", line, blockPath = "variables")
-                        tokens += text.substring(index + 1)
-                        index = text.length
-                    } else {
-                        tokens += text.substring(index + 1, close)
-                        index = close + 1
                     }
+                    tokens += scan.text
+                    index = if (scan.terminated) scan.closeIndex + 1 else text.length
                 }
                 else -> {
                     val start = index
@@ -405,19 +400,6 @@ internal object CnlDocumentSections {
             }
         }
         return tokens
-    }
-
-    private fun findQuotedEnd(text: String, start: Int, quote: Char): Int {
-        var index = start + 1
-        while (index < text.length) {
-            if (quote == '"' && text[index] == '\\') {
-                index += 2
-                continue
-            }
-            if (text[index] == quote) return index
-            index++
-        }
-        return -1
     }
 
     private fun yamlValue(type: CnlVariableType, value: String): String {
@@ -434,8 +416,10 @@ internal object CnlDocumentSections {
         }
     }
 
+    private val plainScalarRegex = Regex("""[A-Za-z0-9_.-]+""")
+
     private fun yamlPlain(value: String): String =
-        if (value.matches(Regex("""[A-Za-z0-9_.-]+"""))) value else yamlString(value)
+        if (value.matches(plainScalarRegex)) value else yamlString(value)
 
     private fun yamlString(value: String): String =
         "\"" + value

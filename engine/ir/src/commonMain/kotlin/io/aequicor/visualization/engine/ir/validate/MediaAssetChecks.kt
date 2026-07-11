@@ -5,7 +5,9 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.MediaKind
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 
 /**
  * IR-ASSET — assets, media, vector paths, boolean operations, masks.
@@ -72,10 +74,10 @@ internal object MediaAssetChecks {
         slot: String,
     ) {
         if (focalPoint == null) return
-        if (focalPoint.x !in 0.0..1.0 || focalPoint.y !in 0.0..1.0) {
+        if (focalPoint.x.orZero !in 0.0..1.0 || focalPoint.y.orZero !in 0.0..1.0) {
             sink += validationError(
                 "IR-ASSET-003",
-                "Focal point (${focalPoint.x}, ${focalPoint.y}) of $slot on '${node.id}' " +
+                "Focal point (${focalPoint.x.orZero}, ${focalPoint.y.orZero}) of $slot on '${node.id}' " +
                     "must be normalized to 0..1",
                 ctx.location(node),
             )
@@ -85,8 +87,10 @@ internal object MediaAssetChecks {
     private fun checkMedia(sink: MutableList<DesignDiagnostic>, ctx: ValidationContext, node: DesignNode) {
         val media = (node.kind as? DesignNodeKind.Media)?.media ?: return
         val expectedType = if (media.kind == MediaKind.Video) "video" else "image"
-        assetExists(sink, ctx, node, media.assetId, "media", expectedType)
-        assetExists(sink, ctx, node, media.posterAssetId, "media.poster", "image")
+        // Static validation runs on unresolved IR: only literal ids can be checked
+        // against the asset table; a $var / {{expr}} binding resolves at runtime and is skipped.
+        media.assetId.literalOrNull()?.let { assetExists(sink, ctx, node, it, "media", expectedType) }
+        media.posterAssetId.literalOrNull()?.let { assetExists(sink, ctx, node, it, "media.poster", "image") }
         checkFocalPoint(sink, ctx, node, media.focalPoint, "media")
     }
 

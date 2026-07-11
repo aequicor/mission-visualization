@@ -20,36 +20,13 @@ class SectionMoveTest {
         sourceLocale: en-US
         ---
 
-        # Screen
+        # Screen id root name «Screen» column
 
-        node:
-          id: root
-          name: Screen
-        layout:
-          mode: column
+        ## Frame: Panel id panel
 
-        ## Frame: Panel
+        ### Shape: Chip id chip
 
-        node:
-          type: frame
-          id: panel
-          name: Panel
-
-        ### Shape: Chip
-
-        node:
-          type: shape
-          id: chip
-          name: Chip
-        shape:
-          kind: rectangle
-
-        ## Frame: Sidebar
-
-        node:
-          type: frame
-          id: sidebar
-          name: Sidebar
+        ## Frame: Sidebar id sidebar
     """.trimIndent() + "\n"
 
     @Test
@@ -63,12 +40,12 @@ class SectionMoveTest {
         // The whole subtree is re-leveled one deeper: Panel `## `->`### `, Chip `### `->`#### `,
         // and the old level-2 Panel / level-3 Chip heading lines are gone (line-anchored so a
         // deeper heading's `#`-run does not spuriously match the shallower one).
-        assertTrue("\n### Frame: Panel\n" in new, new)
-        assertTrue("\n#### Shape: Chip\n" in new, new)
-        assertFalse("\n## Frame: Panel\n" in new, "old level-2 Panel heading still present:\n$new")
-        assertFalse("\n### Shape: Chip\n" in new, "old level-3 Chip heading still present:\n$new")
+        assertTrue("\n### Frame: Panel id panel\n" in new, new)
+        assertTrue("\n#### Shape: Chip id chip\n" in new, new)
+        assertFalse("\n## Frame: Panel id panel\n" in new, "old level-2 Panel heading still present:\n$new")
+        assertFalse("\n### Shape: Chip id chip\n" in new, "old level-3 Chip heading still present:\n$new")
         // Panel landed after Sidebar's heading (it is now Sidebar's child).
-        assertTrue(new.indexOf("\n### Frame: Panel\n") > new.indexOf("\n## Frame: Sidebar\n"), new)
+        assertTrue(new.indexOf("\n### Frame: Panel id panel\n") > new.indexOf("\n## Frame: Sidebar id sidebar\n"), new)
 
         val recompiled = compileForEdit(new)
         assertNoErrors(recompiled)
@@ -88,10 +65,10 @@ class SectionMoveTest {
         assertLosslessOutside(doc, new, assertNotNull(result.appliedRange))
 
         // Chip is de-leveled `### `->`## ` and sits between Panel and Sidebar.
-        assertTrue("\n## Shape: Chip\n" in new, new)
-        assertFalse("\n### Shape: Chip\n" in new, "old level-3 Chip heading still present:\n$new")
-        val chipAt = new.indexOf("\n## Shape: Chip\n")
-        assertTrue(chipAt in (new.indexOf("\n## Frame: Panel\n") + 1) until new.indexOf("\n## Frame: Sidebar\n"), new)
+        assertTrue("\n## Shape: Chip id chip\n" in new, new)
+        assertFalse("\n### Shape: Chip id chip\n" in new, "old level-3 Chip heading still present:\n$new")
+        val chipAt = new.indexOf("\n## Shape: Chip id chip\n")
+        assertTrue(chipAt in (new.indexOf("\n## Frame: Panel id panel\n") + 1) until new.indexOf("\n## Frame: Sidebar id sidebar\n"), new)
 
         val recompiled = compileForEdit(new)
         assertNoErrors(recompiled)
@@ -109,55 +86,19 @@ class SectionMoveTest {
             sourceLocale: en-US
             ---
 
-            # Screen
+            # Screen id root name «Screen»
 
-            node:
-              id: root
-              name: Screen
+            ## Frame: A id a
 
-            ## Frame: A
+            ### Frame: B id b
 
-            node:
-              type: frame
-              id: a
-              name: A
+            #### Frame: C id c
 
-            ### Frame: B
+            ##### Frame: D id d
 
-            node:
-              type: frame
-              id: b
-              name: B
+            ## Frame: Panel id panel
 
-            #### Frame: C
-
-            node:
-              type: frame
-              id: c
-              name: C
-
-            ##### Frame: D
-
-            node:
-              type: frame
-              id: d
-              name: D
-
-            ## Frame: Panel
-
-            node:
-              type: frame
-              id: panel
-              name: Panel
-
-            ### Shape: Chip
-
-            node:
-              type: shape
-              id: chip
-              name: Chip
-            shape:
-              kind: rectangle
+            ### Shape: Chip id chip
         """.trimIndent() + "\n"
         val compiled = compileForEdit(deep)
         val result = applySlmEdit(deep, MoveSection("panel", "d"), compiled)

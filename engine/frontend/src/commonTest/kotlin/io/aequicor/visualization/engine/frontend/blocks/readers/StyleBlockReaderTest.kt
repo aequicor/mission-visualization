@@ -5,6 +5,7 @@ import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignEffect
+import io.aequicor.visualization.engine.ir.model.DesignExpression
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
@@ -102,8 +103,8 @@ class StyleBlockReaderTest {
                 DesignEffect.DropShadow(
                     color = Bindable.VarRef("shadow.card.color"),
                     offset = DesignPoint(0.0, 8.0),
-                    blur = 24.0,
-                    spread = 0.0,
+                    blur = 24.0.bindable(),
+                    spread = 0.0.bindable(),
                 ),
             ),
             style.effects,
@@ -253,6 +254,63 @@ class StyleBlockReaderTest {
         assertEquals(
             listOf(DesignPaint.Solid(DesignColor(0xFF1E293B).bindable())),
             assertIs<StylePatch>(patch).fills,
+        )
+    }
+
+    /** S28a: effect blur/spread and layerBlur radius accept `$token` refs and `{{expr}}` bindings from YAML. */
+    @Test
+    fun effectScalarsCarryTokenRefsAndDataBindings() {
+        val (patch, collector) = readSingle(
+            """
+            style:
+              effects:
+                - type: dropShadow
+                  color: "#00000040"
+                  blur: §shadow.blur
+                  spread: "{{data.spread}}"
+                - type: layerBlur
+                  blur: §blur.token
+            """,
+        )
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        assertEquals(
+            listOf(
+                DesignEffect.DropShadow(
+                    color = DesignColor(0x40000000).bindable(),
+                    blur = Bindable.VarRef("shadow.blur"),
+                    spread = Bindable.DataRef(DesignExpression("data.spread")),
+                ),
+                DesignEffect.LayerBlur(radius = Bindable.VarRef("blur.token")),
+            ),
+            assertIs<StylePatch>(patch).effects,
+        )
+    }
+
+    /** S28b: shadow offset x/y accept `$token` refs and `{{expr}}` bindings from YAML, preserved per axis. */
+    @Test
+    fun shadowOffsetAxesCarryTokenRefsAndDataBindings() {
+        val (patch, collector) = readSingle(
+            """
+            style:
+              effects:
+                - type: dropShadow
+                  color: "#00000040"
+                  x: §shadow.x
+                  y: "{{data.dy}}"
+            """,
+        )
+        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
+        assertEquals(
+            listOf(
+                DesignEffect.DropShadow(
+                    color = DesignColor(0x40000000).bindable(),
+                    offset = DesignPoint(
+                        x = Bindable.VarRef("shadow.x"),
+                        y = Bindable.DataRef(DesignExpression("data.dy")),
+                    ),
+                ),
+            ),
+            assertIs<StylePatch>(patch).effects,
         )
     }
 }

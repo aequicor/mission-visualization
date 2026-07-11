@@ -30,13 +30,10 @@ internal object CnlEmitter {
     fun emitSentence(node: DesignNode, includeId: Boolean = false): String {
         val parts = mutableListOf(CnlGrammar.canonicalNoun(node) ?: "Frame")
         if (includeId && node.id.isNotEmpty()) parts += "id ${node.id}"
-        CnlGrammar.textLiteral(node)?.let { parts += "«$it»" }
+        CnlGrammar.textLiteral(node)?.let { parts += CnlGrammar.quoteText(it) }
         parts += phrasesOf(node)
         return parts.joinToString(" ")
     }
-
-    /** The property phrases of [node] in canonical order (no noun/name) — a heading suffix. */
-    fun emitHeadingSuffix(node: DesignNode): String = phrasesOf(node, includeName = false).joinToString(" ")
 
     /** A container heading line at markdown [level]: `## Name id node_id suffix`. */
     fun emitHeadingLine(
@@ -235,22 +232,44 @@ internal object CnlEmitter {
     fun isContainer(node: DesignNode): Boolean =
         node.kind is DesignNodeKind.Frame || node.children.isNotEmpty()
 
-    private fun emitStableSubtree(
+    /**
+     * A single stable heading line for [node] (its own properties, no children) — the form the
+     * migration body and tier-3 write-back re-emit use: canonical type prefix + explicit `name`
+     * phrase + id, so a recompile keeps the same node identity.
+     */
+    fun emitStableHeadingLine(node: DesignNode, level: Int, includeId: Boolean = true): String =
+        emitHeadingLine(
+            node = node,
+            level = level,
+            includeId = includeId,
+            titleOverride = stableHeadingTitle(node),
+            textAsCharacters = true,
+            preserveEmptyTitle = true,
+            forceNamePhrase = true,
+        )
+
+    /**
+     * A node's stable heading line followed by each child one level deeper (heading-per-node,
+     * id-stable). The structural write-back form: [titleOverride] names the screen root's H1.
+     */
+    fun emitStableSubtree(
         node: DesignNode,
         level: Int,
-        includeId: Boolean,
+        includeId: Boolean = true,
         titleOverride: String? = null,
     ): List<String> {
         val lines = mutableListOf(
-            emitHeadingLine(
-                node = node,
-                level = level,
-                includeId = includeId,
-                titleOverride = titleOverride ?: stableHeadingTitle(node),
-                textAsCharacters = true,
-                preserveEmptyTitle = true,
-                forceNamePhrase = true,
-            ),
+            titleOverride?.let {
+                emitHeadingLine(
+                    node = node,
+                    level = level,
+                    includeId = includeId,
+                    titleOverride = it,
+                    textAsCharacters = true,
+                    preserveEmptyTitle = true,
+                    forceNamePhrase = true,
+                )
+            } ?: emitStableHeadingLine(node, level, includeId),
         )
         node.children.forEach { child ->
             lines += ""
@@ -259,10 +278,11 @@ internal object CnlEmitter {
         return lines
     }
 
+    private val orderedDescriptors = CnlGrammar.descriptors.sortedBy { it.order }
+
     private fun phrasesOf(node: DesignNode, includeName: Boolean = true): List<String> =
-        CnlGrammar.descriptors
+        orderedDescriptors
             .filter { includeName || it.kind != CnlPropertyKind.NodeName }
-            .sortedBy { it.order }
             .mapNotNull { it.render(node) }
 
     private fun headingTitle(node: DesignNode, preserveEmpty: Boolean = false): String {
@@ -278,17 +298,25 @@ internal object CnlEmitter {
     }
 
     private fun headingPrefix(node: DesignNode): String? {
-        if (node.type == "screen") return null
-        return when (node.type) {
-            "frame" -> "Frame"
-            "group" -> "Group"
-            "section" -> null
-            "text" -> if (node.role == "button") "Button" else "Text"
-            "media" -> "Image"
-            "vector" -> "Vector"
-            "instance" -> "Instance"
-            "shape" -> CnlGrammar.canonicalNoun(node)
-            else -> null
+        // Dispatch on kind first so an ir-spliced node carrying a raw type string ("rectangle",
+        // "ellipse", …) still gets its canonical shape noun rather than falling through to a name.
+        when (node.kind) {
+            is DesignNodeKind.Shape -> return CnlGrammar.canonicalNoun(node)
+            is DesignNodeKind.Media -> return "Image"
+            is DesignNodeKind.Instance -> return "Instance"
+            is DesignNodeKind.Text -> return if (node.role == "button") "Button" else "Text"
+            DesignNodeKind.Frame -> {
+                if (node.type == "screen") return null
+                // Every Frame-kind node in a page body is an in-tree frame (component *definitions*
+                // are lifted out and emitted separately), so a free-form type like "component"
+                // still renders `Frame:` rather than a `Component:` marker that would re-lift it.
+                return when (node.type) {
+                    "group" -> "Group"
+                    "section" -> null
+                    else -> "Frame"
+                }
+            }
+            else -> return null
         }
     }
 
@@ -406,11 +434,12 @@ internal object CnlEmitter {
         is PropValue.SlotContent -> "()"
     }
 
-    private fun cnlTextOrToken(value: String): String =
-        if (value.matches(Regex("""[A-Za-z0-9_.\-/]+"""))) value else cnlText(value)
+    private val bareTokenPattern = Regex("""[A-Za-z0-9_.\-/]+""")
 
-    private fun cnlText(value: String): String =
-        "«" + value.replace("»", "\\»") + "»"
+    private fun cnlTextOrToken(value: String): String =
+        if (value.matches(bareTokenPattern)) value else cnlText(value)
+
+    private fun cnlText(value: String): String = CnlGrammar.quoteText(value)
 
     private fun frontmatterScalar(value: String): String =
         if (value.isNotEmpty() && value.none { it == ':' || it == '#' || it == '"' || it == '\'' || it == '\n' }) {
@@ -438,7 +467,7 @@ internal object CnlEmitter {
     private fun emitVariableValue(value: VariableValue): String = when (value) {
         is VariableValue.ColorValue -> value.value.toCnlHex()
         is VariableValue.NumberValue -> formatNumber(value.value)
-        is VariableValue.TextValue -> "«${value.value}»"
+        is VariableValue.TextValue -> cnlText(value.value)
         is VariableValue.BoolValue -> if (value.value) "yes" else "no"
         is VariableValue.Alias -> "\$${value.varId}"
     }

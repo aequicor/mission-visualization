@@ -24,15 +24,15 @@ import kotlin.test.assertTrue
 /**
  * P2 reducer: [DesignEditorIntent.InteractionCommand] / [DesignEditorIntent.MotionCommand] mirror
  * onto the working document AND patch the owning SLM source (or fall back in-memory), through the
- * op-command idiom. `overview_wide` is a heading-anchored shape in mission-overview.layout.md with
+ * op-command idiom. `win_bg` is a heading-anchored rectangle in mission-overview.layout.md with
  * no authored behavior, so it is a clean canvas.
  */
 class InteractionMotionReducerTest {
 
-    private val nodeId = "overview_wide"
+    private val nodeId = "win_bg"
 
     private fun freshState(): DesignEditorState =
-        createDesignEditorState(legacyMissionDocuments())
+        createDesignEditorState(missionDemoDocuments())
 
     private fun DesignEditorState.node() = assertNotNull(document?.nodeById(nodeId))
 
@@ -52,7 +52,7 @@ class InteractionMotionReducerTest {
         assertEquals("missionTelemetry", (interaction.actions.single() as DesignAction.Navigate).to)
 
         val changed = assertNotNull(changedSource(before, next), "one source must be patched")
-        assertTrue("interaction:" in changed.content)
+        assertTrue("onClick" in changed.content, "interaction serialized as a CNL trigger phrase")
         next.assertNoErrors()
         assertEquals(listOf(before.sources), next.previousSources, "source undo captured")
     }
@@ -98,7 +98,7 @@ class InteractionMotionReducerTest {
         val motion = assertNotNull(enabled.node().motion?.fallback)
         assertTrue(motion.loop)
         assertEquals(900.0, motion.durationMs)
-        assertTrue("motion:" in assertNotNull(changedSource(before, enabled)).content)
+        assertTrue("motion" in assertNotNull(changedSource(before, enabled)).content, "motion serialized as a CNL phrase")
 
         val disabled = reduceDesignEditor(enabled, DesignEditorIntent.MotionCommand(nodeId, MotionOp.SetEnabled(false)))
         assertNull(disabled.node().motion)

@@ -68,53 +68,15 @@ class IdStabilityAdversarialTest {
         sourceLocale: en-US
         ---
 
-        # Screen
+        # Screen id root name «Screen»
 
-        node:
-          id: root
-          name: Screen
+        ## Frame: Home id home
 
-        ## Frame: Home
+        ### Frame: Panel width 100 height 100
 
-        node:
-          type: frame
-          id: home
-          name: Home
+        ## Frame: Tray id tray
 
-        ### Frame: Panel
-
-        node:
-          type: frame
-          name: Panel
-        layout:
-          sizing:
-            width:
-              type: fixed
-              value: 100
-            height:
-              type: fixed
-              value: 100
-
-        ## Frame: Tray
-
-        node:
-          type: frame
-          id: tray
-          name: Tray
-
-        ### Frame: Panel
-
-        node:
-          type: frame
-          name: Panel
-        layout:
-          sizing:
-            width:
-              type: fixed
-              value: 200
-            height:
-              type: fixed
-              value: 200
+        ### Frame: Panel width 200 height 200
     """.trimIndent() + "\n"
 
     @Test
@@ -154,67 +116,17 @@ class IdStabilityAdversarialTest {
         sourceLocale: en-US
         ---
 
-        # Screen
+        # Screen id root name «Screen»
 
-        node:
-          id: root
-          name: Screen
+        ## Frame: Bin id bin
 
-        ## Frame: Bin
+        ### Frame: Item width 11 height 11
 
-        node:
-          type: frame
-          id: bin
-          name: Bin
+        ### Frame: Item width 22 height 22
 
-        ### Frame: Item
+        ## Frame: Dock id dock
 
-        node:
-          type: frame
-          name: Item
-        layout:
-          sizing:
-            width:
-              type: fixed
-              value: 11
-            height:
-              type: fixed
-              value: 11
-
-        ### Frame: Item
-
-        node:
-          type: frame
-          name: Item
-        layout:
-          sizing:
-            width:
-              type: fixed
-              value: 22
-            height:
-              type: fixed
-              value: 22
-
-        ## Frame: Dock
-
-        node:
-          type: frame
-          id: dock
-          name: Dock
-
-        ### Frame: Item
-
-        node:
-          type: frame
-          name: Item
-        layout:
-          sizing:
-            width:
-              type: fixed
-              value: 33
-            height:
-              type: fixed
-              value: 33
+        ### Frame: Item width 33 height 33
     """.trimIndent() + "\n"
 
     @Test
