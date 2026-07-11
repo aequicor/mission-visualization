@@ -1,5 +1,7 @@
 # Mission Visualization
 
+**Latest published web version: v0.1.45.** <!-- published-version -->
+
 Mission Visualization is a Kotlin Multiplatform + Compose Multiplatform library and
 demo: an agent authors **Semantic Layout Markdown** (`*.layout.md`, RU/EN + i18n),
 the frontend compiles it to a language-independent typed IR (`slm-ir/1.0`), a pure
