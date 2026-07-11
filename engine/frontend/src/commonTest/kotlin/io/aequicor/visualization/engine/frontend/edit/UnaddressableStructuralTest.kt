@@ -74,18 +74,9 @@ class UnaddressableStructuralTest {
             sourceLocale: en-US
             ---
 
-            # Screen
+            # Screen id root name «Screen»
 
-            node:
-              id: root
-              name: Screen
-
-            ## Frame: Panel
-
-            node:
-              type: frame
-              id: panel
-              name: Panel
+            ## Frame: Panel id panel name «Panel»
         """.trimIndent() + "\n"
         val compiled = compileForEdit(doc)
         val result = applySlmEdit(doc, InsertChildSubtree("root", leaf, afterSiblingId = "ghost"), compiled)

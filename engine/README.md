@@ -27,12 +27,13 @@ only at the very edge:
     check groups (structure, layout, styles, text/i18n, components, media/assets,
     interactions, responsive, data, handoff/export) plus opt-in resolve/layout
     probes; diagnostics carry `IR-*` codes.
-- `:engine:frontend` — the SLM compiler (pure Kotlin): the **primary authoring
-  front-slice is CNL** — the `cnl` package parses one English sentence per node
-  (see **CNL** below). The markdown/frontmatter/typed-block parsing, semantic
-  extraction, normalization and slug/order resolution that turn `*.layout.md`
+- `:engine:frontend` — the SLM compiler (pure Kotlin): the **authoring surface
+  is CNL** — the `cnl` package parses one English sentence per node
+  (see **CNL** below). The markdown/frontmatter parsing, semantic extraction,
+  typed patches, normalization and slug/order resolution that turn `*.layout.md`
   sources into the IR are the **internal desugar stage** CNL sentences lower
-  into — not an authoring surface.
+  into — not an authoring surface. Raw YAML typed blocks are not parsed (a
+  `word:` line warns and stays prose); YAML exists only in the frontmatter.
 - `:engine:backend-compose` — this renderer: `DesignArtboard` +
   `ComposeDesignTextMeasurer` + the canvas drawing pass. The only engine module
   that depends on Compose. Text measurement/rendering is delegated to the
@@ -53,8 +54,8 @@ flowchart LR
 ```
 
 Inside `:engine:frontend`, `compileSlm` first runs `CnlParser`, which **desugars**
-each sentence/heading into the same typed patches the YAML block-readers consume;
-that typed-block stage is an internal desugar step, not an author-facing layer.
+each sentence/heading directly into typed patches (`DirectPatchEntry`, no YAML
+round-trip anywhere); YAML survives only in the frontmatter fence.
 `CnlEmitter` runs the reverse (IR → CNL) for write-back, migration and
 round-trip tests. JSON/IR documents enter the same pipeline through `:engine:ir`
 `serialization` — an internal/import mechanism, not an authoring surface.
@@ -76,33 +77,38 @@ markdown-heading nesting.
   keywords, enum/direction words). Nouns match only at `token[0]`; property keywords
   only mid-sentence.
 - `CnlParser` — tokenizes a line (numbers, `#hex`/`$token`, `«…»`/`"…"` text,
-  `( … )` groups) into a positioned `CnlElement`, and **desugars** it into the same
-  `node`/`shape`/`layout`/`style`/`text` typed patches the block-readers consume —
-  those YAML typed blocks are internal desugar machinery, not an authoring surface.
+  `( … )` groups) into a positioned `CnlElement`, and **desugars** it directly into
+  typed `node`/`shape`/`layout`/`style`/`text` patches (`DirectPatchEntry`) — raw
+  YAML typed blocks are gone; an ex-reserved `word:` line warns and stays prose.
   Container headings (`## Panel column gap 16`) split into name + a property suffix
   via `CnlParser.parseHeading`.
 - `CnlEmitter` — deterministic IR → CNL emit driven by `CnlGrammar`. Powers new-node
-  write-back, whole-document YAML → CNL migration/regeneration and round-trip/fidelity
-  tests. Orders each sentence's phrases by the descriptors' `order` field.
+  write-back, whole-document regeneration and round-trip/fidelity tests. Orders each
+  sentence's phrases by the descriptors' `order` field.
 - `CnlDocumentSections` — document-scoped `#`-heading sections (`# Collection`,
   `# Styles`, `# Prototype Variables`, `# Component:`) parsed alongside element
   sentences and emitted by `CnlEmitter`.
 - `CnlDiagnostics` — the dedicated CNL error catalog: every violation names the broken
   rule and how to fix it (with an example), so a generator can self-correct.
+- Extensions: `blocks/CnlContainerExtension` is the CNL container seam — a subsystem
+  registers a heading noun (e.g. `## Diagram: …`) plus a scoped sentence grammar; body
+  lines parse into the extension's elements, aggregate into a typed payload on the
+  container's design node, and emit back as canonical sentences. The frontend never
+  sees the payload type (only the contract); the diagrams subsystem
+  (`:subsystems:diagrams-slm`) is the reference implementation. There are no YAML
+  read/write halves.
 - Write-back: `edit/CnlWriter` patches a CNL-owned node in three tiers — **tier-1**
   span-replace (replace a value token in place), **tier-2** phrase-append (append a
   missing property phrase), **tier-3** whole-sentence re-emit (`CnlEmitter` regenerates
   the sentence or stable heading line from the patched node) — guarded by an
   anti-corruption **fidelity veto** (the reducer recompiles the owning source and keeps
   the edit in-memory if the source diverges from the intended node). Nodes it owns are
-  recorded in `SlmEditIndex.cnlOwners`; a CNL-owned node **never** falls back to a YAML
-  typed block.
+  recorded in `SlmEditIndex.cnlOwners`.
 
 CNL depends only on the frontend's markdown/blocks layers (no Compose, no `:engine`
-outside `ir`). The YAML typed-block layer is an **internal desugar stage** —
-`CnlParser` lowers each sentence into the same typed patches the block-readers consume;
-those readers are machinery, not an authoring surface. Contract and authoring guide:
-`design-book/semantic-layout-markdown-i18n.md` and `SLM-SKILL.md`.
+outside `ir`). Typed patches are produced by CNL desugar alone — the raw-YAML
+typed-block readers were removed; YAML remains only for frontmatter. Contract and
+authoring guide: `design-book/semantic-layout-markdown-i18n.md` and `SLM-SKILL.md`.
 
 ## Layering rules
 

@@ -27,6 +27,9 @@ internal object CnlVocabulary {
         "image" to node("media"),
         "icon" to node("vector"), "vector" to node("vector"),
         "instance" to node("instance"),
+        // Container-extension heading noun (`## Diagram: …`); its body sentences (Node/Edge/
+        // Layer/Group) are extension-scoped and deliberately NOT in this table.
+        "diagram" to node("diagram"),
     )
 
     /**

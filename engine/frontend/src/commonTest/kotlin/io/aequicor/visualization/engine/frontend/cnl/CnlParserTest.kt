@@ -5,7 +5,6 @@ import io.aequicor.visualization.engine.frontend.blocks.NodePatch
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
-import io.aequicor.visualization.engine.frontend.blocks.TypedBlockReader
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.ir.model.DesignColor
@@ -33,9 +32,7 @@ class CnlParserTest {
         val diagnostics = DiagnosticCollector("test.layout.md")
         val element = CnlParser.parseElement(line, lineNumber = 1, baseColumn = 1, diagnostics)
             ?: error("\"$line\" was not recognized as a CNL element")
-        val patches = CnlParser.desugar(element, line = 1, diagnostics).mapNotNull {
-            TypedBlockReader.read(it, diagnostics)
-        }
+        val patches = CnlParser.desugar(element, line = 1, diagnostics).map { it.patch }
         return Parsed(element, patches, diagnostics)
     }
 

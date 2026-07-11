@@ -36,8 +36,8 @@ import io.aequicor.visualization.engine.frontend.markdown.SlmMarkdownDocument
 import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 import io.aequicor.visualization.engine.frontend.markdown.TableBlock
 import io.aequicor.visualization.engine.frontend.markdown.TextRun
+import io.aequicor.visualization.engine.frontend.markdown.DirectPatchEntry
 import io.aequicor.visualization.engine.frontend.markdown.TypedAttributeBlock
-import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
 import io.aequicor.visualization.engine.frontend.normalize.latinizeToCamelCase
 import io.aequicor.visualization.engine.ir.model.JustifyContent
 import io.aequicor.visualization.engine.ir.model.bindable
@@ -112,7 +112,7 @@ private class SemanticExtractor(
         var cnlSpan: SlmSourceSpan? = null
         var isComponentDef = false
         val propBindings = LinkedHashMap<String, SlmExpression>()
-        val explicitPatches = mutableListOf<io.aequicor.visualization.engine.frontend.markdown.TypedEntry>()
+        val explicitPatches = mutableListOf<io.aequicor.visualization.engine.frontend.markdown.DirectPatchEntry>()
         val semanticPatches = mutableListOf<TypedPatch>()
         val children = mutableListOf<NodeBuilder>()
 
@@ -158,7 +158,7 @@ private class SemanticExtractor(
 
     private lateinit var root: NodeBuilder
     private var title: SemanticText? = null
-    private val documentPatches = mutableListOf<TypedEntry>()
+    private val documentPatches = mutableListOf<DirectPatchEntry>()
     private val screenModes = LinkedHashMap<String, String>()
     private var tableCount = 0
 

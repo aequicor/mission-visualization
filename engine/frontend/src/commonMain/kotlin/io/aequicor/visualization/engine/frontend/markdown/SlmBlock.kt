@@ -1,8 +1,8 @@
 package io.aequicor.visualization.engine.frontend.markdown
 
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
 import io.aequicor.visualization.engine.frontend.cnl.CnlElement
-import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 
 /** 1-based inclusive line range of a block in the SLM source. */
 data class SlmSourceSpan(val startLine: Int, val endLine: Int)
@@ -49,7 +49,7 @@ data class ListBlock(
 
 /**
  * One list item: [inlines] from the marker line, [children] parsed from lines indented
- * to the item content column — nested lists, blockquotes, typed blocks, paragraphs.
+ * to the item content column — nested lists, blockquotes, paragraphs.
  */
 data class SlmListItem(
     val inlines: List<SlmInline>,
@@ -78,24 +78,26 @@ data class TableBlock(
 ) : SlmBlock
 
 /**
- * Group of consecutive typed attribute entries bound to the nearest preceding anchor
+ * Group of CNL-desugared typed patch entries bound to the nearest preceding anchor
  * (heading / list item / image / table / blockquote), or to the screen root when
- * there is no anchor. A blank line closes the group.
+ * there is no anchor. Synthetic only — produced by `CnlParser.desugar` for a heading's
+ * CNL property suffix and by container-extension scopes; never parsed from raw YAML
+ * (typed-block YAML is no longer an authoring surface).
  */
 data class TypedAttributeBlock(
-    val entries: List<TypedEntry>,
+    val entries: List<DirectPatchEntry>,
     override val span: SlmSourceSpan,
 ) : SlmBlock
 
 /**
- * One reserved-key entry of a typed block; [value] is the YAML value under the key.
- * [span] covers the entry's full extent including same-line trailing comments.
- * [key] is either a built-in reserved key (then [kind] resolves it) or the kind of
- * a registered `TypedBlockExtension` (then [kind] is null).
+ * A CNL-desugared patch entry carrying the typed [patch] directly — no YAML value
+ * round-trip anywhere. Produced by `CnlParser.desugar` (heading property suffixes)
+ * and by container-extension aggregation (`ExtensionPatch` payloads).
  */
-data class TypedEntry(
+data class DirectPatchEntry(
+    /** Reserved block key (`node`, `layout`, …) or a registered extension kind. */
     val key: String,
-    val value: YamlValue,
+    val patch: TypedPatch,
     val span: SlmSourceSpan,
 ) {
     /** Built-in block kind, or null for a registry-extension entry. */

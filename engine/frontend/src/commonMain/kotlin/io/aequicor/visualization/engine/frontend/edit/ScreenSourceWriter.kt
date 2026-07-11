@@ -16,9 +16,9 @@ import io.aequicor.visualization.engine.ir.model.DesignPage
  *   from it), matching the authored mission documents;
  * - the plain `# <title>` H1 is the screen-root heading (no decorative prefix, so the extractor
  *   records a screen title, never a spurious `SectionTitle` i18n text node);
- * - the H1's `node:` / `layout:` / `style:` blocks (reused verbatim from [NodeSectionWriter],
- *   only the decorative heading swapped) carry the root frame's **explicit minted id**, the
- *   canonical `layout.sizing` size and `style.fills`.
+ * - the H1's trailing CNL phrases (emitted by [CnlEmitter.emitStableSubtree] with
+ *   `includeId = true`, same stable form as [NodeSectionWriter]) carry the root frame's
+ *   **explicit minted id**, the canonical size and fill phrases.
  *
  * Pure: same page + locale always yields the same text, so the reducer stays referentially
  * transparent and the write-back is testable.

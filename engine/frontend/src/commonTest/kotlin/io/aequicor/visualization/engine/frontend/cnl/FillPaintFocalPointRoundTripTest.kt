@@ -1,7 +1,5 @@
 package io.aequicor.visualization.engine.frontend.cnl
 
-import io.aequicor.visualization.engine.frontend.blocks.StylePatch
-import io.aequicor.visualization.engine.frontend.blocks.readers.readSingle
 import io.aequicor.visualization.engine.frontend.blocks.readers.slm
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.ir.model.Bindable
@@ -24,8 +22,8 @@ import kotlin.test.assertTrue
 /**
  * S28d: a `DesignPaint.Image`/`Video` `focalPoint` (a fill paint) must carry the same per-axis
  * `$var`/`{{expr}}` refs as the media-node `focalPoint`, and survive every emit/parse leg —
- * YAML read, CNL emit + recompile, and JSON serde. Before the [CnlGrammar] fix the CNL emitter
- * rendered the focal via `.orZero`, silently collapsing a ref axis to `0` on the way out.
+ * CNL authoring, CNL emit + recompile, and JSON serde. Before the [CnlGrammar] fix the CNL
+ * emitter rendered the focal via `.orZero`, silently collapsing a ref axis to `0` on the way out.
  */
 class FillPaintFocalPointRoundTripTest {
     /** x authored as a `$var`, y as a `{{expr}}` — the mixed shape that a literal-only emit drops. */
@@ -34,23 +32,10 @@ class FillPaintFocalPointRoundTripTest {
         y = Bindable.DataRef(DesignExpression("data.fy")),
     )
 
-    /** Leg 1 — the YAML reader preserves per-axis refs on a fill-paint focalPoint. */
+    /** Leg 1 — CNL authoring preserves per-axis refs on a fill-paint focalPoint. */
     @Test
-    fun yamlReaderPreservesFillPaintFocalRefs() {
-        val (patch, collector) = readSingle(
-            """
-            style:
-              fills:
-                - type: image
-                  asset: hero.jpg
-                  fillMode: crop
-                  focalPoint:
-                    x: §crop.x
-                    y: "{{data.fy}}"
-            """,
-        )
-        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.joinToString { it.message })
-        val fill = assertIs<DesignPaint.Image>(assertNotNull(assertIs<StylePatch>(patch).fills).single())
+    fun cnlAuthoringPreservesFillPaintFocalRefs() {
+        val fill = assertIs<DesignPaint.Image>(assertNotNull(imageFillNode().fills).single())
         assertEquals(focal, fill.focalPoint)
     }
 
@@ -76,20 +61,20 @@ class FillPaintFocalPointRoundTripTest {
         assertEquals(node.fills, reparsed.fills)
     }
 
-    /** All three legs chained end-to-end: YAML author → IR → CNL → IR → JSON → IR. */
+    /** All legs chained end-to-end: CNL author → IR → CNL → IR → JSON → IR. */
     @Test
-    fun fillPaintFocalRefsSurviveYamlCnlJsonRoundTrip() {
-        val fromYaml = imageFillNode()
-        val yamlFill = assertIs<DesignPaint.Image>(assertNotNull(fromYaml.fills).single())
-        assertEquals(focal, yamlFill.focalPoint, "YAML → IR must preserve the focal refs")
+    fun fillPaintFocalRefsSurviveCnlJsonRoundTrip() {
+        val fromCnl = imageFillNode()
+        val cnlFill = assertIs<DesignPaint.Image>(assertNotNull(fromCnl.fills).single())
+        assertEquals(focal, cnlFill.focalPoint, "CNL → IR must preserve the focal refs")
 
-        val afterCnl = compileLeaf(CnlEmitter.emitSentence(fromYaml))
-        assertEquals(fromYaml.fills, afterCnl.fills, "IR → CNL → IR must preserve the focal refs")
+        val afterCnl = compileLeaf(CnlEmitter.emitSentence(fromCnl))
+        assertEquals(fromCnl.fills, afterCnl.fills, "IR → CNL → IR must preserve the focal refs")
 
         val afterJson = assertIs<DesignNodeParseResult.Success>(
             parseDesignNode(writeDesignNode(afterCnl).toJsonString()),
         ).node
-        assertEquals(fromYaml.fills, afterJson.fills, "IR → JSON → IR must preserve the focal refs")
+        assertEquals(fromCnl.fills, afterJson.fills, "IR → JSON → IR must preserve the focal refs")
     }
 
     private fun imageFillNode(): DesignNode =

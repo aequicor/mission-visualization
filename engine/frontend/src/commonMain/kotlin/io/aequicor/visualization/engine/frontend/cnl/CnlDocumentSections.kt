@@ -1,9 +1,16 @@
 package io.aequicor.visualization.engine.frontend.cnl
 
+import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
+import io.aequicor.visualization.engine.frontend.blocks.StylePatch
+import io.aequicor.visualization.engine.frontend.blocks.StylesPatch
+import io.aequicor.visualization.engine.frontend.blocks.TextPatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
+import io.aequicor.visualization.engine.frontend.blocks.VariablesPatch
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.markdown.BlockquoteBlock
 import io.aequicor.visualization.engine.frontend.markdown.CnlElementBlock
+import io.aequicor.visualization.engine.frontend.markdown.DirectPatchEntry
 import io.aequicor.visualization.engine.frontend.markdown.ExpressionRun
 import io.aequicor.visualization.engine.frontend.markdown.HeadingBlock
 import io.aequicor.visualization.engine.frontend.markdown.HtmlCommentBlock
@@ -14,11 +21,13 @@ import io.aequicor.visualization.engine.frontend.markdown.SlmBlock
 import io.aequicor.visualization.engine.frontend.markdown.SlmInline
 import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 import io.aequicor.visualization.engine.frontend.markdown.TextRun
-import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
-import io.aequicor.visualization.engine.frontend.yaml.YamlMap
-import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
-import io.aequicor.visualization.engine.frontend.yaml.YamlValue
-import io.aequicor.visualization.engine.frontend.yaml.parseSlmYaml
+import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignStyle
+import io.aequicor.visualization.engine.ir.model.DesignVariable
+import io.aequicor.visualization.engine.ir.model.PrototypeVariable
+import io.aequicor.visualization.engine.ir.model.VariableCollection
+import io.aequicor.visualization.engine.ir.model.VariableType
+import io.aequicor.visualization.engine.ir.model.VariableValue
 
 /** Document-scoped CNL sections: shared styles, variable collections and prototype variables. */
 internal object CnlDocumentSections {
@@ -39,7 +48,7 @@ internal object CnlDocumentSections {
         heading: HeadingBlock,
         body: List<SlmBlock>,
         diagnostics: DiagnosticCollector,
-    ): TypedEntry? {
+    ): DirectPatchEntry? {
         val text = headingText.trim()
         if (stylesHeading.matches(text)) return parseStylesPatch(heading, body, diagnostics)
         return parseVariablesPatch(headingText, heading, body, diagnostics)
@@ -50,24 +59,22 @@ internal object CnlDocumentSections {
         heading: HeadingBlock,
         body: List<SlmBlock>,
         diagnostics: DiagnosticCollector,
-    ): TypedEntry? {
+    ): DirectPatchEntry? {
         val text = headingText.trim()
-        val yaml = when {
-            collectionHeading.matches(text) -> collectionYaml(text, body, diagnostics)
-            prototypeHeading.matches(text) -> prototypeYaml(body, diagnostics)
+        val patch = when {
+            collectionHeading.matches(text) -> collectionPatch(text, body, diagnostics)
+            prototypeHeading.matches(text) -> prototypePatch(body, diagnostics)
             else -> return null
         } ?: return null
-        val parsed = parseSlmYaml(yaml, diagnostics, heading.span.startLine)
-        val value = (parsed as? YamlMap)?.entries?.get("variables") ?: return null
         val endLine = body.lastOrNull()?.span?.endLine ?: heading.span.endLine
-        return TypedEntry(TypedBlockKind.Variables.key, value, SlmSourceSpan(heading.span.startLine, endLine))
+        return DirectPatchEntry(TypedBlockKind.Variables.key, patch, SlmSourceSpan(heading.span.startLine, endLine))
     }
 
-    private fun collectionYaml(
+    private fun collectionPatch(
         headingText: String,
         body: List<SlmBlock>,
         diagnostics: DiagnosticCollector,
-    ): String? {
+    ): VariablesPatch? {
         val match = collectionHeading.matchEntire(headingText) ?: return null
         val collectionId = match.groupValues[1]
         val collectionName = match.groupValues.getOrNull(2).orEmpty().takeIf { it.isNotBlank() }
@@ -80,31 +87,37 @@ internal object CnlDocumentSections {
         if (variables.isEmpty()) {
             diagnostics.warning("Collection \"$collectionId\" has no variable rows", body.firstOrNull()?.span ?: SlmSourceSpan(1, 1))
         }
-        return buildString {
-            appendLine("variables:")
-            appendLine("  collections:")
-            appendLine("    - id: ${yamlPlain(collectionId)}")
-            collectionName?.let { appendLine("      name: ${yamlString(it)}") }
-            if (options.modes.isNotEmpty()) {
-                appendLine("      modes: [${options.modes.joinToString(", ") { yamlPlain(it) }}]")
-                appendLine("      defaultMode: ${yamlPlain(options.defaultMode ?: options.modes.first())}")
-            }
-            appendLine("      variables:")
+        val collections = LinkedHashMap<String, VariableCollection>()
+        // The old `id:` scalar was plain-written: a bare `null` word read back as no id and the
+        // reader dropped the whole collection (the `variables:` entry itself still existed).
+        if (collectionId != "null") {
+            // The old bare-written modes went through `stringList`: non-string-typed tokens die.
+            val modes = options.modes.mapNotNull { plainListItem(it) }
+            val writtenDefault = if (options.modes.isNotEmpty()) options.defaultMode ?: options.modes.first() else null
+            val defaultMode = writtenDefault?.takeUnless { it == "null" } ?: modes.firstOrNull().orEmpty()
+            val vars = LinkedHashMap<String, DesignVariable>()
             variables.forEach { variable ->
-                appendLine("        ${yamlPlain(variable.name)}:")
-                appendLine("          type: ${variable.type.yamlType}")
-                appendLine("          values:")
-                variable.values.forEach { value ->
-                    appendLine("            ${yamlPlain(value.mode)}: ${yamlValue(variable.type, value.value)}")
-                }
+                vars[variable.name] = DesignVariable(
+                    type = variable.type.irType,
+                    values = variable.values.mapNotNull { value ->
+                        variableValueOf(variable.type, value.value)?.let { value.mode to it }
+                    }.toMap(),
+                )
             }
+            collections[collectionId] = VariableCollection(
+                name = collectionName ?: collectionId,
+                modes = modes,
+                defaultMode = defaultMode,
+                vars = vars,
+            )
         }
+        return VariablesPatch(collections = collections)
     }
 
-    private fun prototypeYaml(
+    private fun prototypePatch(
         body: List<SlmBlock>,
         diagnostics: DiagnosticCollector,
-    ): String? {
+    ): VariablesPatch {
         val variables = logicalLines(body, diagnostics, "document CNL variable section") {
             "Document CNL variable rows must not be UI element sentences; use `String`, not `Text`, for text variables"
         }.mapNotNull { line ->
@@ -113,16 +126,45 @@ internal object CnlDocumentSections {
         if (variables.isEmpty()) {
             diagnostics.warning("Prototype Variables section has no variable rows", body.firstOrNull()?.span ?: SlmSourceSpan(1, 1))
         }
-        return buildString {
-            appendLine("variables:")
-            appendLine("  prototype:")
-            variables.forEach { variable ->
-                appendLine("    ${yamlPlain(variable.name)}:")
-                appendLine("      type: ${variable.type.yamlType}")
-                variable.default?.let { appendLine("      default: ${yamlValue(variable.type, it)}") }
+        val prototype = LinkedHashMap<String, PrototypeVariable>()
+        variables.forEach { variable ->
+            prototype[variable.name] = PrototypeVariable(
+                type = variable.type.irType,
+                default = variable.default?.let { variableValueOf(variable.type, it) },
+            )
+        }
+        // An empty section mirrors the old empty `prototype:` scalar → no prototype map.
+        return VariablesPatch(prototype = prototype.takeIf { it.isNotEmpty() })
+    }
+
+    /**
+     * One typed per-mode value (mirrors the old `yamlValue` writer + `readVariableValue`):
+     * `$ref` → alias for any type; otherwise the type decides — invalid values are dropped.
+     */
+    private fun variableValueOf(type: CnlVariableType, value: String): VariableValue? {
+        if (value.startsWith("$")) return VariableValue.Alias(value.drop(1))
+        return when (type) {
+            CnlVariableType.Color -> DesignColor.fromHex(value)?.let { VariableValue.ColorValue(it) }
+            CnlVariableType.Number ->
+                if (numberRegex.matches(value)) VariableValue.NumberValue(value.toDouble()) else null
+            CnlVariableType.String -> VariableValue.TextValue(value)
+            CnlVariableType.Boolean -> when (value.lowercase()) {
+                "yes", "true" -> VariableValue.BoolValue(true)
+                "no", "false" -> VariableValue.BoolValue(false)
+                else -> null
             }
         }
     }
+
+    /** A plain-written list item read back through `stringList`: non-string-typed bare tokens die. */
+    private fun plainListItem(token: String): String? =
+        if (token.matches(plainScalarRegex) &&
+            (token == "null" || token == "true" || token == "false" || numberRegex.matches(token))
+        ) {
+            null
+        } else {
+            token
+        }
 
     private data class CollectionOptions(val modes: List<String>, val defaultMode: String?)
 
@@ -196,31 +238,35 @@ internal object CnlDocumentSections {
         else -> ""
     }
 
-    private data class SharedStyleRow(val id: String, val value: YamlValue)
+    private data class SharedStyleRow(val id: String, val style: DesignStyle?, val line: Int)
 
     private fun parseStylesPatch(
         heading: HeadingBlock,
         body: List<SlmBlock>,
         diagnostics: DiagnosticCollector,
-    ): TypedEntry? {
-        val styles = linkedMapOf<String, YamlValue>()
+    ): DirectPatchEntry {
+        // The row map mirrors the old YAML-map semantics: last definition per id wins (a later
+        // INVALID row still overwrites an earlier valid one), positions keep first occurrence.
+        val rows = linkedMapOf<String, DesignStyle?>()
         logicalLines(body, diagnostics, "document CNL styles section") {
             "Document CNL style rows must use `Paint`, `TextStyle`, `Effect` or `Grid`, not UI element sentences"
         }.mapNotNull { line ->
             parseSharedStyle(line, diagnostics)
         }.forEach { row ->
-            if (styles.containsKey(row.id)) {
-                diagnostics.warning("Shared style \"${row.id}\" is defined more than once; last definition wins", row.value.line, blockPath = "styles")
+            if (rows.containsKey(row.id)) {
+                diagnostics.warning("Shared style \"${row.id}\" is defined more than once; last definition wins", row.line, blockPath = "styles")
             }
-            styles[row.id] = row.value
+            rows[row.id] = row.style
         }
-        if (styles.isEmpty()) {
+        if (rows.isEmpty()) {
             diagnostics.warning("Styles section has no style rows", body.firstOrNull()?.span ?: heading.span)
         }
+        val styles = linkedMapOf<String, DesignStyle>()
+        rows.forEach { (id, style) -> style?.let { styles[id] = it } }
         val endLine = body.lastOrNull()?.span?.endLine ?: heading.span.endLine
-        return TypedEntry(
+        return DirectPatchEntry(
             TypedBlockKind.Styles.key,
-            yamlMap(styles, heading.span.startLine),
+            StylesPatch(styles),
             SlmSourceSpan(heading.span.startLine, endLine),
         )
     }
@@ -238,15 +284,36 @@ internal object CnlDocumentSections {
             return null
         }
         val lowered = lowerStyleRow(kind, rest, line.line, diagnostics) ?: return null
-        return SharedStyleRow(id, styleSpec(kind, lowered, line.line))
+        // Mirrors StylesBlockReader: a row whose lowered patch lacks the required body is kept
+        // for duplicate detection but contributes no style (warning texts match the reader's).
+        val style = when (kind) {
+            "paint" -> (lowered as? StylePatch)?.fills?.let { DesignStyle.Paint(it) } ?: run {
+                diagnostics.warning("Paint style \"$id\" needs fill/color CNL", line.line, blockPath = "styles")
+                null
+            }
+            "textstyle" -> (lowered as? TextPatch)?.typography?.let { DesignStyle.Text(it) } ?: run {
+                diagnostics.warning("Text style \"$id\" needs typography CNL", line.line, blockPath = "styles")
+                null
+            }
+            "effect" -> (lowered as? StylePatch)?.effects?.let { DesignStyle.Effect(it) } ?: run {
+                diagnostics.warning("Effect style \"$id\" needs effect CNL", line.line, blockPath = "styles")
+                null
+            }
+            else -> (lowered as? LayoutPatch)?.grids?.let { DesignStyle.Grid(it) } ?: run {
+                diagnostics.warning("Grid style \"$id\" needs grids CNL", line.line, blockPath = "styles")
+                null
+            }
+        }
+        return SharedStyleRow(id, style, line.line)
     }
 
+    /** Lowers one shared-style row's CNL property suffix to its typed block patch. */
     private fun lowerStyleRow(
         kind: String,
         rest: String,
         line: Int,
         diagnostics: DiagnosticCollector,
-    ): TypedEntry? {
+    ): TypedPatch? {
         val entries = when (kind) {
             "textstyle" -> {
                 val element = CnlParser.parseElement("Text «style» $rest", line, 1, diagnostics) ?: run {
@@ -271,56 +338,22 @@ internal object CnlDocumentSections {
         }
         val entry = entries.firstOrNull { it.kind == blockKind }
         if (entry == null) diagnostics.warning("Shared style row has no ${blockKind?.key ?: "known"} CNL properties", line, blockPath = "styles")
-        return entry
+        return entry?.patch
     }
-
-    private fun styleSpec(kind: String, lowered: TypedEntry, line: Int): YamlMap {
-        val type = when (kind) {
-            "paint" -> "paint"
-            "textstyle" -> "text"
-            "effect" -> "effect"
-            "grid" -> "grid"
-            else -> kind
-        }
-        val bodyKey = when (kind) {
-            "textstyle" -> "text"
-            "grid" -> "layout"
-            else -> "style"
-        }
-        return yamlMap(
-            linkedMapOf(
-                "type" to yamlScalar(type, line),
-                bodyKey to lowered.value,
-            ),
-            line,
-        )
-    }
-
-    private fun yamlScalar(value: String, line: Int): YamlScalar =
-        YamlScalar(value, value, line, 1)
-
-    private fun yamlMap(entries: Map<String, YamlValue>, line: Int): YamlMap =
-        YamlMap(
-            entries = entries,
-            line = line,
-            column = 1,
-            endLine = entries.values.maxOfOrNull { it.endLine } ?: line,
-            endColumn = entries.values.maxOfOrNull { it.endColumn } ?: 1,
-        )
 
     private data class VariableRow(val type: CnlVariableType, val name: String, val values: List<ModeValue>)
     private data class PrototypeRow(val type: CnlVariableType, val name: String, val default: String?)
     private data class ModeValue(val mode: String, val value: String)
 
-    private enum class CnlVariableType(val yamlType: String, vararg val words: String) {
-        Color("color", "color"),
-        Number("number", "number"),
-        String("string", "string", "text"),
-        Boolean("boolean", "boolean", "bool"),
+    private enum class CnlVariableType(val irType: VariableType, vararg val words: String) {
+        Color(VariableType.Color, "color"),
+        Number(VariableType.Number, "number"),
+        String(VariableType.Text, "string", "text"),
+        Boolean(VariableType.Bool, "boolean", "bool"),
         ;
 
         companion object {
-            fun of(word: String): CnlVariableType? =
+            fun of(word: kotlin.String): CnlVariableType? =
                 entries.firstOrNull { type -> word.lowercase() in type.words }
         }
     }
@@ -403,28 +436,6 @@ internal object CnlDocumentSections {
         return tokens
     }
 
-    private fun yamlValue(type: CnlVariableType, value: String): String {
-        if (value.startsWith("$")) return value
-        return when (type) {
-            CnlVariableType.Color -> yamlString(value)
-            CnlVariableType.Number -> if (numberRegex.matches(value)) value else yamlString(value)
-            CnlVariableType.String -> yamlString(value)
-            CnlVariableType.Boolean -> when (value.lowercase()) {
-                "yes", "true" -> "true"
-                "no", "false" -> "false"
-                else -> yamlString(value)
-            }
-        }
-    }
-
+    /** The old yamlPlain writer's bare-safe set — used to mirror its `stringList` read-back. */
     private val plainScalarRegex = Regex("""[A-Za-z0-9_.-]+""")
-
-    private fun yamlPlain(value: String): String =
-        if (value.matches(plainScalarRegex)) value else yamlString(value)
-
-    private fun yamlString(value: String): String =
-        "\"" + value
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n") + "\""
 }

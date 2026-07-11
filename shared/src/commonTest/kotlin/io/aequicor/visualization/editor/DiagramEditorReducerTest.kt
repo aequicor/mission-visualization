@@ -27,7 +27,7 @@ import kotlin.test.assertTrue
 
 /**
  * Diagram intents through [reduceDesignEditor]: every graph edit runs a pure
- * `:subsystems:diagrams` op and writes the whole `diagram:` block back into the owning
+ * `:subsystems:diagrams` op and writes the canonical `## Diagram:` CNL body back into the owning
  * SLM source (round-trip veto), mirroring onto the working document in lock-step.
  */
 class DiagramEditorReducerTest {
@@ -40,52 +40,14 @@ class DiagramEditorReducerTest {
         |page: Diagrams Test
         |---
         |
-        |# Diagrams Test
+        |# Diagrams Test id frame_root name «Root»
         |
-        |node:
-        |  id: frame_root
-        |  name: Root
+        |## Diagram: Canvas id canvas
         |
-        |## Canvas
-        |
-        |node:
-        |  id: canvas
-        |  name: Canvas
-        |diagram:
-        |  nodes:
-        |    - id: a
-        |      x: 20
-        |      y: 20
-        |      w: 120
-        |      h: 60
-        |      label: A
-        |    - id: b
-        |      x: 220
-        |      y: 20
-        |      w: 120
-        |      h: 60
-        |      label: B
-        |    - id: grid
-        |      type: table
-        |      x: 20
-        |      y: 160
-        |      w: 240
-        |      h: 64
-        |      rows:
-        |        - 32
-        |        - 32
-        |      columns:
-        |        - 120
-        |        - 120
-        |  edges:
-        |    - id: e1
-        |      from: a
-        |      to: b
-        |      labels:
-        |        - text: src
-        |          position: source
-        |        - text: dst
-        |          position: target
+        |Node rectangle a 120 by 60 position 20 20 label «A»
+        |Node rectangle b 120 by 60 position 220 20 label «B»
+        |Node table grid 240 by 64 position 20 160 row 32 row 32 col 120 col 120
+        |Edge e1 from a to b label («src» at source) label («dst» at target)
     """.trimMargin()
 
     private fun freshState(): DesignEditorState =
@@ -133,7 +95,7 @@ class DiagramEditorReducerTest {
         assertEquals(DiagramNodePayload.BasicShape(DiagramShapeKind.ELLIPSE), added.payload)
         assertEquals("C", added.labels.single().text)
 
-        assertTrue("- id: c" in next.sourceContent(), "new element persisted in the diagram: block")
+        assertTrue("Node ellipse c" in next.sourceContent(), "new element persisted as a CNL sentence")
         assertEquals(listOf(before), next.previousSources, "source undo captured the pre-edit sources")
         assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error })
     }
@@ -165,7 +127,7 @@ class DiagramEditorReducerTest {
         )
         val edge = assertNotNull(next.graphOf("canvas").edgeById(DiagramEdgeId("e2")))
         assertEquals("uses", edge.labels.single().label.text)
-        assertTrue("- id: e2" in next.sourceContent(), "edge persisted")
+        assertTrue("Edge e2 from a to grid" in next.sourceContent(), "edge persisted as a CNL sentence")
 
         // An endpoint referencing a missing node is refused: state unchanged.
         val invalid = reduceDesignEditor(
@@ -212,7 +174,7 @@ class DiagramEditorReducerTest {
         val graph = next.graphOf("canvas")
         assertEquals(null, graph.nodeById(DiagramNodeId("a")))
         assertEquals(null, graph.edgeById(DiagramEdgeId("e1")), "edge attached to the deleted node died with it")
-        assertTrue("- id: a" !in next.sourceContent(), "deleted element left the source")
+        assertTrue("Node rectangle a" !in next.sourceContent(), "deleted element left the source")
     }
 
     @Test
@@ -282,5 +244,59 @@ class DiagramEditorReducerTest {
         assertEquals(3, classDiagram.graph.edges.size)
         val stateMachine = assertIs<DesignNodeKind.Diagram>(assertNotNull(document.nodeById("state_machine")).kind)
         assertEquals(4, stateMachine.graph.nodes.size)
+        val moduleGraph = assertIs<DesignNodeKind.Diagram>(assertNotNull(document.nodeById("module_graph")).kind)
+        assertEquals(21, moduleGraph.graph.nodes.size)
+        assertEquals(27, moduleGraph.graph.edges.size)
+    }
+
+    @Test
+    fun bundledDiagramScreensAreAuthoredAsPureCnl() {
+        // Migration pin: the bundled diagram screens author their graphs as `## Diagram:`
+        // CNL containers; no raw `diagram:` YAML block remains in any bundled source.
+        val sources = DefaultDesignDocumentRepository().missionDocumentSources()
+        val diagramScreens = sources.filter {
+            it.fileName == "diagrams.layout.md" || it.fileName == "project-structure.layout.md"
+        }
+        assertEquals(2, diagramScreens.size, "both diagram screens bundled")
+        diagramScreens.forEach { source ->
+            assertTrue("## Diagram:" in source.content, "${source.fileName} authors diagrams as CNL containers")
+        }
+        sources.forEach { source ->
+            assertTrue(
+                !Regex("^\\s*diagram:", RegexOption.MULTILINE).containsMatchIn(source.content),
+                "${source.fileName} must not carry a raw diagram: YAML block",
+            )
+        }
+    }
+
+    @Test
+    fun editOnBundledCnlDiagramPersistsAsCnlSentences() {
+        val diagrams = DefaultDesignDocumentRepository().missionDocumentSources()
+            .single { it.fileName == "diagrams.layout.md" }
+        val state = createDesignEditorState(compileMissionDocuments(listOf(diagrams)))
+
+        val next = reduceDesignEditor(
+            state,
+            DiagramEditorIntent.MoveDiagramNode(
+                nodeId = "class_diagram",
+                elementId = "circle",
+                dx = 10.0,
+                dy = 5.0,
+            ),
+        )
+
+        val moved = assertNotNull(next.graphOf("class_diagram").nodeById(DiagramNodeId("circle")))
+        assertEquals(70.0, moved.x)
+        assertEquals(225.0, moved.y)
+        val content = assertNotNull(next.sources.single().content)
+        assertTrue(
+            "Node class circle «Circle» 180 by 100 position 70 225 field (- «radius: Double») method (+ «area(): Double»)" in content,
+            "moved element persisted as a canonical CNL sentence:\n$content",
+        )
+        assertTrue("diagram:" !in content, "no YAML splice into the CNL source")
+        assertTrue(
+            next.diagnostics.none { "kept in memory" in it.message },
+            "write-back must not fall back to memory: ${next.diagnostics}",
+        )
     }
 }

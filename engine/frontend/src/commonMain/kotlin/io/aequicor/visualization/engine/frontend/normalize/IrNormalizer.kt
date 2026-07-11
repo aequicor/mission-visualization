@@ -24,7 +24,6 @@ import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
 import io.aequicor.visualization.engine.frontend.blocks.StylesPatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
-import io.aequicor.visualization.engine.frontend.blocks.TypedBlockReader
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
 import io.aequicor.visualization.engine.frontend.blocks.VariablesPatch
 import io.aequicor.visualization.engine.frontend.blocks.VectorPatch
@@ -116,10 +115,8 @@ private class Normalization(
 
         val defs = screen.componentDefs.map { def ->
             val defRoot = materialize(def, isRoot = false)
-            // Re-read without the shared collector: materialize already reported
-            // this node's block diagnostics.
             val componentPatch = def.explicitPatches
-                .mapNotNull { TypedBlockReader.read(it, DiagnosticCollector(fileName), extensions) }
+                .map { it.patch }
                 .filterIsInstance<ComponentPatch>()
                 .lastOrNull()
             lifter.register(defRoot, componentPatch, def.span.startLine)
@@ -420,14 +417,12 @@ private class Normalization(
     // --- typed patches ---
 
     private fun readPatches(node: SemanticNode): List<AppliedPatch> =
-        node.explicitPatches.mapNotNull { entry ->
-            TypedBlockReader.read(entry, diagnostics, extensions)?.let {
-                AppliedPatch(it, entry.key, entry.span.startLine)
-            }
+        node.explicitPatches.map { entry ->
+            AppliedPatch(entry.patch, entry.key, entry.span.startLine)
         }
 
     private fun readDocumentPatches(): List<TypedPatch> =
-        screen.documentPatches.mapNotNull { TypedBlockReader.read(it, diagnostics) }
+        screen.documentPatches.map { it.patch }
 
     /** `variables`/`handoff` blocks contribute to the document, wherever anchored. */
     private fun liftDocumentPatches(patches: List<TypedPatch>) {

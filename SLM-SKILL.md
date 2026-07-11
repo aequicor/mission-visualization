@@ -19,9 +19,12 @@ Each sentence compiles into typed UI properties; the document tree is markdown h
 Write it so it reads like an annotated wireframe. **Keywords are English-only.** The only
 localized part of a document is the visible text inside `«…»` / `"…"`.
 
-> The YAML typed blocks and `` ```ir `` fences you may see elsewhere are **INTERNAL desugar
-> machinery / IR serialization** — `CnlParser` lowers each sentence into the same typed patches
-> the block-readers consume. They are **not** an authoring surface. Never hand-write them.
+> Raw YAML typed blocks (`node:` / `layout:` / `style:` / …) and `` ```ir `` fences **do not
+> compile at all**: a `word:` line gets the warning `Raw YAML typed blocks are no longer
+> supported; author CNL instead` and stays prose (the patch is never applied); any fenced code
+> block is ignored with `Unsupported fenced code block '<info>' is ignored`. `CnlParser` lowers
+> each sentence **directly** into typed patches (no YAML anywhere); YAML survives only in the
+> frontmatter fence. Never hand-write typed blocks or `` ```ir ``.
 
 ## Working-Layout Contract
 
@@ -75,9 +78,10 @@ inspect it before composing:
 - `design-book/semantic-layout-markdown-i18n.md` — the SLM spec, including the CNL Phrase Reference.
 - `shared/src/commonMain/.../editor/data/*Slm.kt` — large production CNL examples.
 
-The `engine/frontend/.../blocks/readers` are **internal desugar** (the typed patches CNL lowers
-into) — not a syntax you author against. Prefer the CNL grammar/tests over prose when they
-conflict. If no local implementation exists, use this skill as the contract and state assumptions.
+CNL lowers directly into typed patches (`cnl/CnlDirectDesugar.kt`) — there is no YAML block
+syntax to author against (the old block-readers were removed). Prefer the CNL grammar/tests over
+prose when they conflict. If no local implementation exists, use this skill as the contract and
+state assumptions.
 
 ## Authoring Workflow
 
@@ -392,6 +396,98 @@ Motion: `motion duration N loop frames (at opacity x y scale rotation) …`. Use
 (`easeOut`, `spring …`); a cubic-bezier easing is not expressible and forces the node off the CNL
 path (falls to internal IR splice).
 
+### Diagrams (`## Diagram:` container)
+
+Diagrams (UML / flowchart / ER / tables / swimlanes / BPMN) are authored **and persisted** as
+CNL: a container heading plus one sentence per diagram element. There is **no YAML form**. The
+grammar only compiles where the diagram extension is registered (in this repo: the editor's
+`EditorSlmExtensions`; grammar source of truth `subsystems/diagrams-slm/.../DiagramCnlReader.kt`
+/ `DiagramCnlWriter.kt`).
+
+```md
+## Diagram: <Display name> id <id> <W> by <H> position <X> <Y>
+```
+
+The heading carries the **design-node side** (name, id, size, position — like any container
+heading). Every non-blank body line (until the next same-or-higher heading) is one element
+sentence; global nouns (`Rectangle`, `Text`, …) are inactive inside the body. Inner coordinates
+are diagram-local. Canonical body order: `Layer*` → `Node*` → `Edge*` → `Group*`.
+
+| Sentence | Form |
+|---|---|
+| layer | `Layer <id> [«name»] [visible no] [locked yes]` |
+| node | `Node <type-word> <id> <head…> <w> by <h> position <x> <y> [rotate N] <items…> {port (…)} [style (…)] {label …} [parent <id>] [layer <id>] [locked yes] [visible no]` |
+| edge | `Edge <id> from <endpoint> to <endpoint> [relation …] [routing …] {via (x y)} {label …} [style (…)] [arrow source <ah>] [arrow target <ah>] [jumps arc\|gap\|sharp] [mode link\|arrow] [animated yes] [layer <id>]` |
+| group | `Group <id> [«name»] members (<id> …)` |
+
+Node type-words: basic shapes `rectangle`, `rounded-rectangle`, `ellipse`, `text`, `rhombus`,
+`triangle`, `hexagon`, `parallelogram`, `trapezoid`, `cylinder`, `cloud` (caption via `label`),
+plus payload types:
+
+| type-word | head (after id) | repeated items (after size/position) |
+|---|---|---|
+| `container` | `[title «…»] [collapsed]` | — |
+| `swimlane` | `[vertical] [title «…»]` | `lane («T» [size])` / `lane <size>` |
+| `flowchart` | `process\|decision\|input-output\|terminator` (required) | — |
+| `entity` | `«name»` | `attribute («n» [type «…»] [pk] [fk])` |
+| `bpmn` | `task\|event\|gateway` (required) | — |
+| `table` | — | `row <h>` / `row (<h> header)`, `col <w>` / `col (<w> header)`, `cell (r c [span R by C] [«label»] [style (…)])` |
+| `class` | `«name» [stereotype «…»] [abstract]` | `field (<vis> [static] [abstract] «text»)`, `method (…)`; vis: `+` `-` `#` `~` |
+| `lifeline` | `«name» [actor]` | `activation (start end)` (0..1) |
+| `state` | `[«name»] [initial\|final\|composite]` | — |
+| `activity` | `action\|decision\|fork\|join\|start\|end` (required) `[«name»]` | — |
+| `actor` / `use-case` / `package` | `«name»` | — |
+| `component` / `deployment` | `«name» [stereotype «…»]` | — |
+| `note` | `«text»` | — |
+
+Edge endpoints: `nodeId` (floating), `nodeId.portId` (fixed port), `(x y)` (free point),
+`(node <id> [port <id>])` (explicit — required when an id contains a dot). Relations:
+`association [directed]`, `aggregation`, `composition`, `generalization`, `dependency`,
+`realization`, `transition`, `include`, `extend`, `message sync|async|return|create|destroy`,
+`er [<card> to <card>]` (`one`/`zero-or-one`/`many`/`one-or-many`/`zero-or-many`). Routing:
+`straight|orthogonal|simple|isometric|curved|entity-relation` (default orthogonal, omitted).
+Ports on nodes: `port (<id> top|right|bottom|left [offset])` or `port (<id> at <x> <y>)`.
+Style group (nodes/edges/cells): `style ([fill #hex] [stroke #hex] [weight N]
+[pattern solid|dashed|dotted] [opacity N] [corners sharp|rounded|curved] [sketch] [shadow])`.
+Colors are `#RRGGBB[AA]` (alpha is the **last** two digits, `FF` omitted). Prefer a semantic
+`relation` over explicit `arrow source/target` overrides.
+
+Worked example — module dependency diagram (compiles clean):
+
+```md
+## Diagram: Module Dependencies id module_graph 900 by 520 position 40 40
+
+Node component web_app «webApp» stereotype «app» 150 by 56 position 60 20
+Node component shared «shared» stereotype «app shell» 210 by 60 position 340 20
+Node component frontend «frontend» stereotype «engine» 170 by 56 position 60 200
+Node component ir «ir» stereotype «IR core» 200 by 64 position 340 200
+Node component backend_compose «backend-compose» stereotype «engine» 170 by 56 position 620 200
+Edge e_web from web_app to shared relation dependency
+Edge e_shared_frontend from shared to frontend relation dependency
+Edge e_frontend_ir from frontend to ir relation dependency label «api»
+Edge e_backend_ir from backend_compose to ir relation dependency
+Group g_engine «Engine» members (frontend ir backend_compose)
+```
+
+Worked example — UML class diagram (compiles clean):
+
+```md
+## Diagram: Shapes Model id class_diagram 560 by 400 position 48 48
+
+Node class shape «Shape» abstract 180 by 120 position 190 24 field (+ «origin: Point») method (+ abstract «area(): Double»)
+Node class circle «Circle» 180 by 100 position 60 220 field (- «radius: Double») method (+ «area(): Double»)
+Node class registry «Registry» stereotype «singleton» 200 by 140 position 320 220 field (- static «instance: Registry») method (+ static «get(): Registry»)
+Node note n1 «Circle owns its radius.» 160 by 64 position 320 40
+Edge e_extends from circle to shape relation generalization
+Edge e_uses from registry to shape relation dependency
+Edge e_assoc from registry to circle relation association directed label «caches»
+```
+
+Diagram rules: give every node/edge a stable meaningful id (ids anchor write-back); duplicate
+ids are dropped with an error (first wins); an unknown type/kind word drops the sentence; broken
+edge/port/parent/layer references are errors at the sentence line, broken group members are
+warnings. The reader never throws — treat every diagnostic as a defect.
+
 ### Bindings across families
 
 `$var` (variable ref), `{{expr}}` (data/expression binding), and `$prop.x` (component prop ref)
@@ -485,7 +581,8 @@ DON'T:
 - Don't invent property words or nouns — only those in the tables above are recognized.
 - Don't put numbers with no keyword (a bare `42` is an error — attach it, e.g. `radius 42`).
 - Don't start a container heading with a property word (name it first: `## Panel column`).
-- Don't hand-write YAML typed blocks or `` ```ir `` fences — they are internal desugar, not authoring.
+- Don't hand-write YAML typed blocks or `` ```ir `` fences — they **don't compile**: typed-block
+  lines warn and stay prose, fenced code blocks are ignored with a warning.
 
 ## Error catalog (self-check)
 
@@ -501,6 +598,13 @@ If the compiler warns `[CNL:<id>] …`, fix per the id:
 | `unterminated-text` | quotes not closed | close `«…»` or `"…"` |
 | `bad-direction` | not a valid alignment | `center\|bottom\|right` or `align (block …)` |
 | `stray-number` | a number not attached to a property | attach it, e.g. `size 120 by 15` |
+
+Compiler deprecation warnings (not `[CNL:…]`-prefixed):
+
+| Warning text | Meaning | Fix |
+|---|---|---|
+| `Raw YAML typed blocks are no longer supported; author CNL instead ('<key>:' and its indented lines are kept as prose)` | a body line spells an ex-reserved key (`node:`, `layout:`, `style:`, `diagram:`, …); the block is NOT applied | delete the block and express the properties as CNL phrases (diagrams: the `## Diagram:` container) |
+| `Unsupported fenced code block '<info>' is ignored` | a ```` ``` ````-fence (incl. `` ```ir ``) in the body; no node is created | author the subtree as CNL sentences |
 
 ## Canvas And Scene Contract
 
@@ -569,4 +673,4 @@ A good SLM output has no error diagnostics and passes these checks:
   nouns/keywords, no `characters «literal»`, and no hand-written YAML typed blocks or `` ```ir ``.
 
 When validation fails, fix the CNL sentence. Do not paper over parser errors by moving required
-properties into free-form prose or by hand-writing internal typed blocks.
+properties into free-form prose or by hand-writing YAML typed blocks (they no longer compile).

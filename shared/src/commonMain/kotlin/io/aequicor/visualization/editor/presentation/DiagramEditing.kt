@@ -332,11 +332,12 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
 // --- Write-back ---------------------------------------------------------------
 
 /**
- * Applies [transform] to the diagram node's graph and commits the result: the whole
- * `diagram:` block of the owning SLM source is replaced by the canonical emission of the
- * new graph (`applyDiagramWriteBack`, which recompiles the patched source and vetoes any
- * round-trip drift), the source is recompiled with the editor's extension registry, and
- * the working document mirrors the change in lock-step (one undo entry).
+ * Applies [transform] to the diagram node's graph and commits the result: the owning SLM
+ * source is surgically patched with the canonical emission of the new graph — the CNL
+ * `## Diagram: …` container body, the only diagram authoring surface
+ * (`applyDiagramWriteBack`, which recompiles the patched source and
+ * vetoes any round-trip drift), the source is recompiled with the editor's extension
+ * registry, and the working document mirrors the change in lock-step (one undo entry).
  *
  * Falls back to an in-memory-only edit — every source byte-identical — when the node has
  * no owning/addressable source or the patch/recompile/veto fails, surfacing the write-back
