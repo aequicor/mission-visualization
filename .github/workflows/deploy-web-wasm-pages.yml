@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -20,7 +20,7 @@ jobs:
     name: Build and Deploy Web Wasm
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -58,16 +58,9 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v5
 
-      - name: Update published version in README
+      - name: Record published version
         env:
           VERSION: 0.1.${{ github.run_number }}
         run: |
-          sed -i "/<!-- published-version -->/c\\**Latest published web version: v${VERSION}.** <!-- published-version -->" README.md
-          if git diff --quiet -- README.md; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git commit -m "docs: update published version to v${VERSION} [skip ci]"
-          git push
+          echo "### Published v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
