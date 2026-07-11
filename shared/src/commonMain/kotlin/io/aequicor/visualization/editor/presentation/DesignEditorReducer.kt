@@ -220,6 +220,7 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.ReorderNode -> state.reorderNodeWriteBack(intent)
         is DesignEditorIntent.ReparentNode -> state.reparentNodeWriteBack(intent)
         is DesignEditorIntent.CreateObject -> state.createObject(intent)
+        is DesignEditorIntent.CreateDiagramObject -> state.createDiagramObject(intent)
         is DesignEditorIntent.CreateScreen -> state.createScreenWriteBack(intent)
         is DesignEditorIntent.DetachInstance -> state.detachInstanceReduce(intent.nodeId)
 
@@ -860,6 +861,49 @@ private fun DesignEditorState.createObject(intent: DesignEditorIntent.CreateObje
     // source ([InsertChildSubtree], appended at the end of the parent's footprint). A page-id /
     // prose / unaddressable parent, a node the section writer can't faithfully round-trip, or any
     // surviving-id drift keeps the in-memory create with every source byte-identical.
+    if (!placed.isStructurallyExpressible()) return inMemory
+    val owner = owningSourceIndex(parentId) ?: return inMemory
+    val ownerIds = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
+    val expected = ownerIds + placed.id + placed.allDescendants().map { it.id }
+    return withStructuralSource(parentId, listOf(InsertChildSubtree(parentId, placed)), inMemory, expected)
+}
+
+/**
+ * Creates a new diagram canvas node (seeded with the picked element,
+ * [EditorNodeFactory.newDiagram]) and persists it exactly like [createObject]: a structural
+ * insert whose section carries the `diagram:` typed block (extension emit hook); any veto in
+ * [withStructuralSource] keeps the in-memory create with every source byte-identical.
+ */
+private fun DesignEditorState.createDiagramObject(
+    intent: DesignEditorIntent.CreateDiagramObject,
+): DesignEditorState {
+    val document = document ?: return this
+    val node = EditorNodeFactory.newDiagram(
+        document = document,
+        payload = intent.payload,
+        x = intent.x,
+        y = intent.y,
+        width = intent.width,
+        height = intent.height,
+        elementWidth = intent.elementWidth,
+        elementHeight = intent.elementHeight,
+        elementLabel = intent.elementLabel,
+    )
+    val parentValid = intent.parentId in document.pages.map { it.id } || document.nodeById(intent.parentId) != null
+    val parentId = if (parentValid) intent.parentId else document.pageById(selectedPageId)?.children?.firstOrNull()?.id
+        ?: document.pageById(selectedPageId)?.id ?: return this
+    val placed = when (document.nodeById(parentId)?.layout?.mode) {
+        LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
+            node.copy(layoutChild = node.layoutChild.copy(absolute = false))
+        else -> node
+    }
+    val next = document.insertNode(parentId, placed)
+    if (next == document) return this
+    val inMemory = pushHistory(document).copy(
+        document = next,
+        selectedNodeId = placed.id,
+        selectedNodeIds = setOf(placed.id),
+    )
     if (!placed.isStructurallyExpressible()) return inMemory
     val owner = owningSourceIndex(parentId) ?: return inMemory
     val ownerIds = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
@@ -1583,6 +1627,11 @@ private fun DesignNode.isStructurallyExpressible(): Boolean {
             // Outline Stroke produce). Asset refs and structural networks stay in-memory-only.
             (nodeKind.paths.isEmpty() && nodeKind.iconRef.isEmpty() && nodeKind.pathRef.isEmpty()) ||
                 (nodeKind.shape == ShapeType.Vector && nodeKind.iconRef.isEmpty() && nodeKind.pathRef.isEmpty() && nodeKind.network == null)
+        // A diagram node's section carries its whole graph as a `diagram:` typed block (the
+        // registry emit hook), which the extension round-trips at IR parity. An EMPTY graph
+        // however writes a bare `diagram:` the parser drops (the node would recompile as a
+        // plain section and trip the fingerprint veto) — keep that case in-memory.
+        is DesignNodeKind.Diagram -> nodeKind.graph.nodes.isNotEmpty()
         else -> false
     }
     // A node carrying an interaction the SLM writer can't round-trip (CubicBezier easing, unknown

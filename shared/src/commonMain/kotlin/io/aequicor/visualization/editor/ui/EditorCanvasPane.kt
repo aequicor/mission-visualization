@@ -101,6 +101,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.aequicor.visualization.editor.presentation.TextSelection
@@ -1321,7 +1322,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             VectorEditOverlay(state, layout, viewport, zoomPx)
 
             // Diagram edit mode: selection/ports/waypoints overlays + element gestures.
-            DiagramEditOverlay(state, layout, viewport, zoomPx)
+            DiagramEditOverlay(state, layout, viewport, zoomPx, panActive = spaceHeld)
+
+            // Palette→canvas drag ghost (draw.io insert): shape preview under the pointer
+            // plus an accent highlight of the diagram box the drop would land in.
+            DiagramPaletteDragGhost(state, viewport)
 
             // On-canvas arc handles for a single, unlocked ellipse authored with an arc/donut, while
             // the Select tool is active and it is not in point-edit mode.
@@ -4144,7 +4149,9 @@ private fun commitAddAnnotation(
 
 /**
  * Arms the diagram Add-node tool: targets the diagram already being edited, else the
- * selected diagram node, else the page's first diagram node; no diagram — no-op.
+ * selected diagram node, else the page's first diagram node. A page with no diagram
+ * node at all gets one created on the spot ([createSeededDiagram]) — the picked shape
+ * lands as its first element and edit mode opens on it (draw.io-style insert).
  */
 private fun armDiagramAddNode(state: MissionEditorStateHolder, payload: DiagramNodePayload) {
     val design = state.designState
@@ -4152,7 +4159,7 @@ private fun armDiagramAddNode(state: MissionEditorStateHolder, payload: DiagramN
     val targetId = state.workspace.diagramEditNodeId.takeIf { it.isNotBlank() }
         ?: design.selectedNodeId.takeIf { it.isNotBlank() && document.nodeById(it)?.kind is DesignNodeKind.Diagram }
         ?: firstDiagramNodeId(document, design.selectedPageId)
-        ?: return
+        ?: return createSeededDiagram(state, payload)
     if (design.selectedNodeId != targetId) state.dispatch(DesignEditorIntent.SelectNode(targetId))
     state.updateWorkspace {
         it.copy(
@@ -4160,6 +4167,107 @@ private fun armDiagramAddNode(state: MissionEditorStateHolder, payload: DiagramN
             diagramEditNodeId = targetId,
             diagramTool = DiagramTool.AddNode(payload),
             diagramSelection = DiagramSelection.Empty,
+        )
+    }
+}
+
+/** Default diagram canvas size for a from-palette insert on a page with no diagram yet. */
+internal const val NewDiagramWidth = 640.0
+internal const val NewDiagramHeight = 480.0
+
+/**
+ * Live ghost of an inspector-palette shape being dragged over the canvas: a translucent
+ * dashed stamp of the shape's footprint under the pointer, its mini glyph inside, and an
+ * accent outline around the diagram box the drop would land in ([commitDiagramPaletteDrop]
+ * in the inspector performs the actual drop on release).
+ */
+@Composable
+private fun DiagramPaletteDragGhost(state: MissionEditorStateHolder, viewport: CanvasViewport) {
+    val drag = state.workspace.diagramPaletteDrag ?: return
+    val colors = LocalEditorColors.current
+    val bounds = state.canvasExportBounds ?: return
+    val localX = drag.windowX - bounds.left.toFloat()
+    val localY = drag.windowY - bounds.top.toFloat()
+    if (localX < 0f || localY < 0f || localX > bounds.width || localY > bounds.height) return
+    val document = state.designState.document
+    val layout = state.artboardLayout
+    val docX = viewport.toDocX(localX)
+    val docY = viewport.toDocY(localY)
+
+    Canvas(Modifier.fillMaxSize()) {
+        // Highlight the diagram box under the pointer (the drop target).
+        val target = layout?.allBoxes()?.lastOrNull { box ->
+            document?.nodeById(box.node.sourceId)?.kind is DesignNodeKind.Diagram &&
+                docX >= box.x && docX <= box.right && docY >= box.y && docY <= box.bottom
+        }
+        if (target != null) {
+            val topLeft = viewport.toScreen(target.x, target.y)
+            val bottomRight = viewport.toScreen(target.right, target.bottom)
+            drawRect(
+                color = colors.accent.copy(alpha = 0.9f),
+                topLeft = topLeft,
+                size = Size(bottomRight.x - topLeft.x, bottomRight.y - topLeft.y),
+                style = Stroke(width = 2f),
+            )
+        }
+        // Ghost footprint centered on the pointer, in document scale.
+        val ghostW = (drag.width * viewport.zoom).toFloat()
+        val ghostH = (drag.height * viewport.zoom).toFloat()
+        val ghostTopLeft = Offset(localX - ghostW / 2, localY - ghostH / 2)
+        drawRect(
+            color = colors.selectionFill.copy(alpha = 0.5f),
+            topLeft = ghostTopLeft,
+            size = Size(ghostW, ghostH),
+        )
+        drawRect(
+            color = colors.accent,
+            topLeft = ghostTopLeft,
+            size = Size(ghostW, ghostH),
+            style = Stroke(width = 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))),
+        )
+    }
+    // The shape's mini glyph rides along under the pointer.
+    Box(
+        Modifier
+            .offset { IntOffset((localX - 12f).roundToInt(), (localY - 12f).roundToInt()) }
+            .size(24.dp),
+    ) {
+        DiagramNodePreview(drag.payload, editorDiagramPreviewStyle(), Modifier.fillMaxSize())
+    }
+}
+
+/**
+ * Creates a new diagram canvas node centered in the page's root frame, seeded with one
+ * element of [payload] type, then enters its edit mode with the seed selected. The create
+ * persists to SLM (`diagram:` block) through the structural write-back.
+ */
+private fun createSeededDiagram(state: MissionEditorStateHolder, payload: DiagramNodePayload) {
+    val design = state.designState
+    val document = design.document ?: return
+    val root = document.pageById(design.selectedPageId)?.children?.firstOrNull() ?: return
+    val entry = DiagramNodePalette.firstOrNull { it.payload == payload }
+    val rootW = root.size?.width ?: NewDiagramWidth
+    val rootH = root.size?.height ?: NewDiagramHeight
+    state.dispatch(
+        DesignEditorIntent.CreateDiagramObject(
+            parentId = root.id,
+            payload = payload,
+            x = ((rootW - NewDiagramWidth) / 2).coerceAtLeast(0.0),
+            y = ((rootH - NewDiagramHeight) / 2).coerceAtLeast(0.0),
+            width = NewDiagramWidth,
+            height = NewDiagramHeight,
+            elementWidth = entry?.width ?: 120.0,
+            elementHeight = entry?.height ?: 60.0,
+        ),
+    )
+    val newId = state.designState.selectedNodeId
+    if (newId.isBlank() || state.designState.document?.nodeById(newId)?.kind !is DesignNodeKind.Diagram) return
+    state.updateWorkspace {
+        it.copy(
+            tool = EditorTool.Select,
+            diagramEditNodeId = newId,
+            diagramTool = DiagramTool.Select,
+            diagramSelection = DiagramSelection(elementIds = setOf("node-1")),
         )
     }
 }

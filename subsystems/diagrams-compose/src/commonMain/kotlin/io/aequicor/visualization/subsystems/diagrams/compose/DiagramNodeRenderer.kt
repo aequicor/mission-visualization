@@ -748,16 +748,40 @@ private fun DrawScope.drawUmlComponent(
         drawStyledPath(rectPath(tab), style, colors, seed)
     }
 
-    if (payload.stereotype != null) {
-        drawDiagramLabel(
-            measurer,
-            DiagramLabel("«${payload.stereotype}»"),
-            DiagramRect(body.x, body.y + body.height * 0.18, body.width, 14.0).inset(2.0),
-            labelInk,
-            fontSize = 10.0,
-        )
+        drawStereotypedName(measurer, payload.stereotype, payload.name, body.inset(6.0), labelInk)
+}
+
+/**
+ * `«stereotype»` band on top, name centered in the remaining area below — the two never
+ * share a box, so a wrapped name cannot collide with the stereotype (mirrors the
+ * class-node name-row split).
+ */
+private fun DrawScope.drawStereotypedName(
+    measurer: ComposeTypographyMeasurer,
+    stereotype: String?,
+    name: String,
+    content: DiagramRect,
+    labelInk: Color,
+) {
+    if (stereotype == null) {
+        drawDiagramLabel(measurer, DiagramLabel(name), content, labelInk, fontWeight = 600)
+        return
     }
-    drawDiagramLabel(measurer, DiagramLabel(payload.name), body.inset(6.0), labelInk, fontWeight = 600)
+    val band = min(14.0, content.height / 2.0)
+    drawDiagramLabel(
+        measurer,
+        DiagramLabel("«$stereotype»"),
+        DiagramRect(content.x, content.y, content.width, band),
+        labelInk,
+        fontSize = 10.0,
+    )
+    drawDiagramLabel(
+        measurer,
+        DiagramLabel(name),
+        DiagramRect(content.x, content.y + band, content.width, (content.height - band).coerceAtLeast(0.0)),
+        labelInk,
+        fontWeight = 600,
+    )
 }
 
 private fun DrawScope.drawUmlDeployment(
@@ -792,16 +816,7 @@ private fun DrawScope.drawUmlDeployment(
     drawStyledPath(sideFace, style, colors, seed + 1, fillOverride = (style.fill?.toComposeColor() ?: colors.nodeFill).darken(0.12f))
     drawStyledPath(rectPath(front), style, colors, seed + 2)
 
-    if (payload.stereotype != null) {
-        drawDiagramLabel(
-            measurer,
-            DiagramLabel("«${payload.stereotype}»"),
-            DiagramRect(front.x, front.y + front.height * 0.16, front.width, 14.0).inset(2.0),
-            labelInk,
-            fontSize = 10.0,
-        )
-    }
-    drawDiagramLabel(measurer, DiagramLabel(payload.name), front.inset(6.0), labelInk, fontWeight = 600)
+    drawStereotypedName(measurer, payload.stereotype, payload.name, front.inset(6.0), labelInk)
 }
 
 // --- Shared drawing helpers ---------------------------------------------------------------

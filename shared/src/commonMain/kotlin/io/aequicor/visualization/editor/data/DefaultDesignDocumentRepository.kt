@@ -11,6 +11,7 @@ class DefaultDesignDocumentRepository : DesignDocumentRepository {
         MissionDocumentSource("mission-event-log.layout.md", MissionEventLogSlm),
         MissionDocumentSource("shapes-showcase.layout.md", ShapesShowcaseSlm),
         MissionDocumentSource("diagrams.layout.md", MissionDiagramsSlm),
+        MissionDocumentSource("project-structure.layout.md", ProjectStructureSlm),
         MissionDocumentSource("cnl-showcase.layout.md", CnlShowcaseSlm),
     )
 }

@@ -46,7 +46,20 @@ interface TypedBlockExtension<P : Any> {
      * trailing newline. Must round-trip through [read].
      */
     fun write(payload: P): String
+
+    /**
+     * Extracts this extension's payload from an IR node when the node carries one —
+     * the inverse of [applyToNode]; null when the node has no payload of this kind.
+     * Structural write-back uses it to render the node's `<kind>:` block into a
+     * freshly inserted section. Default: no payload (extensions that don't support
+     * structural inserts).
+     */
+    fun payloadOf(node: DesignNode): P? = null
 }
+
+/** Canonical block text for the payload [node] carries, or null when it has none. */
+internal fun <P : Any> TypedBlockExtension<P>.blockTextOrNull(node: DesignNode): String? =
+    payloadOf(node)?.let { write(it) }
 
 /**
  * A payload read by a [TypedBlockExtension], carried through the patch pipeline

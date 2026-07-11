@@ -13,6 +13,7 @@ import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.subsystems.diagrams.model.UmlComponentNode
 import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
@@ -187,6 +188,52 @@ class StructuralWriteBackTest {
 
         next.assertWroteBack(before)
         assertEquals(listOf(before.sources), next.previousSources, "source undo captured the pre-edit sources")
+    }
+
+    @Test
+    fun createDiagramObjectWritesSectionWithDiagramBlock() {
+        val before = freshState()
+        val rootFrame = "frame_overview"
+
+        val next = reduceDesignEditor(
+            before,
+            DesignEditorIntent.CreateDiagramObject(
+                parentId = rootFrame,
+                payload = UmlComponentNode(name = "Component"),
+                x = 100.0,
+                y = 120.0,
+                width = 640.0,
+                height = 480.0,
+                elementWidth = 160.0,
+                elementHeight = 80.0,
+            ),
+        )
+
+        // A fresh diagram node exists in the working document with the seeded element centered.
+        val mintedId = next.selectedNodeId
+        assertTrue(mintedId.startsWith("diagram_"), "minted a fresh diagram id: $mintedId")
+        val created = assertNotNull(next.document?.nodeById(mintedId), "created node in document")
+        val createdKind = created.kind
+        assertTrue(createdKind is DesignNodeKind.Diagram, "created a diagram node")
+        val seed = assertNotNull(createdKind.graph.nodes.singleOrNull(), "one seeded element")
+        assertEquals("node-1", seed.id.value)
+        assertTrue(seed.payload is UmlComponentNode, "seed keeps the picked payload")
+        assertEquals(240.0, seed.x, "seed centered horizontally")
+        assertEquals(200.0, seed.y, "seed centered vertically")
+
+        // The owning source gained the section WITH its `diagram:` typed block, and the
+        // recompiled IR round-trips the whole graph (kind, element, geometry).
+        val source = next.sourceOf(owningFile)
+        assertTrue(mintedId in source, "minted id written to source")
+        assertTrue("diagram:" in source, "diagram typed block written to source")
+        val recompiled = assertNotNull(next.compiledDocumentOf(owningFile), "owning source recompiled")
+        val recompiledKind = assertNotNull(
+            recompiled.nodeById(mintedId)?.kind as? DesignNodeKind.Diagram,
+            "recompiled node keeps the Diagram kind",
+        )
+        assertEquals(createdKind.graph, recompiledKind.graph, "diagram graph round-trips at parity")
+
+        next.assertWroteBack(before)
     }
 
     // --- Duplicate ---------------------------------------------------------------

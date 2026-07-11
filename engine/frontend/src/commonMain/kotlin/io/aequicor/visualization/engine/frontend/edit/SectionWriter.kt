@@ -1,5 +1,6 @@
 package io.aequicor.visualization.engine.frontend.edit
 
+import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.markdown.HeadingBlock
 import io.aequicor.visualization.engine.frontend.markdown.SlmMarkdownParser
@@ -23,6 +24,7 @@ internal class SectionWriter(
     private val source: String,
     private val lineIndex: LineIndex,
     fileName: String,
+    private val extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
 ) {
     private val document = SlmMarkdownParser(DiagnosticCollector(fileName)).parse(source)
     private val headings: List<HeadingBlock> = document.blocks.filterIsInstance<HeadingBlock>()
@@ -72,7 +74,7 @@ internal class SectionWriter(
             else -> parentSpan.endLine + 1
         }
         val offset = lineIndex.lineStartOffset(insertBeforeLine)
-        val text = frameInsert(NodeSectionWriter.emitSubtree(subtree, childLevel), offset)
+        val text = frameInsert(NodeSectionWriter.emitSubtree(subtree, childLevel, extensions), offset)
         return WritePlan.Ops(listOf(TextOp(offset, offset, text)))
     }
 
