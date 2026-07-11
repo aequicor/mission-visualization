@@ -106,6 +106,38 @@ class TypographyWriteBackReducerTest {
     }
 
     @Test
+    fun openTypeFeatureWritesGroupAndPreservesAuthoredTypography() {
+        val before = freshState()
+        val next = reduceDesignEditor(
+            before,
+            DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(fontFeatures = mapOf("liga" to true))),
+        )
+        assertEquals(true, next.textStyle().fontFeatures["liga"])
+        // Features have no surgical value span, so this goes through CnlWriter's tier-3
+        // whole-sentence re-emit; the `features (…)` group lands and every authored phrase survives.
+        val source = next.sourceOf(owningFile)
+        assertTrue("features (liga on)" in source, "OpenType feature written as CNL: $source")
+        assertTrue("font «Inter»" in source, source)
+        assertTrue("size 12" in source, source)
+        assertTrue("key missionTelemetry.badge.live" in source, source)
+        assertEquals("Inter", next.textStyle().fontFamily)
+        next.assertWroteBack(before)
+    }
+
+    @Test
+    fun variableAxisWritesGroupAndRoundTrips() {
+        val before = freshState()
+        val next = reduceDesignEditor(
+            before,
+            DesignEditorIntent.UpdateTypography(nodeId, TypographyPatch(variableAxes = mapOf("wght" to 620.0))),
+        )
+        assertEquals(620.0, next.textStyle().variableAxes["wght"])
+        val source = next.sourceOf(owningFile)
+        assertTrue("axes (wght 620)" in source, "variable axis written as CNL: $source")
+        next.assertWroteBack(before)
+    }
+
+    @Test
     fun nonTextNodeIsNoOp() {
         val before = freshState()
         // A frame/shape carries no textStyle; UpdateTypography must not touch any source.
