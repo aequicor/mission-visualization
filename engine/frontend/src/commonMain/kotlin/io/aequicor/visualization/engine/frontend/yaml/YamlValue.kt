@@ -1,7 +1,8 @@
 package io.aequicor.visualization.engine.frontend.yaml
 
 /**
- * Parsed YAML-subset value. Every value carries its 1-based source position:
+ * Parsed YAML-subset value (frontmatter only — YAML's sole remaining surface in SLM).
+ * Every value carries its 1-based source position:
  * [line]/[column] point at the first character of the value, [endLine]/[endColumn]
  * describe the subtree extent — [endColumn] is exclusive (the column right after the
  * last character on [endLine]). Positions are absolute in the enclosing SLM file when

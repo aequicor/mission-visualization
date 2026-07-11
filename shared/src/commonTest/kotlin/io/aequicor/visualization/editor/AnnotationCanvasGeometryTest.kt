@@ -41,7 +41,7 @@ class AnnotationCanvasGeometryTest {
     @Test
     fun dragEndCommitsExactlyOneMoveWithOneSidecarPatchAndOneHistoryEntry() {
         val screenFile = "mission-overview.layout.md"
-        var state = createDesignEditorState(legacyMissionDocuments())
+        var state = createDesignEditorState(annotationFixtureDocuments())
         state = reduceDesignEditor(
             state,
             DesignEditorIntent.AddAnnotation(

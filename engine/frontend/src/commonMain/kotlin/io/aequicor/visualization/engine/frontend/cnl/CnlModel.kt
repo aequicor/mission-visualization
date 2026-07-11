@@ -28,7 +28,7 @@ enum class CnlPropertyKind {
     Id,
     /** Explicit non-visible layer name; visible text remains the sentence text literal. */
     NodeName,
-    /** A `( … )`-group fill (gradient/image/video/solid-with-props) whose value is a ready YAML fragment. */
+    /** A `( … )`-group fill (gradient/image/video/solid-with-props) carried as a typed paint payload. */
     FillComplex,
     /** Corner smoothing scalar (`smoothing N`). */
     Smoothing,
@@ -36,18 +36,18 @@ enum class CnlPropertyKind {
     Blend,
     /** Shared style references (`styles (fill … text … effect … grid …)`). */
     StyleRefs,
-    /** A `stroke ( … )` record (stack/dash/cap/join) pre-lowered to a `strokes:` YAML fragment. */
+    /** A `stroke ( … )` record (stack/dash/cap/join) carried as a typed strokes payload. */
     StrokeComplex,
-    /** An `effect ( … )` group pre-lowered to an `effects:` list item. */
+    /** An `effect ( … )` group carried as a typed effect payload. */
     Effect,
     // Typography-deep (Text nodes).
     FontFamily, LineHeight, Tracking, ParagraphSpacing,
     TextAlign, TextValign, TextCase, TextDecoration,
     Features, Axes,
     AutoSize, Truncate, MaxLines, TextKey, TextStyleRef, ListSettings, Characters,
-    /** A `link ( … )` rich-text span, pre-lowered to a `text.spans[]` item. */
+    /** A `link ( … )` rich-text span carried as a typed `text.spans[]` payload. */
     Link,
-    /** A `span ( … )` shared-text-style rich-text span, pre-lowered to a `text.spans[]` item. */
+    /** A `span ( … )` shared-text-style rich-text span carried as a typed `text.spans[]` payload. */
     Span,
     // Layout-deep.
     Wrap, Clip, Absolute, Distribute, Anchor, Constraints, ContainerAlign,
@@ -74,13 +74,19 @@ enum class CnlPropertyKind {
  * One property phrase. [values] are the parsed value tokens (with spans for write-back);
  * [keywordSpan] is the keyword phrase (null for keyword-less forms like `120 by 15`);
  * [phraseSpan] covers the whole phrase (for append/remove during write-back).
+ * [payload] is the typed model the parser's `( … )` consumers attach for complex kinds —
+ * the direct desugar reads it; [values] keeps only the write-back spans (plus a compact raw).
  */
 data class CnlProperty(
     val kind: CnlPropertyKind,
     val values: List<CnlValue>,
     val keywordSpan: CnlSpan?,
     val phraseSpan: CnlSpan,
+    val payload: CnlPayload? = null,
 )
+
+/** Typed payload attached by the parser's `( … )` consumers — the direct desugar's data carrier. */
+sealed interface CnlPayload
 
 /**
  * One parsed CNL sentence. [noun] is null for a heading property suffix (name-only

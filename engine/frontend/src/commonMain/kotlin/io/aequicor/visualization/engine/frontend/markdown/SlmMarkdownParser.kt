@@ -1,20 +1,24 @@
 package io.aequicor.visualization.engine.frontend.markdown
 
+import io.aequicor.visualization.engine.frontend.blocks.CnlContainerExtension
+import io.aequicor.visualization.engine.frontend.blocks.CnlContainerLine
 import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.frontend.blocks.aggregateErased
+import io.aequicor.visualization.engine.frontend.blocks.parseSentenceErased
 import io.aequicor.visualization.engine.frontend.cnl.CnlParser
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
-import io.aequicor.visualization.engine.frontend.yaml.YamlMap
-import io.aequicor.visualization.engine.frontend.yaml.parseSlmYaml
 
 /**
  * Hand-rolled block-level SLM markdown parser: frontmatter split, ATX headings 1–6,
  * paragraphs, nested lists, blockquotes, standalone images, GFM tables, fenced code
- * blocks, HTML comments, and CNL element sentences. A leading reserved key or a registered
- * [SlmExtensionRegistry] extension key (e.g. subsystem `diagram:`) opens a typed attribute
- * block. Typed blocks are **internal desugar machinery** — CNL is the authoring surface and
- * lowers each sentence into the same typed patches — but the parser still recognizes them so
- * that CNL desugar output and self-contained subsystem block-readers round-trip.
+ * blocks, HTML comments, and CNL element sentences. CNL is the **only** authoring
+ * surface for typed content: heading property suffixes and container-extension bodies
+ * desugar into synthetic [TypedAttributeBlock]s carrying [DirectPatchEntry]s. Raw YAML
+ * typed blocks (`node:` / `layout:` / …) are no longer parsed — a top-level line that
+ * still spells an ex-reserved key (or a registered [SlmExtensionRegistry] extension key,
+ * e.g. `diagram:`) gets a deprecation warning and stays prose. YAML survives only in the
+ * frontmatter fence.
  */
 class SlmMarkdownParser(
     private val diagnostics: DiagnosticCollector,
@@ -50,84 +54,217 @@ class SlmMarkdownParser(
         val indent: Int get() = text.takeWhile { it == ' ' }.length
     }
 
+    // --- container-extension scopes (`## Diagram: …` bodies) ---
+
+    /**
+     * An open CNL container scope: body lines down to the next same-or-higher heading are
+     * offered to the extension's scoped sentence grammar first; collected elements aggregate
+     * into one [DirectPatchEntry] carrying the extension payload (typed end to end, no YAML)
+     * inserted right after the heading so it binds to the container's anchor.
+     */
+    private class ContainerScope(
+        val extension: CnlContainerExtension<*, *>,
+        val level: Int,
+        val insertIndex: Int,
+        val headingLine: Int,
+    ) {
+        val elements = mutableListOf<Any>()
+        var firstLine: Int = headingLine
+        var lastLine: Int = headingLine
+        var sawSentence: Boolean = false
+
+        fun noteSentenceLine(line: Int) {
+            if (!sawSentence) firstLine = line
+            sawSentence = true
+            lastLine = line
+        }
+    }
+
+    /** The registered container extension for a heading line's `Noun:` prefix, or null. */
+    private fun containerExtensionOf(line: Line): CnlContainerExtension<*, *>? {
+        val (_, contentStart) = headingMatch(line.text) ?: return null
+        val content = line.text.substring(contentStart).trimEnd()
+        val colon = content.indexOf(':')
+        if (colon <= 0) return null
+        val prefix = content.take(colon).trim()
+        if (prefix.isEmpty() || prefix.any(Char::isWhitespace)) return null
+        return extensions.containerFor(prefix)
+    }
+
     // --- block loop ---
 
     private fun parseBlocks(lines: List<Line>): List<SlmBlock> {
         val blocks = mutableListOf<SlmBlock>()
+        val scopes = ArrayDeque<ContainerScope>()
+
+        fun close(scope: ContainerScope) {
+            val span = SlmSourceSpan(scope.firstLine, scope.lastLine)
+            val patch = scope.extension.aggregateErased(scope.elements, span, diagnostics)
+            blocks.add(
+                scope.insertIndex,
+                TypedAttributeBlock(
+                    entries = listOf(DirectPatchEntry(scope.extension.kind, patch, span)),
+                    span = span,
+                ),
+            )
+        }
+
         var i = 0
         while (i < lines.size) {
             val line = lines[i]
-            when {
-                line.isBlank -> i++
-
-                headingMatch(line.text) != null -> {
-                    val (heading, attrs) = parseHeading(line)
-                    blocks += heading
-                    attrs?.let { blocks += it }
-                    i++
+            if (line.isBlank) {
+                i++
+                continue
+            }
+            val headingLevel = headingMatch(line.text)?.first
+            if (headingLevel != null) {
+                while (scopes.isNotEmpty() && headingLevel <= scopes.last().level) {
+                    close(scopes.removeLast())
                 }
-
-                line.text.startsWith("```") -> {
-                    val (block, next) = parseFence(lines, i)
-                    block?.let { blocks += it }
-                    i = next
+                val (heading, attrs) = parseHeading(line)
+                blocks += heading
+                attrs?.let { blocks += it }
+                containerExtensionOf(line)?.let { extension ->
+                    scopes.addLast(ContainerScope(extension, headingLevel, blocks.size, line.number))
                 }
-
-                line.text.trimStart().startsWith(">") -> {
-                    val (block, next) = parseBlockquote(lines, i)
-                    blocks += block
-                    i = next
-                }
-
-                standaloneImageMatch(line.text) != null -> {
-                    blocks += parseStandaloneImage(line)
-                    i++
-                }
-
-                listMarkerOf(line.text) != null -> {
-                    val (block, next) = parseList(lines, i)
-                    blocks += block
-                    i = next
-                }
-
-                isTableStart(lines, i) -> {
-                    val (block, next) = parseTable(lines, i)
-                    blocks += block
-                    i = next
-                }
-
-                isCommentStart(line.text) -> {
-                    val comment = parseHtmlComment(lines, i)
-                    if (comment != null) {
-                        blocks += comment.first
-                        i = comment.second
-                    } else {
-                        val (block, next) = parseParagraph(lines, i)
-                        blocks += block
-                        i = next
-                    }
-                }
-
-                typedKeyOf(line) != null -> {
-                    val (block, next) = parseTypedGroup(lines, i)
-                    block?.let { blocks += it }
-                    i = next
-                }
-
-                else -> {
-                    val cnl = cnlElementOf(line)
-                    if (cnl != null) {
-                        blocks += cnl
+                i++
+                continue
+            }
+            val scope = scopes.lastOrNull()
+            if (scope != null) {
+                when (val result = scope.extension.parseSentenceErased(line.text, line.number, diagnostics)) {
+                    is CnlContainerLine.Sentence -> {
+                        scope.elements += result.element
+                        scope.noteSentenceLine(line.number)
                         i++
-                    } else {
-                        val (block, next) = parseParagraph(lines, i)
-                        blocks += block
-                        i = next
+                        continue
+                    }
+                    CnlContainerLine.Invalid -> {
+                        scope.noteSentenceLine(line.number)
+                        i++
+                        continue
+                    }
+                    CnlContainerLine.Prose -> {
+                        i = parseScopedProse(lines, i, blocks, scope)
+                        continue
                     }
                 }
             }
+            i = parseGeneralBlock(lines, i, blocks)
         }
+        while (scopes.isNotEmpty()) close(scopes.removeLast())
         return blocks
+    }
+
+    /**
+     * A non-sentence line inside a container scope. Structural markdown (fences, quotes,
+     * lists, tables, images, comments, typed blocks) parses normally; anything else becomes
+     * a **single-line** paragraph with a typo-guard warning — multi-line grouping is off so
+     * a following sentence line is never swallowed into the paragraph, and global CNL
+     * element nouns are inactive per the container-scope contract.
+     */
+    private fun parseScopedProse(
+        lines: List<Line>,
+        start: Int,
+        blocks: MutableList<SlmBlock>,
+        scope: ContainerScope,
+    ): Int {
+        val line = lines[start]
+        if (isStructuralStart(lines, start)) return parseGeneralBlock(lines, start, blocks)
+        diagnostics.warning(
+            "Line inside the `${scope.extension.containerNoun}` container is not a " +
+                "${scope.extension.containerNoun} sentence; kept as prose",
+            line.number,
+        )
+        blocks += ParagraphBlock(
+            inlines = inlineParser.parseLine(line.text.trimEnd(), line.number, line.columnOffset),
+            span = SlmSourceSpan(line.number, line.number),
+        )
+        return start + 1
+    }
+
+    /** Whether the line opens a non-paragraph structural block (scope-independent kinds). */
+    private fun isStructuralStart(lines: List<Line>, i: Int): Boolean {
+        val text = lines[i].text
+        return text.startsWith("```") ||
+            text.trimStart().startsWith(">") ||
+            standaloneImageMatch(text) != null ||
+            listMarkerOf(text) != null ||
+            isTableStart(lines, i) ||
+            isCommentStart(text) ||
+            exReservedKeyOf(lines[i]) != null
+    }
+
+    /** One ordinary (scope-free) block dispatch starting at [start]; returns the next index. */
+    private fun parseGeneralBlock(lines: List<Line>, start: Int, blocks: MutableList<SlmBlock>): Int {
+        var i = start
+        val line = lines[i]
+        when {
+            line.text.startsWith("```") -> {
+                val (block, next) = parseFence(lines, i)
+                block?.let { blocks += it }
+                i = next
+            }
+
+            line.text.trimStart().startsWith(">") -> {
+                val (block, next) = parseBlockquote(lines, i)
+                blocks += block
+                i = next
+            }
+
+            standaloneImageMatch(line.text) != null -> {
+                blocks += parseStandaloneImage(line)
+                i++
+            }
+
+            listMarkerOf(line.text) != null -> {
+                val (block, next) = parseList(lines, i)
+                blocks += block
+                i = next
+            }
+
+            isTableStart(lines, i) -> {
+                val (block, next) = parseTable(lines, i)
+                blocks += block
+                i = next
+            }
+
+            isCommentStart(line.text) -> {
+                val comment = parseHtmlComment(lines, i)
+                if (comment != null) {
+                    blocks += comment.first
+                    i = comment.second
+                } else {
+                    val (block, next) = parseParagraph(lines, i)
+                    blocks += block
+                    i = next
+                }
+            }
+
+            exReservedKeyOf(line) != null -> {
+                diagnostics.warning(
+                    "Raw YAML typed blocks are no longer supported; author CNL instead " +
+                        "(`${exReservedKeyOf(line)}:` and its indented lines are kept as prose)",
+                    line.number,
+                )
+                val (block, next) = parseParagraph(lines, i)
+                blocks += block
+                i = next
+            }
+
+            else -> {
+                val cnl = cnlElementOf(line)
+                if (cnl != null) {
+                    blocks += cnl
+                    i++
+                } else {
+                    val (block, next) = parseParagraph(lines, i)
+                    blocks += block
+                    i = next
+                }
+            }
+        }
+        return i
     }
 
     // --- headings ---
@@ -443,16 +580,15 @@ class SlmMarkdownParser(
             listMarkerOf(text) != null ||
             isTableStart(lines, i) ||
             isCommentStart(text) ||
-            typedKeyOf(lines[i]) != null
+            exReservedKeyOf(lines[i]) != null
     }
 
-    // --- typed attribute blocks (internal desugar targets, not an authoring surface) ---
+    // --- ex-reserved typed-block keys (deprecation guard, not an authoring surface) ---
     //
-    // A leading built-in reserved key (`node:`/`style:`/…) or a registered extension key
-    // (e.g. `diagram:`) opens a typed block: its indented YAML body is lowered to typed
-    // patches. Fenced-only `ir` is deliberately excluded here (it never opens an unfenced
-    // block). CNL is the authoring surface; these blocks exist for desugar and self-contained
-    // subsystem block-readers.
+    // Raw YAML typed blocks were removed as an authoring surface: a leading built-in
+    // ex-reserved key (`node:`/`style:`/…) or a registered extension key (e.g. `diagram:`)
+    // no longer opens anything. The pattern is still detected so authors get one clear
+    // deprecation warning and the lines fall through as prose.
 
     /** Leading `word:` (colon followed by space or line end) at column 0 of the window. */
     private fun leadingWordColon(text: String): String? {
@@ -465,39 +601,9 @@ class SlmMarkdownParser(
         return text.take(i)
     }
 
-    /** A built-in reserved key or a registered extension key opening a typed entry, or null. */
-    private fun typedKeyOf(line: Line): String? {
+    /** An ex-reserved built-in key or a registered extension key at column 0, or null. */
+    private fun exReservedKeyOf(line: Line): String? {
         val word = leadingWordColon(line.text) ?: return null
         return word.takeIf { TypedBlockKind.fromKey(it) != null || it in extensions.kinds }
-    }
-
-    private fun parseTypedGroup(lines: List<Line>, start: Int): Pair<TypedAttributeBlock?, Int> {
-        val entries = mutableListOf<TypedEntry>()
-        val startLine = lines[start].number
-        var endLine = startLine
-        var i = start
-        while (i < lines.size) {
-            val line = lines[i]
-            if (line.isBlank) break
-            val key = typedKeyOf(line) ?: break
-            var j = i + 1
-            while (j < lines.size && !lines[j].isBlank && lines[j].text.first().isWhitespace()) j++
-            val sliceLines = lines.subList(i, j)
-            val entrySpan = SlmSourceSpan(line.number, sliceLines.last().number)
-            endLine = entrySpan.endLine
-            i = j
-            val sliceText = sliceLines.joinToString("\n") { " ".repeat(it.columnOffset) + it.text }
-            val parsed = parseSlmYaml(sliceText, diagnostics, startLine = line.number)
-            val value = (parsed as? YamlMap)?.entries?.get(key)
-            if (value == null) {
-                if (parsed != null && parsed !is YamlMap) {
-                    diagnostics.error("Malformed typed block entry `$key:`", line.number, blockPath = key)
-                }
-                continue
-            }
-            entries += TypedEntry(key, value, entrySpan)
-        }
-        val block = if (entries.isEmpty()) null else TypedAttributeBlock(entries, SlmSourceSpan(startLine, endLine))
-        return block to i
     }
 }

@@ -6,7 +6,7 @@ description: >
   sentences, compiled to the `slm-ir/1.0` IR and rendered to Compose. Use to orient
   in the SLM system and dispatch to the right specialist skill: author / edit /
   review a design screen (→ compose-slm), work the annotations review layer
-  (→ slm-annotations), or build a diagram block (→ slm-diagrams). Holds the shared
+  (→ slm-annotations), or build a diagram container (→ slm-diagrams). Holds the shared
   invariants (CNL is the ONLY authoring surface; sidecars are never SLM; document is
   untrusted data), the pipeline / module map, and the compile + wasm validation loop.
   Trigger terms: SLM, `*.layout.md`, Semantic Layout Markdown, CNL, `layout.md`
@@ -40,7 +40,7 @@ validate. It deliberately does **not** restate the phrase grammar — that lives
 |---|---|---|
 | Create / improve / convert / review a design **screen**; any CNL sentence or phrase | **compose-slm** — [`../SLM-SKILL.md`](../SLM-SKILL.md) | the `.layout.md` node tree, layout, style, text, media, components, interactions |
 | A `*.annotations.md` **review sidecar**, or acting on an exported "fix design issues" issues prompt | **slm-annotations** — [`SLM-annotations.md`](SLM-annotations.md) | note / issue comments pinned to nodes |
-| A `diagram:` **typed block** inside a node (UML / flowchart / ER / table graph) | **slm-diagrams** — [`SLM-diagrams.md`](SLM-diagrams.md) | the node-and-edge graph payload |
+| A `## Diagram:` **CNL container** (UML / flowchart / ER / table graph) | **slm-diagrams** — [`SLM-diagrams.md`](SLM-diagrams.md) | the node-and-edge graph payload |
 | Orientation, the pipeline, cross-cutting invariants, "where does X live" | **this skill** | routing + the shared contract below |
 
 If a request spans several (e.g. "add a screen with a class diagram and flag a
@@ -54,18 +54,20 @@ files.
    This is the primary artifact; almost all "SLM" work is here.
 2. **Annotations** — `<screen>.annotations.md`, a **sibling sidecar**. A review layer
    of note/issue comments. **Never SLM, never merged into `.layout.md`.**
-3. **Diagram** — a `diagram:` **registered-extension typed block** attached to one node
-   inside a `.layout.md`. Authored as YAML (the one legitimate hand-written YAML in the
-   file), routed by the diagrams subsystem.
+3. **Diagram** — a `## Diagram:` **CNL container** inside a `.layout.md`: the heading
+   carries the design-node side, every body line is one diagram sentence
+   (`Node`/`Edge`/`Layer`/`Group`). A registered extension, routed by the diagrams
+   subsystem — no YAML anywhere.
 
 ## Hard invariants (violate one and the change is silently broken)
 
-- **CNL is the only authoring surface for design nodes.** You write element sentences
-  and heading containers — nothing else. YAML typed blocks (`node:` / `style:` /
-  `layout:` …) and `` ```ir `` fences you may see are **internal desugar / IR
-  serialization**, not an authoring surface. **Never hand-write them.** The lone
-  exception is a *registered extension* payload — a `diagram:` block (→ slm-diagrams);
-  those are extension data, handled by their own skill, not the core node surface.
+- **CNL is the only authoring surface — for everything.** You write element sentences
+  and heading containers — nothing else. Raw YAML typed blocks (`node:` / `style:` /
+  `layout:` / `diagram:` …) **no longer compile**: they warn
+  (`Raw YAML typed blocks are no longer supported; author CNL instead`) and stay prose;
+  `` ```ir `` fences are ignored with a warning. YAML survives only in the frontmatter.
+  Extension payloads are CNL too — a diagram is the `## Diagram:` container
+  (→ slm-diagrams), not a YAML block.
 - **Sidecar ≠ SLM.** A `*.annotations.md` file is a separate document source; do not
   compile it as SLM or fold it into a `.layout.md`.
 - **Write-back is fidelity-gated.** Editor edits patch the CNL source in place; an edit
@@ -98,14 +100,14 @@ skills) if they disagree. Inspect before composing:
 1. **Classify & route.** Decide which document family (above) the task touches and
    load that skill. Ambiguous scope → ask before writing (Stop & escalate).
 2. **Read the source of truth** for the surface you will edit — the owning sub-skill,
-   plus `CnlGrammar` / the spec for design nodes. Do not invent nouns, keywords, or
-   YAML keys; the sets are fixed.
+   plus `CnlGrammar` / the spec for design nodes. Do not invent nouns or keywords;
+   the sets are fixed.
 3. **Locate the target.** For an edit, find the node by its stable `id`. For a new
    screen, define the contract first (screen id, locales, frame, states, actions) then
    the information architecture, then sentences (see compose-slm).
 4. **Make the change** on the correct surface only — CNL sentence for a design node,
-   sidecar section for an annotation, `diagram:` block for a graph. Keep ids stable;
-   ids anchor write-back.
+   sidecar section for an annotation, `## Diagram:` container sentences for a graph.
+   Keep ids stable; ids anchor write-back.
 5. **Validate deterministically** — compile and read diagnostics (next section). The
    readers are lenient and drop malformed elements silently, so a "successful" parse
    can still be missing nodes. Treat every diagnostic as a defect. Loop fix → compile
@@ -129,7 +131,7 @@ follow them exactly.
 | IR (model/resolve/layout/validate) | `./gradlew :engine:ir:jvmTest` |
 | Editor + write-back (whole path) | `./gradlew :shared:jvmTest` |
 | Annotations sidecar round-trip | `./gradlew :subsystems:annotations-slm:jvmTest` |
-| Diagram block round-trip | `./gradlew :subsystems:diagrams-slm:jvmTest` |
+| Diagram CNL round-trip | `./gradlew :subsystems:diagrams-slm:jvmTest` |
 | Compile-check (fast) | `./gradlew :desktopApp:compileKotlin` |
 | Web preview (wasm-first) | `./gradlew :webApp:wasmJsBrowserDevelopmentRun` (or `preview_start` `webApp`) |
 

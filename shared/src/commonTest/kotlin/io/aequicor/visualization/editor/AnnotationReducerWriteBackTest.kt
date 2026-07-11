@@ -33,7 +33,7 @@ class AnnotationReducerWriteBackTest {
     private val screenFile = "mission-overview.layout.md"
     private val sidecarFile = annotationSidecarFileName(screenFile)
 
-    private fun freshState(): DesignEditorState = createDesignEditorState(legacyMissionDocuments())
+    private fun freshState(): DesignEditorState = createDesignEditorState(annotationFixtureDocuments())
 
     private fun DesignEditorState.sidecarContent(): String =
         assertNotNull(sources.firstOrNull { it.fileName == sidecarFile }, "missing sidecar $sidecarFile").content
@@ -226,7 +226,7 @@ class AnnotationReducerWriteBackTest {
 
     @Test
     fun sidecarSourcesLoadIntoLayersAndAreNeverCompiledAsSlm() {
-        val plain = legacyMissionDocuments()
+        val plain = annotationFixtureDocuments()
         val withSidecar = compileMissionDocuments(
             plain.sources + MissionDocumentSource(
                 sidecarFile,

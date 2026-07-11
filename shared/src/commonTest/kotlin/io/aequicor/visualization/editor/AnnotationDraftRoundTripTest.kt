@@ -38,7 +38,7 @@ class AnnotationDraftRoundTripTest {
 
     /** A state whose sources carry a sidecar with every annotation field, via real write-back. */
     private fun annotatedState(): DesignEditorState {
-        var state = createDesignEditorState(legacyMissionDocuments())
+        var state = createDesignEditorState(annotationFixtureDocuments())
         state = reduceDesignEditor(
             state,
             DesignEditorIntent.AddAnnotation(screenFile, AnnotationAnchor.NodeAnchor("tile_1"), AnnotationKind.Issue),

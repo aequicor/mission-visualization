@@ -4,8 +4,8 @@ import io.aequicor.visualization.engine.frontend.SlmLocale
 import io.aequicor.visualization.engine.frontend.blocks.TypedPatch
 import io.aequicor.visualization.engine.frontend.expr.SlmExpression
 import io.aequicor.visualization.engine.frontend.frontmatter.SlmFrontmatter
+import io.aequicor.visualization.engine.frontend.markdown.DirectPatchEntry
 import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
-import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
 
 /**
  * Semantic AST — the output of the extraction pass and the input of the IR
@@ -19,7 +19,7 @@ data class SemanticScreen(
     val title: SemanticText? = null,
     val root: SemanticNode,
     /** Document-scoped CNL sections lowered to typed patches; never visible nodes. */
-    val documentPatches: List<TypedEntry> = emptyList(),
+    val documentPatches: List<DirectPatchEntry> = emptyList(),
     /** `Component:`-marked subtrees, lifted out of the visible tree. */
     val componentDefs: List<SemanticNode> = emptyList(),
     /** Mode values contributed by extraction rules (e.g. `density` -> `compact`). */
@@ -46,7 +46,7 @@ data class SemanticNode(
     /** Data bindings for synthesized instances, prop name -> expression. */
     val propBindings: Map<String, SlmExpression> = emptyMap(),
     /** Typed attribute block entries bound to this node's anchor, document order. */
-    val explicitPatches: List<TypedEntry> = emptyList(),
+    val explicitPatches: List<DirectPatchEntry> = emptyList(),
     /** Patches contributed by extraction rules; explicit patches take precedence. */
     val semanticPatches: List<TypedPatch> = emptyList(),
     /** True when the node owns a markdown anchor element (edit-index addressable). */

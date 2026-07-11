@@ -172,6 +172,7 @@ internal object CnlGrammar {
         is DesignNodeKind.Media -> "Image"
         DesignNodeKind.Frame -> "Frame"
         is DesignNodeKind.Instance -> "Instance"
+        is DesignNodeKind.Diagram -> "Diagram"
         else -> null
     }
 
@@ -493,7 +494,7 @@ internal object CnlGrammar {
      * it apart from a ref id that merely ends in `fr` (`$railfr` = Fixed ref to `railfr`): a literal
      * (`1fr`), a `{{expr}}` binding (`{{w}}fr`), or a **braced** token ref (`${weight}fr` /
      * `${prop.w}fr`). A bare `$weightfr` would be indistinguishable from a Fixed ref, so token refs
-     * are braced here — [io.aequicor.visualization.engine.frontend.blocks.readers.readTrack] mirrors this.
+     * are braced here — the CNL track grammar re-read relies on it.
      */
     private fun flexWord(value: Bindable<Double>): String = when (value) {
         is Bindable.Value -> "${num(value.value)}fr"

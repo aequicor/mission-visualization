@@ -1,21 +1,18 @@
 package io.aequicor.visualization.engine.frontend.blocks
 
-import io.aequicor.visualization.engine.ir.model.DesignNode
-
 /**
- * Immutable set of [TypedBlockExtension]s keyed by block kind, passed to the
+ * Immutable set of [TypedBlockExtension]s keyed by payload kind, passed to the
  * compiler via `SlmCompileOptions.extensions`. The default everywhere is
  * [Empty], which reproduces the pre-registry behavior exactly.
  *
- * Registration is validated eagerly: a key that is not a well-formed block word,
- * collides with a built-in reserved key ([TypedBlockKind.reservedKeys], including
- * fenced-only `ir`) or duplicates another registered extension fails with
- * [IllegalArgumentException].
+ * Registration is validated eagerly: a key that is not a well-formed kind word,
+ * collides with a built-in reserved key ([TypedBlockKind.reservedKeys]) or
+ * duplicates another registered extension fails with [IllegalArgumentException].
  */
 class SlmExtensionRegistry private constructor(
     private val extensionsByKind: Map<String, TypedBlockExtension<*>>,
 ) {
-    /** Registered extension block keys. */
+    /** Registered extension kind keys. */
     val kinds: Set<String> get() = extensionsByKind.keys
 
     val isEmpty: Boolean get() = extensionsByKind.isEmpty()
@@ -24,12 +21,16 @@ class SlmExtensionRegistry private constructor(
     fun find(kind: String): TypedBlockExtension<*>? = extensionsByKind[kind]
 
     /**
-     * Canonical block texts for every registered extension whose payload [node] carries
-     * ([TypedBlockExtension.payloadOf]), in registration order. Structural write-back
-     * appends these under the node's freshly inserted heading section.
+     * The container-capable extension whose heading noun is [noun] (case-insensitive),
+     * or null. Drives the CNL container scope: `## <Noun>: …` heading bodies are parsed
+     * with the extension's scoped sentence grammar instead of the global vocabulary.
      */
-    fun blockTextsFor(node: DesignNode): List<String> =
-        extensionsByKind.values.mapNotNull { it.blockTextOrNull(node) }
+    fun containerFor(noun: String): CnlContainerExtension<*, *>? {
+        val lower = noun.lowercase()
+        return extensionsByKind.values
+            .filterIsInstance<CnlContainerExtension<*, *>>()
+            .firstOrNull { it.containerNoun == lower }
+    }
 
     companion object {
         /** No extensions; the compiler behaves exactly as before the registry. */

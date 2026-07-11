@@ -5,11 +5,11 @@ import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.markdown.BlockquoteBlock
+import io.aequicor.visualization.engine.frontend.markdown.DirectPatchEntry
 import io.aequicor.visualization.engine.frontend.markdown.ListBlock
 import io.aequicor.visualization.engine.frontend.markdown.SlmBlock
 import io.aequicor.visualization.engine.frontend.markdown.SlmMarkdownParser
 import io.aequicor.visualization.engine.frontend.markdown.TypedAttributeBlock
-import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 
@@ -47,18 +47,16 @@ public sealed interface DiagramWriteBackPlan {
 }
 
 /**
- * Plans the surgical replacement of the `diagram:` block bound to node [nodeId] with the
- * canonical emission of [graph] (see [DiagramYamlWriter.blockText]). Compatible with the
- * `SlmPatcher`/`typedBlockSetPlan` approach: whole-entry replacement addressed by the
- * entry's own line span, sibling `node:`/`layout:`/`style:` entries untouched.
+ * Plans the surgical persistence of node [nodeId]'s new diagram [graph]. The CNL container
+ * (`## Diagram: …` heading with body sentences) is the only write-back route: the
+ * container's body sentence span is replaced with the canonical [DiagramCnlWriter]
+ * sentences — the heading line (design-node side) is never touched. Prose interleaved
+ * *between* the first and last sentence line is superseded by the canonical body; prose
+ * before/after the sentence block survives.
  *
- * - When the node already has a `diagram:` entry, its full span is replaced in place
- *   (indentation preserved).
- * - When it does not, the block is inserted right below the node's last typed entry
- *   (same indentation).
- * - Unaddressable cases return [DiagramWriteBackPlan.Failed]: source does not compile,
- *   node missing, the `diagram:` entry lives inside a fenced ```yaml block, or the node
- *   has no typed-block anchor at all (author `node: { id: ... }` first).
+ * Unaddressable cases return [DiagramWriteBackPlan.Failed] (the caller keeps the edit
+ * in memory): source does not compile, node missing, or the node's graph is not anchored
+ * to a `## Diagram: …` CNL container (e.g. an `ir` splice).
  *
  * [extensions] must be able to parse the document; [DiagramSlmExtension] is added to the
  * registry automatically when absent.
@@ -77,44 +75,21 @@ public fun diagramBlockSetPlan(
     val node = document.nodeById(nodeId)
         ?: return DiagramWriteBackPlan.Failed("node '$nodeId' not found in the compiled document")
 
-    val entries = collectTypedEntries(source, fileName, registry)
+    val entries = collectPatchEntries(source, fileName, registry)
     val lineStarts = lineStartOffsets(source)
-    val blockText = DiagramSlmExtension.write(graph)
 
     val diagramLine = node.blockSourceMaps[DiagramSlmExtension.kind]?.line
-    if (diagramLine != null) {
-        val entry = entries.firstOrNull {
-            it.key == DiagramSlmExtension.kind && it.span.startLine == diagramLine
-        } ?: return DiagramWriteBackPlan.Failed(
-            "diagram block of node '$nodeId' is not addressable as a typed entry " +
-                "(fenced yaml or ir splice); keep the edit in memory",
-        )
-        val indent = indentOfLine(source, lineStarts, entry.span.startLine)
-        val start = lineStarts.offsetOf(entry.span.startLine, source.length)
-        val end = lineStarts.offsetOf(entry.span.endLine + 1, source.length)
-        val keepNewline = end > start && source[end - 1] == '\n'
-        val replacement = indentBlock(blockText, indent) + if (keepNewline) "\n" else ""
-        return DiagramWriteBackPlan.Ops(listOf(DiagramTextOp(start, end, replacement)))
-    }
-
-    // No diagram entry yet: insert below the node's last typed entry.
-    val ownedStartLines = node.blockSourceMaps.values.map { it.line }.toSet()
-    val anchorEntry = entries
-        .filter { it.span.startLine in ownedStartLines }
-        .maxByOrNull { it.span.endLine }
         ?: return DiagramWriteBackPlan.Failed(
-            "node '$nodeId' has no typed-block anchor to attach a diagram block to; " +
-                "author `node: { id: $nodeId }` first",
+            "node '$nodeId' has no `## Diagram: …` CNL container to persist the graph into; " +
+                "keep the edit in memory",
         )
-    val indent = indentOfLine(source, lineStarts, anchorEntry.span.startLine)
-    val insertAt = lineStarts.offsetOf(anchorEntry.span.endLine + 1, source.length)
-    val needsLeadingBreak = insertAt == source.length && !source.endsWith("\n")
-    val text = buildString {
-        if (needsLeadingBreak) append('\n')
-        append(indentBlock(blockText, indent))
-        append('\n')
-    }
-    return DiagramWriteBackPlan.Ops(listOf(DiagramTextOp(insertAt, insertAt, text)))
+    val entry = entries.firstOrNull {
+        it.key == DiagramSlmExtension.kind && it.span.startLine == diagramLine
+    } ?: return DiagramWriteBackPlan.Failed(
+        "diagram graph of node '$nodeId' is not addressable as a CNL container " +
+            "(ir splice); keep the edit in memory",
+    )
+    return cnlBodyReplacePlan(source, lineStarts, entry, graph)
 }
 
 /** Result of [applyDiagramWriteBack]; [newSource] is null when nothing was applied. */
@@ -163,6 +138,52 @@ public fun applyDiagramWriteBack(
 
 // --- helpers ---
 
+/**
+ * The CNL-container branch: replaces the `## Diagram: …` container's collected sentence
+ * span (the [DirectPatchEntry] the markdown parser aggregated from the body) with the
+ * canonical CNL body for [graph]. When the container body was empty the entry span is
+ * anchored at the heading line itself — then the body is inserted *below* the heading
+ * (blank-line separated) and the heading is left untouched. An empty [graph] with an
+ * already-empty body is a no-op plan.
+ */
+private fun cnlBodyReplacePlan(
+    source: String,
+    lineStarts: IntArray,
+    entry: DirectPatchEntry,
+    graph: DiagramGraph,
+): DiagramWriteBackPlan {
+    val body = DiagramSlmExtension.emitBody(graph)
+    val startOffset = lineStarts.offsetOf(entry.span.startLine, source.length)
+    val startLineText = source.substring(
+        startOffset,
+        minOf(lineStarts.offsetOf(entry.span.startLine + 1, source.length), source.length),
+    )
+    val spanIsHeading = startLineText.trimStart().startsWith("#")
+    if (spanIsHeading) {
+        // Empty container body: the aggregate span points at the heading line. Insert the
+        // sentences below it; never rewrite the heading (it carries the design-node side).
+        if (body.isEmpty()) return DiagramWriteBackPlan.Ops(emptyList())
+        val insertAt = lineStarts.offsetOf(entry.span.startLine + 1, source.length)
+        val needsLeadingBreak = insertAt == source.length && !source.endsWith("\n")
+        val text = buildString {
+            if (needsLeadingBreak) append('\n')
+            append('\n')
+            append(body.joinToString("\n"))
+            append('\n')
+        }
+        return DiagramWriteBackPlan.Ops(listOf(DiagramTextOp(insertAt, insertAt, text)))
+    }
+    val indent = indentOfLine(source, lineStarts, entry.span.startLine)
+    val end = lineStarts.offsetOf(entry.span.endLine + 1, source.length)
+    val keepNewline = end > startOffset && source[end - 1] == '\n'
+    val replacement = if (body.isEmpty()) {
+        "" // graph emptied: drop the sentence lines entirely
+    } else {
+        indentBlock(body.joinToString("\n"), indent) + if (keepNewline) "\n" else ""
+    }
+    return DiagramWriteBackPlan.Ops(listOf(DiagramTextOp(startOffset, end, replacement)))
+}
+
 private fun withDiagramExtension(extensions: SlmExtensionRegistry): SlmExtensionRegistry =
     if (extensions.find(DiagramSlmExtension.kind) != null) {
         extensions
@@ -172,14 +193,18 @@ private fun withDiagramExtension(extensions: SlmExtensionRegistry): SlmExtension
         )
     }
 
-/** All typed entries of the document, in source order (top level, lists, blockquotes). */
-private fun collectTypedEntries(
+/**
+ * All CNL patch entries of the document, in source order (top level, lists,
+ * blockquotes) — heading desugar and container aggregates. The `diagram` key entry
+ * of a `## Diagram: …` container carries the aggregated graph payload.
+ */
+private fun collectPatchEntries(
     source: String,
     fileName: String,
     registry: SlmExtensionRegistry,
-): List<TypedEntry> {
+): List<DirectPatchEntry> {
     val parsed = SlmMarkdownParser(DiagnosticCollector(fileName), registry).parse(source)
-    val entries = mutableListOf<TypedEntry>()
+    val entries = mutableListOf<DirectPatchEntry>()
     fun walk(blocks: List<SlmBlock>) {
         blocks.forEach { block ->
             when (block) {

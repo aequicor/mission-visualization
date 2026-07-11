@@ -1,17 +1,93 @@
 package io.aequicor.visualization.engine.frontend.cnl
 
+import io.aequicor.visualization.engine.frontend.blocks.BooleanOpPatch
+import io.aequicor.visualization.engine.frontend.blocks.ComponentPatch
+import io.aequicor.visualization.engine.frontend.blocks.ExportPatch
+import io.aequicor.visualization.engine.frontend.blocks.HandoffPatch
+import io.aequicor.visualization.engine.frontend.blocks.InteractionPatch
+import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
+import io.aequicor.visualization.engine.frontend.blocks.MaskPatch
+import io.aequicor.visualization.engine.frontend.blocks.MediaPatch
+import io.aequicor.visualization.engine.frontend.blocks.MotionPatch
+import io.aequicor.visualization.engine.frontend.blocks.NestedInstancePatch
+import io.aequicor.visualization.engine.frontend.blocks.NodePatch
+import io.aequicor.visualization.engine.frontend.blocks.NodePositionMode
+import io.aequicor.visualization.engine.frontend.blocks.OverridesPatch
+import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
+import io.aequicor.visualization.engine.frontend.blocks.ResponsiveVariantPatch
+import io.aequicor.visualization.engine.frontend.blocks.SetOverridePatch
+import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
+import io.aequicor.visualization.engine.frontend.blocks.SizingPatch
+import io.aequicor.visualization.engine.frontend.blocks.SlotOverridePatch
+import io.aequicor.visualization.engine.frontend.blocks.StylePatch
+import io.aequicor.visualization.engine.frontend.blocks.TextPatch
+import io.aequicor.visualization.engine.frontend.blocks.TextSpanPatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
+import io.aequicor.visualization.engine.frontend.blocks.VectorPatch
+import io.aequicor.visualization.engine.frontend.blocks.readers.ReaderEnums
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
+import io.aequicor.visualization.engine.frontend.markdown.DirectPatchEntry
 import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
-import io.aequicor.visualization.engine.frontend.markdown.TypedEntry
-import io.aequicor.visualization.engine.frontend.yaml.YamlMap
-import io.aequicor.visualization.engine.frontend.yaml.parseSlmYaml
+import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.CodeHints
+import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
+import io.aequicor.visualization.engine.ir.model.DesignAction
+import io.aequicor.visualization.engine.ir.model.DesignAnnotation
+import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
+import io.aequicor.visualization.engine.ir.model.DesignEasing
+import io.aequicor.visualization.engine.ir.model.DesignEffect
+import io.aequicor.visualization.engine.ir.model.DesignExpression
+import io.aequicor.visualization.engine.ir.model.DesignGap
+import io.aequicor.visualization.engine.ir.model.DesignHandoff
+import io.aequicor.visualization.engine.ir.model.DesignInsets
+import io.aequicor.visualization.engine.ir.model.DesignMeasurement
+import io.aequicor.visualization.engine.ir.model.DesignMotion
+import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.DesignStrokes
+import io.aequicor.visualization.engine.ir.model.DesignTextStyle
+import io.aequicor.visualization.engine.ir.model.DesignTransition
+import io.aequicor.visualization.engine.ir.model.EasingKind
+import io.aequicor.visualization.engine.ir.model.ExportSetting
+import io.aequicor.visualization.engine.ir.model.GradientKind
+import io.aequicor.visualization.engine.ir.model.GradientStop
+import io.aequicor.visualization.engine.ir.model.GridPlacement
+import io.aequicor.visualization.engine.ir.model.GridTrack
+import io.aequicor.visualization.engine.ir.model.GuideLine
+import io.aequicor.visualization.engine.ir.model.GuideOrientation
+import io.aequicor.visualization.engine.ir.model.ImageScaleMode
+import io.aequicor.visualization.engine.ir.model.LayoutGridAlignment
+import io.aequicor.visualization.engine.ir.model.LayoutGridDefinition
+import io.aequicor.visualization.engine.ir.model.MotionFrame
+import io.aequicor.visualization.engine.ir.model.MotionKeyframes
+import io.aequicor.visualization.engine.ir.model.OverlayPosition
+import io.aequicor.visualization.engine.ir.model.OverlaySettings
+import io.aequicor.visualization.engine.ir.model.PropValue
+import io.aequicor.visualization.engine.ir.model.ResponsiveDimension
+import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.StrokeAlign
+import io.aequicor.visualization.engine.ir.model.TextContent
+import io.aequicor.visualization.engine.ir.model.TextListSettings
+import io.aequicor.visualization.engine.ir.model.TextListType
+import io.aequicor.visualization.engine.ir.model.TextTruncate
+import io.aequicor.visualization.engine.ir.model.TransitionDirection
+import io.aequicor.visualization.engine.ir.model.TransitionType
+import io.aequicor.visualization.engine.ir.model.bindable
+import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.subsystems.figures.HandleMirror
+import io.aequicor.visualization.subsystems.figures.HandleOffset
+import io.aequicor.visualization.subsystems.figures.VectorNetwork
+import io.aequicor.visualization.subsystems.figures.VectorPath
+import io.aequicor.visualization.subsystems.figures.VectorRegion
+import io.aequicor.visualization.subsystems.figures.VectorSegment
+import io.aequicor.visualization.subsystems.figures.VectorVertex
 
 /**
- * The CNL clause parser: a single sentence of `noun property…` phrases (RU/EN) → a
- * [CnlElement] with per-value source spans, plus the desugaring of that element into the
- * standard typed patches (`node`/`shape`/`layout`/`style`/`text`) reused by the block
- * readers. One parse serves both compile (desugar) and write-back (spans).
+ * The CNL clause parser: a single sentence of English `noun property…` phrases → a
+ * [CnlElement] with per-value source spans, plus the desugaring of that element **directly**
+ * into typed patches (`node`/`shape`/`layout`/`style`/`text` [DirectPatchEntry]s via
+ * [CnlDirectDesugar] — no YAML anywhere). One parse serves both compile (desugar) and
+ * write-back (spans).
  */
 internal object CnlParser {
     private val numberRegex = Regex("""-?\d+(\.\d+)?""")
@@ -90,7 +166,7 @@ internal object CnlParser {
         return null
     }
 
-    private fun entriesAllowed(entries: List<TypedEntry>, allowedKinds: Set<TypedBlockKind>?): Boolean =
+    private fun entriesAllowed(entries: List<DirectPatchEntry>, allowedKinds: Set<TypedBlockKind>?): Boolean =
         allowedKinds == null || entries.all { it.kind in allowedKinds }
 
     private val structuralHeadingKinds = setOf(
@@ -527,24 +603,32 @@ internal object CnlParser {
         val (group, after) = parseGroup(tokens, valueStart)
         val leaves = group.children.mapNotNull { it.leafText() }
         val parts = mutableListOf<String>()
+        val pairs = mutableListOf<Pair<String, String>>()
         var i = 0
         while (i + 1 < leaves.size) {
             parts += "${leaves[i]}: ${leaves[i + 1]}"
+            pairs += leaves[i] to leaves[i + 1]
             i += 2
         }
         if (i < leaves.size) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"${leaves[i]}\" has no value in the ( … ) pair list")
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(kind, listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(
+            kind,
+            listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)),
+            keywordSpan,
+            span,
+            payload = CnlPairsPayload(pairs),
+        )
         return after
     }
 
     /**
      * A fill phrase led by `color`/`fill` (bare solid or `( … )` solid-with-props) or by
      * `gradient`/`image`/`video` (always a `( … )` group). Bare solids keep their color token +
-     * span for surgical write-back ([CnlPropertyKind.Fill]); group forms are pre-lowered to a
-     * ready YAML fragment ([CnlPropertyKind.FillComplex]).
+     * span for surgical write-back ([CnlPropertyKind.Fill]); group forms carry the typed paint
+     * as a [CnlPaintPayload] ([CnlPropertyKind.FillComplex]).
      */
     private fun consumeFill(
         tokens: List<Token>,
@@ -558,9 +642,15 @@ internal object CnlParser {
         val keyword = tokens[keywordStart].text.lowercase()
         val next = tokens.getOrNull(valueStart)
 
-        fun addComplex(fragment: String, lastIdx: Int) {
+        fun addComplex(paint: DesignPaint?, lastIdx: Int) {
             val span = joinSpan(keywordSpan, tokens[lastIdx].span)
-            properties += CnlProperty(CnlPropertyKind.FillComplex, listOf(CnlValue(fragment, span)), keywordSpan, span)
+            properties += CnlProperty(
+                CnlPropertyKind.FillComplex,
+                listOf(CnlValue(tokens[keywordStart].text, span)),
+                keywordSpan,
+                span,
+                payload = CnlPaintPayload(paint),
+            )
         }
 
         if (keyword == "gradient" || keyword == "image" || keyword == "video") {
@@ -569,19 +659,19 @@ internal object CnlParser {
                 return valueStart
             }
             val (group, after) = parseGroup(tokens, valueStart)
-            val fragment = when (keyword) {
-                "gradient" -> gradientFragment(group)
-                "image" -> mediaFillFragment(group, video = false)
-                else -> mediaFillFragment(group, video = true)
+            val paint = when (keyword) {
+                "gradient" -> gradientPaintOf(group)
+                "image" -> mediaPaintOf(group, video = false)
+                else -> mediaPaintOf(group, video = true)
             }
-            addComplex(fragment, after - 1)
+            addComplex(paint, after - 1)
             return after
         }
 
         // `color`/`fill` with a `( … )` group → solid-with-props.
         if (next?.text == "(") {
             val (group, after) = parseGroup(tokens, valueStart)
-            addComplex(solidFragment(group), after - 1)
+            addComplex(solidPaintOf(group), after - 1)
             return after
         }
 
@@ -603,82 +693,112 @@ internal object CnlParser {
         return valueStart + 1
     }
 
-    // --- fill fragment builders (GGroup -> ready YAML fragment for a `fills:` list item) ---
+    private val fillModeWords = setOf("fill", "fit", "crop", "tile", "stretch")
 
-    private class FillProps {
-        var opacity: String? = null
+    // --- typed paint constructors (direct desugar; the semantic source of truth) ---
+
+    private val gradientKindEnums = mapOf(
+        "linear" to GradientKind.Linear, "radial" to GradientKind.Radial,
+        "angular" to GradientKind.Angular, "diamond" to GradientKind.Diamond,
+    )
+
+    /** Shared opacity/blend/visible paint props, coerced like `StyleBlockReader.readPaint`. */
+    private class PaintPropsTyped {
+        var opacity: Bindable<Double>? = null
         var blendMode: String? = null
-        var visible: String? = null
+        var visible: Bindable<Boolean>? = null
 
         fun apply(sub: String, value: String?): Boolean = when (sub) {
-            "opacity" -> { opacity = value; true }
-            "blend" -> { blendMode = value; true }
-            "visible" -> { visible = value?.let(::boolLiteral); true }
+            "opacity" -> { opacity = value?.let { CnlScalars.bindableDoubleOf(it) }; true }
+            "blend" -> { blendMode = value?.let { CnlScalars.stringOf(it) }; true }
+            "visible" -> { visible = value?.let { CnlScalars.bindableBooleanOf(it) }; true }
             else -> false
         }
 
-        fun parts(): List<String> = buildList {
-            opacity?.let { add("opacity: $it") }
-            blendMode?.let { add("blendMode: $it") }
-            visible?.let { add("visible: $it") }
-        }
+        val opacityOrDefault: Bindable<Double> get() = opacity ?: 1.0.bindable()
+        val blendOrDefault: String get() = blendMode ?: "normal"
+        val visibleOrDefault: Bindable<Boolean> get() = visible ?: true.bindable()
     }
 
-    private fun gradientFragment(group: GGroup): String {
+    /** A `color`/`fill` ( … ) group (mirrors the reader's map-paint branch); null when the color is missing/invalid. */
+    private fun solidPaintOf(group: GGroup): DesignPaint? {
         val children = group.children
-        var kindKey = "linearGradient"
-        var from: String? = null
-        var to: String? = null
-        val stops = mutableListOf<String>()
-        val props = FillProps()
+        var color: String? = null
+        val props = PaintPropsTyped()
+        var i = 0
+        while (i < children.size) {
+            val node = children[i]
+            val text = node.leafText()
+            val lower = text?.lowercase()
+            when {
+                lower != null && props.apply(lower, children.getOrNull(i + 1)?.leafText()) -> i += 2
+                text != null && (isColor(text) || isBinding(text)) -> { color = text; i += 1 }
+                else -> i += 1
+            }
+        }
+        val bound = color?.let { CnlScalars.colorOf(it) } ?: return null
+        return DesignPaint.Solid(bound, props.visibleOrDefault, props.opacityOrDefault, props.blendOrDefault)
+    }
+
+    /** A `gradient ( … )` group (mirrors the reader's gradient branch). */
+    private fun gradientPaintOf(group: GGroup): DesignPaint {
+        val children = group.children
+        var kind = GradientKind.Linear
+        var from: DesignPoint? = null
+        var to: DesignPoint? = null
+        val stops = mutableListOf<GradientStop>()
+        val props = PaintPropsTyped()
         var i = 0
         children.getOrNull(0)?.leafText()?.lowercase()?.let { word ->
-            gradientKinds[word]?.let { kindKey = it; i = 1 }
+            gradientKindEnums[word]?.let { kind = it; i = 1 }
         }
         while (i < children.size) {
             val text = children[i].leafText()?.lowercase()
             when {
-                text == "from" -> { from = pointFragment(children.getOrNull(i + 1)); i += 2 }
-                text == "to" -> { to = pointFragment(children.getOrNull(i + 1)); i += 2 }
+                text == "from" -> { from = literalPointOf(children.getOrNull(i + 1)); i += 2 }
+                text == "to" -> { to = literalPointOf(children.getOrNull(i + 1)); i += 2 }
                 text == "stops" -> {
                     i += 1
                     while (i < children.size) {
                         val stop = children[i].asGroup() ?: break
-                        stops += stopFragment(stop); i += 1
+                        stopOf(stop)?.let { stops += it }
+                        i += 1
                     }
                 }
                 text != null && props.apply(text, children.getOrNull(i + 1)?.leafText()) -> i += 2
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            add("type: $kindKey")
-            from?.let { add("from: $it") }
-            to?.let { add("to: $it") }
-            if (stops.isNotEmpty()) add("stops: [ ${stops.joinToString(", ")} ]")
-            addAll(props.parts())
-        }
-        return "{ ${parts.joinToString(", ")} }"
+        return DesignPaint.Gradient(
+            gradientType = kind,
+            from = from ?: DesignPoint(0.0, 0.0),
+            to = to ?: DesignPoint(0.0, 1.0),
+            stops = stops,
+            visible = props.visibleOrDefault,
+            opacity = props.opacityOrDefault,
+            blendMode = props.blendOrDefault,
+        )
     }
 
-    private fun mediaFillFragment(group: GGroup, video: Boolean): String {
+    /** An `image`/`video` ( … ) fill group (mirrors the reader's image/video branches). */
+    private fun mediaPaintOf(group: GGroup, video: Boolean): DesignPaint {
         val children = group.children
         var asset: String? = null
         var poster: String? = null
         var fillMode: String? = null
-        var focal: String? = null
+        var focal: GNode? = null
         var autoplay = false
         var loop = false
         var replaceable = false
         var muted: Boolean? = null
-        val props = FillProps()
+        val props = PaintPropsTyped()
         var i = 0
         while (i < children.size) {
             val text = children[i].leafText()?.lowercase()
             when {
                 text == "asset" -> { asset = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 text == "poster" -> { poster = children.getOrNull(i + 1)?.leafText(); i += 2 }
-                text == "focus" || text == "focal" -> { focal = pointFragment(children.getOrNull(i + 1)); i += 2 }
+                text == "focus" || text == "focal" -> { focal = children.getOrNull(i + 1); i += 2 }
                 text in fillModeWords -> { fillMode = text; i += 1 }
                 text == "autoplay" -> { autoplay = true; i += 1 }
                 text == "loop" -> { loop = true; i += 1 }
@@ -691,77 +811,60 @@ internal object CnlParser {
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            add("type: ${if (video) "video" else "image"}")
-            asset?.let { add("asset: ${yamlString(it)}") }
-            fillMode?.let { add("fillMode: $it") }
-            focal?.let { add("focalPoint: $it") }
-            if (video) {
-                poster?.let { add("poster: ${yamlString(it)}") }
-                if (autoplay) add("autoplay: true")
-                if (loop) add("loop: true")
-                muted?.let { add("muted: $it") }
-            } else if (replaceable) {
-                add("replaceable: true")
-            }
-            addAll(props.parts())
+        val scaleMode = fillMode?.let { ReaderEnums.fillMode[it] } ?: ImageScaleMode.Fill
+        val focalPoint = bindablePointOf(focal)
+        return if (video) {
+            DesignPaint.Video(
+                assetId = asset.orEmpty(),
+                scaleMode = scaleMode,
+                focalPoint = focalPoint,
+                posterAssetId = poster.orEmpty(),
+                autoplay = autoplay,
+                loop = loop,
+                muted = muted ?: true,
+                visible = props.visibleOrDefault,
+                opacity = props.opacityOrDefault,
+                blendMode = props.blendOrDefault,
+            )
+        } else {
+            DesignPaint.Image(
+                assetId = asset.orEmpty(),
+                scaleMode = scaleMode,
+                focalPoint = focalPoint,
+                replaceable = replaceable,
+                visible = props.visibleOrDefault,
+                opacity = props.opacityOrDefault,
+                blendMode = props.blendOrDefault,
+            )
         }
-        return "{ ${parts.joinToString(", ")} }"
     }
 
-    private fun solidFragment(group: GGroup): String {
-        val children = group.children
-        var color: String? = null
-        val props = FillProps()
-        var i = 0
-        while (i < children.size) {
-            val node = children[i]
-            val text = node.leafText()
-            val lower = text?.lowercase()
-            when {
-                lower != null && props.apply(lower, children.getOrNull(i + 1)?.leafText()) -> i += 2
-                text != null && (isColor(text) || isBinding(text)) -> { color = text; i += 1 }
-                else -> i += 1
-            }
-        }
-        val parts = buildList {
-            color?.let { add("color: ${colorLiteral(it)}") }
-            addAll(props.parts())
-        }
-        return "{ ${parts.joinToString(", ")} }"
-    }
-
-    private fun pointFragment(node: GNode?): String? {
+    /** A `(x y)` point read as literals (gradient from/to; the reader drops refs to `0.0` there). */
+    private fun literalPointOf(node: GNode?): DesignPoint? {
         val nums = node?.asGroup()?.children?.mapNotNull { it.leafText() } ?: return null
         if (nums.size < 2) return null
-        // Each axis may be a number, `$var`/`$prop` ref or `{{expr}}` binding; quote bindings for YAML.
-        return "{ x: ${numOrBindingYaml(nums[0])}, y: ${numOrBindingYaml(nums[1])} }"
+        return DesignPoint(CnlScalars.doubleOf(nums[0]) ?: 0.0, CnlScalars.doubleOf(nums[1]) ?: 0.0)
     }
 
-    private fun stopFragment(group: GGroup): String {
+    /** A `(x y)` focal point kept bindable (mirrors `readFocalPoint`'s map branch). */
+    private fun bindablePointOf(node: GNode?): DesignPoint? {
+        val nums = node?.asGroup()?.children?.mapNotNull { it.leafText() } ?: return null
+        if (nums.size < 2) return null
+        return DesignPoint(
+            x = CnlScalars.bindableDoubleOf(nums[0]) ?: 0.0.bindable(),
+            y = CnlScalars.bindableDoubleOf(nums[1]) ?: 0.0.bindable(),
+        )
+    }
+
+    /** A gradient stop group (mirrors `readStops`: position/color required, otherwise dropped). */
+    private fun stopOf(group: GGroup): GradientStop? {
         val leaves = group.children.mapNotNull { it.leafText() }
-        val color = leaves.firstOrNull() ?: "#000000"
-        val position = leaves.lastOrNull { it != "at" } ?: "0"
-        return "{ position: $position, color: ${colorLiteral(color)} }"
+        val colorToken = leaves.firstOrNull() ?: "#000000"
+        val positionToken = leaves.lastOrNull { it != "at" } ?: "0"
+        val position = CnlScalars.doubleOf(positionToken) ?: return null
+        val color = CnlScalars.colorOf(colorToken) ?: return null
+        return GradientStop(position, color)
     }
-
-    private fun boolLiteral(word: String): String =
-        CnlVocabulary.booleans[word.lowercase()]?.toString() ?: word
-
-    /** Double-quoted YAML scalar with the escapes [parseQuoted] decodes (`\\`, `\"`, `\n`, `\t`, `\r`). */
-    private fun yamlString(value: String): String =
-        "\"" + value
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\t", "\\t")
-            .replace("\r", "\\r") + "\""
-
-    private val gradientKinds = mapOf(
-        "linear" to "linearGradient", "radial" to "radialGradient",
-        "angular" to "angularGradient", "diamond" to "diamondGradient",
-    )
-    private val fillModeWords = setOf("fill", "fit", "crop", "tile", "stretch")
 
     /** `radius N` (uniform, write-back friendly) or `radius (tl tr br bl)` (per-corner). */
     private fun consumeRadius(
@@ -782,7 +885,20 @@ internal object CnlParser {
             }
             val fragment = "{ topLeft: ${nums[0]}, topRight: ${nums[1]}, bottomRight: ${nums[2]}, bottomLeft: ${nums[3]} }"
             val span = joinSpan(tokens[valueStart].span, tokens[after - 1].span)
-            properties += CnlProperty(CnlPropertyKind.Radius, listOf(CnlValue(fragment, span)), keywordSpan, joinSpan(keywordSpan, span))
+            properties += CnlProperty(
+                CnlPropertyKind.Radius,
+                listOf(CnlValue(fragment, span)),
+                keywordSpan,
+                joinSpan(keywordSpan, span),
+                payload = CnlRadiusPayload(
+                    DesignCornerRadius(
+                        topLeft = CnlScalars.bindableDoubleOf(nums[0]) ?: 0.0.bindable(),
+                        topRight = CnlScalars.bindableDoubleOf(nums[1]) ?: 0.0.bindable(),
+                        bottomRight = CnlScalars.bindableDoubleOf(nums[2]) ?: 0.0.bindable(),
+                        bottomLeft = CnlScalars.bindableDoubleOf(nums[3]) ?: 0.0.bindable(),
+                    ),
+                ),
+            )
             return after
         }
         if (next == null || !isNumberLike(next.text)) {
@@ -810,19 +926,27 @@ internal object CnlParser {
         val (group, after) = parseGroup(tokens, valueStart)
         val children = group.children
         val refs = mutableListOf<CnlValue>()
+        val pairs = mutableListOf<Pair<String, String>>()
         var i = 0
         while (i < children.size) {
             val readerKey = styleRefKeys[children[i].leafText()?.lowercase()]
             val value = children.getOrNull(i + 1)?.leafText()
             if (readerKey != null && value != null) {
                 refs += CnlValue("$readerKey: $value", keywordSpan)
+                pairs += readerKey to value
                 i += 2
             } else {
                 i += 1
             }
         }
         if (refs.isNotEmpty()) {
-            properties += CnlProperty(CnlPropertyKind.StyleRefs, refs, keywordSpan, joinSpan(keywordSpan, tokens[after - 1].span))
+            properties += CnlProperty(
+                CnlPropertyKind.StyleRefs,
+                refs,
+                keywordSpan,
+                joinSpan(keywordSpan, tokens[after - 1].span),
+                payload = CnlPairsPayload(pairs),
+            )
         }
         return after
     }
@@ -844,14 +968,21 @@ internal object CnlParser {
     ): Int {
         var i = valueStart
         val entries = mutableListOf<String>()
+        val pairs = mutableListOf<Pair<String, String>>()
         while (tokens.getOrNull(i)?.text == "(") {
             val (group, after) = parseGroup(tokens, i)
             val leaves = group.children.mapNotNull { it.leafText() }
             val key = leaves.getOrNull(0)
             val raw = leaves.getOrNull(1)
             if (key != null && raw != null) {
-                val value = if (kind == CnlPropertyKind.Features) boolLiteral(raw) else raw
+                // Features: the boolean-word TABLE lookup (`on`/`off`/`yes`…) → "true"/"false".
+                val value = if (kind == CnlPropertyKind.Features) {
+                    CnlVocabulary.booleans[raw.lowercase()]?.toString() ?: raw
+                } else {
+                    raw
+                }
                 entries += "$key: $value"
+                pairs += key to value
             }
             i = after
         }
@@ -859,8 +990,27 @@ internal object CnlParser {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "Expected ( key value ) groups")
             return valueStart
         }
+        val payload = if (kind == CnlPropertyKind.Features) {
+            // Mirrors TextBlockReader.booleanEntries: only boolean-typed values survive.
+            CnlFeaturesPayload(
+                pairs.mapNotNull { (key, value) ->
+                    when (value) {
+                        "true" -> key to true
+                        "false" -> key to false
+                        else -> null
+                    }
+                }.toMap(),
+            )
+        } else {
+            // Mirrors TextBlockReader.axisEntries: number values only, friendly names → axis tags.
+            CnlAxesPayload(
+                pairs.mapNotNull { (key, value) ->
+                    CnlScalars.doubleOf(value)?.let { number -> (variableAxisTags[key] ?: key) to number }
+                }.toMap(),
+            )
+        }
         val span = joinSpan(keywordSpan, tokens[i - 1].span)
-        properties += CnlProperty(kind, listOf(CnlValue("{ ${entries.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(kind, listOf(CnlValue("{ ${entries.joinToString(", ")} }", span)), keywordSpan, span, payload)
         return i
     }
 
@@ -888,12 +1038,26 @@ internal object CnlParser {
             listOf(CnlValue("{ type: $type, indent: $indent }", span)),
             keywordSpan,
             span,
+            payload = CnlListSettingsPayload(
+                TextListSettings(
+                    type = ReaderEnums.textListType[type] ?: TextListType.None,
+                    indent = CnlScalars.intOf(indent) ?: 0,
+                ),
+            ),
         )
         return after
     }
 
-    private fun unitLiteral(value: String): String =
-        if (value.endsWith("%")) "{ unit: percent, value: ${value.dropLast(1)} }" else value
+    /** Friendly variable-font axis names → registered tags (mirrors TextBlockReader.axisEntries). */
+    private val variableAxisTags = mapOf(
+        "weight" to "wght", "opticalSize" to "opsz", "width" to "wdth", "slant" to "slnt", "italic" to "ital",
+    )
+
+    /** Mirrors LayoutBlockReader's private `guideOrientations` table. */
+    private val guideOrientations = mapOf(
+        "horizontal" to GuideOrientation.Horizontal,
+        "vertical" to GuideOrientation.Vertical,
+    )
 
     // --- layout-deep ---
 
@@ -910,25 +1074,43 @@ internal object CnlParser {
         diagnostics: DiagnosticCollector,
     ): Int {
         val next = tokens.getOrNull(valueStart)
-        fun add(value: String, span: CnlSpan, end: Int): Int {
-            properties += CnlProperty(kind, listOf(CnlValue(value, span)), keywordSpan, joinSpan(keywordSpan, span))
+        fun add(value: String, sizing: SizingPatch, span: CnlSpan, end: Int): Int {
+            properties += CnlProperty(
+                kind,
+                listOf(CnlValue(value, span)),
+                keywordSpan,
+                joinSpan(keywordSpan, span),
+                payload = CnlSizingPayload(sizing),
+            )
             return end
         }
         if (next?.text == "(") {
             val (group, after) = parseGroup(tokens, valueStart)
-            return add(sizingRecordFragment(group), joinSpan(tokens[valueStart].span, tokens[after - 1].span), after)
+            return add(
+                group.children.firstOrNull()?.leafText() ?: "fixed",
+                sizingRecordOf(group),
+                joinSpan(tokens[valueStart].span, tokens[after - 1].span),
+                after,
+            )
         }
         if (next != null && next.text.lowercase() in sizingModeWords) {
-            return add(next.text.lowercase(), next.span, valueStart + 1)
+            val mode = next.text.lowercase()
+            return add(mode, SizingPatch(mode = ReaderEnums.sizingMode[mode]), next.span, valueStart + 1)
         }
         if (next == null || !isNumber(next.text)) {
             CnlDiagnostics.warn(diagnostics, CnlRule.BadNumber, lineNumber, "Size axis needs a number, `fill`, `hug` or a ( … ) record")
             return valueStart
         }
-        return add("{ type: fixed, value: ${next.text} }", next.span, valueStart + 1)
+        return add(
+            "{ type: fixed, value: ${next.text} }",
+            SizingPatch(mode = SizingMode.Fixed, value = CnlScalars.doubleOf(next.text)),
+            next.span,
+            valueStart + 1,
+        )
     }
 
-    private fun sizingRecordFragment(group: GGroup): String {
+    /** A `( <mode> [N] [min N] [max N] )` sizing record (mirrors `readSizingAxis`'s map branch). */
+    private fun sizingRecordOf(group: GGroup): SizingPatch {
         val children = group.children
         val mode = children.getOrNull(0)?.leafText()?.lowercase() ?: "fixed"
         var value: String? = null
@@ -944,13 +1126,12 @@ internal object CnlParser {
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            add("type: $mode")
-            value?.let { add("value: $it") }
-            min?.let { add("min: $it") }
-            max?.let { add("max: $it") }
-        }
-        return "{ ${parts.joinToString(", ")} }"
+        return SizingPatch(
+            mode = ReaderEnums.sizingMode[mode],
+            value = value?.let { CnlScalars.doubleOf(it) },
+            min = min?.let { CnlScalars.doubleOf(it) },
+            max = max?.let { CnlScalars.doubleOf(it) },
+        )
     }
 
     /** `gap N` | `gap auto` | `gap ( row N column N )`. */
@@ -963,19 +1144,37 @@ internal object CnlParser {
         diagnostics: DiagnosticCollector,
     ): Int {
         val next = tokens.getOrNull(valueStart)
-        fun add(value: String, span: CnlSpan, end: Int): Int {
-            properties += CnlProperty(CnlPropertyKind.Gap, listOf(CnlValue(value, span)), keywordSpan, joinSpan(keywordSpan, span))
+        fun add(value: String, span: CnlSpan, end: Int, payload: CnlPayload? = null): Int {
+            properties += CnlProperty(
+                CnlPropertyKind.Gap,
+                listOf(CnlValue(value, span)),
+                keywordSpan,
+                joinSpan(keywordSpan, span),
+                payload = payload,
+            )
             return end
         }
         if (next?.text?.lowercase() == "auto") return add("auto", next.span, valueStart + 1)
         if (next?.text == "(") {
             val (group, after) = parseGroup(tokens, valueStart)
             val leaves = group.children.mapNotNull { it.leafText() }
+            var rowToken: String? = null
+            var columnToken: String? = null
             val entries = buildList {
-                val row = leaves.indexOf("row"); if (row >= 0) leaves.getOrNull(row + 1)?.let { add("row: $it") }
-                val col = leaves.indexOf("column"); if (col >= 0) leaves.getOrNull(col + 1)?.let { add("column: $it") }
+                val row = leaves.indexOf("row")
+                if (row >= 0) leaves.getOrNull(row + 1)?.let { add("row: $it"); rowToken = it }
+                val col = leaves.indexOf("column")
+                if (col >= 0) leaves.getOrNull(col + 1)?.let { add("column: $it"); columnToken = it }
             }
-            return add("{ ${entries.joinToString(", ")} }", joinSpan(tokens[valueStart].span, tokens[after - 1].span), after)
+            return add(
+                "{ ${entries.joinToString(", ")} }",
+                joinSpan(tokens[valueStart].span, tokens[after - 1].span),
+                after,
+                payload = CnlGapPayload(
+                    row = rowToken?.let { CnlScalars.bindableDoubleOf(it) },
+                    column = columnToken?.let { CnlScalars.bindableDoubleOf(it) },
+                ),
+            )
         }
         if (next == null || !isNumberLike(next.text)) {
             CnlDiagnostics.warn(diagnostics, CnlRule.BadNumber, lineNumber, "Gap needs a number, `auto` or a ( row/column ) record")
@@ -1000,12 +1199,25 @@ internal object CnlParser {
         val (group, after) = parseGroup(tokens, valueStart)
         val leaves = group.children.mapNotNull { it.leafText() }
         val entries = mutableListOf<String>()
+        val pairs = mutableListOf<Pair<String, String>>()
         var i = 0
         while (i < leaves.size - 1) {
-            if (leaves[i] in anchorSides) { entries += "${leaves[i]}: ${leaves[i + 1]}"; i += 2 } else i += 1
+            if (leaves[i] in anchorSides) {
+                entries += "${leaves[i]}: ${leaves[i + 1]}"
+                pairs += leaves[i] to leaves[i + 1]
+                i += 2
+            } else {
+                i += 1
+            }
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Anchor, entries.map { CnlValue(it, span) }, keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Anchor,
+            entries.map { CnlValue(it, span) },
+            keywordSpan,
+            span,
+            payload = CnlPairsPayload(pairs),
+        )
         return after
     }
 
@@ -1027,16 +1239,23 @@ internal object CnlParser {
         val (group, after) = parseGroup(tokens, valueStart)
         val leaves = group.children.mapNotNull { it.leafText() }
         val entries = mutableListOf<String>()
+        val pairs = mutableListOf<Pair<String, String>>()
         var i = 0
         while (i < leaves.size - 1) {
             when (leaves[i].lowercase()) {
-                "horizontal" -> { entries += "horizontal: ${leaves[i + 1]}"; i += 2 }
-                "vertical" -> { entries += "vertical: ${leaves[i + 1]}"; i += 2 }
+                "horizontal" -> { entries += "horizontal: ${leaves[i + 1]}"; pairs += "horizontal" to leaves[i + 1]; i += 2 }
+                "vertical" -> { entries += "vertical: ${leaves[i + 1]}"; pairs += "vertical" to leaves[i + 1]; i += 2 }
                 else -> i += 1
             }
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Constraints, entries.map { CnlValue(it, span) }, keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Constraints,
+            entries.map { CnlValue(it, span) },
+            keywordSpan,
+            span,
+            payload = CnlPairsPayload(pairs),
+        )
         return after
     }
 
@@ -1052,18 +1271,25 @@ internal object CnlParser {
         val (group, after) = parseGroup(tokens, valueStart)
         val leaves = group.children.mapNotNull { it.leafText() }
         val entries = mutableListOf<String>()
+        val pairs = mutableListOf<Pair<String, String>>()
         var i = 0
         while (i < leaves.size - 1) {
             when (leaves[i].lowercase()) {
-                "inline" -> { entries += "inline: ${leaves[i + 1]}"; i += 2 }
-                "block" -> { entries += "block: ${leaves[i + 1]}"; i += 2 }
-                "baseline" -> { entries += "baseline: ${leaves[i + 1]}"; i += 2 }
+                "inline" -> { entries += "inline: ${leaves[i + 1]}"; pairs += "inline" to leaves[i + 1]; i += 2 }
+                "block" -> { entries += "block: ${leaves[i + 1]}"; pairs += "block" to leaves[i + 1]; i += 2 }
+                "baseline" -> { entries += "baseline: ${leaves[i + 1]}"; pairs += "baseline" to leaves[i + 1]; i += 2 }
                 else -> i += 1
             }
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         val fragment = "{ ${entries.joinToString(", ")} }"
-        properties += CnlProperty(CnlPropertyKind.ContainerAlign, listOf(CnlValue(fragment, span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.ContainerAlign,
+            listOf(CnlValue(fragment, span)),
+            keywordSpan,
+            span,
+            payload = CnlPairsPayload(pairs),
+        )
         return after
     }
 
@@ -1084,42 +1310,52 @@ internal object CnlParser {
             return valueStart
         }
         val (group, after) = parseGroup(tokens, valueStart)
-        val fragment = linkSpanFragment(group)
-        if (fragment == null) {
+        val typed = linkSpanOf(group)
+        if (typed == null) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"link\" needs range (s e) and url «href» or to <id>")
             return after
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Link, listOf(CnlValue(fragment, span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Link,
+            listOf(CnlValue("link", span)),
+            keywordSpan,
+            span,
+            payload = CnlSpanPayload(typed),
+        )
         return after
     }
 
-    private fun linkSpanFragment(group: GGroup): String? {
+    /** A `link ( … )` span (mirrors `TextBlockReader.readSpan`'s link branch). */
+    private fun linkSpanOf(group: GGroup): TextSpanPatch? {
         val children = group.children
-        var range: String? = null
-        var link: String? = null
+        var range: Pair<Int, Int>? = null
+        var linkUrl: String? = null
+        var linkNodeTarget: String? = null
+        var hasLink = false
         var i = 0
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
                 "range" -> {
                     val nums = children.getOrNull(i + 1)?.asGroup()?.children
                         ?.mapNotNull { it.leafText() }?.filter { isNumber(it) }
-                    if (nums != null && nums.size >= 2) range = "range: [ ${nums[0]}, ${nums[1]} ]"
+                    if (nums != null && nums.size >= 2) range = nums[0].toDouble().toInt() to nums[1].toDouble().toInt()
                     i += 2
                 }
                 "url" -> {
-                    children.getOrNull(i + 1)?.leafText()?.let { link = "link: { type: url, href: ${yamlString(it)} }" }
+                    children.getOrNull(i + 1)?.leafText()?.let { linkUrl = it; linkNodeTarget = null; hasLink = true }
                     i += 2
                 }
                 "to" -> {
-                    children.getOrNull(i + 1)?.leafText()?.let { link = "link: { type: node, target: $it }" }
+                    children.getOrNull(i + 1)?.leafText()?.let { linkNodeTarget = CnlScalars.stringOf(it); linkUrl = null; hasLink = true }
                     i += 2
                 }
                 else -> i += 1
             }
         }
-        if (range == null || link == null) return null
-        return "{ $range, $link }"
+        val bounds = range ?: return null
+        if (!hasLink) return null
+        return TextSpanPatch(start = bounds.first, end = bounds.second, linkUrl = linkUrl, linkNodeTarget = linkNodeTarget)
     }
 
     /**
@@ -1139,38 +1375,47 @@ internal object CnlParser {
             return valueStart
         }
         val (group, after) = parseGroup(tokens, valueStart)
-        val fragment = spanFragment(group)
-        if (fragment == null) {
+        val typed = styleSpanOf(group)
+        if (typed == null) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"span\" needs range (s e) and style <ref>")
             return after
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Span, listOf(CnlValue(fragment, span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Span,
+            listOf(CnlValue("span", span)),
+            keywordSpan,
+            span,
+            payload = CnlSpanPayload(typed),
+        )
         return after
     }
 
-    private fun spanFragment(group: GGroup): String? {
+    /** A `span ( … )` style-ref span (mirrors `TextBlockReader.readSpan`'s style-ref form). */
+    private fun styleSpanOf(group: GGroup): TextSpanPatch? {
         val children = group.children
-        var range: String? = null
+        var range: Pair<Int, Int>? = null
         var style: String? = null
+        var hasStyle = false
         var i = 0
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
                 "range" -> {
                     val nums = children.getOrNull(i + 1)?.asGroup()?.children
                         ?.mapNotNull { it.leafText() }?.filter { isNumber(it) }
-                    if (nums != null && nums.size >= 2) range = "range: [ ${nums[0]}, ${nums[1]} ]"
+                    if (nums != null && nums.size >= 2) range = nums[0].toDouble().toInt() to nums[1].toDouble().toInt()
                     i += 2
                 }
                 "style" -> {
-                    children.getOrNull(i + 1)?.leafText()?.let { style = "style: $it" }
+                    children.getOrNull(i + 1)?.leafText()?.let { style = CnlScalars.stringOf(it); hasStyle = true }
                     i += 2
                 }
                 else -> i += 1
             }
         }
-        if (range == null || style == null) return null
-        return "{ $range, $style }"
+        val bounds = range ?: return null
+        if (!hasStyle) return null
+        return TextSpanPatch(start = bounds.first, end = bounds.second, styleRef = style)
     }
 
     // --- layout-deep P4b: overflow / scroll / grid tracks / placement / guides / grids ---
@@ -1190,12 +1435,19 @@ internal object CnlParser {
         }
         val (group, after) = parseGroup(tokens, valueStart)
         val leaves = group.children.mapNotNull { it.leafText() }
+        val pairs = mutableListOf<Pair<String, String>>()
         val entries = buildList {
-            val x = leaves.indexOf("x"); if (x >= 0) leaves.getOrNull(x + 1)?.let { add("x: $it") }
-            val y = leaves.indexOf("y"); if (y >= 0) leaves.getOrNull(y + 1)?.let { add("y: $it") }
+            val x = leaves.indexOf("x"); if (x >= 0) leaves.getOrNull(x + 1)?.let { add("x: $it"); pairs += "x" to it }
+            val y = leaves.indexOf("y"); if (y >= 0) leaves.getOrNull(y + 1)?.let { add("y: $it"); pairs += "y" to it }
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Overflow, listOf(CnlValue("{ ${entries.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Overflow,
+            listOf(CnlValue("{ ${entries.joinToString(", ")} }", span)),
+            keywordSpan,
+            span,
+            payload = CnlPairsPayload(pairs),
+        )
         return after
     }
 
@@ -1216,6 +1468,7 @@ internal object CnlParser {
         val children = group.children
         var direction: String? = null
         var fixed: String? = null
+        var fixedIds: List<String>? = null
         var sticky = false
         var i = 0
         while (i < children.size) {
@@ -1224,6 +1477,7 @@ internal object CnlParser {
                 "fixedchildren" -> {
                     val ids = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }
                     fixed = ids?.joinToString(", ")?.let { "[ $it ]" }
+                    fixedIds = ids
                     i += 2
                 }
                 "sticky" -> { sticky = true; i += 1 }
@@ -1236,7 +1490,17 @@ internal object CnlParser {
             if (sticky) add("sticky: true")
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Scroll, listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Scroll,
+            listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)),
+            keywordSpan,
+            span,
+            payload = CnlScrollPayload(
+                direction = direction?.let { ReaderEnums.scrollDirection[it] },
+                sticky = sticky,
+                fixedChildren = fixedIds?.mapNotNull { CnlScalars.plainStringOf(it) },
+            ),
+        )
         return after
     }
 
@@ -1257,56 +1521,56 @@ internal object CnlParser {
         }
         val (group, after) = parseGroup(tokens, valueStart)
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(kind, listOf(CnlValue(trackAxisFragment(group), span)), keywordSpan, span)
+        properties += CnlProperty(
+            kind,
+            listOf(CnlValue(keyword, span)),
+            keywordSpan,
+            span,
+            payload = trackAxisOf(group),
+        )
         return after
     }
 
-    private fun trackAxisFragment(group: GGroup): String {
+    /** A `columns`/`rows` ( … ) group (mirrors `LayoutBlockReader.readTrackAxis`). */
+    private fun trackAxisOf(group: GGroup): CnlTrackAxisPayload {
         val children = group.children
-        var count: String? = null
-        var track: String? = null
-        var tracks: String? = null
-        var gap: String? = null
-        var min: String? = null
+        var countToken: String? = null
+        var trackToken: String? = null
+        var tracksTokens: List<String>? = null
+        var gapToken: String? = null
+        var minToken: String? = null
         var auto = false
         var i = 0
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
-                "count" -> { count = children.getOrNull(i + 1)?.leafText(); i += 2 }
-                "track" -> { track = children.getOrNull(i + 1)?.leafText()?.let { trackValueYaml(it) }; i += 2 }
+                "count" -> { countToken = children.getOrNull(i + 1)?.leafText(); i += 2 }
+                "track" -> { trackToken = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "tracks" -> {
-                    val values = children.getOrNull(i + 1)?.asGroup()?.children
-                        ?.mapNotNull { it.leafText()?.let { text -> trackValueYaml(text) } }
-                    tracks = values?.joinToString(", ")?.let { "[ $it ]" }
+                    tracksTokens = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }
                     i += 2
                 }
-                "gap" -> { gap = children.getOrNull(i + 1)?.leafText()?.let { trackValueYaml(it) }; i += 2 }
-                "min" -> { min = children.getOrNull(i + 1)?.leafText()?.let { trackValueYaml(it) }; i += 2 }
+                "gap" -> { gapToken = children.getOrNull(i + 1)?.leafText(); i += 2 }
+                "min" -> { minToken = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "auto" -> { auto = true; i += 1 }
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            count?.let { add("count: $it") }
-            track?.let { add("track: $it") }
-            tracks?.let { add("tracks: $it") }
-            if (auto) add("auto: true")
-            min?.let { add("min: $it") }
-            gap?.let { add("gap: $it") }
+        val count = countToken?.let { CnlScalars.intOf(it) }
+        val track = trackToken?.let { CnlScalars.gridTrackOf(it) }
+        val trackList = tracksTokens?.mapNotNull { CnlScalars.gridTrackOf(it) }
+        val tracks = when {
+            trackList != null -> trackList
+            count != null && count > 0 -> List(count) { track ?: GridTrack.Flex(1.0.bindable()) }
+            track != null && !auto -> listOf(track)
+            else -> null
         }
-        return "{ ${parts.joinToString(", ")} }"
+        return CnlTrackAxisPayload(
+            tracks = tracks,
+            gap = gapToken?.let { CnlScalars.bindableDoubleOf(it) },
+            implicitTrack = if (auto) track ?: GridTrack.Flex(1.0.bindable()) else null,
+            min = minToken?.let { CnlScalars.bindableDoubleOf(it) },
+        )
     }
-
-    /**
-     * Formats a grid-track / gap / min value for the enclosing `{ … }` flow mapping. A braceless
-     * `$var` / `$prop.x` token ref is written verbatim so the reader sees a [Bindable.VarRef] /
-     * [Bindable.PropRef]. Any value carrying braces — a `{{expr}}` binding, a `{{expr}}fr` flex
-     * binding, or a braced flex ref `${id}fr` — is quoted so its `{`/`}` neither open nor close a
-     * nested mapping. Literals (`200`, `1fr`, `hug`) and braceless refs (`$rail`, `$railfr`) pass
-     * through unchanged.
-     */
-    private fun trackValueYaml(text: String): String =
-        if (text.any { it == '{' || it == '}' }) yamlString(text) else text
 
     /** `place ( column N row N columnSpan N rowSpan N )` → `layout.placement`. */
     private fun consumePlace(
@@ -1324,18 +1588,33 @@ internal object CnlParser {
         val (group, after) = parseGroup(tokens, valueStart)
         val children = group.children
         val entries = mutableListOf<String>()
+        var column: String? = null
+        var row: String? = null
+        var columnSpan: String? = null
+        var rowSpan: String? = null
         var i = 0
         while (i < children.size - 1) {
             when (children[i].leafText()?.lowercase()) {
-                "column" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "column: $it" }; i += 2 }
-                "row" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "row: $it" }; i += 2 }
-                "columnspan" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "columnSpan: $it" }; i += 2 }
-                "rowspan" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "rowSpan: $it" }; i += 2 }
+                "column" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "column: $it"; column = it }; i += 2 }
+                "row" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "row: $it"; row = it }; i += 2 }
+                "columnspan" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "columnSpan: $it"; columnSpan = it }; i += 2 }
+                "rowspan" -> { children.getOrNull(i + 1)?.leafText()?.let { entries += "rowSpan: $it"; rowSpan = it }; i += 2 }
                 else -> i += 1
             }
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Place, listOf(CnlValue("{ ${entries.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Place,
+            listOf(CnlValue("{ ${entries.joinToString(", ")} }", span)),
+            keywordSpan,
+            span,
+            payload = CnlPlacePayload(
+                column = column?.let { CnlScalars.intOf(it) },
+                row = row?.let { CnlScalars.intOf(it) },
+                columnSpan = columnSpan?.let { CnlScalars.intOf(it) },
+                rowSpan = rowSpan?.let { CnlScalars.intOf(it) },
+            ),
+        )
         return after
     }
 
@@ -1354,6 +1633,7 @@ internal object CnlParser {
         }
         var i = valueStart
         val items = mutableListOf<String>()
+        val guides = mutableListOf<GuideLine>()
         while (tokens.getOrNull(i)?.text == "(") {
             val (group, after) = parseGroup(tokens, i)
             val leaves = group.children.mapNotNull { it.leafText() }
@@ -1361,11 +1641,22 @@ internal object CnlParser {
             val position = leaves.getOrNull(1)
             if (orientation != null && position != null) {
                 items += "{ orientation: $orientation, position: $position }"
+                val typedOrientation = guideOrientations[orientation]
+                val typedPosition = CnlScalars.doubleOf(position)
+                if (typedOrientation != null && typedPosition != null) {
+                    guides += GuideLine(typedOrientation, typedPosition)
+                }
             }
             i = after
         }
         val span = joinSpan(keywordSpan, tokens[i - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Guides, listOf(CnlValue("[ ${items.joinToString(", ")} ]", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Guides,
+            listOf(CnlValue("[ ${items.joinToString(", ")} ]", span)),
+            keywordSpan,
+            span,
+            payload = CnlGuidesPayload(guides),
+        )
         return i
     }
 
@@ -1383,18 +1674,25 @@ internal object CnlParser {
             return valueStart
         }
         var i = valueStart
-        val items = mutableListOf<String>()
+        val grids = mutableListOf<LayoutGridDefinition>()
         while (tokens.getOrNull(i)?.text == "(") {
             val (group, after) = parseGroup(tokens, i)
-            items += gridFragment(group)
+            gridDefinitionOf(group)?.let { grids += it }
             i = after
         }
         val span = joinSpan(keywordSpan, tokens[i - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Grids, listOf(CnlValue("[ ${items.joinToString(", ")} ]", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Grids,
+            listOf(CnlValue("grids", span)),
+            keywordSpan,
+            span,
+            payload = CnlGridsPayload(grids),
+        )
         return i
     }
 
-    private fun gridFragment(group: GGroup): String {
+    /** A `( <type> [count N] … )` grid overlay item (mirrors `LayoutBlockReader.readGrids`; typeless items dropped). */
+    private fun gridDefinitionOf(group: GGroup): LayoutGridDefinition? {
         val children = group.children
         val type = children.getOrNull(0)?.leafText()?.lowercase() ?: "columns"
         var count: String? = null
@@ -1407,10 +1705,10 @@ internal object CnlParser {
         var i = 1
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
-                "count" -> { count = children.getOrNull(i + 1)?.leafText()?.let { trackValueYaml(it) }; i += 2 }
-                "size" -> { size = children.getOrNull(i + 1)?.leafText()?.let { trackValueYaml(it) }; i += 2 }
-                "gutter" -> { gutter = children.getOrNull(i + 1)?.leafText()?.let { trackValueYaml(it) }; i += 2 }
-                "margin" -> { margin = children.getOrNull(i + 1)?.leafText()?.let { trackValueYaml(it) }; i += 2 }
+                "count" -> { count = children.getOrNull(i + 1)?.leafText(); i += 2 }
+                "size" -> { size = children.getOrNull(i + 1)?.leafText(); i += 2 }
+                "gutter" -> { gutter = children.getOrNull(i + 1)?.leafText(); i += 2 }
+                "margin" -> { margin = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "alignment" -> { alignment = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "color" -> { color = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "visible" -> {
@@ -1420,24 +1718,24 @@ internal object CnlParser {
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            add("type: $type")
-            count?.let { add("count: $it") }
-            size?.let { add("size: $it") }
-            gutter?.let { add("gutter: $it") }
-            margin?.let { add("margin: $it") }
-            alignment?.let { add("alignment: $it") }
-            color?.let { add("color: ${colorLiteral(it)}") }
-            visible?.let { add("visible: $it") }
-        }
-        return "{ ${parts.joinToString(", ")} }"
+        val gridType = ReaderEnums.gridType[type] ?: return null
+        return LayoutGridDefinition(
+            type = gridType,
+            count = count?.let { CnlScalars.bindableIntOf(it) },
+            size = size?.let { CnlScalars.bindableDoubleOf(it) },
+            gutter = gutter?.let { CnlScalars.bindableDoubleOf(it) },
+            margin = margin?.let { CnlScalars.bindableDoubleOf(it) },
+            alignment = alignment?.let { ReaderEnums.gridAlignment[it] } ?: LayoutGridAlignment.Stretch,
+            color = color?.let { CnlScalars.colorOf(it) }?.let { (it as? Bindable.Value)?.value },
+            visible = visible?.let { it == "true" } ?: true,
+        )
     }
 
     // ============ P6 consumers — media node / shape params / vector paths·networks / boolean / mask.
 
     /** `media ( asset <id> [video|image] [fill|fit|crop|tile|stretch] [focus center|(x y)] [alt «…»]
      *  [opacity n|$ref] [blend <mode>] [poster <id>] [autoplay] [loop] [replaceable] [unmuted] )`
-     *  → a pre-lowered `media:` record body. */
+     *  → a typed [MediaPatch] carried as a [CnlMediaPayload]. */
     private fun consumeMedia(
         tokens: List<Token>,
         valueStart: Int,
@@ -1452,16 +1750,23 @@ internal object CnlParser {
         }
         val (group, after) = parseGroup(tokens, valueStart)
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Media, listOf(CnlValue(mediaFragment(group), span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Media,
+            listOf(CnlValue("media", span)),
+            keywordSpan,
+            span,
+            payload = CnlMediaPayload(mediaPatchOf(group)),
+        )
         return after
     }
 
-    private fun mediaFragment(group: GGroup): String {
+    /** Typed twin of the retired YAML `media:` reader semantics. */
+    private fun mediaPatchOf(group: GGroup): MediaPatch {
         val children = group.children
         var asset: String? = null
         var kind: String? = null      // only "video" survives; "image" is the reader default
         var fillMode: String? = null
-        var focal: String? = null
+        var focal: DesignPoint? = null
         var alt: String? = null
         var opacity: String? = null
         var blend: String? = null
@@ -1469,7 +1774,7 @@ internal object CnlParser {
         var autoplay = false
         var loop = false
         var replaceable = false
-        var muted: String? = null
+        var muted: Boolean? = null
         var i = 0
         while (i < children.size) {
             val text = children[i].leafText()?.lowercase()
@@ -1479,54 +1784,45 @@ internal object CnlParser {
                 text == "video" -> { kind = "video"; i += 1 }
                 text == "image" -> { kind = "image"; i += 1 }
                 text in fillModeWords -> { fillMode = text; i += 1 }
-                text == "focus" || text == "focal" -> { focal = focalFragment(children.getOrNull(i + 1)); i += 2 }
+                text == "focus" || text == "focal" -> { focal = focalPointOf(children.getOrNull(i + 1)); i += 2 }
                 text == "alt" -> { alt = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 text == "opacity" -> { opacity = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 text == "blend" -> { blend = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 text == "autoplay" -> { autoplay = true; i += 1 }
                 text == "loop" -> { loop = true; i += 1 }
                 text == "replaceable" -> { replaceable = true; i += 1 }
-                text == "unmuted" -> { muted = "false"; i += 1 }
+                text == "unmuted" -> { muted = false; i += 1 }
                 text == "muted" -> {
                     val flag = children.getOrNull(i + 1)?.leafText()?.let { CnlVocabulary.booleans[it.lowercase()] }
-                    if (flag != null) { muted = flag.toString(); i += 2 } else { muted = "true"; i += 1 }
+                    if (flag != null) { muted = flag; i += 2 } else { muted = true; i += 1 }
                 }
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            asset?.let { add("asset: ${mediaId(it)}") }
-            kind?.let { add("kind: $it") }
-            fillMode?.let { add("fillMode: $it") }
-            focal?.let { add("focalPoint: $it") }
-            alt?.let { add("alt: ${yamlString(it)}") }
-            opacity?.let { add("opacity: $it") }
-            blend?.let { add("blendMode: $it") }
-            poster?.let { add("poster: ${mediaId(it)}") }
-            if (autoplay) add("autoplay: true")
-            if (loop) add("loop: true")
-            if (replaceable) add("replaceable: true")
-            muted?.let { add("muted: $it") }
-        }
-        return parts.joinToString(", ")
+        return MediaPatch(
+            asset = asset?.let { CnlScalars.bindableStringOf(it) },
+            kind = kind?.let { ReaderEnums.mediaKind[it] },
+            fillMode = fillMode?.let { ReaderEnums.fillMode[it] },
+            focalPoint = focal,
+            alt = alt?.let { TextContent(defaultText = it) },
+            replaceable = if (replaceable) true else null,
+            opacity = opacity?.let { CnlScalars.bindableDoubleOf(it) },
+            blendMode = blend?.let { CnlScalars.stringOf(it) },
+            poster = poster?.let { CnlScalars.bindableStringOf(it) },
+            autoplay = if (autoplay) true else null,
+            loop = if (loop) true else null,
+            muted = muted,
+        )
     }
 
-    /**
-     * A media `asset`/`poster` id. A `$var` / `$prop.x` token ref is written verbatim so the reader
-     * sees a [Bindable.VarRef]/[Bindable.PropRef]; a `{{expr}}` binding and plain literals are quoted so
-     * the enclosing `{ … }` flow mapping still parses.
-     */
-    private fun mediaId(value: String): String =
-        if (value.startsWith("$")) value else yamlString(value)
-
-    /** `focus center` → scalar `center`; `focus (x y)` → `{ x: .., y: .. }`. */
-    private fun focalFragment(node: GNode?): String? = when {
+    /** `focus center` → (0.5, 0.5); `focus (x y)` → a bindable point (mirrors `readFocalPoint`). */
+    private fun focalPointOf(node: GNode?): DesignPoint? = when {
         node == null -> null
-        node.leafText()?.lowercase() == "center" -> "center"
-        else -> pointFragment(node)
+        node.leafText()?.lowercase() == "center" -> DesignPoint(0.5, 0.5)
+        else -> bindablePointOf(node)
     }
 
-    /** `viewbox (x y w h)` → `viewBox: [ x, y, w, h ]`. */
+    /** `viewbox (x y w h)` → a typed [DesignViewBox]. */
     /** `arc ( start sweep )` → shape `arcStart` + `arcSweep` (ellipse pie/donut geometry). */
     private fun consumeShapeArc(
         tokens: List<Token>,
@@ -1576,13 +1872,16 @@ internal object CnlParser {
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.ViewBox,
-            listOf(CnlValue("viewBox: [ ${nums[0]}, ${nums[1]}, ${nums[2]}, ${nums[3]} ]", span)),
+            listOf(CnlValue("viewbox", span)),
             keywordSpan, span,
+            payload = CnlViewBoxPayload(
+                DesignViewBox(nums[0].toDouble(), nums[1].toDouble(), nums[2].toDouble(), nums[3].toDouble()),
+            ),
         )
         return after
     }
 
-    /** One or more `path «d» [evenodd|nonzero]` → `paths: [ { d: "…"[, windingRule: evenodd] }, … ]`.
+    /** One or more `path «d» [evenodd|nonzero]` → the typed `vector.paths` list.
      *  Greedily consumes consecutive `path` phrases so they compose into one list. */
     private fun consumeVectorPaths(
         tokens: List<Token>,
@@ -1592,7 +1891,7 @@ internal object CnlParser {
         lineNumber: Int,
         diagnostics: DiagnosticCollector,
     ): Int {
-        val items = mutableListOf<String>()
+        val items = mutableListOf<VectorPath>()
         var i = valueStart
         var last = valueStart
         while (true) {
@@ -1603,11 +1902,7 @@ internal object CnlParser {
             tokens.getOrNull(next)?.text?.lowercase()?.let { flag ->
                 if (flag == "evenodd" || flag == "nonzero") { winding = flag; next += 1 }
             }
-            items += if (winding == "evenodd") {
-                "{ d: ${yamlString(dTok.text)}, windingRule: evenodd }"
-            } else {
-                "{ d: ${yamlString(dTok.text)} }"
-            }
+            items += VectorPath(windingRule = winding, d = dTok.text)
             last = next - 1
             if (tokens.getOrNull(next)?.text?.lowercase() == "path") { i = next + 1 } else { i = next; break }
         }
@@ -1618,13 +1913,14 @@ internal object CnlParser {
         val span = joinSpan(keywordSpan, tokens[last].span)
         properties += CnlProperty(
             CnlPropertyKind.VectorPaths,
-            listOf(CnlValue("paths: [ ${items.joinToString(", ")} ]", span)),
+            listOf(CnlValue("paths", span)),
             keywordSpan, span,
+            payload = CnlVectorPathsPayload(items),
         )
         return i
     }
 
-    /** `network ( vertex (…) … segment (…) … region [evenodd] loops (…) … )` → `network: { … }`. */
+    /** `network ( vertex (…) … segment (…) … region [evenodd] loops (…) … )` → a typed network. */
     private fun consumeNetwork(
         tokens: List<Token>,
         valueStart: Int,
@@ -1639,26 +1935,36 @@ internal object CnlParser {
         }
         val (group, after) = parseGroup(tokens, valueStart)
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.VectorNetwork, listOf(CnlValue(networkFragment(group), span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.VectorNetwork,
+            listOf(CnlValue("network", span)),
+            keywordSpan,
+            span,
+            payload = networkOf(group),
+        )
         return after
     }
 
-    private fun networkFragment(group: GGroup): String {
+    /** Typed twin of the old network fragment + `ShapeVectorMaskReader.readNetwork`/`readRegionFills`. */
+    private fun networkOf(group: GGroup): CnlNetworkPayload {
         val children = group.children
-        val vertices = mutableListOf<String>()
-        val segments = mutableListOf<String>()
-        val regions = mutableListOf<String>()
+        val vertices = mutableListOf<VectorVertex>()
+        val segments = mutableListOf<VectorSegment>()
+        val regions = mutableListOf<VectorRegion>()
+        val regionFills = LinkedHashMap<Int, List<DesignPaint>>()
         var i = 0
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
                 "vertex" -> {
-                    children.getOrNull(i + 1)?.asGroup()?.let { vertices += vertexFragment(it) }
+                    children.getOrNull(i + 1)?.asGroup()?.let { g -> vertexOf(g)?.let { vertices += it } }
                     i += 2
                 }
                 "segment" -> {
                     val nums = children.getOrNull(i + 1)?.asGroup()?.children
                         ?.mapNotNull { it.leafText() }?.filter { isNumber(it) }
-                    if (nums != null && nums.size >= 2) segments += "[ ${nums[0]}, ${nums[1]} ]"
+                    if (nums != null && nums.size >= 2) {
+                        segments += VectorSegment(nums[0].toDouble().toInt(), nums[1].toDouble().toInt())
+                    }
                     i += 2
                 }
                 "region" -> {
@@ -1668,77 +1974,79 @@ internal object CnlParser {
                         if (w == "evenodd" || w == "nonzero") { winding = w; i += 1 }
                     }
                     if (children.getOrNull(i)?.leafText()?.lowercase() == "loops") i += 1
-                    val loops = mutableListOf<String>()
+                    val loops = mutableListOf<List<Int>>()
                     while (i < children.size) {
                         val g = children[i].asGroup() ?: break
-                        val nums = g.children.mapNotNull { it.leafText() }.filter { isNumber(it) }
-                        loops += "[ ${nums.joinToString(", ")} ]"
+                        loops += g.children.mapNotNull { it.leafText() }
+                            .filter { isNumber(it) }
+                            .map { it.toDouble().toInt() }
                         i += 1
                     }
                     // Per-region solid/token fills: `fill #hex` / `fill $ref` / `fill token:ref`.
-                    val fills = mutableListOf<String>()
+                    val fills = mutableListOf<DesignPaint>()
                     while (children.getOrNull(i)?.leafText()?.lowercase() == "fill") {
-                        children.getOrNull(i + 1)?.leafText()?.let { fills += regionFillItem(it) }
+                        children.getOrNull(i + 1)?.leafText()?.let { token ->
+                            regionPaintOf(token)?.let { fills += it }
+                        }
                         i += 2
                     }
-                    val parts = buildList {
-                        if (winding == "evenodd") add("windingRule: evenodd")
-                        add("loops: [ ${loops.joinToString(", ")} ]")
-                        if (fills.isNotEmpty()) add("fills: [ ${fills.joinToString(", ")} ]")
-                    }
-                    regions += "{ ${parts.joinToString(", ")} }"
+                    regions += VectorRegion(windingRule = winding, loops = loops)
+                    if (fills.isNotEmpty()) regionFills[regions.size - 1] = fills
                 }
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            add("vertices: [ ${vertices.joinToString(", ")} ]")
-            if (segments.isNotEmpty()) add("segments: [ ${segments.joinToString(", ")} ]")
-            if (regions.isNotEmpty()) add("regions: [ ${regions.joinToString(", ")} ]")
-        }
-        return "network: { ${parts.joinToString(", ")} }"
+        val network = if (vertices.isEmpty()) null else VectorNetwork(vertices, segments, regions)
+        return CnlNetworkPayload(network, regionFills)
     }
 
-    private fun vertexFragment(group: GGroup): String {
+    /** A `vertex (x y …)` group (mirrors `readVertices`; a non-numeric coordinate drops the vertex). */
+    private fun vertexOf(group: GGroup): VectorVertex? {
         val children = group.children
-        val x = children.getOrNull(0)?.leafText()
-        val y = children.getOrNull(1)?.leafText()
-        var inH: String? = null
-        var outH: String? = null
+        val x = CnlScalars.doubleOf(children.getOrNull(0)?.leafText() ?: "0") ?: return null
+        val y = CnlScalars.doubleOf(children.getOrNull(1)?.leafText() ?: "0") ?: return null
+        var inH: HandleOffset? = null
+        var outH: HandleOffset? = null
         var mirror: String? = null
         var corner = false
         var radius: String? = null
         var i = 2
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
-                "in" -> { inH = offsetFragment(children.getOrNull(i + 1)); i += 2 }
-                "out" -> { outH = offsetFragment(children.getOrNull(i + 1)); i += 2 }
+                "in" -> { inH = offsetOf(children.getOrNull(i + 1)); i += 2 }
+                "out" -> { outH = offsetOf(children.getOrNull(i + 1)); i += 2 }
                 "mirror" -> { mirror = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 "corner" -> { corner = true; i += 1 }
                 "radius" -> { radius = children.getOrNull(i + 1)?.leafText()?.takeIf { isNumber(it) }; i += 2 }
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            add("x: ${x ?: "0"}")
-            add("y: ${y ?: "0"}")
-            inH?.let { add("in: $it") }
-            outH?.let { add("out: $it") }
-            mirror?.let { if (it.lowercase() != "none") add("mirror: $it") }
-            if (corner) add("corner: true")
-            radius?.let { add("radius: $it") }
-        }
-        return "{ ${parts.joinToString(", ")} }"
+        return VectorVertex(
+            x = x,
+            y = y,
+            inHandle = inH,
+            outHandle = outH,
+            mirror = mirror?.takeIf { it.lowercase() != "none" }
+                ?.let { ReaderEnums.handleMirror[it] } ?: HandleMirror.None,
+            corner = corner,
+            cornerRadius = radius?.toDouble() ?: 0.0,
+        )
     }
 
-    /** `(dx dy)` → `[ dx, dy ]`. */
-    private fun offsetFragment(node: GNode?): String? {
+    /** `(dx dy)` → a handle offset. */
+    private fun offsetOf(node: GNode?): HandleOffset? {
         val nums = node?.asGroup()?.children?.mapNotNull { it.leafText() }?.filter { isNumber(it) }
         if (nums == null || nums.size < 2) return null
-        return "[ ${nums[0]}, ${nums[1]} ]"
+        return HandleOffset(nums[0].toDouble(), nums[1].toDouble())
     }
 
-    /** `mask <type> [clips ( id id )] [from <id>]` → `mask:` block entries (type + appliesTo [+ source]). */
+    /** A region-fill token → a solid paint: `#hex`, `token:ref`, `$ref` or `{{expr}}`; else dropped. */
+    private fun regionPaintOf(token: String): DesignPaint? = when {
+        token.startsWith("token:") -> DesignPaint.Solid(Bindable.VarRef(token.removePrefix("token:")))
+        else -> CnlScalars.colorOf(token)?.let { DesignPaint.Solid(it) }
+    }
+
+    /** `mask <type> [clips ( id id )] [from <id>]` → a typed [MaskPatch]. */
     private fun consumeMask(
         tokens: List<Token>,
         valueStart: Int,
@@ -1748,25 +2056,40 @@ internal object CnlParser {
         diagnostics: DiagnosticCollector,
     ): Int {
         var i = valueStart
-        val entries = mutableListOf<String>()
+        var type: String? = null
+        var appliesTo: List<String>? = null
+        var source: String? = null
         val typeTok = tokens.getOrNull(i)?.text?.lowercase()
-        if (typeTok != null && typeTok in maskTypeWords) { entries += "type: $typeTok"; i += 1 }
+        if (typeTok != null && typeTok in maskTypeWords) { type = typeTok; i += 1 }
         if (tokens.getOrNull(i)?.text?.lowercase() == "clips" && tokens.getOrNull(i + 1)?.text == "(") {
             val (group, after) = parseGroup(tokens, i + 1)
             val ids = group.children.mapNotNull { it.leafText() }
-            if (ids.isNotEmpty()) entries += "appliesTo: [ ${ids.joinToString(", ")} ]"
+            if (ids.isNotEmpty()) appliesTo = ids
             i = after
         }
         if (tokens.getOrNull(i)?.text?.lowercase() == "from") {
-            tokens.getOrNull(i + 1)?.let { entries += "source: ${yamlString(it.text)}" }
+            tokens.getOrNull(i + 1)?.let { source = it.text }
             i += 2
         }
-        if (entries.isEmpty()) {
+        if (type == null && appliesTo == null && source == null) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"mask\" needs a type (alpha, vector or luminance)")
             return i
         }
         val span = joinSpan(keywordSpan, tokens[i - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Mask, entries.map { CnlValue(it, span) }, keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Mask,
+            listOf(CnlValue("mask", span)),
+            keywordSpan,
+            span,
+            payload = CnlMaskPayload(
+                MaskPatch(
+                    type = type?.let { ReaderEnums.maskType[it] },
+                    source = source,
+                    // Bare-written ids: only tokens YAML types as strings survive (`stringList`).
+                    appliesTo = appliesTo?.mapNotNull { CnlScalars.plainStringOf(it) },
+                ),
+            ),
+        )
         return i
     }
 
@@ -1791,9 +2114,10 @@ internal object CnlParser {
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.Variant,
-            listOf(CnlValue("variant: ${variantRecordFragment(group)}", span)),
+            listOf(CnlValue("variant", span)),
             keywordSpan,
             span,
+            payload = CnlVariantSelectionPayload(variantSelectionOf(group)),
         )
         return after
     }
@@ -1815,9 +2139,10 @@ internal object CnlParser {
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.Props,
-            listOf(CnlValue("props: ${propsRecordFragment(group)}", span)),
+            listOf(CnlValue("props", span)),
             keywordSpan,
             span,
+            payload = CnlPropsPayload(propsRecordOf(group)),
         )
         return after
     }
@@ -1837,22 +2162,25 @@ internal object CnlParser {
             return valueStart
         }
         var i = valueStart + 1
-        val fills = mutableListOf<String>()
+        var groupCount = 0
+        val fills = mutableListOf<SlotOverridePatch>()
         while (tokens.getOrNull(i)?.text == "(") {
             val (group, after) = parseGroup(tokens, i)
-            fills += slotFillFragment(group)
+            groupCount += 1
+            slotFillOf(group)?.let { fills += it }
             i = after
         }
-        if (fills.isEmpty()) {
+        if (groupCount == 0) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "Slot \"${nameToken.text}\" needs ( … ) fills")
             return i
         }
         val span = joinSpan(keywordSpan, tokens[i - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.SlotOverride,
-            listOf(CnlValue("${nameToken.text}: [ ${fills.joinToString(", ")} ]", span)),
+            listOf(CnlValue(nameToken.text, span)),
             keywordSpan,
             span,
+            payload = CnlSlotPayload(nameToken.text, fills),
         )
         return i
     }
@@ -1860,8 +2188,8 @@ internal object CnlParser {
     /**
      * `override <id/path> ( <appearance phrases> )` → one `overrides.sets` entry. The inner
      * phrases are the ordinary node phrases (color/opacity/radius/stroke/visible/characters/
-     * typography); they are re-parsed with the shared phrase loop and re-serialized as `style`/
-     * `text`/`node` sub-blocks so the same block readers materialize the override's property groups.
+     * typography); they are re-parsed with the shared phrase loop into a nested [BlockBuilder]
+     * whose typed `style`/`text`/`node` sub-patches form the [SetOverridePatch].
      */
     private fun consumeSetOverride(
         tokens: List<Token>,
@@ -1890,14 +2218,15 @@ internal object CnlParser {
             val element = parseFrom(inner, startIndex = 0, noun = null, lineNumber = lineNumber, diagnostics = diagnostics)
             element.properties.forEach { applyProperty(builder, it) }
         }
-        val targetPath = target.text.split("/").filter { it.isNotEmpty() }.joinToString(", ")
+        val targetSegments = target.text.split("/").filter { it.isNotEmpty() }
         val after = closeIdx + 1
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.SetOverride,
-            listOf(CnlValue(builder.overrideSetRecord(targetPath), span)),
+            listOf(CnlValue(target.text, span)),
             keywordSpan,
             span,
+            payload = CnlSetOverridePayload(builder.setOverrideTyped(targetSegments)),
         )
         return after
     }
@@ -1939,13 +2268,17 @@ internal object CnlParser {
             return groupStart
         }
         val (group, after) = parseGroup(tokens, groupStart)
-        val inner = instanceOverrideRecordParts(group)
+        val record = instanceOverrideRecordOf(group)
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.NestedOverride,
-            listOf(CnlValue("${target.text}: { ${inner.joinToString(", ")} }", span)),
+            listOf(CnlValue(target.text, span)),
             keywordSpan,
             span,
+            payload = CnlNestedPayload(
+                target.text,
+                NestedInstancePatch(variant = record.variant, props = record.props),
+            ),
         )
         return after
     }
@@ -1978,9 +2311,10 @@ internal object CnlParser {
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.ComponentAxis,
-            listOf(CnlValue("${axis.text}: { values: [ ${values.joinToString(", ") { plainScalar(it) }} ] }", span)),
+            listOf(CnlValue(axis.text, span)),
             keywordSpan,
             span,
+            payload = CnlComponentAxisPayload(axis.text, values.mapNotNull { recordListItemOf(it) }),
         )
         return after
     }
@@ -2005,66 +2339,73 @@ internal object CnlParser {
             return groupStart
         }
         val (group, after) = parseGroup(tokens, groupStart)
-        val parts = componentPropDefinitionParts(name.text, group, lineNumber, diagnostics) ?: return after
+        val definition = componentPropDefinitionOf(name.text, group, lineNumber, diagnostics) ?: return after
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
         properties += CnlProperty(
             CnlPropertyKind.ComponentPropDefinition,
-            listOf(CnlValue("${name.text}: { ${parts.joinToString(", ")} }", span)),
+            listOf(CnlValue(name.text, span)),
             keywordSpan,
             span,
+            payload = CnlComponentPropPayload(name.text, definition),
         )
         return after
     }
 
-    private fun componentPropDefinitionParts(
+    /** Typed twin of the old prop-definition fragment + `ComponentBlockReader.readPropertyDefinitions`. */
+    private fun componentPropDefinitionOf(
         name: String,
         group: GGroup,
         lineNumber: Int,
         diagnostics: DiagnosticCollector,
-    ): List<String>? {
+    ): ComponentPropertyDefinition? {
         val children = group.children
         val typeWord = children.firstOrNull()?.leafText()?.lowercase()
-        val type = componentPropertyType(typeWord)
-        if (type == null) {
+        val typeKey = componentPropertyType(typeWord)
+        if (typeKey == null) {
             CnlDiagnostics.warn(diagnostics, CnlRule.UnknownKeyword, lineNumber, "Prop \"$name\" needs a component property type")
             return null
         }
-        val parts = mutableListOf("type: $type")
+        var default: PropValue? = null
+        var preferred: List<String> = emptyList()
+        var minItems: Int? = null
+        var maxItems: Int? = null
+        var allowed: List<String> = emptyList()
         var i = 1
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
                 "default" -> {
-                    children.getOrNull(i + 1)?.let { value ->
-                        parts += "default: ${componentDefaultValue(type, value)}"
-                    }
+                    children.getOrNull(i + 1)?.let { value -> default = componentDefaultOf(typeKey, value) }
                     i += 2
                 }
                 "preferred", "preferredvalues" -> {
                     val values = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }.orEmpty()
-                    if (values.isNotEmpty()) {
-                        parts += "preferredValues: [ ${values.joinToString(", ") { plainScalar(it) }} ]"
-                    }
+                    if (values.isNotEmpty()) preferred = values.mapNotNull { recordListItemOf(it) }
                     i += 2
                 }
                 "min", "minitems" -> {
-                    children.getOrNull(i + 1)?.leafText()?.let { parts += "minItems: $it" }
+                    children.getOrNull(i + 1)?.leafText()?.let { minItems = CnlScalars.intOf(it) }
                     i += 2
                 }
                 "max", "maxitems" -> {
-                    children.getOrNull(i + 1)?.leafText()?.let { parts += "maxItems: $it" }
+                    children.getOrNull(i + 1)?.leafText()?.let { maxItems = CnlScalars.intOf(it) }
                     i += 2
                 }
                 "allow", "allowed", "allowedcontent" -> {
                     val values = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }.orEmpty()
-                    if (values.isNotEmpty()) {
-                        parts += "allowedContent: [ ${values.joinToString(", ") { plainScalar(it) }} ]"
-                    }
+                    if (values.isNotEmpty()) allowed = values.mapNotNull { recordListItemOf(it) }
                     i += 2
                 }
                 else -> i += 1
             }
         }
-        return parts
+        return ComponentPropertyDefinition(
+            type = ReaderEnums.componentPropertyType.getValue(typeKey),
+            default = default,
+            preferredValues = preferred,
+            minItems = minItems,
+            maxItems = maxItems,
+            allowedContent = allowed,
+        )
     }
 
     private fun componentPropertyType(word: String?): String? = when (word) {
@@ -2079,62 +2420,74 @@ internal object CnlParser {
         else -> null
     }
 
-    private fun componentDefaultValue(type: String, value: GNode): String {
-        val leaf = value.leaf()
-        val text = leaf?.token?.text.orEmpty()
-        return when (type) {
-            "boolean" -> CnlVocabulary.booleans[text.lowercase()]?.toString() ?: "false"
-            "number" -> if (isNumber(text)) text else "0"
-            "instanceSwap", "variant" -> "{ type: $type, value: ${plainScalar(text)} }"
-            "dataBinding" -> "{ type: dataBinding, value: ${yamlString(text)} }"
-            else -> yamlString(text)
+    /** The declared default of a component property (mirrors the old fragment + `readPropValue`). */
+    private fun componentDefaultOf(typeKey: String, value: GNode): PropValue {
+        val text = value.leaf()?.token?.text.orEmpty()
+        return when (typeKey) {
+            "boolean" -> PropValue.Bool(CnlVocabulary.booleans[text.lowercase()] ?: false)
+            "number" -> PropValue.Number(if (isNumber(text)) text.toDouble() else 0.0)
+            "instanceSwap", "variant" -> PropValue.Reference(referenceValueOf(text))
+            "dataBinding" -> PropValue.Data(DesignExpression(CnlScalars.expressionBodyOf(text) ?: text))
+            else -> textPropOf(text)
         }
     }
 
-    /** A slot fill group `( <instanceRef> [variant (…)] [props (…)] )` → `{ instance:…, variant:…, props:… }`. */
-    private fun slotFillFragment(group: GGroup): String {
+    /** A slot fill group `( <instanceRef> [variant (…)] [props (…)] )`; null = no instance ref. */
+    private fun slotFillOf(group: GGroup): SlotOverridePatch? {
         val children = group.children
-        val parts = mutableListOf<String>()
-        var i = 0
-        children.firstOrNull()?.leafText()?.let { parts += "instance: ${plainScalar(it)}"; i = 1 }
-        parts += instanceOverrideRecordParts(GGroup(children.drop(i)))
-        return "{ ${parts.joinToString(", ")} }"
+        val instance = children.firstOrNull()?.leafText() ?: return null
+        // plainScalar-written ref: a bare `null` word dies in the reader; numbers keep their text.
+        val ref = instance.takeUnless { it == "null" } ?: return null
+        val record = instanceOverrideRecordOf(GGroup(children.drop(1)))
+        return SlotOverridePatch(
+            instanceRef = ref,
+            props = record.props ?: emptyMap(),
+            variant = record.variant ?: emptyMap(),
+        )
     }
 
+    private class InstanceOverrideRecord(
+        val variant: Map<String, String>?,
+        val props: Map<String, PropValue>?,
+    )
+
     /** The `variant`/`props` sub-records shared by nested overrides and slot fills. */
-    private fun instanceOverrideRecordParts(group: GGroup): List<String> {
+    private fun instanceOverrideRecordOf(group: GGroup): InstanceOverrideRecord {
         val children = group.children
-        val parts = mutableListOf<String>()
+        var variant: Map<String, String>? = null
+        var props: Map<String, PropValue>? = null
         var i = 0
         while (i < children.size) {
             val kw = children[i].leafText()?.lowercase()
             val record = children.getOrNull(i + 1)?.asGroup()
             when {
-                kw == "variant" && record != null -> { parts += "variant: ${variantRecordFragment(record)}"; i += 2 }
-                kw == "props" && record != null -> { parts += "props: ${propsRecordFragment(record)}"; i += 2 }
+                kw == "variant" && record != null -> { variant = variantSelectionOf(record); i += 2 }
+                kw == "props" && record != null -> { props = propsRecordOf(record); i += 2 }
                 else -> i += 1
             }
         }
-        return parts
+        return InstanceOverrideRecord(variant, props)
     }
 
-    /** `( axis value … )` → `{ axis: value, … }` (variant axis→value record; iteration order preserved). */
-    private fun variantRecordFragment(group: GGroup): String {
+    /**
+     * `( axis value … )` → axis→value selection map (mirrors the old plainScalar record +
+     * `stringEntries`: a bare `null` value dies; numbers/booleans keep their source text).
+     */
+    private fun variantSelectionOf(group: GGroup): Map<String, String> {
         val leaves = group.children.mapNotNull { it.leafText() }
-        val entries = buildList {
-            var i = 0
-            while (i + 1 < leaves.size) {
-                add("${leaves[i]}: ${plainScalar(leaves[i + 1])}")
-                i += 2
-            }
+        val entries = LinkedHashMap<String, String>()
+        var i = 0
+        while (i + 1 < leaves.size) {
+            leaves[i + 1].takeUnless { it == "null" }?.let { entries[leaves[i]] = it }
+            i += 2
         }
-        return "{ ${entries.joinToString(", ")} }"
+        return entries
     }
 
-    /** `( name value … )` → `{ name: <propValue>, … }`; a value may be a scalar or a `( … )` record. */
-    private fun propsRecordFragment(group: GGroup): String {
+    /** `( name value … )` → typed prop values; a value may be a scalar or a `( … )` record. */
+    private fun propsRecordOf(group: GGroup): Map<String, PropValue> {
         val children = group.children
-        val entries = mutableListOf<String>()
+        val entries = LinkedHashMap<String, PropValue>()
         var i = 0
         while (i < children.size) {
             val name = children[i].leafText()
@@ -2144,34 +2497,38 @@ internal object CnlParser {
                 continue
             }
             val record = valueNode.asGroup()
-            entries += if (record != null) {
-                "$name: ${propValueRecordFragment(record)}"
-            } else {
-                "$name: ${propScalarFragment(valueNode.leaf())}"
-            }
+            val value = if (record != null) propValueRecordOf(record) else propScalarOf(valueNode.leaf())
+            value?.let { entries[name] = it }
             i += 2
         }
-        return "{ ${entries.joinToString(", ")} }"
+        return entries
     }
 
     /** A bare prop scalar: quoted text, number, boolean, `{{expr}}` binding, or a bare word (→ text). */
-    private fun propScalarFragment(leaf: GLeaf?): String {
-        val token = leaf?.token ?: return yamlString("")
+    private fun propScalarOf(leaf: GLeaf?): PropValue {
+        val token = leaf?.token ?: return PropValue.Text("")
         val text = token.text
         return when {
-            token.isText -> yamlString(text)
-            isNumber(text) -> text
-            text.lowercase() in CnlVocabulary.booleans -> CnlVocabulary.booleans.getValue(text.lowercase()).toString()
-            else -> yamlString(text)
+            token.isText -> textPropOf(text)
+            isNumber(text) -> PropValue.Number(text.toDouble())
+            text.lowercase() in CnlVocabulary.booleans -> PropValue.Bool(CnlVocabulary.booleans.getValue(text.lowercase()))
+            else -> textPropOf(text)
         }
     }
 
-    /** A prop value record: `(swap ref)`, `(text «…» [key k])`, or `(data expr)`. */
-    private fun propValueRecordFragment(group: GGroup): String {
+    /** A string prop value: `{{expr}}` → data binding, else literal text (mirrors `readPropValue`). */
+    private fun textPropOf(text: String): PropValue =
+        CnlScalars.expressionBodyOf(text)?.let { PropValue.Data(DesignExpression(it)) } ?: PropValue.Text(text)
+
+    /** A prop value record: `(swap ref)`, `(text «…» [key k])`, or `(data expr)`; unknown → dropped. */
+    private fun propValueRecordOf(group: GGroup): PropValue? {
         val children = group.children
         return when (children.firstOrNull()?.leafText()?.lowercase()) {
-            "swap" -> "{ type: instanceSwap, value: ${plainScalar(children.getOrNull(1)?.leafText().orEmpty())} }"
-            "data" -> "{ type: dataBinding, value: ${yamlString(children.getOrNull(1)?.leafText().orEmpty())} }"
+            "swap" -> PropValue.Reference(referenceValueOf(children.getOrNull(1)?.leafText().orEmpty()))
+            "data" -> {
+                val expr = children.getOrNull(1)?.leafText().orEmpty()
+                PropValue.Data(DesignExpression(CnlScalars.expressionBodyOf(expr) ?: expr))
+            }
             "text" -> {
                 var value = ""
                 var key: String? = null
@@ -2184,23 +2541,46 @@ internal object CnlParser {
                         else -> i += 1
                     }
                 }
-                val parts = buildList {
-                    add("type: text")
-                    add("value: ${yamlString(value)}")
-                    key?.let { add("i18nKey: ${plainScalar(it)}") }
+                // plainScalar-written key: a bare `null` word reads back as no key.
+                val i18nKey = key?.takeUnless { it == "null" }
+                if (i18nKey != null) {
+                    PropValue.Content(TextContent(key = i18nKey, defaultText = value))
+                } else {
+                    textPropOf(value)
                 }
-                "{ ${parts.joinToString(", ")} }"
             }
-            else -> "{ }"
+            else -> null
         }
     }
 
-    /** A YAML plain scalar when safe, otherwise a quoted string (keeps `md`, `ds/Icon/Check` bare). */
-    private fun plainScalar(value: String): String =
-        if (value.isNotEmpty() && value.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' || it == '/' }) {
-            value
+    /** Is [value] safe as a bare YAML plain scalar (the old `plainScalar` bare set)? */
+    private fun isPlainWord(value: String): Boolean =
+        value.isNotEmpty() && value.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' || it == '/' }
+
+    /**
+     * A plainScalar-written value read back through `stringOrNull().orEmpty()`: bare tokens the
+     * YAML would type as non-strings (null/booleans/numbers) collapse to "".
+     */
+    private fun referenceValueOf(token: String): String =
+        if (isPlainWord(token) &&
+            (token == "null" || token == "true" || token == "false" || CnlScalars.doubleOf(token) != null)
+        ) {
+            ""
         } else {
-            yamlString(value)
+            token
+        }
+
+    /**
+     * A plainScalar-written list item read back through `stringList`: bare tokens the YAML types
+     * as non-strings (null/booleans/numbers) are dropped.
+     */
+    private fun recordListItemOf(token: String): String? =
+        if (isPlainWord(token) &&
+            (token == "null" || token == "true" || token == "false" || CnlScalars.doubleOf(token) != null)
+        ) {
+            null
+        } else {
+            token
         }
 
     private fun consumeStroke(
@@ -2214,9 +2594,14 @@ internal object CnlParser {
         // Record form `stroke ( … )` → a `strokes:` list (stack / dash / cap / join).
         if (tokens.getOrNull(start)?.text == "(") {
             val (group, after) = parseGroup(tokens, start)
-            val fragment = strokeRecordFragment(group)
             val span = joinSpan(keywordSpan, tokens[after - 1].span)
-            properties += CnlProperty(CnlPropertyKind.StrokeComplex, listOf(CnlValue(fragment, span)), keywordSpan, span)
+            properties += CnlProperty(
+                CnlPropertyKind.StrokeComplex,
+                listOf(CnlValue("stroke", span)),
+                keywordSpan,
+                span,
+                payload = strokesPayloadOf(group),
+            )
             return after
         }
         // Flat form `stroke #hex [weight] [align]` (P0; keeps the color token span for write-back).
@@ -2239,43 +2624,46 @@ internal object CnlParser {
         return next
     }
 
-    /** `stroke ( color … [weight N] [align a] [dash (n n)] [cap w] [join w] )` → `strokes:` list. */
-    private fun strokeRecordFragment(group: GGroup): String {
+    /** A bare stroke color token → solid paint (mirrors `readPaint` on `token:`/`color:` entries). */
+    private fun strokeColorPaintOf(token: String): DesignPaint? =
+        if (token.startsWith("$")) {
+            DesignPaint.Solid(Bindable.VarRef(token.removePrefix("$")))
+        } else {
+            CnlScalars.colorOf(token)?.let { DesignPaint.Solid(it) }
+        }
+
+    /** `stroke ( … )` record (mirrors `StyleBlockReader.readStrokes` attribute hoisting). */
+    private fun strokesPayloadOf(group: GGroup): CnlStrokesPayload {
         val children = group.children
-        // Each paint is an UNWRAPPED YAML body (`color: …, opacity: …` / `type: …, …`) so the shared
-        // stroke attributes can ride on the first item's map; grouped paints reuse the fill fragments.
-        val paints = mutableListOf<String>()
+        val paints = mutableListOf<DesignPaint>()
         var weight: String? = null
         var align: String? = null
-        var dash: String? = null
+        var dash: List<String>? = null
         var cap: String? = null
         var join: String? = null
-        var perSide: String? = null
-        fun unwrap(fragment: String): String = fragment.removePrefix("{ ").removeSuffix(" }")
+        var perSide: List<String>? = null
         var i = 0
         while (i < children.size) {
             val text = children[i].leafText()?.lowercase()
             val paintGroup = children.getOrNull(i + 1)?.asGroup()
             when {
-                text == "color" && paintGroup != null -> { paints += unwrap(solidFragment(paintGroup)); i += 2 }
+                text == "color" && paintGroup != null -> { solidPaintOf(paintGroup)?.let { paints += it }; i += 2 }
                 text == "color" -> {
-                    children.getOrNull(i + 1)?.leafText()?.let { paints += paintColorEntry(it) }
+                    children.getOrNull(i + 1)?.leafText()?.let { token -> strokeColorPaintOf(token)?.let { paints += it } }
                     i += 2
                 }
-                text == "gradient" && paintGroup != null -> { paints += unwrap(gradientFragment(paintGroup)); i += 2 }
-                text == "image" && paintGroup != null -> { paints += unwrap(mediaFillFragment(paintGroup, video = false)); i += 2 }
-                text == "video" && paintGroup != null -> { paints += unwrap(mediaFillFragment(paintGroup, video = true)); i += 2 }
+                text == "gradient" && paintGroup != null -> { paints += gradientPaintOf(paintGroup); i += 2 }
+                text == "image" && paintGroup != null -> { paints += mediaPaintOf(paintGroup, video = false); i += 2 }
+                text == "video" && paintGroup != null -> { paints += mediaPaintOf(paintGroup, video = true); i += 2 }
                 text == "weight" -> { weight = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 text == "weight-per-side" -> {
                     val nums = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }
                     perSide = nums?.takeIf { it.size == 4 }
-                        ?.let { "{ top: ${it[0]}, right: ${it[1]}, bottom: ${it[2]}, left: ${it[3]} }" }
                     i += 2
                 }
                 text == "align" -> { align = children.getOrNull(i + 1)?.leafText()?.lowercase(); i += 2 }
                 text == "dash" -> {
-                    val nums = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }
-                    dash = nums?.joinToString(", ")?.let { "[ $it ]" }
+                    dash = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }
                     i += 2
                 }
                 text == "cap" -> { cap = children.getOrNull(i + 1)?.leafText(); i += 2 }
@@ -2283,28 +2671,23 @@ internal object CnlParser {
                 else -> i += 1
             }
         }
-        val items = paints.mapIndexed { index, paint ->
-            if (index == 0) {
-                val props = buildList {
-                    add(paint)
-                    weight?.let { add("weight: $it") }
-                    perSide?.let { add("weightPerSide: $it") }
-                    align?.let { add("position: $it") }
-                    dash?.let { add("dash: $it") }
-                    cap?.let { add("caps: $it") }
-                    join?.let { add("joins: $it") }
-                }
-                "{ ${props.joinToString(", ")} }"
-            } else {
-                "{ $paint }"
-            }
-        }
-        return "strokes: [ ${items.joinToString(", ")} ]"
+        return CnlStrokesPayload(
+            paints = paints,
+            weight = weight?.let { CnlScalars.bindableDoubleOf(it) },
+            align = align?.let { ReaderEnums.strokeAlign[it] },
+            dash = dash?.mapNotNull { CnlScalars.doubleOf(it) },
+            cap = cap?.let { CnlScalars.stringOf(it) },
+            join = join?.let { CnlScalars.stringOf(it) },
+            weightPerSide = perSide?.let { sides ->
+                DesignInsets(
+                    top = CnlScalars.bindableDoubleOf(sides[0]) ?: 0.0.bindable(),
+                    right = CnlScalars.bindableDoubleOf(sides[1]) ?: 0.0.bindable(),
+                    bottom = CnlScalars.bindableDoubleOf(sides[2]) ?: 0.0.bindable(),
+                    left = CnlScalars.bindableDoubleOf(sides[3]) ?: 0.0.bindable(),
+                )
+            },
+        )
     }
-
-    /** A paint color for a stroke item map: `token: id` for `$ref`, else `color: "#hex"`. */
-    private fun paintColorEntry(raw: String): String =
-        if (raw.startsWith("$")) "token: ${raw.removePrefix("$")}" else "color: ${colorLiteral(raw)}"
 
     /** `effect ( <type> … )` → one `effects:` list item. */
     private fun consumeEffect(
@@ -2321,11 +2704,18 @@ internal object CnlParser {
         }
         val (group, after) = parseGroup(tokens, valueStart)
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Effect, listOf(CnlValue(effectFragment(group), span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Effect,
+            listOf(CnlValue("effect", span)),
+            keywordSpan,
+            span,
+            payload = CnlEffectPayload(effectOf(group)),
+        )
         return after
     }
 
-    private fun effectFragment(group: GGroup): String {
+    /** `effect ( … )` group (mirrors `StyleBlockReader.readEffect`; colorless shadows dropped). */
+    private fun effectOf(group: GGroup): DesignEffect? {
         val children = group.children
         val typeWord = children.getOrNull(0)?.leafText()?.lowercase()
         val typeKey = effectTypes[typeWord] ?: (children.getOrNull(0)?.leafText() ?: "dropShadow")
@@ -2347,25 +2737,27 @@ internal object CnlParser {
                 }
                 text == "blur" -> { blur = children.getOrNull(i + 1)?.leafText(); i += 2 }
                 text == "spread" -> { spread = children.getOrNull(i + 1)?.leafText(); i += 2 }
-                // layerBlur/backgroundBlur positional radius: a number, `$var` or `{{expr}}`.
                 blur == null && text != null && isNumberLike(text) -> { blur = node.leafText(); i += 1 }
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            add("type: $typeKey")
-            color?.let { add(paintColorEntry(it)) }
-            x?.let { add("x: ${numOrBindingYaml(it)}") }
-            y?.let { add("y: ${numOrBindingYaml(it)}") }
-            blur?.let { add("blur: ${numOrBindingYaml(it)}") }
-            spread?.let { add("spread: ${numOrBindingYaml(it)}") }
+        val boundColor = color?.let { token ->
+            if (token.startsWith("$")) Bindable.VarRef(token.removePrefix("$")) else CnlScalars.colorOf(token)
         }
-        return "{ ${parts.joinToString(", ")} }"
+        val offset = DesignPoint(
+            x = x?.let { CnlScalars.bindableDoubleOf(it) } ?: 0.0.bindable(),
+            y = y?.let { CnlScalars.bindableDoubleOf(it) } ?: 0.0.bindable(),
+        )
+        val blurBound = blur?.let { CnlScalars.bindableDoubleOf(it) } ?: 0.0.bindable()
+        val spreadBound = spread?.let { CnlScalars.bindableDoubleOf(it) } ?: 0.0.bindable()
+        return when (typeKey) {
+            "dropShadow" -> boundColor?.let { DesignEffect.DropShadow(it, offset, blurBound, spreadBound) }
+            "innerShadow" -> boundColor?.let { DesignEffect.InnerShadow(it, offset, blurBound, spreadBound) }
+            "layerBlur" -> DesignEffect.LayerBlur(radius = blurBound)
+            "backgroundBlur" -> DesignEffect.BackgroundBlur(radius = blurBound)
+            else -> DesignEffect.Unknown(typeKey)
+        }
     }
-
-    /** A number or `$var` token ref stays verbatim; a `{{expr}}` binding is quoted for the flow map. */
-    private fun numOrBindingYaml(value: String): String =
-        if (isBinding(value)) yamlString(value) else value
 
     private val effectTypes = mapOf(
         "dropshadow" to "dropShadow", "innershadow" to "innerShadow",
@@ -2625,44 +3017,54 @@ internal object CnlParser {
         diagnostics: DiagnosticCollector,
     ): Int {
         val triggerWord = tokens[keywordStart].text.lowercase()
-        val parts = mutableListOf("trigger: ${triggerTypes[triggerWord] ?: triggerWord}")
+        var key: String? = null
+        var delayMs: Double? = null
+        var variable: String? = null
         var i = valueStart
         if (triggerWord in triggerArgKinds && tokens.getOrNull(i)?.text == "(") {
             val (group, after) = parseGroup(tokens, i)
             val arg = group.children.firstOrNull()?.leafText()
             if (arg != null) when (triggerWord) {
-                "onkey" -> parts += "key: ${yamlString(arg)}"
-                "afterdelay" -> parts += "delayMs: $arg"
-                "onvariablechange" -> parts += "variable: ${yamlString(arg)}"
+                "onkey" -> key = arg
+                "afterdelay" -> delayMs = CnlScalars.doubleOf(arg)
+                "onvariablechange" -> variable = arg
             }
             i = after
         }
-        val actions = mutableListOf<String>()
+        val actions = mutableListOf<DesignAction>()
         while (i < tokens.size) {
             val word = tokens[i].text.lowercase()
             if (word in triggerTypes) break // next interaction — re-dispatched by parseFrom
             val type = actionTypes[word] ?: break // not an action → hand back to parseFrom
-            val (fragment, next) = consumeAction(type, tokens, i + 1, lineNumber, diagnostics)
-            actions += fragment
+            val (action, next) = consumeAction(type, tokens, i + 1)
+            actions += action
             i = next
         }
         if (actions.isEmpty()) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"$triggerWord\" needs an action")
             return i
         }
-        parts += "actions: [ ${actions.joinToString(", ")} ]"
         val span = joinSpan(keywordSpan, tokens[(i - 1).coerceIn(0, tokens.size - 1)].span)
         properties += CnlProperty(
             CnlPropertyKind.Interactions,
-            listOf(CnlValue(parts.joinToString(", "), span)),
+            listOf(CnlValue(tokens[keywordStart].text, span)),
             keywordSpan,
             span,
+            payload = CnlInteractionPayload(
+                InteractionPatch(
+                    trigger = ReaderEnums.trigger[triggerTypes[triggerWord] ?: triggerWord],
+                    key = key,
+                    delayMs = delayMs,
+                    variable = variable,
+                    actions = actions,
+                ),
+            ),
         )
         return i
     }
 
     /**
-     * One action `<verb> [ (positional) ] [ modifier… ]` → a ready `{ type: …, … }` map plus the index
+     * One action `<verb> [ (positional) ] [ modifier… ]` → a typed [DesignAction] plus the index
      * after the last token consumed. Modifiers (`animate`/`overlay`/`to`/`variant`/`animated`) are
      * resolved group-locally by action type, never through the top-level keyword table.
      */
@@ -2670,11 +3072,8 @@ internal object CnlParser {
         type: String,
         tokens: List<Token>,
         start: Int,
-        lineNumber: Int,
-        diagnostics: DiagnosticCollector,
-    ): Pair<String, Int> {
+    ): Pair<DesignAction, Int> {
         var i = start
-        val parts = mutableListOf("type: $type")
 
         fun positional(): String? {
             if (tokens.getOrNull(i)?.text != "(") return null
@@ -2683,53 +3082,79 @@ internal object CnlParser {
             return group.children.firstOrNull()?.leafText()
         }
 
-        when (type) {
-            "navigate" -> positional()?.let { parts += "to: ${yamlString(it)}" }
-            "openOverlay", "swapOverlay" -> positional()?.let { parts += "destination: ${yamlString(it)}" }
-            "openLink" -> positional()?.let { parts += "url: ${yamlString(it)}" }
-            "setVariable" -> positional()?.let { parts += "variable: ${yamlString(it)}" }
-            "changeToVariant", "scrollTo" -> positional()?.let { parts += "target: ${yamlString(it)}" }
-            "runActionSet" -> positional()?.let { parts += "actionSet: ${yamlString(it)}" }
-            else -> {} // back, closeOverlay carry no positional argument
+        val positionalValue: String? = when (type) {
+            "navigate", "openOverlay", "swapOverlay", "openLink",
+            "setVariable", "changeToVariant", "scrollTo", "runActionSet",
+            -> positional()
+            else -> null // back, closeOverlay carry no positional argument
         }
+
+        var transition: DesignTransition? = null
+        var overlay: OverlaySettings? = null
+        var setValue: Bindable<String>? = null
+        var variantSelection: Map<String, String>? = null
+        var animated = true
 
         modifiers@ while (i < tokens.size) {
             when (tokens[i].text.lowercase()) {
                 "animate" -> {
                     if (type !in transitionActions) break@modifiers
                     val group = groupAfter(tokens, i) ?: break@modifiers
-                    parts += "animation: ${transitionFragment(group.first)}"
+                    transition = transitionOf(group.first)
                     i = group.second
                 }
                 "overlay" -> {
                     if (type != "openOverlay") break@modifiers
                     val group = groupAfter(tokens, i) ?: break@modifiers
-                    parts += "overlay: ${overlayFragment(group.first)}"
+                    overlay = overlaySettingsOf(group.first)
                     i = group.second
                 }
                 "to" -> {
                     if (type != "setVariable") break@modifiers
                     val group = groupAfter(tokens, i) ?: break@modifiers
-                    group.first.children.firstOrNull()?.leafText()?.let { parts += "value: ${yamlString(it)}" }
+                    group.first.children.firstOrNull()?.leafText()?.let { setValue = CnlScalars.bindableStringOf(it) }
                     i = group.second
                 }
                 "variant" -> {
                     if (type != "changeToVariant") break@modifiers
                     val group = groupAfter(tokens, i) ?: break@modifiers
-                    parts += "variant: ${variantFragment(group.first)}"
+                    variantSelection = bareVariantSelectionOf(group.first)
                     i = group.second
                 }
                 "animated" -> {
                     if (type != "scrollTo") break@modifiers
                     val group = groupAfter(tokens, i) ?: break@modifiers
                     val flag = group.first.children.firstOrNull()?.leafText()?.lowercase()
-                    if (flag != null && CnlVocabulary.booleans[flag] == false) parts += "animated: false"
+                    if (flag != null && CnlVocabulary.booleans[flag] == false) animated = false
                     i = group.second
                 }
                 else -> break@modifiers
             }
         }
-        return "{ ${parts.joinToString(", ")} }" to i
+        val action = when (type) {
+            "navigate" -> DesignAction.Navigate(to = positionalValue ?: "", transition = transition)
+            "openOverlay" -> DesignAction.OpenOverlay(
+                destination = positionalValue ?: "",
+                overlay = overlay ?: OverlaySettings(),
+                transition = transition,
+            )
+            "swapOverlay" -> DesignAction.SwapOverlay(destination = positionalValue ?: "", transition = transition)
+            "closeOverlay" -> DesignAction.CloseOverlay(transition)
+            "back" -> DesignAction.Back
+            "openLink" -> DesignAction.OpenLink(url = positionalValue ?: "")
+            "setVariable" -> DesignAction.SetVariable(
+                variable = positionalValue ?: "",
+                value = setValue ?: "".bindable(),
+            )
+            "changeToVariant" -> DesignAction.ChangeToVariant(
+                target = positionalValue ?: "",
+                variant = variantSelection ?: emptyMap(),
+            )
+            "scrollTo" -> DesignAction.ScrollTo(target = positionalValue ?: "", animated = animated)
+            "runActionSet" -> DesignAction.RunActionSet(actionSetId = positionalValue ?: "")
+            else -> DesignAction.Unknown(type) // unreachable: type comes from actionTypes
+        }
+        return action to i
     }
 
     /** The `( … )` group starting right after the keyword at [keywordIdx], or null when absent. */
@@ -2738,81 +3163,119 @@ internal object CnlParser {
         return parseGroup(tokens, keywordIdx + 1)
     }
 
-    /** `animate (type … easing … duration N direction …)` → an `animation:` map fragment. */
-    private fun transitionFragment(group: GGroup): String {
+    /** Mirrors the reader's private `transitionDirections` table. */
+    private val transitionDirections = mapOf(
+        "left" to TransitionDirection.Left,
+        "right" to TransitionDirection.Right,
+        "top" to TransitionDirection.Top,
+        "bottom" to TransitionDirection.Bottom,
+    )
+
+    /** `animate (type … easing … duration N direction …)` (mirrors `readTransition`). */
+    private fun transitionOf(group: GGroup): DesignTransition {
         val children = group.children
-        val parts = mutableListOf<String>()
+        val raw = LinkedHashMap<String, String>()
         var i = 0
         while (i < children.size) {
             val key = transitionSubKeys[children[i].leafText()?.lowercase()]
             val value = children.getOrNull(i + 1)?.leafText()
             if (key != null && value != null) {
-                parts += "$key: $value"
+                raw[key] = value
                 i += 2
             } else {
                 i += 1
             }
         }
-        return "{ ${parts.joinToString(", ")} }"
+        val easing = when (val name = raw["easing"]) {
+            null -> DesignEasing.Named(EasingKind.EaseOut)
+            "spring" -> DesignEasing.Spring(
+                mass = raw["mass"]?.let { CnlScalars.doubleOf(it) } ?: 1.0,
+                stiffness = raw["stiffness"]?.let { CnlScalars.doubleOf(it) } ?: 100.0,
+                damping = raw["damping"]?.let { CnlScalars.doubleOf(it) } ?: 15.0,
+            )
+            else -> DesignEasing.Named(ReaderEnums.easing[name] ?: EasingKind.EaseOut)
+        }
+        return DesignTransition(
+            type = raw["type"]?.let { ReaderEnums.transitionType[it] } ?: TransitionType.Instant,
+            direction = raw["direction"]?.let { transitionDirections[it] } ?: TransitionDirection.Left,
+            easing = easing,
+            durationMs = raw["durationMs"]?.let { CnlScalars.doubleOf(it) } ?: 300.0,
+        )
     }
 
-    /** `overlay (position … offset (x y) closeOnOutside (false) background …)` → an `overlay:` fragment. */
-    private fun overlayFragment(group: GGroup): String {
+    /** `overlay (position … offset (x y) closeOnOutside (false) background …)` (mirrors `readOverlay`). */
+    private fun overlaySettingsOf(group: GGroup): OverlaySettings {
         val children = group.children
         fun valueAt(index: Int): String? {
             val node = children.getOrNull(index) ?: return null
             return node.leafText() ?: node.asGroup()?.children?.firstOrNull()?.leafText()
         }
-        val parts = mutableListOf<String>()
+        var positionRaw: String? = null
+        var offset: DesignPoint? = null
+        var closeRaw: String? = null
+        var backgroundRaw: String? = null
         var i = 0
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
-                "position" -> { valueAt(i + 1)?.let { parts += "position: $it" }; i += 2 }
+                "position" -> { valueAt(i + 1)?.let { positionRaw = it }; i += 2 }
                 "offset" -> {
                     val pt = children.getOrNull(i + 1)?.asGroup()?.children?.mapNotNull { it.leafText() }
-                    if (pt != null && pt.size >= 2) parts += "offset: { x: ${pt[0]}, y: ${pt[1]} }"
+                    if (pt != null && pt.size >= 2) {
+                        offset = DesignPoint(
+                            CnlScalars.doubleOf(pt[0]) ?: 0.0,
+                            CnlScalars.doubleOf(pt[1]) ?: 0.0,
+                        )
+                    }
                     i += 2
                 }
-                "closeonoutside" -> { valueAt(i + 1)?.let { parts += "closeOnOutsideClick: ${boolLiteral(it)}" }; i += 2 }
-                "background" -> { valueAt(i + 1)?.let { parts += "background: ${colorLiteral(it)}" }; i += 2 }
+                "closeonoutside" -> { valueAt(i + 1)?.let { closeRaw = it }; i += 2 }
+                "background" -> { valueAt(i + 1)?.let { backgroundRaw = it }; i += 2 }
                 else -> i += 1
             }
         }
-        return "{ ${parts.joinToString(", ")} }"
+        return OverlaySettings(
+            position = positionRaw?.let { ReaderEnums.overlayPosition[it] } ?: OverlayPosition.Center,
+            offset = offset,
+            closeOnOutsideClick = closeRaw?.let { CnlVocabulary.booleans[it.lowercase()] } ?: true,
+            background = backgroundRaw?.let { CnlScalars.colorOf(it) },
+        )
     }
 
-    /** `variant (state hover size md)` → a `{ state: hover, size: md }` selection map. */
-    private fun variantFragment(group: GGroup): String {
+    /**
+     * `variant (state hover size md)` for `changeToVariant` — values were written BARE, so YAML
+     * `null`/`~` words die; everything else keeps its source text (`stringEntries`).
+     */
+    private fun bareVariantSelectionOf(group: GGroup): Map<String, String> {
         val leaves = group.children.mapNotNull { it.leafText() }
-        val parts = mutableListOf<String>()
+        val entries = LinkedHashMap<String, String>()
         var i = 0
         while (i + 1 < leaves.size) {
-            parts += "${leaves[i]}: ${leaves[i + 1]}"
+            leaves[i + 1].takeUnless { it == "null" || it == "~" }?.let { entries[leaves[i]] = it }
             i += 2
         }
-        return "{ ${parts.joinToString(", ")} }"
+        return entries
     }
 
-    /** One keyframe group `(at [prop N]…)` → `{ at: N, prop: N, … }`. */
-    private fun motionFrameFragment(group: GGroup): String {
+    /** One keyframe group `(at [prop N]…)` (mirrors `readKeyframes`; a non-numeric `at` drops it). */
+    private fun motionFrameOf(group: GGroup): MotionFrame? {
         val leaves = group.children.mapNotNull { it.leafText() }
-        val at = leaves.firstOrNull() ?: "0"
-        val parts = mutableListOf("at: $at")
+        val at = CnlScalars.doubleOf(leaves.firstOrNull() ?: "0") ?: return null
+        val frameProperties = LinkedHashMap<String, Double>()
         var i = 1
         while (i < leaves.size) {
             val key = leaves[i].lowercase()
             val value = leaves.getOrNull(i + 1)
             if (key in motionFrameKeys && value != null && isNumber(value)) {
-                parts += "$key: $value"
+                frameProperties[key] = value.toDouble()
                 i += 2
             } else {
                 i += 1
             }
         }
-        return "{ ${parts.joinToString(", ")} }"
+        return MotionFrame(at, frameProperties)
     }
 
-    /** `motion (ref) [duration N] [loop] [frames (at …)…]` → a `motion:` typed block. */
+    /** `motion (ref) [duration N] [loop] [frames (at …)…]` → a typed `motion:` block. */
     private fun consumeMotion(
         tokens: List<Token>,
         valueStart: Int,
@@ -2831,7 +3294,8 @@ internal object CnlParser {
         }
         var duration: String? = null
         var loop = false
-        val frames = mutableListOf<String>()
+        val frames = mutableListOf<MotionFrame>()
+        var framesAuthored = false
         fallback@ while (i < tokens.size) {
             when (tokens[i].text.lowercase()) {
                 "duration" -> {
@@ -2844,32 +3308,35 @@ internal object CnlParser {
                     i += 1
                     while (tokens.getOrNull(i)?.text == "(") {
                         val (group, after) = parseGroup(tokens, i)
-                        frames += motionFrameFragment(group)
+                        framesAuthored = true
+                        motionFrameOf(group)?.let { frames += it }
                         i = after
                     }
                 }
                 else -> break@fallback
             }
         }
-        val fallbackParts = buildList {
-            duration?.let { add("durationMs: $it") }
-            if (loop) add("loop: true")
-            if (frames.isNotEmpty()) add("frames: [ ${frames.joinToString(", ")} ]")
-        }
-        if (ref.isEmpty() && fallbackParts.isEmpty()) {
+        val hasFallback = duration != null || loop || framesAuthored
+        if (ref.isEmpty() && !hasFallback) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"motion\" needs a (ref) group or fallback")
             return i
         }
-        val motionParts = buildList {
-            if (ref.isNotEmpty()) add("ref: ${yamlString(ref)}")
-            if (fallbackParts.isNotEmpty()) add("fallback: { ${fallbackParts.joinToString(", ")} }")
+        val fallback = if (hasFallback) {
+            MotionKeyframes(
+                durationMs = duration?.toDouble() ?: 0.0,
+                loop = loop,
+                frames = frames,
+            )
+        } else {
+            null
         }
         val span = joinSpan(keywordSpan, tokens[(i - 1).coerceIn(0, tokens.size - 1)].span)
         properties += CnlProperty(
             CnlPropertyKind.Motion,
-            listOf(CnlValue(motionParts.joinToString(", "), span)),
+            listOf(CnlValue("motion", span)),
             keywordSpan,
             span,
+            payload = CnlMotionPayload(MotionPatch(DesignMotion(ref = ref, fallback = fallback))),
         )
         return i
     }
@@ -2928,27 +3395,37 @@ internal object CnlParser {
         }
         val builder = BlockBuilder()
         overrideProps.forEach { applyProperty(builder, it) }
-        val record = builder.variantRecord(selectors)
         val span = joinSpan(keywordSpan, tokens[i - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Responsive, listOf(CnlValue(record, span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Responsive,
+            listOf(CnlValue(selectors.raw, span)),
+            keywordSpan,
+            span,
+            payload = CnlVariantPayload(builder.variantTyped(selectors.typed)),
+        )
         return i
     }
 
-    /** `( breakpoint sm platform ios … )` -> `{ breakpoint: "sm", platform: "ios" }` or null when empty. */
-    private fun responsiveSelectors(group: GGroup): String? {
+    /** The selector group typed as reader dimensions plus a compact raw spelling for [CnlValue]. */
+    private class ResponsiveSelectors(val typed: Map<ResponsiveDimension, String>, val raw: String)
+
+    /** `( breakpoint sm platform ios … )` -> AND-ed dimension selectors, or null when empty. */
+    private fun responsiveSelectors(group: GGroup): ResponsiveSelectors? {
         val leaves = group.children.mapNotNull { it.leafText() }
         val entries = mutableListOf<String>()
+        val typed = linkedMapOf<ResponsiveDimension, String>()
         var i = 0
         while (i < leaves.size - 1) {
             val readerKey = responsiveDimensionKeys[leaves[i].lowercase()]
             if (readerKey != null) {
-                entries += "$readerKey: ${yamlString(leaves[i + 1])}"
+                entries += "$readerKey: ${leaves[i + 1]}"
+                ReaderEnums.responsiveDimension[readerKey]?.let { typed[it] = leaves[i + 1] }
                 i += 2
             } else {
                 i += 1
             }
         }
-        return if (entries.isEmpty()) null else "{ ${entries.joinToString(", ")} }"
+        return if (entries.isEmpty()) null else ResponsiveSelectors(typed, "{ ${entries.joinToString(", ")} }")
     }
 
     // --- export: `export ( fmt [at N] [«suffix»] )… ` | `export off` --------
@@ -2956,8 +3433,9 @@ internal object CnlParser {
     private val exportFormatWords = setOf("png", "jpg", "jpeg", "svg", "pdf")
 
     /**
-     * `export (png at 2 «@2x») (svg)` → `settings: [ … ]` (one value per setting so repeated
-     * `export` clauses on one line merge into a single export block); `export off` → `enabled: false`.
+     * `export (png at 2 «@2x») (svg)` → typed export settings (one value per setting group so
+     * repeated `export` clauses on one line merge into a single export block); `export off` →
+     * `enabled: false`.
      */
     private fun consumeExport(
         tokens: List<Token>,
@@ -2970,26 +3448,40 @@ internal object CnlParser {
         val next = tokens.getOrNull(valueStart)
         if (next != null && next.text.lowercase() == "off") {
             val span = joinSpan(keywordSpan, next.span)
-            properties += CnlProperty(CnlPropertyKind.Export, listOf(CnlValue("enabled: false", span)), keywordSpan, span)
+            properties += CnlProperty(
+                CnlPropertyKind.Export,
+                listOf(CnlValue("off", span)),
+                keywordSpan,
+                span,
+                payload = CnlExportPayload(disabled = true, settings = emptyList()),
+            )
             return valueStart + 1
         }
         var i = valueStart
-        val settings = mutableListOf<CnlValue>()
+        val values = mutableListOf<CnlValue>()
+        val settings = mutableListOf<ExportSetting>()
         while (tokens.getOrNull(i)?.text == "(") {
             val (group, after) = parseGroup(tokens, i)
-            settings += CnlValue(exportSettingFragment(group), joinSpan(tokens[i].span, tokens[after - 1].span))
+            values += CnlValue("export", joinSpan(tokens[i].span, tokens[after - 1].span))
+            exportSettingOf(group)?.let { settings += it }
             i = after
         }
-        if (settings.isEmpty()) {
+        if (values.isEmpty()) {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"export\" needs ( … ) settings or `off`")
             return valueStart
         }
-        properties += CnlProperty(CnlPropertyKind.Export, settings, keywordSpan, joinSpan(keywordSpan, tokens[i - 1].span))
+        properties += CnlProperty(
+            CnlPropertyKind.Export,
+            values,
+            keywordSpan,
+            joinSpan(keywordSpan, tokens[i - 1].span),
+            payload = CnlExportPayload(disabled = false, settings = settings),
+        )
         return i
     }
 
-    /** `( png at 2 «@2x» )` -> `{ format: png, scale: 2, suffix: "@2x" }`. */
-    private fun exportSettingFragment(group: GGroup): String {
+    /** `( png at 2 «@2x» )` → a typed export setting (format-less groups dropped like the reader). */
+    private fun exportSettingOf(group: GGroup): ExportSetting? {
         val children = group.children
         var format: String? = null
         var scale: String? = null
@@ -3005,12 +3497,12 @@ internal object CnlParser {
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            format?.let { add("format: $it") }
-            scale?.let { add("scale: $it") }
-            suffix?.let { add("suffix: ${yamlString(it)}") }
-        }
-        return "{ ${parts.joinToString(", ")} }"
+        val exportFormat = format?.let { ReaderEnums.exportFormat[it] } ?: return null
+        return ExportSetting(
+            format = exportFormat,
+            scale = scale?.let { CnlScalars.doubleOf(it) } ?: 1.0,
+            suffix = suffix ?: "",
+        )
     }
 
     // --- handoff: note / measure / code (parse-only; folded into one handoff block) --
@@ -3029,7 +3521,9 @@ internal object CnlParser {
             CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"note\" needs «text»")
             return valueStart
         }
-        val parts = mutableListOf("text: ${yamlString(textTok.text)}")
+        var id: String? = null
+        var target: String? = null
+        var audience: String? = null
         var i = valueStart + 1
         if (tokens.getOrNull(i)?.text == "(") {
             val (group, after) = parseGroup(tokens, i)
@@ -3037,16 +3531,29 @@ internal object CnlParser {
             var j = 0
             while (j < leaves.size - 1) {
                 when (leaves[j].lowercase()) {
-                    "id" -> { parts += "id: ${yamlString(leaves[j + 1])}"; j += 2 }
-                    "target" -> { parts += "target: ${yamlString(leaves[j + 1])}"; j += 2 }
-                    "audience" -> { parts += "audience: ${yamlString(leaves[j + 1])}"; j += 2 }
+                    "id" -> { id = leaves[j + 1]; j += 2 }
+                    "target" -> { target = leaves[j + 1]; j += 2 }
+                    "audience" -> { audience = leaves[j + 1]; j += 2 }
                     else -> j += 1
                 }
             }
             i = after
         }
         val span = joinSpan(keywordSpan, tokens[i - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Annotation, listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Annotation,
+            listOf(CnlValue("note", span)),
+            keywordSpan,
+            span,
+            payload = CnlAnnotationPayload(
+                DesignAnnotation(
+                    id = id.orEmpty(),
+                    target = target.orEmpty(),
+                    text = textTok.text,
+                    audience = audience.orEmpty(),
+                ),
+            ),
+        )
         return i
     }
 
@@ -3082,14 +3589,25 @@ internal object CnlParser {
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            from?.let { add("from: ${yamlString(it)}") }
-            to?.let { add("to: ${yamlString(it)}") }
-            axis?.let { add("axis: $it") }
-            value?.let { add("value: $it") }
+        // The reader drops a measurement missing from/to/axis but the handoff block still exists.
+        val measurement = if (from != null && to != null && axis != null) {
+            DesignMeasurement(
+                from = from,
+                to = to,
+                axis = ReaderEnums.measureAxis.getValue(axis),
+                value = value?.let { CnlScalars.bindableDoubleOf(it) },
+            )
+        } else {
+            null
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.Measurement, listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.Measurement,
+            listOf(CnlValue("measure", span)),
+            keywordSpan,
+            span,
+            payload = CnlMeasurementPayload(measurement),
+        )
         return after
     }
 
@@ -3118,172 +3636,307 @@ internal object CnlParser {
                 else -> i += 1
             }
         }
-        val parts = buildList {
-            framework?.let { add("framework: ${yamlString(it)}") }
-            component?.let { add("componentHint: ${yamlString(it)}") }
-        }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
-        properties += CnlProperty(CnlPropertyKind.CodeHint, listOf(CnlValue("{ ${parts.joinToString(", ")} }", span)), keywordSpan, span)
+        properties += CnlProperty(
+            CnlPropertyKind.CodeHint,
+            listOf(CnlValue("code", span)),
+            keywordSpan,
+            span,
+            payload = CnlCodeHintPayload(
+                CodeHints(framework = framework.orEmpty(), componentHint = component.orEmpty()),
+            ),
+        )
         return after
     }
 
-    // --- desugar: CnlElement -> typed entries (via the standard YAML + block readers) ---
+    // --- desugar: CnlElement -> typed patch entries (direct construction; no YAML round trip) ---
 
-    /** Desugars [element] to `node`/`shape`/`layout`/`style`/`text` typed entries at [line]. */
-    fun desugar(element: CnlElement, line: Int, diagnostics: DiagnosticCollector): List<TypedEntry> {
+    /** Desugars [element] to typed [DirectPatchEntry] blocks at [line]. */
+    @Suppress("UNUSED_PARAMETER")
+    fun desugar(element: CnlElement, line: Int, diagnostics: DiagnosticCollector): List<DirectPatchEntry> {
         val builder = BlockBuilder()
         element.noun?.let { noun ->
-            builder.node("type" to noun.nodeType)
-            noun.role?.let { builder.node("role" to "\"$it\"") }
-            noun.shapeKind?.let { builder.shape("kind" to it) }
+            builder.nodeTyped { it.copy(type = noun.nodeType) }
+            noun.role?.let { role -> builder.nodeTyped { it.copy(role = role) } }
+            noun.shapeKind?.let { kind -> builder.shapeTyped { it.copy(kind = ReaderEnums.shapeKind[kind]) } }
         }
         element.properties.forEach { property -> applyProperty(builder, property) }
-        return builder.toEntries(line, diagnostics)
+        return builder.toEntries(line)
     }
+
+    /** `size W by H` axis (mirrors the old `sizeAxis` fragment + `readSizingAxis`). */
+    private fun sizingAxisOfToken(value: String): SizingPatch =
+        if (isNumber(value)) {
+            SizingPatch(mode = SizingMode.Fixed, value = CnlScalars.doubleOf(value))
+        } else {
+            SizingPatch(mode = ReaderEnums.sizingMode[value])
+        }
+
+    /** A bare fill/stroke color token → solid paint (mirrors `readPaint` on a color scalar). */
+    private fun solidPaintOfToken(token: String): DesignPaint? =
+        CnlScalars.colorOf(token)?.let { DesignPaint.Solid(it) }
 
     private fun applyProperty(builder: BlockBuilder, property: CnlProperty) {
         val values = property.values.map { it.raw }
         when (property.kind) {
-            CnlPropertyKind.Size -> builder.sizing(sizeAxis(values[0]), sizeAxis(values[1]))
-            CnlPropertyKind.Width -> builder.sizing(width = values[0])
-            CnlPropertyKind.Height -> builder.sizing(height = values[0])
-            CnlPropertyKind.Fill -> builder.addFill(colorLiteral(values[0]))
-            CnlPropertyKind.FillComplex -> builder.addFill(values[0])
-            CnlPropertyKind.Stroke -> builder.style("stroke" to strokeLiteral(values))
-            CnlPropertyKind.StrokeComplex -> builder.styleRaw(values[0])
-            CnlPropertyKind.Effect -> builder.addEffect(values[0])
-            CnlPropertyKind.Radius -> builder.style("radius" to values[0])
-            CnlPropertyKind.Smoothing -> builder.style("cornerSmoothing" to values[0])
-            CnlPropertyKind.Blend -> builder.style("blendMode" to values[0])
-            CnlPropertyKind.StyleRefs -> values.forEach { builder.styleRaw(it) }
-            CnlPropertyKind.Opacity -> builder.style("opacity" to bindingLiteral(values[0]))
-            CnlPropertyKind.Visible -> builder.node("visible" to bindingLiteral(values[0]))
-            CnlPropertyKind.Locked -> builder.node("locked" to values[0])
-            CnlPropertyKind.VariableModes -> builder.node("variableModes" to values[0])
-            CnlPropertyKind.Rotation -> builder.position("rotation" to values[0])
-            CnlPropertyKind.Position -> {
-                builder.position("x" to values[0])
-                builder.position("y" to values[1])
+            CnlPropertyKind.Size ->
+                builder.sizingTyped(width = sizingAxisOfToken(values[0]), height = sizingAxisOfToken(values[1]))
+            CnlPropertyKind.Width -> (property.payload as? CnlSizingPayload)?.let { builder.sizingTyped(width = it.sizing) }
+            CnlPropertyKind.Height -> (property.payload as? CnlSizingPayload)?.let { builder.sizingTyped(height = it.sizing) }
+            CnlPropertyKind.Fill -> builder.addFillTyped(solidPaintOfToken(values[0]))
+            CnlPropertyKind.FillComplex -> builder.addFillTyped((property.payload as? CnlPaintPayload)?.paint)
+            CnlPropertyKind.Stroke -> builder.strokeFlatTyped(
+                paint = solidPaintOfToken(values[0]),
+                weight = values.getOrNull(1)?.takeIf { isNumber(it) }?.let { CnlScalars.bindableDoubleOf(it) },
+                align = values.getOrNull(2)?.let { ReaderEnums.strokeAlign[it.lowercase()] },
+            )
+            CnlPropertyKind.StrokeComplex -> builder.strokeComplexTyped(property.payload as? CnlStrokesPayload)
+            CnlPropertyKind.Effect -> builder.addEffectTyped((property.payload as? CnlEffectPayload)?.effect)
+            CnlPropertyKind.Radius -> {
+                val corners = (property.payload as? CnlRadiusPayload)?.radius
+                    ?: CnlScalars.bindableDoubleOf(values[0])?.let { DesignCornerRadius.all(it) }
+                builder.radiusTyped(corners)
             }
-            CnlPropertyKind.Padding -> builder.layout("padding" to paddingLiteral(values))
-            CnlPropertyKind.Gap -> builder.layout("gap" to values[0])
-            CnlPropertyKind.Direction -> builder.layout("mode" to values[0])
-            CnlPropertyKind.AlignParent -> CnlVocabulary.alignDirections[values[0].lowercase()]?.let { (axis, value) ->
-                if (axis == "both") {
-                    builder.constraint("horizontal" to value)
-                    builder.constraint("vertical" to value)
-                } else {
-                    builder.constraint(axis to value)
+            CnlPropertyKind.Smoothing -> builder.smoothingTyped(CnlScalars.doubleOf(values[0]))
+            CnlPropertyKind.Blend -> builder.styleTyped { it.copy(blendMode = CnlScalars.stringOf(values[0])) }
+            CnlPropertyKind.StyleRefs ->
+                (property.payload as? CnlPairsPayload)?.pairs?.forEach { (key, value) ->
+                    val ref = CnlScalars.stringOf(value)
+                    builder.styleTyped {
+                        when (key) {
+                            "fillStyle" -> it.copy(fillStyle = ref)
+                            "strokeStyle" -> it.copy(strokeStyle = ref)
+                            "textStyle" -> it.copy(textStyle = ref)
+                            "effectStyle" -> it.copy(effectStyle = ref)
+                            else -> it.copy(gridStyle = ref)
+                        }
+                    }
+                }
+            CnlPropertyKind.Opacity -> builder.styleTyped { it.copy(opacity = CnlScalars.bindableDoubleOf(values[0])) }
+            CnlPropertyKind.Visible -> builder.nodeTyped { it.copy(visible = CnlScalars.bindableBooleanOf(values[0])) }
+            CnlPropertyKind.Locked -> builder.nodeTyped { it.copy(locked = values[0] == "true") }
+            CnlPropertyKind.VariableModes -> {
+                val modes = (property.payload as? CnlPairsPayload)?.pairs.orEmpty()
+                    .mapNotNull { (key, value) -> CnlScalars.stringOf(value)?.let { key to it } }
+                    .toMap()
+                builder.nodeTyped { it.copy(variableModes = modes) }
+            }
+            CnlPropertyKind.Rotation -> builder.positionTyped { it.copy(rotation = CnlScalars.doubleOf(values[0])) }
+            CnlPropertyKind.Position -> builder.positionTyped {
+                it.copy(x = CnlScalars.doubleOf(values[0]), y = CnlScalars.doubleOf(values[1]))
+            }
+            CnlPropertyKind.Padding -> {
+                val sides = values.map { CnlScalars.bindableDoubleOf(it) }
+                val (blockStart, inlineEnd, blockEnd, inlineStart) = when (values.size) {
+                    2 -> listOf(sides[0], sides[1], sides[0], sides[1])
+                    4 -> listOf(sides[0], sides[1], sides[2], sides[3])
+                    else -> listOf(sides[0], sides[0], sides[0], sides[0])
+                }
+                builder.layoutTyped {
+                    it.copy(
+                        paddingBlockStart = blockStart,
+                        paddingInlineEnd = inlineEnd,
+                        paddingBlockEnd = blockEnd,
+                        paddingInlineStart = inlineStart,
+                    )
                 }
             }
-            CnlPropertyKind.FontSize -> builder.typography("fontSize" to values[0])
-            CnlPropertyKind.FontWeight -> builder.typography("fontWeight" to values[0])
-            CnlPropertyKind.Id -> builder.node("id" to values[0])
-            CnlPropertyKind.NodeName -> builder.node("name" to yamlString(values[0]))
-            CnlPropertyKind.FontFamily -> builder.typography("fontFamily" to yamlString(values[0]))
-            CnlPropertyKind.LineHeight -> builder.typography("lineHeight" to unitLiteral(values[0]))
-            CnlPropertyKind.Tracking -> builder.typography("letterSpacing" to unitLiteral(values[0]))
-            CnlPropertyKind.ParagraphSpacing -> builder.typography("paragraphSpacing" to values[0])
-            CnlPropertyKind.TextAlign -> builder.typography("horizontalAlign" to values[0])
-            CnlPropertyKind.TextValign -> builder.typography("verticalAlign" to values[0])
-            CnlPropertyKind.TextCase -> builder.typography("case" to values[0])
-            CnlPropertyKind.TextDecoration -> builder.typography("decoration" to values[0])
-            CnlPropertyKind.Features -> builder.typography("openType" to values[0])
-            CnlPropertyKind.Axes -> builder.typography("variableFont" to values[0])
-            CnlPropertyKind.TextKey -> builder.text("key" to yamlString(values[0]))
-            CnlPropertyKind.TextStyleRef -> builder.text("style" to values[0].removePrefix("$"))
+            CnlPropertyKind.Gap -> when (val payload = property.payload) {
+                is CnlGapPayload -> builder.gapTyped(main = null, row = payload.row, column = payload.column)
+                else -> if (values[0] == "auto") {
+                    builder.gapTyped(main = DesignGap.Auto, row = null, column = null)
+                } else {
+                    builder.gapTyped(
+                        main = CnlScalars.bindableDoubleOf(values[0])?.let { DesignGap.Fixed(it) },
+                        row = null,
+                        column = null,
+                    )
+                }
+            }
+            CnlPropertyKind.Direction -> builder.layoutTyped { it.copy(mode = ReaderEnums.layoutMode[values[0]]) }
+            CnlPropertyKind.AlignParent -> CnlVocabulary.alignDirections[values[0].lowercase()]?.let { (axis, value) ->
+                when (axis) {
+                    "both" -> builder.constraintTyped(horizontal = value, vertical = value)
+                    "horizontal" -> builder.constraintTyped(horizontal = value)
+                    else -> builder.constraintTyped(vertical = value)
+                }
+            }
+            CnlPropertyKind.FontSize -> builder.typographyTyped { it.copy(fontSize = CnlScalars.bindableDoubleOf(values[0])) }
+            CnlPropertyKind.FontWeight -> builder.typographyTyped { it.copy(fontWeight = CnlScalars.bindableDoubleOf(values[0])) }
+            CnlPropertyKind.Id -> builder.nodeTyped { it.copy(id = CnlScalars.stringOf(values[0])) }
+            CnlPropertyKind.NodeName -> builder.nodeTyped { it.copy(name = values[0]) }
+            CnlPropertyKind.FontFamily -> builder.typographyTyped { it.copy(fontFamily = values[0]) }
+            CnlPropertyKind.LineHeight -> builder.typographyTyped { it.copy(lineHeight = CnlScalars.unitValueOf(values[0])) }
+            CnlPropertyKind.Tracking -> builder.typographyTyped { it.copy(letterSpacing = CnlScalars.unitValueOf(values[0])) }
+            CnlPropertyKind.ParagraphSpacing -> builder.typographyTyped { it.copy(paragraphSpacing = CnlScalars.doubleOf(values[0])) }
+            CnlPropertyKind.TextAlign -> builder.typographyTyped { it.copy(textAlignHorizontal = ReaderEnums.textAlignHorizontal[values[0]]) }
+            CnlPropertyKind.TextValign -> builder.typographyTyped { it.copy(textAlignVertical = ReaderEnums.textAlignVertical[values[0]]) }
+            CnlPropertyKind.TextCase -> builder.typographyTyped { it.copy(textCase = ReaderEnums.textCase[values[0]]) }
+            CnlPropertyKind.TextDecoration -> builder.typographyTyped { it.copy(textDecoration = ReaderEnums.textDecoration[values[0]]) }
+            CnlPropertyKind.Features -> builder.typographyTyped {
+                it.copy(fontFeatures = (property.payload as? CnlFeaturesPayload)?.features ?: emptyMap())
+            }
+            CnlPropertyKind.Axes -> builder.typographyTyped {
+                it.copy(variableAxes = (property.payload as? CnlAxesPayload)?.axes ?: emptyMap())
+            }
+            CnlPropertyKind.TextKey -> builder.textTyped { it.copy(key = values[0]) }
+            CnlPropertyKind.TextStyleRef ->
+                builder.textTyped { it.copy(styleRef = CnlScalars.stringOf(values[0].removePrefix("$"))) }
             CnlPropertyKind.Characters -> {
                 if (isStringBinding(values[0])) {
-                    builder.text("characters" to bindableStringLiteral(values[0]))
+                    builder.textTyped { it.copy(characters = CnlScalars.bindableStringOf(values[0])) }
                 } else {
-                    builder.text("defaultText" to yamlString(values[0]))
+                    builder.textTyped { it.copy(defaultText = values[0]) }
                 }
             }
-            CnlPropertyKind.MaxLines -> builder.text("maxLines" to values[0])
-            CnlPropertyKind.ListSettings -> builder.text("list" to values[0])
-            CnlPropertyKind.AutoSize ->
-                builder.text("resizing" to if (values[0].lowercase() == "both") "{ width: hug, height: hug }" else "{ height: hug }")
-            CnlPropertyKind.Truncate -> {
-                builder.text("overflow" to "truncate")
-                builder.text("maxLines" to values[0])
+            CnlPropertyKind.MaxLines -> builder.maxLinesTyped(CnlScalars.intOf(values[0]))
+            CnlPropertyKind.ListSettings ->
+                builder.textTyped { it.copy(list = (property.payload as? CnlListSettingsPayload)?.settings) }
+            CnlPropertyKind.AutoSize -> {
+                if (values[0].lowercase() == "both") {
+                    builder.textTyped { it.copy(resizingWidth = SizingMode.Hug, resizingHeight = SizingMode.Hug) }
+                } else {
+                    builder.textTyped { it.copy(resizingHeight = SizingMode.Hug) }
+                }
             }
-            CnlPropertyKind.Wrap -> builder.layout("wrap" to "true")
-            CnlPropertyKind.Clip -> builder.layout("clipContent" to "true")
-            CnlPropertyKind.Absolute -> builder.layoutPosition("mode: absolute")
-            CnlPropertyKind.Distribute -> builder.layout("distribution" to values[0])
-            CnlPropertyKind.Anchor -> values.forEach { builder.layoutPosition(it) }
-            CnlPropertyKind.Constraints -> values.forEach { builder.constraintRaw(it) }
-            CnlPropertyKind.ContainerAlign -> builder.layout("align" to values[0])
-            CnlPropertyKind.Overflow -> builder.layout("overflow" to values[0])
-            CnlPropertyKind.Scroll -> builder.layout("scroll" to values[0])
-            CnlPropertyKind.Columns -> builder.layout("columns" to values[0])
-            CnlPropertyKind.Rows -> builder.layout("rows" to values[0])
-            CnlPropertyKind.Place -> builder.layout("placement" to values[0])
-            CnlPropertyKind.Guides -> builder.layout("guides" to values[0])
-            CnlPropertyKind.Grids -> builder.layout("grids" to values[0])
-            CnlPropertyKind.Link -> builder.span(values[0])
-            CnlPropertyKind.Span -> builder.span(values[0])
-            CnlPropertyKind.ComponentRef -> builder.component("ref: ${values[0]}")
-            CnlPropertyKind.LibraryRef -> builder.component("libraryRef: ${values[0]}")
-            CnlPropertyKind.Variant -> builder.component(values[0])
-            CnlPropertyKind.Props -> builder.component(values[0])
-            CnlPropertyKind.Detach -> builder.component("detach: true")
-            CnlPropertyKind.ResetOverrides -> builder.component("resetOverrides: true")
-            CnlPropertyKind.SlotOverride -> builder.overrideSlot(values[0])
-            CnlPropertyKind.SetOverride -> builder.overrideSet(values[0])
-            CnlPropertyKind.NestedOverride -> builder.overrideNested(values[0])
-            CnlPropertyKind.ComponentName -> builder.component("name: ${plainScalar(values[0])}")
-            CnlPropertyKind.ComponentSet -> builder.component("set: ${plainScalar(values[0])}")
-            CnlPropertyKind.ComponentAxis -> builder.componentAxis(values[0])
-            CnlPropertyKind.ComponentPropDefinition -> builder.componentProperty(values[0])
-            CnlPropertyKind.Media -> builder.media(values[0])
-            CnlPropertyKind.ShapePoints -> builder.shape("pointCount" to values[0])
-            CnlPropertyKind.ShapeInner -> builder.shape("innerRadius" to values[0])
-            CnlPropertyKind.ShapeArc -> {
-                builder.shape("arcStart" to values[0])
-                builder.shape("arcSweep" to values[1])
+            CnlPropertyKind.Truncate -> builder.truncateTyped(CnlScalars.intOf(values[0]))
+            CnlPropertyKind.Wrap -> builder.layoutTyped { it.copy(wrap = true) }
+            CnlPropertyKind.Clip -> builder.layoutTyped { it.copy(clipContent = true) }
+            CnlPropertyKind.Absolute -> builder.layoutPositionTyped { it.copy(positionMode = NodePositionMode.Absolute) }
+            CnlPropertyKind.Distribute -> builder.layoutTyped { it.copy(distribution = ReaderEnums.distribution[values[0]]) }
+            CnlPropertyKind.Anchor -> (property.payload as? CnlPairsPayload)?.pairs?.forEach { (side, token) ->
+                val bound = CnlScalars.bindableDoubleOf(token)
+                builder.layoutPositionTyped {
+                    when (side) {
+                        "inlineStart" -> it.copy(anchorInlineStart = bound)
+                        "inlineEnd" -> it.copy(anchorInlineEnd = bound)
+                        "blockStart" -> it.copy(anchorBlockStart = bound)
+                        else -> it.copy(anchorBlockEnd = bound)
+                    }
+                }
             }
-            CnlPropertyKind.ViewBox -> builder.vector(values[0])
-            CnlPropertyKind.IconRef -> builder.vector("iconRef: ${yamlString(values[0])}")
-            CnlPropertyKind.PathRef -> builder.vector("pathRef: ${yamlString(values[0])}")
-            CnlPropertyKind.VectorPaths -> builder.vector(values[0])
-            CnlPropertyKind.VectorNetwork -> builder.vector(values[0])
-            CnlPropertyKind.BooleanOp -> builder.vector("boolean: { op: ${values[0]} }")
-            CnlPropertyKind.Mask -> values.forEach { builder.mask(it) }
-            CnlPropertyKind.Interactions -> builder.addInteraction(values[0])
-            CnlPropertyKind.Motion -> builder.motion(values[0])
-            CnlPropertyKind.Responsive -> builder.responsiveVariant(values[0])
-            CnlPropertyKind.Export -> values.forEach { v ->
-                if (v == "enabled: false") builder.exportDisabled() else builder.exportSetting(v)
+            CnlPropertyKind.Constraints -> (property.payload as? CnlPairsPayload)?.pairs?.forEach { (axis, value) ->
+                if (axis == "horizontal") builder.constraintTyped(horizontal = value) else builder.constraintTyped(vertical = value)
             }
-            CnlPropertyKind.Annotation -> builder.handoffAnnotation(values[0])
-            CnlPropertyKind.Measurement -> builder.handoffMeasurement(values[0])
-            CnlPropertyKind.CodeHint -> builder.handoffCode(values[0])
+            CnlPropertyKind.ContainerAlign -> {
+                val pairs = (property.payload as? CnlPairsPayload)?.pairs.orEmpty().toMap()
+                builder.layoutTyped {
+                    it.copy(
+                        alignInline = pairs["inline"]?.let { value -> ReaderEnums.align[value] },
+                        alignBlock = pairs["block"]?.let { value -> ReaderEnums.align[value] },
+                        baseline = pairs["baseline"]?.let { value -> ReaderEnums.baseline[value] },
+                    )
+                }
+            }
+            CnlPropertyKind.Overflow -> {
+                val pairs = (property.payload as? CnlPairsPayload)?.pairs.orEmpty().toMap()
+                builder.layoutTyped {
+                    it.copy(
+                        overflowX = pairs["x"]?.let { value -> ReaderEnums.overflow[value] },
+                        overflowY = pairs["y"]?.let { value -> ReaderEnums.overflow[value] },
+                    )
+                }
+            }
+            CnlPropertyKind.Scroll -> {
+                val payload = property.payload as? CnlScrollPayload
+                builder.layoutTyped {
+                    it.copy(
+                        scrollDirection = payload?.direction,
+                        scrollSticky = if (payload?.sticky == true) true else null,
+                        scrollFixedChildren = payload?.fixedChildren,
+                    )
+                }
+            }
+            CnlPropertyKind.Columns -> builder.columnsTyped(property.payload as? CnlTrackAxisPayload)
+            CnlPropertyKind.Rows -> builder.rowsTyped(property.payload as? CnlTrackAxisPayload)
+            CnlPropertyKind.Place -> {
+                val payload = property.payload as? CnlPlacePayload
+                builder.layoutTyped {
+                    it.copy(
+                        placement = GridPlacement(
+                            column = payload?.column ?: 0,
+                            row = payload?.row ?: 0,
+                            columnSpan = payload?.columnSpan ?: 1,
+                            rowSpan = payload?.rowSpan ?: 1,
+                        ),
+                    )
+                }
+            }
+            CnlPropertyKind.Guides -> builder.layoutTyped {
+                it.copy(guides = (property.payload as? CnlGuidesPayload)?.guides.orEmpty())
+            }
+            CnlPropertyKind.Grids -> builder.layoutTyped {
+                it.copy(grids = (property.payload as? CnlGridsPayload)?.grids.orEmpty())
+            }
+            CnlPropertyKind.Link -> builder.spanTyped((property.payload as? CnlSpanPayload)?.span)
+            CnlPropertyKind.Span -> builder.spanTyped((property.payload as? CnlSpanPayload)?.span)
+            CnlPropertyKind.ComponentRef -> builder.componentTyped { it.copy(ref = CnlScalars.stringOf(values[0])) }
+            CnlPropertyKind.LibraryRef -> builder.componentTyped { it.copy(libraryRef = CnlScalars.stringOf(values[0])) }
+            CnlPropertyKind.Variant -> (property.payload as? CnlVariantSelectionPayload)?.let { payload ->
+                builder.componentTyped { it.copy(variant = payload.variant) }
+            }
+            CnlPropertyKind.Props -> (property.payload as? CnlPropsPayload)?.let { payload ->
+                builder.componentTyped { it.copy(props = payload.props) }
+            }
+            CnlPropertyKind.Detach -> builder.componentTyped { it.copy(detach = true) }
+            CnlPropertyKind.ResetOverrides -> builder.componentTyped { it.copy(resetOverrides = true) }
+            CnlPropertyKind.SlotOverride ->
+                (property.payload as? CnlSlotPayload)?.let { builder.slotOverrideTyped(it.name, it.fills) }
+            CnlPropertyKind.SetOverride ->
+                (property.payload as? CnlSetOverridePayload)?.let { builder.addSetOverrideTyped(it.set) }
+            CnlPropertyKind.NestedOverride ->
+                (property.payload as? CnlNestedPayload)?.let { builder.nestedOverrideTyped(it.target, it.override) }
+            // plainScalar-written name/set: a bare `null` word reads back as null.
+            CnlPropertyKind.ComponentName ->
+                builder.componentTyped { it.copy(name = values[0].takeUnless { v -> v == "null" }) }
+            CnlPropertyKind.ComponentSet ->
+                builder.componentTyped { it.copy(set = values[0].takeUnless { v -> v == "null" }) }
+            CnlPropertyKind.ComponentAxis ->
+                (property.payload as? CnlComponentAxisPayload)?.let { builder.componentAxisTyped(it.axis, it.values) }
+            CnlPropertyKind.ComponentPropDefinition ->
+                (property.payload as? CnlComponentPropPayload)?.let { builder.componentPropertyTyped(it.name, it.definition) }
+            CnlPropertyKind.Media -> (property.payload as? CnlMediaPayload)?.let { builder.mediaTyped(it.media) }
+            CnlPropertyKind.ShapePoints -> builder.shapeTyped { it.copy(pointCount = CnlScalars.intOf(values[0])) }
+            CnlPropertyKind.ShapeInner -> builder.shapeTyped { it.copy(innerRadius = CnlScalars.doubleOf(values[0])) }
+            CnlPropertyKind.ShapeArc -> builder.shapeTyped {
+                it.copy(arcStartDeg = CnlScalars.doubleOf(values[0]), arcSweepDeg = CnlScalars.doubleOf(values[1]))
+            }
+            CnlPropertyKind.ViewBox -> (property.payload as? CnlViewBoxPayload)?.let { payload ->
+                builder.vectorTyped { it.copy(viewBox = payload.viewBox) }
+            }
+            CnlPropertyKind.IconRef -> builder.vectorTyped { it.copy(iconRef = values[0]) }
+            CnlPropertyKind.PathRef -> builder.vectorTyped { it.copy(pathRef = values[0]) }
+            CnlPropertyKind.VectorPaths -> (property.payload as? CnlVectorPathsPayload)?.let { payload ->
+                builder.vectorTyped { it.copy(paths = payload.paths) }
+            }
+            CnlPropertyKind.VectorNetwork -> (property.payload as? CnlNetworkPayload)?.let { payload ->
+                builder.vectorTyped {
+                    it.copy(
+                        network = payload.network,
+                        regionFills = payload.regionFills.takeIf { fills -> fills.isNotEmpty() },
+                    )
+                }
+            }
+            CnlPropertyKind.BooleanOp -> builder.vectorTyped {
+                it.copy(boolean = ReaderEnums.booleanOp[values[0]]?.let { op -> BooleanOpPatch(op) })
+            }
+            CnlPropertyKind.Mask -> (property.payload as? CnlMaskPayload)?.let { builder.maskTyped(it.mask) }
+            CnlPropertyKind.Interactions ->
+                (property.payload as? CnlInteractionPayload)?.let { builder.interactionTyped(it.interaction) }
+            CnlPropertyKind.Motion -> (property.payload as? CnlMotionPayload)?.let { builder.motionTyped(it.motion) }
+            CnlPropertyKind.Responsive ->
+                (property.payload as? CnlVariantPayload)?.let { builder.responsiveVariantTyped(it.variant) }
+            CnlPropertyKind.Export -> (property.payload as? CnlExportPayload)?.let {
+                if (it.disabled) builder.exportDisabledTyped() else builder.exportSettingsTyped(it.settings)
+            }
+            CnlPropertyKind.Annotation ->
+                (property.payload as? CnlAnnotationPayload)?.let { builder.handoffAnnotationTyped(it.annotation) }
+            CnlPropertyKind.Measurement ->
+                (property.payload as? CnlMeasurementPayload)?.let { builder.handoffMeasurementTyped(it.measurement) }
+            CnlPropertyKind.CodeHint ->
+                (property.payload as? CnlCodeHintPayload)?.let { builder.handoffCodeTyped(it.code) }
         }
     }
-
-    private fun sizeAxis(value: String): String =
-        if (isNumber(value)) "{ type: fixed, value: $value }" else value
-
-    private fun colorLiteral(color: String): String =
-        if (color.startsWith("#") || color.startsWith("{{")) "\"$color\"" else color
-
-    /** A region-fill token → a `fills:` list item: `#hex` (quoted), `token:ref` → map, else bare `$ref`. */
-    private fun regionFillItem(token: String): String = when {
-        token.startsWith("#") -> "\"$token\""
-        token.startsWith("token:") -> "{ token: ${token.removePrefix("token:")} }"
-        else -> token
-    }
-
-    /** Opacity/binding literal — quotes `{{expr}}`, turns `$prop.name` into an internal prop ref map. */
-    private fun bindingLiteral(value: String): String =
-        propName(value)?.let { "{ prop: $it }" }
-            ?: if (value.startsWith("{{")) "\"$value\"" else value
-
-    private fun bindableStringLiteral(value: String): String =
-        propName(value)?.let { "{ prop: $it }" }
-            ?: if (value.startsWith("$")) value
-            else yamlString(value)
 
     private fun isStringBinding(value: String): Boolean =
         propName(value) != null || value.startsWith("$") || isBinding(value)
@@ -3297,242 +3950,464 @@ internal object CnlParser {
     /** A `{{expr}}` data-binding token. Single-token only (multi-word exprs need a tokenizer rule). */
     private fun isBinding(text: String): Boolean = text.startsWith("{{") && text.endsWith("}}")
 
-    private fun strokeLiteral(values: List<String>): String {
-        val parts = buildList {
-            add("color: ${colorLiteral(values[0])}")
-            values.getOrNull(1)?.takeIf { isNumber(it) }?.let { add("weight: $it") }
-            values.getOrNull(2)?.let { add("position: ${it.lowercase()}") }
-        }
-        return "{ ${parts.joinToString(", ")} }"
-    }
+    /** A flat `stroke #hex [weight] [align]` phrase (composes with a `stroke ( … )` record). */
+    private data class StrokeFlat(
+        val paint: DesignPaint?,
+        val weight: Bindable<Double>?,
+        val align: StrokeAlign?,
+    )
 
-    private fun paddingLiteral(values: List<String>): String = when (values.size) {
-        1 -> values[0]
-        2 -> "{ block: ${values[0]}, inline: ${values[1]} }"
-        4 -> "{ blockStart: ${values[0]}, inlineEnd: ${values[1]}, blockEnd: ${values[2]}, inlineStart: ${values[3]} }"
-        else -> values.first()
-    }
-
-    /** Accumulates per-block key fragments, emitting one flow map per block key. */
+    /**
+     * Accumulates one CNL sentence's block state. Every block is built as a typed patch and
+     * emitted as a [DirectPatchEntry] — no YAML round trip anywhere. "Touched" flags mirror the
+     * old fragment-list `parts.isEmpty()` emission gating, so blocks that used to emit an
+     * (effectively empty) map still emit an (effectively empty) patch.
+     */
     private class BlockBuilder {
-        private val nodeParts = mutableListOf<String>()
-        private val shapeParts = mutableListOf<String>()
-        private val layoutParts = mutableListOf<String>()
-        private val styleParts = mutableListOf<String>()
-        private val fillParts = mutableListOf<String>()
-        private val effectParts = mutableListOf<String>()
-        private val typographyParts = mutableListOf<String>()
-        private val textDirectParts = mutableListOf<String>()
-        private val spanParts = mutableListOf<String>()
-        private val positionParts = mutableListOf<String>()
-        private val constraintParts = mutableListOf<String>()
-        private val layoutPositionParts = mutableListOf<String>()
-        private val componentParts = mutableListOf<String>()
-        private val componentAxisParts = mutableListOf<String>()
-        private val componentPropertyParts = mutableListOf<String>()
-        private val slotOverrideParts = mutableListOf<String>()
-        private val setOverrideParts = mutableListOf<String>()
-        private val nestedOverrideParts = mutableListOf<String>()
-        private val mediaParts = mutableListOf<String>()
-        private val vectorParts = mutableListOf<String>()
-        private val maskParts = mutableListOf<String>()
-        private val interactionParts = mutableListOf<String>()
-        private var motionFragment: String? = null
-        private var sizeWidth: String? = null
-        private var sizeHeight: String? = null
-        private val responsiveVariantParts = mutableListOf<String>()
-        private val exportSettingParts = mutableListOf<String>()
+        // --- typed state (direct desugar). "Touched" flags mirror the old parts.isEmpty() gating. ---
+        private var nodePatch = NodePatch()
+        private var nodeCoreTouched = false
+        private var positionTouched = false
+        private var constraintTouched = false
+        private var shapePatch = ShapePatch()
+        private var shapeTouched = false
+        private var layoutPatch = LayoutPatch()
+        private var layoutTouched = false
+        private var layoutPositionTouched = false
+        private var sizingWidthTyped: SizingPatch? = null
+        private var sizingHeightTyped: SizingPatch? = null
+        private var gapRowTyped: Bindable<Double>? = null
+        private var gapColumnTyped: Bindable<Double>? = null
+        private var columnsAxis: CnlTrackAxisPayload? = null
+        private var rowsAxis: CnlTrackAxisPayload? = null
+        private var stylePatch = StylePatch()
+        private var styleTouched = false
+        private var radiusCorners: DesignCornerRadius? = null
+        private var cornerSmoothing: Double? = null
+        private val fillsTyped = mutableListOf<DesignPaint>()
+        private var fillsTouched = false
+        private val effectsTyped = mutableListOf<DesignEffect>()
+        private var effectsTouched = false
+        private var strokeFlat: StrokeFlat? = null
+        private var strokeComplex: CnlStrokesPayload? = null
+        private var typographyStyle = DesignTextStyle()
+        private var typographyTouched = false
+        private var textPatch = TextPatch()
+        private var textTouched = false
+        private var truncateOverflow = false
+        private var maxLines: Int? = null
+        private val spansTyped = mutableListOf<TextSpanPatch>()
+        private val responsiveVariantsTyped = mutableListOf<ResponsiveVariantPatch>()
+        private val setOverridesTyped = mutableListOf<SetOverridePatch>()
+        private var mediaPatch = MediaPatch()
+        private var mediaTouched = false
+        private var vectorPatch = VectorPatch()
+        private var vectorTouched = false
+        private var maskPatch = MaskPatch()
+        private var maskTouched = false
+        private val interactionsTyped = mutableListOf<InteractionPatch>()
+        private var motionPatch: MotionPatch? = null
+        private var componentPatch = ComponentPatch()
+        private var componentTouched = false
+        private val componentAxes = LinkedHashMap<String, List<String>>()
+        private val componentProperties = LinkedHashMap<String, ComponentPropertyDefinition>()
+        private val slotOverridesTyped = LinkedHashMap<String, List<SlotOverridePatch>>()
+        private val nestedOverridesTyped = LinkedHashMap<String, NestedInstancePatch>()
+        private val exportSettings = mutableListOf<ExportSetting>()
+        private var exportSettingsTouched = false
         private var exportDisabled = false
-        private val annotationParts = mutableListOf<String>()
-        private val measurementParts = mutableListOf<String>()
-        private var codeHintPart: String? = null
+        private val annotationsTyped = mutableListOf<DesignAnnotation>()
+        private val measurementsTyped = mutableListOf<DesignMeasurement>()
+        private var codeHintTyped: CodeHints? = null
+        private var handoffTouched = false
 
-        fun node(pair: Pair<String, String>) { nodeParts += "${pair.first}: ${pair.second}" }
-        fun shape(pair: Pair<String, String>) { shapeParts += "${pair.first}: ${pair.second}" }
-        fun layout(pair: Pair<String, String>) { layoutParts += "${pair.first}: ${pair.second}" }
-        fun style(pair: Pair<String, String>) { styleParts += "${pair.first}: ${pair.second}" }
-        /** Appends a pre-formatted `key: value` fragment to the `style:` map (shared style refs). */
-        fun styleRaw(fragment: String) { styleParts += fragment }
-        /** Each `color`/`fill` phrase appends a paint; they compose into a `fills:` list. */
-        fun addFill(value: String) { fillParts += value }
-        /** Each `effect ( … )` phrase appends an effect; they compose into an `effects:` list. */
-        fun addEffect(value: String) { effectParts += value }
-        fun typography(pair: Pair<String, String>) { typographyParts += "${pair.first}: ${pair.second}" }
-        /** A direct `text:` block key (key/style/list/resizing/overflow/maxLines), outside `typography:`. */
-        fun text(pair: Pair<String, String>) { textDirectParts += "${pair.first}: ${pair.second}" }
-        /** Each `link ( … )` phrase appends a `text.spans[]` item; they compose into `text: { spans: [ … ] }`. */
-        fun span(fragment: String) { spanParts += fragment }
-        fun position(pair: Pair<String, String>) { positionParts += "${pair.first}: ${pair.second}" }
-        fun constraint(pair: Pair<String, String>) { constraintParts += "${pair.first}: ${pair.second}" }
-        /** A pre-formatted `key: value` constraint fragment (per-axis constraints record). */
-        fun constraintRaw(fragment: String) { constraintParts += fragment }
-        /** A `layout.position` sub-map fragment (absolute mode + anchor sides, merged into one map). */
-        fun layoutPosition(fragment: String) { layoutPositionParts += fragment }
-        /** A `component:` block fragment (ref/libraryRef/variant/props/detach/resetOverrides). */
-        fun component(fragment: String) { componentParts += fragment }
+        // --- typed setters (each marks its block "touched" exactly where a string part was added) ---
+
+        fun nodeTyped(transform: (NodePatch) -> NodePatch) {
+            nodePatch = transform(nodePatch)
+            nodeCoreTouched = true
+        }
+
+        fun positionTyped(transform: (NodePatch) -> NodePatch) {
+            nodePatch = transform(nodePatch)
+            positionTouched = true
+        }
+
+        fun constraintTyped(horizontal: String? = null, vertical: String? = null) {
+            horizontal?.let {
+                nodePatch = nodePatch.copy(constraintsHorizontal = ReaderEnums.horizontalConstraint[it])
+                constraintTouched = true
+            }
+            vertical?.let {
+                nodePatch = nodePatch.copy(constraintsVertical = ReaderEnums.verticalConstraint[it])
+                constraintTouched = true
+            }
+        }
+
+        fun shapeTyped(transform: (ShapePatch) -> ShapePatch) {
+            shapePatch = transform(shapePatch)
+            shapeTouched = true
+        }
+
+        fun layoutTyped(transform: (LayoutPatch) -> LayoutPatch) {
+            layoutPatch = transform(layoutPatch)
+            layoutTouched = true
+        }
+
+        fun layoutPositionTyped(transform: (LayoutPatch) -> LayoutPatch) {
+            layoutPatch = transform(layoutPatch)
+            layoutPositionTouched = true
+        }
+
+        fun sizingTyped(width: SizingPatch? = null, height: SizingPatch? = null) {
+            width?.let { sizingWidthTyped = it }
+            height?.let { sizingHeightTyped = it }
+        }
+
+        /** A `gap` phrase replaces the whole gap state (the old single `gap:` key: last one wins). */
+        fun gapTyped(main: DesignGap?, row: Bindable<Double>?, column: Bindable<Double>?) {
+            layoutTouched = true
+            layoutPatch = layoutPatch.copy(gap = main)
+            gapRowTyped = row
+            gapColumnTyped = column
+        }
+
+        fun columnsTyped(axis: CnlTrackAxisPayload?) {
+            layoutTouched = true
+            axis?.let { columnsAxis = it }
+        }
+
+        fun rowsTyped(axis: CnlTrackAxisPayload?) {
+            layoutTouched = true
+            axis?.let { rowsAxis = it }
+        }
+
+        fun styleTyped(transform: (StylePatch) -> StylePatch) {
+            stylePatch = transform(stylePatch)
+            styleTouched = true
+        }
+
+        fun radiusTyped(corners: DesignCornerRadius?) {
+            styleTouched = true
+            radiusCorners = corners
+        }
+
+        fun smoothingTyped(value: Double?) {
+            styleTouched = true
+            cornerSmoothing = value
+        }
+
+        fun addFillTyped(paint: DesignPaint?) {
+            fillsTouched = true
+            paint?.let { fillsTyped += it }
+        }
+
+        fun addEffectTyped(effect: DesignEffect?) {
+            effectsTouched = true
+            effect?.let { effectsTyped += it }
+        }
+
+        fun strokeFlatTyped(paint: DesignPaint?, weight: Bindable<Double>?, align: StrokeAlign?) {
+            styleTouched = true
+            strokeFlat = StrokeFlat(paint, weight, align)
+        }
+
+        fun strokeComplexTyped(payload: CnlStrokesPayload?) {
+            styleTouched = true
+            payload?.let { strokeComplex = it }
+        }
+
+        fun typographyTyped(transform: (DesignTextStyle) -> DesignTextStyle) {
+            typographyStyle = transform(typographyStyle)
+            typographyTouched = true
+        }
+
+        fun textTyped(transform: (TextPatch) -> TextPatch) {
+            textPatch = transform(textPatch)
+            textTouched = true
+        }
+
+        fun maxLinesTyped(value: Int?) {
+            textTouched = true
+            maxLines = value
+        }
+
+        fun truncateTyped(value: Int?) {
+            textTouched = true
+            truncateOverflow = true
+            maxLines = value
+        }
+
+        fun spanTyped(span: TextSpanPatch?) {
+            span?.let { spansTyped += it }
+        }
+
+        fun responsiveVariantTyped(variant: ResponsiveVariantPatch) { responsiveVariantsTyped += variant }
+
+        fun addSetOverrideTyped(set: SetOverridePatch) { setOverridesTyped += set }
+
+        /** One `responsive.variants` record from this (sub-)builder's captured typed overrides. */
+        fun variantTyped(selectors: Map<ResponsiveDimension, String>): ResponsiveVariantPatch =
+            ResponsiveVariantPatch(
+                selectors = selectors,
+                layout = layoutTypedOrNull(),
+                style = styleTypedOrNull(),
+                text = textTypedOrNull(includeSpans = false),
+            )
+
+        /** One typed `overrides.sets` record from this sub-builder's captured appearance phrases. */
+        fun setOverrideTyped(target: List<String>): SetOverridePatch =
+            SetOverridePatch(
+                target = target,
+                style = styleTypedOrNull(),
+                text = textTypedOrNull(includeSpans = false),
+                node = overrideNodeTypedOrNull(),
+            )
+
+        /** The `media:` record; repeated phrases merge per-field (YAML duplicate-key last-wins). */
+        fun mediaTyped(patch: MediaPatch) {
+            mediaTouched = true
+            mediaPatch = MediaPatch(
+                asset = patch.asset ?: mediaPatch.asset,
+                kind = patch.kind ?: mediaPatch.kind,
+                fillMode = patch.fillMode ?: mediaPatch.fillMode,
+                focalPoint = patch.focalPoint ?: mediaPatch.focalPoint,
+                alt = patch.alt ?: mediaPatch.alt,
+                replaceable = patch.replaceable ?: mediaPatch.replaceable,
+                opacity = patch.opacity ?: mediaPatch.opacity,
+                blendMode = patch.blendMode ?: mediaPatch.blendMode,
+                poster = patch.poster ?: mediaPatch.poster,
+                autoplay = patch.autoplay ?: mediaPatch.autoplay,
+                loop = patch.loop ?: mediaPatch.loop,
+                muted = patch.muted ?: mediaPatch.muted,
+            )
+        }
+
+        /** A `vector:` aspect (viewBox/iconRef/pathRef/paths/network/boolean), merged into ONE patch. */
+        fun vectorTyped(transform: (VectorPatch) -> VectorPatch) {
+            vectorTouched = true
+            vectorPatch = transform(vectorPatch)
+        }
+
+        /** The `mask:` block; repeated phrases merge per-field (YAML duplicate-key last-wins). */
+        fun maskTyped(patch: MaskPatch) {
+            maskTouched = true
+            maskPatch = MaskPatch(
+                type = patch.type ?: maskPatch.type,
+                source = patch.source ?: maskPatch.source,
+                appliesTo = patch.appliesTo ?: maskPatch.appliesTo,
+            )
+        }
+
+        /** Each trigger phrase appends one interaction; they emit as separate `interaction:` blocks. */
+        fun interactionTyped(patch: InteractionPatch) { interactionsTyped += patch }
+
+        /** The node's single `motion:` block (last phrase wins). */
+        fun motionTyped(patch: MotionPatch) { motionPatch = patch }
+
+        /** A `component:` block aspect (ref/libraryRef/variant/props/detach/resetOverrides/name/set). */
+        fun componentTyped(transform: (ComponentPatch) -> ComponentPatch) {
+            componentTouched = true
+            componentPatch = transform(componentPatch)
+        }
+
         /** One definition-side `component.variants` axis entry. */
-        fun componentAxis(fragment: String) { componentAxisParts += fragment }
+        fun componentAxisTyped(axis: String, values: List<String>) {
+            componentTouched = true
+            componentAxes[axis] = values
+        }
+
         /** One definition-side `component.properties` entry. */
-        fun componentProperty(fragment: String) { componentPropertyParts += fragment }
-        /** One `overrides.slots` entry `name: [ … ]`. */
-        fun overrideSlot(fragment: String) { slotOverrideParts += fragment }
-        /** One `overrides.sets` entry `{ target: [ … ], style: {…}, text: {…}, node: {…} }`. */
-        fun overrideSet(fragment: String) { setOverrideParts += fragment }
-        /** One `overrides.nestedInstances` entry `target: { … }`. */
-        fun overrideNested(fragment: String) { nestedOverrideParts += fragment }
-
-        /** Assembles one `overrides.sets` record from this sub-builder's captured appearance phrases. */
-        fun overrideSetRecord(targetPath: String): String {
-            val parts = buildList {
-                add("target: [ $targetPath ]")
-                variantStyleMap()?.let { add("style: $it") }
-                variantTextMap()?.let { add("text: $it") }
-                overrideNodeMap()?.let { add("node: $it") }
-            }
-            return "{ ${parts.joinToString(", ")} }"
+        fun componentPropertyTyped(name: String, definition: ComponentPropertyDefinition) {
+            componentTouched = true
+            componentProperties[name] = definition
         }
 
-        private fun overrideNodeMap(): String? =
-            if (nodeParts.isEmpty()) null else "{ ${nodeParts.joinToString(", ")} }"
-        /** The whole `media:` record body (image/video convenience layer). */
-        fun media(fragment: String) { mediaParts += fragment }
-        /** A `vector:` sub-entry (viewBox/iconRef/pathRef/paths/network/boolean), merged into ONE `vector:` map. */
-        fun vector(fragment: String) { vectorParts += fragment }
-        /** A `mask:` block `key: value` fragment. */
-        fun mask(fragment: String) { maskParts += fragment }
-        /** Each trigger phrase appends one interaction map; they emit as separate `interaction:` blocks. */
-        fun addInteraction(fragment: String) { interactionParts += fragment }
-        /** The node's single `motion:` block. */
-        fun motion(fragment: String) { motionFragment = fragment }
+        /** One `overrides.slots` entry (duplicate slot names: last wins, like YAML map keys). */
+        fun slotOverrideTyped(name: String, fills: List<SlotOverridePatch>) { slotOverridesTyped[name] = fills }
 
-        /** Each `when ( … ) …` clause contributes one `responsive.variants` record. */
-        fun responsiveVariant(fragment: String) { responsiveVariantParts += fragment }
-        /** Each export `( … )` setting group; repeated `export` clauses merge into one list. */
-        fun exportSetting(fragment: String) { exportSettingParts += fragment }
+        /** One `overrides.nestedInstances` entry (duplicate targets: last wins). */
+        fun nestedOverrideTyped(target: String, override: NestedInstancePatch) {
+            nestedOverridesTyped[target] = override
+        }
+
+        /** Export `( … )` settings; repeated `export` clauses merge into one list. */
+        fun exportSettingsTyped(settings: List<ExportSetting>) {
+            exportSettingsTouched = true
+            exportSettings += settings
+        }
+
         /** `export off` → `enabled: false` (only emitted when no settings were authored). */
-        fun exportDisabled() { exportDisabled = true }
-        fun handoffAnnotation(fragment: String) { annotationParts += fragment }
-        fun handoffMeasurement(fragment: String) { measurementParts += fragment }
-        fun handoffCode(fragment: String) { codeHintPart = fragment }
+        fun exportDisabledTyped() { exportDisabled = true }
 
-        /** Assembles one `responsive.variants` record from this (sub-)builder's captured overrides. */
-        fun variantRecord(selectors: String): String {
-            val parts = buildList {
-                add("when: $selectors")
-                variantLayoutMap()?.let { add("layout: $it") }
-                variantStyleMap()?.let { add("style: $it") }
-                variantTextMap()?.let { add("text: $it") }
-            }
-            return "{ ${parts.joinToString(", ")} }"
+        fun handoffAnnotationTyped(annotation: DesignAnnotation) {
+            handoffTouched = true
+            annotationsTyped += annotation
         }
 
-        private fun variantLayoutMap(): String? {
-            val parts = (layoutParts + sizingMap() + layoutPositionMap()).filter { it.isNotEmpty() }
-            return if (parts.isEmpty()) null else "{ ${parts.joinToString(", ")} }"
+        /** A `measure` phrase marks handoff authored even when the record is invalid (dropped). */
+        fun handoffMeasurementTyped(measurement: DesignMeasurement?) {
+            handoffTouched = true
+            measurement?.let { measurementsTyped += it }
         }
 
-        private fun variantStyleMap(): String? {
-            val parts = (listOf(fillsList(), effectsList()) + styleParts).filter { it.isNotEmpty() }
-            return if (parts.isEmpty()) null else "{ ${parts.joinToString(", ")} }"
+        fun handoffCodeTyped(code: CodeHints) {
+            handoffTouched = true
+            codeHintTyped = code
         }
 
-        private fun variantTextMap(): String? {
-            val parts = buildList {
-                if (typographyParts.isNotEmpty()) add("typography: { ${typographyParts.joinToString(", ")} }")
-                addAll(textDirectParts)
+        // --- typed emission (mirrors the block readers on the old fragments) ---
+
+        private fun nodeTypedOrNull(): NodePatch? =
+            if (nodeCoreTouched || positionTouched || constraintTouched) nodePatch else null
+
+        /** The override-set `node` group carries only the core fields (the old map ignored position/constraints). */
+        private fun overrideNodeTypedOrNull(): NodePatch? =
+            if (!nodeCoreTouched) {
+                null
+            } else {
+                nodePatch.copy(
+                    positionMode = null,
+                    x = null,
+                    y = null,
+                    rotation = null,
+                    constraintsHorizontal = null,
+                    constraintsVertical = null,
+                )
             }
-            return if (parts.isEmpty()) null else "{ ${parts.joinToString(", ")} }"
+
+        private fun shapeTypedOrNull(): ShapePatch? = if (shapeTouched) shapePatch else null
+
+        private fun layoutTypedOrNull(): LayoutPatch? {
+            if (!layoutTouched && !layoutPositionTouched && sizingWidthTyped == null && sizingHeightTyped == null) {
+                return null
+            }
+            return layoutPatch.copy(
+                sizingWidth = sizingWidthTyped,
+                sizingHeight = sizingHeightTyped,
+                rowGap = gapRowTyped ?: rowsAxis?.gap,
+                columnGap = gapColumnTyped ?: columnsAxis?.gap,
+                gridColumns = columnsAxis?.tracks,
+                gridRows = rowsAxis?.tracks,
+                implicitRows = rowsAxis?.implicitTrack,
+                implicitRowMin = rowsAxis?.min,
+            )
         }
 
-        fun sizing(width: String? = null, height: String? = null) {
-            width?.let { sizeWidth = it }
-            height?.let { sizeHeight = it }
+        private fun styleTypedOrNull(): StylePatch? {
+            if (!styleTouched && !fillsTouched && !effectsTouched) return null
+            return stylePatch.copy(
+                radius = combinedRadius(),
+                fills = if (fillsTouched) fillsTyped.toList() else null,
+                strokes = combinedStrokes(),
+                effects = if (effectsTouched) effectsTyped.toList() else null,
+            )
         }
 
-        fun toEntries(line: Int, diagnostics: DiagnosticCollector): List<TypedEntry> {
-            val node = (nodeParts + positionMap() + constraintMap()).filter { it.isNotEmpty() }
-            val layout = (layoutParts + sizingMap() + layoutPositionMap()).filter { it.isNotEmpty() }
-            val style = (listOf(fillsList(), effectsList()) + styleParts).filter { it.isNotEmpty() }
-            val text = buildList {
-                if (typographyParts.isNotEmpty()) add("typography: { ${typographyParts.joinToString(", ")} }")
-                addAll(textDirectParts)
-                if (spanParts.isNotEmpty()) add("spans: [ ${spanParts.joinToString(", ")} ]")
+        private fun combinedRadius(): DesignCornerRadius? {
+            if (radiusCorners == null && cornerSmoothing == null) return null
+            return (radiusCorners ?: DesignCornerRadius()).copy(smoothing = cornerSmoothing ?: 0.0)
+        }
+
+        /** Composes the flat + record stroke phrases like `readStrokes` hoisted attributes. */
+        private fun combinedStrokes(): DesignStrokes? {
+            val flat = strokeFlat
+            val complex = strokeComplex
+            if (flat == null && complex == null) return null
+            return DesignStrokes(
+                paints = listOfNotNull(flat?.paint) + (complex?.paints ?: emptyList()),
+                weight = complex?.weight ?: flat?.weight ?: 1.0.bindable(),
+                align = complex?.align ?: flat?.align ?: StrokeAlign.Inside,
+                dashPattern = complex?.dash ?: emptyList(),
+                cap = complex?.cap ?: "butt",
+                join = complex?.join ?: "miter",
+                weightPerSide = complex?.weightPerSide,
+            )
+        }
+
+        private fun textTypedOrNull(includeSpans: Boolean): TextPatch? {
+            val hasSpans = includeSpans && spansTyped.isNotEmpty()
+            if (!typographyTouched && !textTouched && !hasSpans) return null
+            val lines = maxLines
+            return textPatch.copy(
+                typography = if (typographyTouched) typographyStyle else null,
+                truncate = when {
+                    truncateOverflow -> TextTruncate(lines ?: 1)
+                    lines != null -> TextTruncate(lines, ellipsis = false)
+                    else -> null
+                },
+                spans = if (hasSpans) spansTyped.toList() else null,
+            )
+        }
+
+        private fun mediaTypedOrNull(): MediaPatch? = if (mediaTouched) mediaPatch else null
+
+        private fun vectorTypedOrNull(): VectorPatch? = if (vectorTouched) vectorPatch else null
+
+        private fun maskTypedOrNull(): MaskPatch? = if (maskTouched) maskPatch else null
+
+        private fun componentTypedOrNull(): ComponentPatch? =
+            if (!componentTouched) {
+                null
+            } else {
+                componentPatch.copy(
+                    variantsAxes = componentAxes.toMap().takeIf { it.isNotEmpty() },
+                    properties = componentProperties.toMap().takeIf { it.isNotEmpty() },
+                )
             }
-            val overrides = buildList {
-                if (slotOverrideParts.isNotEmpty()) add("slots: { ${slotOverrideParts.joinToString(", ")} }")
-                if (setOverrideParts.isNotEmpty()) add("sets: [ ${setOverrideParts.joinToString(", ")} ]")
-                if (nestedOverrideParts.isNotEmpty()) add("nestedInstances: { ${nestedOverrideParts.joinToString(", ")} }")
+
+        private fun overridesTypedOrNull(): OverridesPatch? {
+            if (slotOverridesTyped.isEmpty() && setOverridesTyped.isEmpty() && nestedOverridesTyped.isEmpty()) {
+                return null
             }
-            val responsive = if (responsiveVariantParts.isEmpty()) emptyList()
-                else listOf("variants: [ ${responsiveVariantParts.joinToString(", ")} ]")
-            val export = buildList {
-                if (exportSettingParts.isNotEmpty()) add("settings: [ ${exportSettingParts.joinToString(", ")} ]")
-                else if (exportDisabled) add("enabled: false")
+            return OverridesPatch(
+                slots = slotOverridesTyped.toMap().takeIf { it.isNotEmpty() },
+                sets = setOverridesTyped.toList().takeIf { it.isNotEmpty() },
+                nestedInstances = nestedOverridesTyped.toMap().takeIf { it.isNotEmpty() },
+            )
+        }
+
+        /** `settings` win over `enabled: false` when both were authored (old emission order). */
+        private fun exportTypedOrNull(): ExportPatch? = when {
+            exportSettingsTouched -> ExportPatch(enabled = null, settings = exportSettings.toList())
+            exportDisabled -> ExportPatch(enabled = false)
+            else -> null
+        }
+
+        private fun handoffTypedOrNull(): HandoffPatch? =
+            if (!handoffTouched) {
+                null
+            } else {
+                HandoffPatch(
+                    DesignHandoff(
+                        annotations = annotationsTyped.toList(),
+                        measurements = measurementsTyped.toList(),
+                        code = codeHintTyped,
+                    ),
+                )
             }
-            val handoff = buildList {
-                if (annotationParts.isNotEmpty()) add("annotations: [ ${annotationParts.joinToString(", ")} ]")
-                if (measurementParts.isNotEmpty()) add("measurements: [ ${measurementParts.joinToString(", ")} ]")
-                codeHintPart?.let { add("code: $it") }
-            }
-            val component = buildList {
-                addAll(componentParts)
-                if (componentAxisParts.isNotEmpty()) add("variants: { ${componentAxisParts.joinToString(", ")} }")
-                if (componentPropertyParts.isNotEmpty()) add("properties: { ${componentPropertyParts.joinToString(", ")} }")
-            }
+
+        fun toEntries(line: Int): List<DirectPatchEntry> {
+            val span = SlmSourceSpan(line, line)
             return buildList {
-                entry("node", node, line, diagnostics)?.let { add(it) }
-                entry("shape", shapeParts, line, diagnostics)?.let { add(it) }
-                entry("media", mediaParts, line, diagnostics)?.let { add(it) }
-                entry("vector", vectorParts, line, diagnostics)?.let { add(it) }
-                entry("mask", maskParts, line, diagnostics)?.let { add(it) }
-                entry("layout", layout, line, diagnostics)?.let { add(it) }
-                entry("style", style, line, diagnostics)?.let { add(it) }
-                entry("text", text, line, diagnostics)?.let { add(it) }
-                entry("responsive", responsive, line, diagnostics)?.let { add(it) }
-                entry("export", export, line, diagnostics)?.let { add(it) }
-                entry("handoff", handoff, line, diagnostics)?.let { add(it) }
-                interactionParts.forEach { part -> entry("interaction", listOf(part), line, diagnostics)?.let { add(it) } }
-                motionFragment?.let { fragment -> entry("motion", listOf(fragment), line, diagnostics)?.let { add(it) } }
-                entry("component", component, line, diagnostics)?.let { add(it) }
-                entry("overrides", overrides, line, diagnostics)?.let { add(it) }
+                nodeTypedOrNull()?.let { add(DirectPatchEntry("node", it, span)) }
+                shapeTypedOrNull()?.let { add(DirectPatchEntry("shape", it, span)) }
+                mediaTypedOrNull()?.let { add(DirectPatchEntry("media", it, span)) }
+                vectorTypedOrNull()?.let { add(DirectPatchEntry("vector", it, span)) }
+                maskTypedOrNull()?.let { add(DirectPatchEntry("mask", it, span)) }
+                layoutTypedOrNull()?.let { add(DirectPatchEntry("layout", it, span)) }
+                styleTypedOrNull()?.let { add(DirectPatchEntry("style", it, span)) }
+                textTypedOrNull(includeSpans = true)?.let { add(DirectPatchEntry("text", it, span)) }
+                if (responsiveVariantsTyped.isNotEmpty()) {
+                    add(DirectPatchEntry("responsive", ResponsivePatch(responsiveVariantsTyped.toList()), span))
+                }
+                exportTypedOrNull()?.let { add(DirectPatchEntry("export", it, span)) }
+                handoffTypedOrNull()?.let { add(DirectPatchEntry("handoff", it, span)) }
+                interactionsTyped.forEach { add(DirectPatchEntry("interaction", it, span)) }
+                motionPatch?.let { add(DirectPatchEntry("motion", it, span)) }
+                componentTypedOrNull()?.let { add(DirectPatchEntry("component", it, span)) }
+                overridesTypedOrNull()?.let { add(DirectPatchEntry("overrides", it, span)) }
             }
-        }
-
-        private fun fillsList(): String =
-            if (fillParts.isEmpty()) "" else "fills: [ ${fillParts.joinToString(", ")} ]"
-
-        private fun effectsList(): String =
-            if (effectParts.isEmpty()) "" else "effects: [ ${effectParts.joinToString(", ")} ]"
-
-        private fun positionMap(): String =
-            if (positionParts.isEmpty()) "" else "position: { ${positionParts.joinToString(", ")} }"
-
-        private fun constraintMap(): String =
-            if (constraintParts.isEmpty()) "" else "constraints: { ${constraintParts.joinToString(", ")} }"
-
-        private fun layoutPositionMap(): String =
-            if (layoutPositionParts.isEmpty()) "" else "position: { ${layoutPositionParts.joinToString(", ")} }"
-
-        private fun sizingMap(): String {
-            if (sizeWidth == null && sizeHeight == null) return ""
-            val parts = buildList {
-                sizeWidth?.let { add("width: $it") }
-                sizeHeight?.let { add("height: $it") }
-            }
-            return "sizing: { ${parts.joinToString(", ")} }"
-        }
-
-        private fun entry(
-            key: String,
-            parts: List<String>,
-            line: Int,
-            diagnostics: DiagnosticCollector,
-        ): TypedEntry? {
-            if (parts.isEmpty()) return null
-            val parsed = parseSlmYaml("$key: { ${parts.joinToString(", ")} }", diagnostics, startLine = line)
-            val value = (parsed as? YamlMap)?.entries?.get(key) ?: return null
-            if (TypedBlockKind.fromKey(key) == null) return null
-            return TypedEntry(key, value, SlmSourceSpan(line, line))
         }
     }
 }

@@ -1,87 +1,63 @@
 package io.aequicor.visualization.engine.frontend.blocks
 
 import io.aequicor.visualization.engine.frontend.blocks.readers.BlockReading
-import io.aequicor.visualization.engine.frontend.yaml.YamlValue
 import io.aequicor.visualization.engine.ir.model.DesignNode
 
 /**
- * External typed-block extension: a subsystem registers a new block key (e.g.
- * `diagram`) together with a reader (block YAML -> typed payload), a validator,
- * a node-patch application and a writer for SLM write-back.
+ * External typed-payload extension: a subsystem registers a payload kind (e.g.
+ * `diagram`) together with a validator and a node-patch application. Authoring is
+ * CNL-only — container-capable extensions additionally implement
+ * [CnlContainerExtension], whose scoped sentence grammar produces the payload; the
+ * frontend carries it through the patch pipeline as an [ExtensionPatch], which the
+ * merger applies to the anchor node via [applyToNode].
  *
  * Extensions are collected in an [SlmExtensionRegistry] and passed to `compileSlm`
- * via `SlmCompileOptions.extensions`. During compilation an entry whose key is not
- * a built-in [TypedBlockKind] is looked up in the registry; a hit is parsed with
- * [read], checked with [validate] and carried through the patch pipeline as an
- * [ExtensionPatch], which the merger applies to the anchor node via [applyToNode].
- * Unregistered keys keep the pre-registry behavior (the line stays prose).
+ * via `SlmCompileOptions.extensions`.
  *
  * Implementations must be pure and immutable: no side effects besides diagnostics
  * reported through the [BlockReading] context.
  */
 interface TypedBlockExtension<P : Any> {
     /**
-     * Block key opening the typed entry, e.g. `diagram`. Lowercase word (letters,
-     * digits, `_`, `-`; starts with a letter); must not collide with the built-in
-     * reserved keys ([TypedBlockKind.reservedKeys], including fenced-only `ir`).
+     * Payload kind key, e.g. `diagram`. Lowercase word (letters, digits, `_`, `-`;
+     * starts with a letter); must not collide with the built-in
+     * [TypedBlockKind.reservedKeys].
      */
     val kind: String
 
-    /**
-     * Parses the YAML value under `<kind>:` into the typed payload. Returns null
-     * when the block is unreadable at the top level (report diagnostics through
-     * [reading]); partial payloads with per-property diagnostics are preferred.
-     */
-    fun read(value: YamlValue, reading: BlockReading): P?
-
-    /** Extra semantic validation of a successfully read payload; diagnostics only. */
+    /** Extra semantic validation of a payload; diagnostics only. */
     fun validate(payload: P, reading: BlockReading) {}
 
     /** Applies the payload onto the anchor IR node. Pure function. */
     fun applyToNode(node: DesignNode, payload: P): DesignNode
 
     /**
-     * Renders the payload back to canonical SLM block text for write-back: the
-     * first line is `<kind>:`, nested lines are indented with two spaces, no
-     * trailing newline. Must round-trip through [read].
-     */
-    fun write(payload: P): String
-
-    /**
      * Extracts this extension's payload from an IR node when the node carries one —
      * the inverse of [applyToNode]; null when the node has no payload of this kind.
-     * Structural write-back uses it to render the node's `<kind>:` block into a
-     * freshly inserted section. Default: no payload (extensions that don't support
-     * structural inserts).
+     * CNL write-back and structural inserts use it to re-emit the container body
+     * sentences. Default: no payload.
      */
     fun payloadOf(node: DesignNode): P? = null
 }
 
-/** Canonical block text for the payload [node] carries, or null when it has none. */
-internal fun <P : Any> TypedBlockExtension<P>.blockTextOrNull(node: DesignNode): String? =
-    payloadOf(node)?.let { write(it) }
-
 /**
- * A payload read by a [TypedBlockExtension], carried through the patch pipeline
- * next to the built-in [TypedPatch] kinds. Application and write-back delegate
- * to the owning extension.
+ * A payload produced by a [CnlContainerExtension] grammar, carried through the patch
+ * pipeline next to the built-in [TypedPatch] kinds. Application delegates to the
+ * owning extension.
  */
 data class ExtensionPatch(
     val extension: TypedBlockExtension<*>,
     val payload: Any,
 ) : TypedPatch {
-    /** The extension block key, used for provenance labels and source maps. */
+    /** The extension kind key, used for provenance labels and source maps. */
     val kind: String get() = extension.kind
 
     /** Applies the payload onto [node] via the owning extension. */
     fun applyTo(node: DesignNode): DesignNode = applyErased(extension, node, payload)
-
-    /** Renders the payload back to SLM block text via the owning extension. */
-    fun writeBlock(): String = writeErased(extension, payload)
 }
 
-// The payload always originates from the same extension's `read`, so the erased
-// casts below are safe by construction.
+// The payload always originates from the same extension's grammar, so the erased
+// cast below is safe by construction.
 
 @Suppress("UNCHECKED_CAST")
 private fun <P : Any> applyErased(
@@ -89,9 +65,3 @@ private fun <P : Any> applyErased(
     node: DesignNode,
     payload: Any,
 ): DesignNode = extension.applyToNode(node, payload as P)
-
-@Suppress("UNCHECKED_CAST")
-private fun <P : Any> writeErased(
-    extension: TypedBlockExtension<P>,
-    payload: Any,
-): String = extension.write(payload as P)

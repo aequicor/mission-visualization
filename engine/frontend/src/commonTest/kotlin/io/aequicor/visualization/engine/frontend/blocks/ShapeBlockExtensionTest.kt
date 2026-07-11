@@ -1,42 +1,14 @@
 package io.aequicor.visualization.engine.frontend.blocks
 
-import io.aequicor.visualization.engine.frontend.blocks.readers.readSingle
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.subsystems.figures.ShapeType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
-/** The migrated built-in `shape:` block exercised through the extension contract. */
+/** The built-in `shape` patch application exercised through the extension contract. */
 class ShapeBlockExtensionTest {
-
-    @Test
-    fun writeRoundTripsThroughTheReader() {
-        val patch = ShapePatch(
-            kind = ShapeType.Star,
-            width = 120.0,
-            height = 80.5,
-            pointCount = 5,
-            innerRadius = 0.6,
-            arcStartDeg = 10.0,
-            arcSweepDeg = 270.0,
-        )
-        val block = ShapeBlockExtension.write(patch)
-        assertTrue(block.startsWith("shape:"), block)
-        val (read, collector) = readSingle(block)
-        assertEquals(patch, read)
-        assertTrue(collector.diagnostics.isEmpty(), collector.diagnostics.toString())
-    }
-
-    @Test
-    fun writeOmitsUnauthoredFields() {
-        assertEquals(
-            "shape:\n  kind: ellipse",
-            ShapeBlockExtension.write(ShapePatch(kind = ShapeType.Ellipse)),
-        )
-    }
 
     @Test
     fun applyToNodeConvertsAFrameIntoAShape() {

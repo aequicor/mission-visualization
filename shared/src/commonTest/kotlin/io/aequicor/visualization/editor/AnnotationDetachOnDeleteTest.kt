@@ -30,7 +30,7 @@ class AnnotationDetachOnDeleteTest {
     private val screenFile = "mission-overview.layout.md"
     private val sidecarFile = annotationSidecarFileName(screenFile)
 
-    private fun freshState(): DesignEditorState = createDesignEditorState(legacyMissionDocuments())
+    private fun freshState(): DesignEditorState = createDesignEditorState(annotationFixtureDocuments())
 
     /** Pre-delete badge position of [anchor], resolved exactly like the reducer resolves it. */
     private fun DesignEditorState.expectedFrozenPoint(anchor: AnnotationAnchor.NodeAnchor): io.aequicor.visualization.subsystems.annotations.AnnotationPoint {

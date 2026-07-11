@@ -221,11 +221,14 @@ class StructuralWriteBackTest {
         assertEquals(240.0, seed.x, "seed centered horizontally")
         assertEquals(200.0, seed.y, "seed centered vertically")
 
-        // The owning source gained the section WITH its `diagram:` typed block, and the
-        // recompiled IR round-trips the whole graph (kind, element, geometry).
+        // The owning source gained a CNL `Diagram:` container section (heading + body
+        // sentences, no YAML), and the recompiled IR round-trips the whole graph
+        // (kind, element, geometry).
         val source = next.sourceOf(owningFile)
         assertTrue(mintedId in source, "minted id written to source")
-        assertTrue("diagram:" in source, "diagram typed block written to source")
+        assertTrue("Diagram:" in source, "CNL diagram container heading written to source")
+        assertTrue("Node component node-1" in source, "CNL body sentence written to source")
+        assertTrue("diagram:" !in source, "no YAML diagram block in a CNL source")
         val recompiled = assertNotNull(next.compiledDocumentOf(owningFile), "owning source recompiled")
         val recompiledKind = assertNotNull(
             recompiled.nodeById(mintedId)?.kind as? DesignNodeKind.Diagram,

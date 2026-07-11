@@ -3,9 +3,9 @@ package io.aequicor.visualization.editor.data
 /**
  * Diagrams screen: two diagram-canvas nodes demonstrating the `:subsystems:diagrams`
  * pipeline through SLM — a UML class diagram (generalization / composition / association)
- * and a state machine (initial / simple / final states with transitions). The `diagram:`
- * blocks are authored in the canonical `DiagramYamlWriter` form, so the first editor
- * write-back re-emits them byte-identically outside the edited entry.
+ * and a state machine (initial / simple / final states with transitions). Authored in pure
+ * CNL: each canvas is a `## Diagram:` container whose body sentences are the canonical
+ * `DiagramCnlWriter` form, so the first editor write-back re-emits them byte-identically.
  */
 val MissionDiagramsSlm: String = missionSlm(
     """
@@ -19,154 +19,25 @@ val MissionDiagramsSlm: String = missionSlm(
       height: 1024
     ---
 
-    # Diagrams
+    # Diagrams id frame_diagrams name «Diagrams» 1440 by 1024 position 0 0 color #FFFFFF stroke #D8DEE9 radius 16
 
-    node:
-      id: frame_diagrams
-      name: Diagrams
-      position:
-        x: 0
-        y: 0
-      constraints:
-        horizontal: left
-        vertical: top
-    layout:
-      mode: none
-    style:
-      radius: 16
-      fills:
-        - color: "#FFFFFF"
-      strokes:
-        - color: "#D8DEE9"
-          weight: 1
-          position: inside
+    ## Diagram: id class_diagram name «Class Diagram» 560 by 400 position 48 48
 
-    ## Class Diagram
+    Node class shape «Shape» abstract 180 by 120 position 190 24 field (+ «origin: Point») method (+ abstract «area(): Double»)
+    Node class circle «Circle» 180 by 100 position 60 220 field (- «radius: Double») method (+ «area(): Double»)
+    Node class drawing «Drawing» 200 by 100 position 320 220 method (+ «render(): Unit»)
+    Edge e_extends from circle to shape relation generalization
+    Edge e_owns from drawing to circle relation composition
+    Edge e_draws from drawing to shape relation association label «draws»
 
-    node:
-      id: class_diagram
-      name: Class Diagram
-      position:
-        x: 48
-        y: 48
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 560
-        height:
-          type: fixed
-          value: 400
-    diagram:
-      nodes:
-        - id: shape
-          type: class
-          x: 190
-          y: 24
-          w: 180
-          h: 120
-          name: Shape
-          abstract: true
-          fields:
-            - "+ origin: Point"
-          methods:
-            - text: "area(): Double"
-              abstract: true
-        - id: circle
-          type: class
-          x: 60
-          y: 220
-          w: 180
-          h: 100
-          name: Circle
-          fields:
-            - "- radius: Double"
-          methods:
-            - "+ area(): Double"
-        - id: drawing
-          type: class
-          x: 320
-          y: 220
-          w: 200
-          h: 100
-          name: Drawing
-          methods:
-            - "+ render(): Unit"
-      edges:
-        - id: e_extends
-          from: circle
-          to: shape
-          relation: generalization
-        - id: e_owns
-          from: drawing
-          to: circle
-          relation: composition
-        - id: e_draws
-          from: drawing
-          to: shape
-          relation: association
-          label: draws
+    ## Diagram: id state_machine name «State Machine» 540 by 400 position 660 48
 
-    ## State Machine
-
-    node:
-      id: state_machine
-      name: State Machine
-      position:
-        x: 660
-        y: 48
-    layout:
-      sizing:
-        width:
-          type: fixed
-          value: 540
-        height:
-          type: fixed
-          value: 400
-    diagram:
-      nodes:
-        - id: start
-          type: state
-          x: 40
-          y: 40
-          w: 28
-          h: 28
-          kind: initial
-        - id: idle
-          type: state
-          x: 140
-          y: 32
-          w: 150
-          h: 56
-          name: Idle
-        - id: active
-          type: state
-          x: 140
-          y: 180
-          w: 150
-          h: 56
-          name: Active
-        - id: done
-          type: state
-          x: 380
-          y: 194
-          w: 28
-          h: 28
-          kind: final
-      edges:
-        - id: t_init
-          from: start
-          to: idle
-          relation: transition
-        - id: t_activate
-          from: idle
-          to: active
-          relation: transition
-          label: activate
-        - id: t_finish
-          from: active
-          to: done
-          relation: transition
-          label: finish
+    Node state start initial 28 by 28 position 40 40
+    Node state idle «Idle» 150 by 56 position 140 32
+    Node state active «Active» 150 by 56 position 140 180
+    Node state done final 28 by 28 position 380 194
+    Edge t_init from start to idle relation transition
+    Edge t_activate from idle to active relation transition label «activate»
+    Edge t_finish from active to done relation transition label «finish»
     """,
 )

@@ -3,10 +3,9 @@ package io.aequicor.visualization.engine.frontend.blocks
 import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.blocks.readers.BlockReading
 import io.aequicor.visualization.engine.frontend.compileSlm
-import io.aequicor.visualization.engine.frontend.yaml.YamlMap
-import io.aequicor.visualization.engine.frontend.yaml.YamlScalar
-import io.aequicor.visualization.engine.frontend.yaml.YamlValue
+import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,60 +14,42 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Test payload of the custom `badge:` block. */
+/** Test payload of the custom `badge` extension. */
 private data class BadgePayload(
     val label: String = "",
     val level: Int = 0,
 )
 
-/** Minimal well-behaved extension: map block with `label` + `level`. */
+/** Minimal well-behaved extension: pure payload application plus a validate hook. */
 private object BadgeBlockExtension : TypedBlockExtension<BadgePayload> {
     override val kind: String = "badge"
 
-    override fun read(value: YamlValue, reading: BlockReading): BadgePayload? {
-        val map = value as? YamlMap ?: run {
-            reading.error("`badge` must be a map", value)
-            return null
-        }
-        return BadgePayload(
-            label = (map.entries["label"] as? YamlScalar)?.value as? String ?: "",
-            level = ((map.entries["level"] as? YamlScalar)?.value as? Double)?.toInt() ?: 0,
-        )
-    }
-
     override fun validate(payload: BadgePayload, reading: BlockReading) {
         if (payload.level < 0) {
-            reading.diagnostics.warning("`badge.level` must be >= 0", blockPath = reading.blockPath)
+            reading.warning("`badge.level` must be >= 0")
         }
     }
 
     override fun applyToNode(node: DesignNode, payload: BadgePayload): DesignNode =
         node.copy(role = "badge-${payload.label}-${payload.level}")
-
-    override fun write(payload: BadgePayload): String = buildString {
-        append("badge:")
-        append("\n  label: ${payload.label}")
-        append("\n  level: ${payload.level}")
-    }
 }
 
 private fun extensionWithKind(key: String): TypedBlockExtension<BadgePayload> =
     object : TypedBlockExtension<BadgePayload> {
         override val kind: String = key
-        override fun read(value: YamlValue, reading: BlockReading): BadgePayload? = BadgePayload()
         override fun applyToNode(node: DesignNode, payload: BadgePayload): DesignNode = node
-        override fun write(payload: BadgePayload): String = "$key:"
     }
 
-private val badgeDocument = """
+/** A document still spelling the retired raw-YAML block form for a registered extension key. */
+private val rawYamlBadgeDocument = """
     ---
     screen: badgeScreen
     ---
 
     # Badge Screen
 
-    ## Card
-    node: { id: card }
+    ## Frame: id card name «Card»
+
     badge:
       label: hot
       level: 2
@@ -82,40 +63,26 @@ private fun findNode(root: DesignNode, id: String): DesignNode? {
 class TypedBlockExtensionTest {
 
     @Test
-    fun registeredExtensionBlockIsParsedAndAppliedToTheAnchorNode() {
+    fun rawYamlExtensionBlockWarnsAndStaysProse() {
         val result = compileSlm(
-            badgeDocument,
+            rawYamlBadgeDocument,
             SlmCompileOptions(extensions = SlmExtensionRegistry.of(BadgeBlockExtension)),
         )
         val document = assertNotNull(result.document)
         val card = assertNotNull(findNode(document.pages.single().children.single(), "card"))
-        assertEquals("badge-hot-2", card.role)
         assertTrue(
-            result.diagnostics.none { it.severity == DesignSeverity.Error },
-            "Unexpected errors: ${result.diagnostics}",
+            !card.role.startsWith("badge-"),
+            "raw YAML block must not reach applyToNode; role=${card.role}",
         )
-    }
-
-    @Test
-    fun unregisteredKeyKeepsLegacyBehaviorAndStaysProse() {
-        val result = compileSlm(badgeDocument)
-        val document = assertNotNull(result.document)
-        val card = assertNotNull(findNode(document.pages.single().children.single(), "card"))
-        assertTrue(card.role.isEmpty() || !card.role.startsWith("badge-"))
+        assertTrue(
+            result.diagnostics.any {
+                it.severity == DesignSeverity.Warning &&
+                    "Raw YAML typed blocks are no longer supported" in it.message &&
+                    "`badge:`" in it.message
+            },
+            "expected the deprecation warning, got: ${result.diagnostics}",
+        )
         assertTrue(result.diagnostics.none { it.severity == DesignSeverity.Error })
-    }
-
-    @Test
-    fun validateReportsDiagnosticsWithoutDroppingThePayload() {
-        val negative = badgeDocument.replace("level: 2", "level: -3")
-        val result = compileSlm(
-            negative,
-            SlmCompileOptions(extensions = SlmExtensionRegistry.of(BadgeBlockExtension)),
-        )
-        val document = assertNotNull(result.document)
-        val card = assertNotNull(findNode(document.pages.single().children.single(), "card"))
-        assertEquals("badge-hot--3", card.role)
-        assertTrue(result.diagnostics.any { it.message.contains("badge.level") })
     }
 
     @Test
@@ -124,8 +91,10 @@ class TypedBlockExtensionTest {
             SlmExtensionRegistry.of(extensionWithKind("shape"))
         }
         assertFailsWith<IllegalArgumentException> {
-            SlmExtensionRegistry.of(extensionWithKind("ir"))
+            SlmExtensionRegistry.of(extensionWithKind("node"))
         }
+        // `ir` is no longer a reserved key: fenced blocks are generically warn-and-ignored.
+        assertEquals(setOf("ir"), SlmExtensionRegistry.of(extensionWithKind("ir")).kinds)
     }
 
     @Test
@@ -154,33 +123,17 @@ class TypedBlockExtensionTest {
     }
 
     @Test
-    fun writerOutputRoundTripsThroughTheCompiler() {
-        val payload = BadgePayload(label = "fresh", level = 5)
-        val block = BadgeBlockExtension.write(payload)
-        val document = listOf(
-            "---",
-            "screen: badgeScreen",
-            "---",
-            "",
-            "# Badge Screen",
-            "",
-            "## Card",
-            "node: { id: card }",
-            block,
-        ).joinToString("\n")
-        val result = compileSlm(
-            document,
-            SlmCompileOptions(extensions = SlmExtensionRegistry.of(BadgeBlockExtension)),
-        )
-        val compiled = assertNotNull(result.document)
-        val card = assertNotNull(findNode(compiled.pages.single().children.single(), "card"))
-        assertEquals("badge-fresh-5", card.role)
+    fun extensionPatchExposesKindAndAppliesThePayload() {
+        val patch = ExtensionPatch(BadgeBlockExtension, BadgePayload("x", 1))
+        assertEquals("badge", patch.kind)
+        val node = DesignNode(id = "n1", type = "frame", kind = DesignNodeKind.Frame)
+        assertEquals("badge-x-1", patch.applyTo(node).role)
     }
 
     @Test
-    fun extensionPatchExposesKindAndWriteBlock() {
-        val patch = ExtensionPatch(BadgeBlockExtension, BadgePayload("x", 1))
-        assertEquals("badge", patch.kind)
-        assertEquals("badge:\n  label: x\n  level: 1", patch.writeBlock())
+    fun validateReportsThroughTheBlockReadingContext() {
+        val collector = DiagnosticCollector("test.layout.md")
+        BadgeBlockExtension.validate(BadgePayload("x", -3), BlockReading(collector, "badge"))
+        assertTrue(collector.diagnostics.any { "badge.level" in it.message })
     }
 }

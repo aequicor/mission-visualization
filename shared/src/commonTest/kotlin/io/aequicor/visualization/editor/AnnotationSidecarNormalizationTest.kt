@@ -37,7 +37,7 @@ class AnnotationSidecarNormalizationTest {
     private fun stateWithSidecars(vararg sidecars: Pair<String, String>): DesignEditorState =
         createDesignEditorState(
             compileMissionDocuments(
-                legacyMissionDocuments().sources + sidecars.map { (name, content) -> MissionDocumentSource(name, content) },
+                annotationFixtureDocuments().sources + sidecars.map { (name, content) -> MissionDocumentSource(name, content) },
             ),
         )
 

@@ -32,7 +32,7 @@ class ExportIssuesPromptUseCaseTest {
      * with an extra `tile_1` reference.
      */
     private fun annotatedState(): DesignEditorState {
-        var state = createDesignEditorState(legacyMissionDocuments())
+        var state = createDesignEditorState(annotationFixtureDocuments())
         state = reduceDesignEditor(
             state,
             DesignEditorIntent.AddAnnotation(overviewFile, AnnotationAnchor.NodeAnchor("tile_1"), AnnotationKind.Issue),

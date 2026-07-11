@@ -3,7 +3,8 @@ package io.aequicor.visualization.engine.frontend.yaml
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 
 /**
- * Hand-rolled YAML-subset parser for SLM frontmatter and typed attribute blocks.
+ * Hand-rolled YAML-subset parser for SLM **frontmatter only** — YAML's sole remaining
+ * surface in SLM. Typed content is authored as CNL and never round-trips through YAML.
  *
  * Supported: indent-nested maps (insertion-ordered), `- ` block lists (including map
  * items with sibling entries and continuations), scalars (`null`/`~`, booleans, numbers

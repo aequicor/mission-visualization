@@ -304,6 +304,7 @@ internal object CnlEmitter {
             is DesignNodeKind.Shape -> return CnlGrammar.canonicalNoun(node)
             is DesignNodeKind.Media -> return "Image"
             is DesignNodeKind.Instance -> return "Instance"
+            is DesignNodeKind.Diagram -> return "Diagram"
             is DesignNodeKind.Text -> return if (node.role == "button") "Button" else "Text"
             DesignNodeKind.Frame -> {
                 if (node.type == "screen") return null

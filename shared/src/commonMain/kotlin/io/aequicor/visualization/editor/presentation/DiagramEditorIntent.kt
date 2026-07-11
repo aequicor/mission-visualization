@@ -24,8 +24,9 @@ import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
  * Diagram-canvas commands: every intent targets the [nodeId] of an IR node whose kind is
  * [io.aequicor.visualization.engine.ir.model.DesignNodeKind.Diagram] and mutates its
  * [io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph] through the pure ops
- * of `:subsystems:diagrams`. Each applied edit writes the whole `diagram:` block back to
- * the owning SLM source (`applyDiagramWriteBack`, anti-corruption round-trip veto) and
+ * of `:subsystems:diagrams`. Each applied edit writes the canonical `## Diagram: …` CNL
+ * container body back to the owning SLM source (`applyDiagramWriteBack`, anti-corruption
+ * round-trip veto) and
  * mirrors onto the working document in lock-step; an unaddressable node or any drift keeps
  * the edit in-memory only — the same fallback contract as structural edits.
  *
