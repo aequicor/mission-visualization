@@ -10,7 +10,9 @@ import io.aequicor.visualization.engine.ir.model.DesignMedia
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPage
+import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.ImageScaleMode
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.subsystems.figures.ShapeType
@@ -212,6 +214,34 @@ class DesignJsonWriterTest {
             parseDesignNode(writeDesignNode(mediaNode).toJsonString()),
         ).node
         val focal = assertNotNull((reparsedMedia.kind as DesignNodeKind.Media).media.focalPoint)
+        assertEquals(Bindable.VarRef("crop.x"), focal.x)
+        assertEquals(Bindable.DataRef(DesignExpression("data.fy")), focal.y)
+    }
+
+    @Test
+    fun fillPaintFocalPointRefsRoundTripThroughJson() {
+        // An image fill-paint focalPoint must carry a `$var` and a `{{expr}}` axis through JSON serde
+        // exactly like the media-node focalPoint — the two share writePoint/readPoint.
+        val node = DesignNode(
+            id = "r",
+            type = "rect",
+            kind = DesignNodeKind.Frame,
+            fills = listOf(
+                DesignPaint.Image(
+                    assetId = "hero.jpg",
+                    scaleMode = ImageScaleMode.Crop,
+                    focalPoint = DesignPoint(
+                        x = Bindable.VarRef("crop.x"),
+                        y = Bindable.DataRef(DesignExpression("data.fy")),
+                    ),
+                ),
+            ),
+        )
+        val reparsed = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode(writeDesignNode(node).toJsonString()),
+        ).node
+        val fill = assertIs<DesignPaint.Image>(assertNotNull(reparsed.fills).single())
+        val focal = assertNotNull(fill.focalPoint)
         assertEquals(Bindable.VarRef("crop.x"), focal.x)
         assertEquals(Bindable.DataRef(DesignExpression("data.fy")), focal.y)
     }

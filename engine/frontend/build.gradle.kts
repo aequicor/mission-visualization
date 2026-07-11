@@ -39,6 +39,8 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+            // Round-trip tests serialize IR to JSON via engine:ir's writer, which returns JsonObject.
+            implementation(libs.kotlinx.serialization.json)
         }
     }
 }
