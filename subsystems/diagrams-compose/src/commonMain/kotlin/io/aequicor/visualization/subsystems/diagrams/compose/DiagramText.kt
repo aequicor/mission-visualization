@@ -3,6 +3,7 @@ package io.aequicor.visualization.subsystems.diagrams.compose
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import io.aequicor.visualization.subsystems.typography.AlignHorizontal
@@ -133,7 +134,15 @@ internal fun DrawScope.drawDiagramLabel(
         LabelVerticalAlign.CENTER -> box.top + (box.height - laidOut.measured.height) / 2.0
         LabelVerticalAlign.BOTTOM -> box.bottom - laidOut.measured.height
     }
-    drawRichText(laidOut, topLeft = Offset(box.x.toFloat(), y.toFloat()))
+    // Clip to the label box so overflowing text never bleeds into neighboring shapes.
+    clipRect(
+        left = box.left.toFloat(),
+        top = box.top.toFloat(),
+        right = box.right.toFloat(),
+        bottom = box.bottom.toFloat(),
+    ) {
+        drawRichText(laidOut, topLeft = Offset(box.x.toFloat(), y.toFloat()))
+    }
 }
 
 /**
