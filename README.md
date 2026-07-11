@@ -1,6 +1,6 @@
 # Mission Visualization
 
-**Latest published web version: v0.1.45.** <!-- published-version -->
+[![Latest published web version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Faequicor.github.io%2Fmission-visualization%2Fversion.json&query=%24.version&label=latest%20published%20web%20version&prefix=v&cacheSeconds=300)](https://aequicor.github.io/mission-visualization/)
 
 Mission Visualization is a Kotlin Multiplatform + Compose Multiplatform library and
 demo: an agent authors **Semantic Layout Markdown** (`*.layout.md`, RU/EN + i18n),

@@ -19,6 +19,8 @@ jobs:
   deploy:
     name: Build and Deploy Web Wasm
     runs-on: ubuntu-24.04
+    env:
+      VERSION: 0.1.${{ github.run_number }}
     permissions:
       contents: read
       pages: write
@@ -40,10 +42,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Build optimized Web Wasm distribution
-        run: ./gradlew :webApp:packWasmDist -PmvAppVersion=0.1.${{ github.run_number }}
+        run: ./gradlew :webApp:packWasmDist -PmvAppVersion="$VERSION"
 
       - name: Disable Jekyll processing
         run: touch webApp/build/dist/wasmJs/productionExecutable/.nojekyll
+
+      - name: Publish version metadata
+        run: printf '{"version":"%s"}\n' "$VERSION" > webApp/build/dist/wasmJs/productionExecutable/version.json
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
@@ -59,8 +64,6 @@ jobs:
         uses: actions/deploy-pages@v5
 
       - name: Record published version
-        env:
-          VERSION: 0.1.${{ github.run_number }}
         run: |
           echo "### Published v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
