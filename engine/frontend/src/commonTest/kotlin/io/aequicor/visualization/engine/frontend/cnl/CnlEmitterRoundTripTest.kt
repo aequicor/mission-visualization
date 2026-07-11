@@ -338,6 +338,32 @@ class CnlEmitterRoundTripTest {
     fun mediaFocalPointDataBinding() =
         assertLeafRoundTrips("Image media (asset media/hero focus ({{data.fx}} {{data.fy}}))") { it is DesignNodeKind.Media }
 
+    // --- S28d: a fill-paint (image/video) focalPoint carries the same per-axis refs as the media node ---
+
+    @Test
+    fun imageFillFocalPointTokenRef() =
+        assertLeafRoundTrips("Rectangle 300 by 200 image (asset «hero.jpg» crop focus (\$crop.x \$crop.y))") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
+    fun imageFillFocalPointDataBinding() =
+        assertLeafRoundTrips("Rectangle 300 by 200 image (asset «hero.jpg» crop focus ({{data.fx}} {{data.fy}}))") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
+    fun imageFillFocalPointMixedRefs() =
+        assertLeafRoundTrips("Rectangle 300 by 200 image (asset «hero.jpg» crop focus (\$crop.x {{data.fy}}))") {
+            it is DesignNodeKind.Shape
+        }
+
+    @Test
+    fun videoFillFocalPointDataBinding() =
+        assertLeafRoundTrips("Rectangle 300 by 200 video (asset «promo.mp4» crop focus ({{data.fx}} {{data.fy}}))") {
+            it is DesignNodeKind.Shape
+        }
+
     @Test
     fun typographyDeep() =
         assertLeafRoundTrips(

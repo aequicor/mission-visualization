@@ -628,7 +628,7 @@ internal object CnlGrammar {
             val inner = buildList {
                 add("asset ${quoteText(paint.assetId)}")
                 fillModeWord(paint.scaleMode)?.let { add(it) }
-                paint.focalPoint?.let { add("focus (${num(it.x.orZero)} ${num(it.y.orZero)})") }
+                paint.focalPoint?.let { add("focus (${numberToken(it.x) ?: return null} ${numberToken(it.y) ?: return null})") }
                 if (paint.replaceable) add("replaceable")
                 addAll(fillPropsWords(paint.opacity, paint.blendMode, paint.visible))
             }
@@ -638,7 +638,7 @@ internal object CnlGrammar {
             val inner = buildList {
                 add("asset ${quoteText(paint.assetId)}")
                 fillModeWord(paint.scaleMode)?.let { add(it) }
-                paint.focalPoint?.let { add("focus (${num(it.x.orZero)} ${num(it.y.orZero)})") }
+                paint.focalPoint?.let { add("focus (${numberToken(it.x) ?: return null} ${numberToken(it.y) ?: return null})") }
                 if (paint.posterAssetId.isNotEmpty()) add("poster ${quoteText(paint.posterAssetId)}")
                 if (paint.autoplay) add("autoplay")
                 if (paint.loop) add("loop")
