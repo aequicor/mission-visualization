@@ -40,6 +40,9 @@ kotlin {
 
             // Figures Compose adapter (geometry IR → Compose Path, stroke/boolean mapping).
             implementation(projects.subsystems.figuresCompose)
+            // Diagrams Compose adapter (DiagramGraph → canvas render). Render path only:
+            // backend-compose never depends on :subsystems:diagrams-slm (the parse path).
+            implementation(projects.subsystems.diagramsCompose)
             // Typography subsystem: rich-text model/measure/paint. The renderer adapts
             // ResolvedText -> RichText at this boundary; :engine:ir stays dependency-free.
             api(projects.subsystems.typographyCompose)

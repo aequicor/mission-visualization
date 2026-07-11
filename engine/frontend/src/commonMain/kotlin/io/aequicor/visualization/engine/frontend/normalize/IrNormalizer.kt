@@ -8,6 +8,7 @@ import io.aequicor.visualization.engine.frontend.ast.SemanticText
 import io.aequicor.visualization.engine.frontend.blocks.ActionPatch
 import io.aequicor.visualization.engine.frontend.blocks.ComponentPatch
 import io.aequicor.visualization.engine.frontend.blocks.ExportPatch
+import io.aequicor.visualization.engine.frontend.blocks.ExtensionPatch
 import io.aequicor.visualization.engine.frontend.blocks.HandoffPatch
 import io.aequicor.visualization.engine.frontend.blocks.InteractionPatch
 import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
@@ -19,6 +20,7 @@ import io.aequicor.visualization.engine.frontend.blocks.OverridesPatch
 import io.aequicor.visualization.engine.frontend.blocks.PropsPatch
 import io.aequicor.visualization.engine.frontend.blocks.ResponsivePatch
 import io.aequicor.visualization.engine.frontend.blocks.ShapePatch
+import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.blocks.StylePatch
 import io.aequicor.visualization.engine.frontend.blocks.TextPatch
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockReader
@@ -83,15 +85,17 @@ data class NormalizedScreen(
 class IrNormalizer(
     private val diagnostics: DiagnosticCollector,
     private val fileName: String,
+    private val extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
 ) {
     fun normalize(screen: SemanticScreen): NormalizedScreen =
-        Normalization(screen, diagnostics, fileName).run()
+        Normalization(screen, diagnostics, fileName, extensions).run()
 }
 
 private class Normalization(
     private val screen: SemanticScreen,
     private val diagnostics: DiagnosticCollector,
     private val fileName: String,
+    private val extensions: SlmExtensionRegistry,
 ) {
     private val slugGenerator = SlugGenerator(diagnostics)
     private val merger = PatchMerger(diagnostics, screen.sourceLocale.tag, fileName)
@@ -116,7 +120,7 @@ private class Normalization(
             // Re-read without the shared collector: materialize already reported
             // this node's block diagnostics.
             val componentPatch = def.explicitPatches
-                .mapNotNull { TypedBlockReader.read(it, DiagnosticCollector(fileName)) }
+                .mapNotNull { TypedBlockReader.read(it, DiagnosticCollector(fileName), extensions) }
                 .filterIsInstance<ComponentPatch>()
                 .lastOrNull()
             lifter.register(defRoot, componentPatch, def.span.startLine)
@@ -221,7 +225,7 @@ private class Normalization(
         val ordered = resolveOrder(children, diagnostics, parentLabel = id, line = node.span.startLine)
 
         val blockSourceMaps = node.explicitPatches.associate { entry ->
-            entry.kind.key to SourceLocation(file = fileName, line = entry.span.startLine)
+            entry.key to SourceLocation(file = fileName, line = entry.span.startLine)
         }
         design = design.copy(
             children = ordered,
@@ -430,8 +434,8 @@ private class Normalization(
 
     private fun readPatches(node: SemanticNode): List<AppliedPatch> =
         node.explicitPatches.mapNotNull { entry ->
-            TypedBlockReader.read(entry, diagnostics)?.let {
-                AppliedPatch(it, entry.kind.key, entry.span.startLine)
+            TypedBlockReader.read(entry, diagnostics, extensions)?.let {
+                AppliedPatch(it, entry.key, entry.span.startLine)
             }
         }
 
@@ -489,6 +493,7 @@ internal fun blockKeyOf(patch: TypedPatch): String = when (patch) {
     is VariablesPatch -> "variables"
     is HandoffPatch -> "handoff"
     is ExportPatch -> "export"
+    is ExtensionPatch -> patch.kind
 }
 
 /** Renders an [SlmExpression] back to its canonical `{{...}}` inner text. */

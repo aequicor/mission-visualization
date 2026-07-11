@@ -1,5 +1,6 @@
 package io.aequicor.visualization.engine.frontend.markdown
 
+import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.cnl.CnlParser
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
@@ -12,8 +13,13 @@ import io.aequicor.visualization.engine.frontend.yaml.parseSlmYaml
  * blocks, HTML comments, and typed attribute blocks per the five detection rules
  * (reserved key at block start, anchor-indent match, group merging, blank-line group
  * closing, near-miss hint with prose fallback). Unfenced `ir:` is an error.
+ * Keys of registered [SlmExtensionRegistry] extensions open typed entries exactly
+ * like built-in reserved keys.
  */
-class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
+class SlmMarkdownParser(
+    private val diagnostics: DiagnosticCollector,
+    private val extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
+) {
     private val inlineParser = SlmInlineParser(diagnostics)
 
     fun parse(source: String): SlmMarkdownDocument {
@@ -453,10 +459,10 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
         return text.take(i)
     }
 
-    /** Reserved key opening a typed entry at this line, incl. fenced-only `ir`. */
+    /** Reserved or extension key opening a typed entry at this line, incl. fenced-only `ir`. */
     private fun typedKeyOf(line: Line): String? {
         val word = leadingWordColon(line.text) ?: return null
-        return word.takeIf { it in TypedBlockKind.reservedKeys }
+        return word.takeIf { it in TypedBlockKind.reservedKeys || it in extensions.kinds }
     }
 
     private fun parseTypedGroup(lines: List<Line>, start: Int): Pair<TypedAttributeBlock?, Int> {
@@ -478,7 +484,6 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
                 diagnostics.error("`ir` must be a fenced code block: use ```ir", line.number, blockPath = "ir")
                 continue
             }
-            val kind = TypedBlockKind.fromKey(key) ?: continue
             val sliceText = sliceLines.joinToString("\n") { " ".repeat(it.columnOffset) + it.text }
             val parsed = parseSlmYaml(sliceText, diagnostics, startLine = line.number)
             val value = (parsed as? YamlMap)?.entries?.get(key)
@@ -488,7 +493,7 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
                 }
                 continue
             }
-            entries += TypedEntry(kind, value, entrySpan)
+            entries += TypedEntry(key, value, entrySpan)
         }
         val block = if (entries.isEmpty()) null else TypedAttributeBlock(entries, SlmSourceSpan(startLine, endLine))
         return block to i
@@ -528,9 +533,9 @@ class SlmMarkdownParser(private val diagnostics: DiagnosticCollector) {
      */
     private fun emitNearMissHint(line: Line) {
         val word = leadingWordColon(line.text) ?: return
-        if (word in TypedBlockKind.reservedKeys) return
+        if (word in TypedBlockKind.reservedKeys || word in extensions.kinds) return
         val lower = word.lowercase()
-        val nearest = TypedBlockKind.entries.map { it.key }.firstOrNull { key ->
+        val nearest = (TypedBlockKind.entries.map { it.key } + extensions.kinds).firstOrNull { key ->
             lower == key || isNearMiss(lower, key)
         } ?: return
         diagnostics.info(

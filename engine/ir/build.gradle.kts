@@ -37,6 +37,9 @@ kotlin {
             // Figures subsystem: pure geometry + vector-network model (api — its types are
             // embedded in the IR node model's public surface, e.g. DesignNodeKind.Shape).
             api(projects.subsystems.figures)
+            // Diagrams subsystem: pure graph model + geometry/routing (api — DiagramGraph is
+            // embedded in the IR node model as a typed payload, like shape/vector).
+            api(projects.subsystems.diagrams)
 
             implementation(libs.kotlinx.serialization.json)
         }

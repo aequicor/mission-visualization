@@ -12,9 +12,10 @@ import io.aequicor.visualization.engine.ir.model.bindable
 
 /**
  * Shared reading context of one typed-block entry: diagnostics are reported at
- * `file:line#<kind>` — the block path is the reserved key of the entry.
+ * `file:line#<kind>` — the block path is the reserved key of the entry. Public
+ * because registry extensions (`TypedBlockExtension`) receive it in `read`/`validate`.
  */
-internal class BlockReading(
+class BlockReading(
     val diagnostics: DiagnosticCollector,
     val blockPath: String,
 ) {

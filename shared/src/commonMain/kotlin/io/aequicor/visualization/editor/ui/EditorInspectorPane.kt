@@ -59,6 +59,10 @@ import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
+import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
+import io.aequicor.visualization.editor.presentation.DiagramSelection
+import io.aequicor.visualization.editor.presentation.DiagramTextFormat
+import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.EditorLayoutMode
 import io.aequicor.visualization.editor.presentation.EffectOp
 import io.aequicor.visualization.editor.presentation.EffectType
@@ -78,6 +82,40 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
+import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
+import io.aequicor.visualization.subsystems.diagrams.compose.DiagramRelationPreview
+import io.aequicor.visualization.subsystems.diagrams.compose.toComposePath
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramColor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramCornerStyle
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramStrokePattern
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramStyle
+import io.aequicor.visualization.subsystems.diagrams.model.FlowchartNodeKind
+import io.aequicor.visualization.subsystems.diagrams.model.LineJumpStyle
+import io.aequicor.visualization.subsystems.diagrams.model.TableNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityKind
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlComponentNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlDeploymentNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlLifelineNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlMember
+import io.aequicor.visualization.subsystems.diagrams.model.UmlMessageKind
+import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlVisibility
+import io.aequicor.visualization.subsystems.diagrams.ops.UmlClassMemberKind
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.templates.diagramTemplates
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.subsystems.figures.compose.FigureBooleanPreview
 import io.aequicor.visualization.subsystems.figures.compose.FigurePreviewStyle
@@ -179,6 +217,8 @@ private fun InspectorDesign(state: MissionEditorStateHolder) {
         // (source of truth for persisted expand state) lives in editor.presentation, which is
         // outside this file's ownership; it uses local visual expand state instead.
         ShapeSection(state, node, visible = isShapeLike)
+        // The Diagram section mirrors the Shape section's standalone chrome (same ownership note).
+        DiagramSection(state, node, visible = node.kind is DesignNodeKind.Diagram)
         Section(state, InspectorSection.Effects) { EffectsSection(state, node) }
         Section(state, InspectorSection.Typography, visible = isText) { TypographySection(state, node) }
     }
@@ -3090,3 +3130,861 @@ private fun StrokeAlign.strokeLabel() = when (this) { StrokeAlign.Inside -> "Ins
 private fun TextAutoResize.autoResizeLabel() = when (this) { TextAutoResize.WidthAndHeight -> "Auto W"; TextAutoResize.Height -> "Auto H"; TextAutoResize.None -> "Fixed" }
 private fun HorizontalConstraint.hLabel() = when (this) { HorizontalConstraint.Left -> "Left"; HorizontalConstraint.Right -> "Right"; HorizontalConstraint.Center -> "Center"; HorizontalConstraint.LeftRight -> "Left & Right"; HorizontalConstraint.Scale -> "Scale" }
 private fun VerticalConstraint.vLabel() = when (this) { VerticalConstraint.Top -> "Top"; VerticalConstraint.Bottom -> "Bottom"; VerticalConstraint.Center -> "Center"; VerticalConstraint.TopBottom -> "Top & Bottom"; VerticalConstraint.Scale -> "Scale" }
+
+// --- Diagram -------------------------------------------------------------------
+
+private val DiagramSectionLabel = CompactLabel("Diagram", "Diagram", "Dgm")
+
+/**
+ * Diagram controls: node type/label/style (+ table and UML class structure) for a selected
+ * diagram element, relation/routing/arrowheads/pattern/jumps/labels for a selected edge,
+ * plus diagram-level actions (auto-layout, starter templates, Mermaid/PlantUML import).
+ * Owns its own collapsible chrome like [ShapeSection]. Element selection lives in the
+ * workspace ([DiagramSelection]); everything dispatches [DiagramEditorIntent]s.
+ */
+@Composable
+private fun DiagramSection(state: MissionEditorStateHolder, node: DesignNode, visible: Boolean) {
+    if (!visible) return
+    val kind = node.kind as? DesignNodeKind.Diagram ?: return
+    StandaloneSection(icon = EditorIcon.Diagram, label = DiagramSectionLabel) {
+        val nodeId = node.id
+        val locked = state.designState.isNodeLocked(nodeId)
+        val graph = kind.graph
+        val ws = state.workspace
+        val editing = ws.diagramEditNodeId == nodeId
+        val selection = if (editing) ws.diagramSelection else DiagramSelection.Empty
+
+        if (!editing) {
+            TinyButton("Edit diagram", enabled = !locked) {
+                state.updateWorkspace {
+                    it.copy(diagramEditNodeId = nodeId, diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        val selectedElement = selection.elementIds.singleOrNull()?.let { graph.nodeById(DiagramNodeId(it)) }
+        val selectedEdge = selection.edgeIds.singleOrNull()?.let { graph.edgeById(DiagramEdgeId(it)) }
+        when {
+            selectedElement != null -> {
+                DiagramNodeControls(state, nodeId, selectedElement, locked)
+                Spacer(Modifier.height(12.dp))
+            }
+            selectedEdge != null -> {
+                DiagramEdgeControls(state, nodeId, selectedEdge, locked)
+                Spacer(Modifier.height(12.dp))
+            }
+            editing -> {
+                MutedNote("Select a node or an edge on the canvas.")
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+        DiagramCanvasActions(state, nodeId, locked)
+    }
+}
+
+/** Type / label / style controls for a selected diagram node (+ table / UML structure). */
+@Composable
+private fun DiagramNodeControls(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    element: io.aequicor.visualization.subsystems.diagrams.model.DiagramNode,
+    locked: Boolean,
+) {
+    val elementId = element.id.value
+    val previewStyle = editorDiagramPreviewStyle()
+    LabeledField("Type") {
+        SelectField(
+            value = diagramPayloadTypeLabel(element.payload),
+            options = DiagramNodePalette.map { it.label },
+            onSelect = { label ->
+                if (!locked && label != diagramPayloadTypeLabel(element.payload)) {
+                    DiagramNodePalette.firstOrNull { it.label == label }?.let { entry ->
+                        state.dispatch(DiagramEditorIntent.SetDiagramNodePayload(nodeId, elementId, entry.payload))
+                    }
+                }
+            },
+            leadingContent = { DiagramNodePreview(element.payload, previewStyle) },
+            optionLeadingContent = { label ->
+                DiagramNodePalette.firstOrNull { it.label == label }
+                    ?.let { DiagramNodePreview(it.payload, previewStyle) }
+            },
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledTextField(
+        "Label",
+        element.labels.firstOrNull()?.text.orEmpty(),
+        "diagram-label-$elementId",
+        enabled = !locked,
+    ) { text ->
+        state.dispatch(DiagramEditorIntent.SetDiagramNodeLabel(nodeId, elementId, text.takeIf { it.isNotBlank() }))
+    }
+    Spacer(Modifier.height(10.dp))
+    DiagramStyleControls(state, element.style, locked, resetKey = "diagram-node-$elementId") { style ->
+        state.dispatch(DiagramEditorIntent.SetDiagramNodeStyle(nodeId, elementId, style))
+    }
+    (element.payload as? TableNode)?.let { table ->
+        Spacer(Modifier.height(10.dp))
+        DiagramTableControls(state, nodeId, elementId, table, locked)
+    }
+    (element.payload as? UmlClassNode)?.let { uml ->
+        Spacer(Modifier.height(10.dp))
+        DiagramClassControls(state, nodeId, elementId, uml, locked)
+    }
+}
+
+/** Shared node/edge style block: fill/stroke colors, width, pattern, corners, sketch/shadow, opacity. */
+@Composable
+private fun DiagramStyleControls(
+    state: MissionEditorStateHolder,
+    style: DiagramStyle,
+    locked: Boolean,
+    resetKey: String,
+    showFill: Boolean = true,
+    onStyle: (DiagramStyle) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    InspectorSubLabel("Style")
+    Spacer(Modifier.height(6.dp))
+    if (showFill) {
+        LabeledField("Fill") {
+            InspectorColorField(
+                state = state,
+                color = (style.fill ?: DiagramColor.White).toDesignColor(),
+                opacity = 1.0,
+                label = style.fill?.toDesignColor()?.toHex() ?: "Default",
+                enabled = !locked,
+                onColor = { picked -> onStyle(style.copy(fill = picked.toDiagramColor())) },
+                onOpacity = { },
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+    }
+    LabeledField("Stroke") {
+        InspectorColorField(
+            state = state,
+            color = (style.stroke ?: DiagramColor.Black).toDesignColor(),
+            opacity = 1.0,
+            label = style.stroke?.toDesignColor()?.toHex() ?: "Default",
+            enabled = !locked,
+            onColor = { picked -> onStyle(style.copy(stroke = picked.toDiagramColor())) },
+            onOpacity = { },
+        )
+    }
+    Spacer(Modifier.height(6.dp))
+    CompactLabeledNumberField("Width", style.strokeWidth.formatPx(), "$resetKey-stroke-width", enabled = !locked) {
+        onStyle(style.copy(strokeWidth = it.coerceAtLeast(0.0)))
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledSelectField(
+        "Pattern",
+        diagramPatternLabel(style.pattern),
+        DiagramStrokePattern.entries.map { diagramPatternLabel(it) },
+        enabled = !locked,
+        leadingContent = { DiagramPatternPreview(style.pattern) },
+        optionLeadingContent = { label ->
+            DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+                ?.let { DiagramPatternPreview(it) }
+        },
+    ) { label ->
+        DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+            ?.let { onStyle(style.copy(pattern = it)) }
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledSelectField(
+        "Corners",
+        diagramCornerLabel(style.cornerStyle),
+        DiagramCornerStyle.entries.map { diagramCornerLabel(it) },
+        enabled = !locked,
+        leadingContent = { DiagramCornerPreview(style.cornerStyle) },
+        optionLeadingContent = { label ->
+            DiagramCornerStyle.entries.firstOrNull { diagramCornerLabel(it) == label }
+                ?.let { DiagramCornerPreview(it) }
+        },
+    ) { label ->
+        DiagramCornerStyle.entries.firstOrNull { diagramCornerLabel(it) == label }
+            ?.let { onStyle(style.copy(cornerStyle = it)) }
+    }
+    Spacer(Modifier.height(6.dp))
+    CheckRow("Sketch", style.sketch) { if (!locked) onStyle(style.copy(sketch = !style.sketch)) }
+    CheckRow("Shadow", style.shadow) { if (!locked) onStyle(style.copy(shadow = !style.shadow)) }
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Opacity", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text("${(style.opacity * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+        UndoableSlider(
+            value = (style.opacity * 100).toFloat(),
+            valueRange = 0f..100f,
+            enabled = !locked,
+            onBegin = { state.dispatch(DesignEditorIntent.BeginInteraction) },
+            onChange = { value -> onStyle(style.copy(opacity = (value / 100.0).coerceIn(0.0, 1.0))) },
+            onEnd = { state.dispatch(DesignEditorIntent.EndInteraction) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** Table structure controls: add/remove rows and columns, merge/split a cell range. */
+@Composable
+private fun DiagramTableControls(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    elementId: String,
+    table: TableNode,
+    locked: Boolean,
+) {
+    InspectorSubLabel("Table (${table.rowCount} x ${table.columnCount})")
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TinyButton("+ Row", enabled = !locked) {
+            state.dispatch(DiagramEditorIntent.AddDiagramTableRow(nodeId, elementId))
+        }
+        TinyButton("+ Column", enabled = !locked) {
+            state.dispatch(DiagramEditorIntent.AddDiagramTableColumn(nodeId, elementId))
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TinyButton("- Row", enabled = !locked && table.rowCount > 1) {
+            state.dispatch(DiagramEditorIntent.RemoveDiagramTableRow(nodeId, elementId, table.rowCount - 1))
+        }
+        TinyButton("- Column", enabled = !locked && table.columnCount > 1) {
+            state.dispatch(DiagramEditorIntent.RemoveDiagramTableColumn(nodeId, elementId, table.columnCount - 1))
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    InspectorSubLabel("Merge cells")
+    var rowStart by remember(elementId) { mutableStateOf(0) }
+    var rowEnd by remember(elementId) { mutableStateOf(0) }
+    var columnStart by remember(elementId) { mutableStateOf(0) }
+    var columnEnd by remember(elementId) { mutableStateOf(1) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val fieldWidth = inspectorPairFieldWidth(maxWidth)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CompactNumberField("R1", rowStart.toDouble().formatPx(), "merge-r1-$elementId", Modifier.width(fieldWidth), enabled = !locked) {
+                    rowStart = it.roundToInt().coerceIn(0, table.rowCount - 1)
+                }
+                CompactNumberField("R2", rowEnd.toDouble().formatPx(), "merge-r2-$elementId", Modifier.width(fieldWidth), enabled = !locked) {
+                    rowEnd = it.roundToInt().coerceIn(0, table.rowCount - 1)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CompactNumberField("C1", columnStart.toDouble().formatPx(), "merge-c1-$elementId", Modifier.width(fieldWidth), enabled = !locked) {
+                    columnStart = it.roundToInt().coerceIn(0, table.columnCount - 1)
+                }
+                CompactNumberField("C2", columnEnd.toDouble().formatPx(), "merge-c2-$elementId", Modifier.width(fieldWidth), enabled = !locked) {
+                    columnEnd = it.roundToInt().coerceIn(0, table.columnCount - 1)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TinyButton("Merge", enabled = !locked) {
+                    state.dispatch(
+                        DiagramEditorIntent.MergeDiagramTableCells(
+                            nodeId, elementId,
+                            rowStart = minOf(rowStart, rowEnd),
+                            rowEnd = maxOf(rowStart, rowEnd),
+                            columnStart = minOf(columnStart, columnEnd),
+                            columnEnd = maxOf(columnStart, columnEnd),
+                        ),
+                    )
+                }
+                TinyButton("Split", enabled = !locked) {
+                    state.dispatch(DiagramEditorIntent.SplitDiagramTableCell(nodeId, elementId, rowStart, columnStart))
+                }
+            }
+        }
+    }
+}
+
+/** UML class compartments: attribute/operation rows with visibility selects, add/remove. */
+@Composable
+private fun DiagramClassControls(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    elementId: String,
+    uml: UmlClassNode,
+    locked: Boolean,
+) {
+    DiagramMemberList(state, nodeId, elementId, "Attributes", UmlClassMemberKind.ATTRIBUTE, uml.attributes, locked)
+    Spacer(Modifier.height(8.dp))
+    DiagramMemberList(state, nodeId, elementId, "Operations", UmlClassMemberKind.OPERATION, uml.operations, locked)
+}
+
+@Composable
+private fun DiagramMemberList(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    elementId: String,
+    title: String,
+    kind: UmlClassMemberKind,
+    members: List<UmlMember>,
+    locked: Boolean,
+) {
+    val colors = LocalEditorColors.current
+    InspectorSubLabel(title)
+    if (members.isEmpty()) {
+        MutedNote("None yet.")
+    }
+    members.forEachIndexed { index, member ->
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CompactSelectField(
+                value = umlVisibilityLabel(member.visibility),
+                options = UmlVisibility.entries.map { umlVisibilityLabel(it) },
+                onSelect = { label ->
+                    if (!locked) {
+                        UmlVisibility.entries.firstOrNull { umlVisibilityLabel(it) == label }?.let {
+                            state.dispatch(
+                                DiagramEditorIntent.SetDiagramClassMemberVisibility(nodeId, elementId, kind, index, it),
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.width(96.dp),
+                enabled = !locked,
+                leadingContent = { UmlVisibilityPreview(member.visibility) },
+                optionLeadingContent = { label ->
+                    UmlVisibility.entries.firstOrNull { umlVisibilityLabel(it) == label }
+                        ?.let { UmlVisibilityPreview(it) }
+                },
+            )
+            Text(
+                member.text,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.ink,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+            TinyButton("x", enabled = !locked) {
+                state.dispatch(DiagramEditorIntent.RemoveDiagramClassMember(nodeId, elementId, kind, index))
+            }
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    var draft by remember(elementId, kind) { mutableStateOf("") }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.weight(1f)) {
+            CompactTextField(
+                value = draft,
+                resetKey = "member-$elementId-$kind-${members.size}",
+                enabled = !locked,
+                placeholder = if (kind == UmlClassMemberKind.ATTRIBUTE) "name: Type" else "name(args): Type",
+            ) { draft = it }
+        }
+        TinyButton("+ Add", enabled = !locked) {
+            val text = draft.trim().ifBlank { if (kind == UmlClassMemberKind.ATTRIBUTE) "attribute" else "operation()" }
+            state.dispatch(DiagramEditorIntent.AddDiagramClassMember(nodeId, elementId, kind, UmlMember(text)))
+            draft = ""
+        }
+    }
+}
+
+/** Relation / routing / arrowheads / pattern / jumps / labels / reverse for a selected edge. */
+@Composable
+private fun DiagramEdgeControls(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    edge: DiagramEdge,
+    locked: Boolean,
+) {
+    val edgeId = edge.id.value
+    val previewStyle = editorDiagramPreviewStyle()
+    LabeledField("Relation") {
+        SelectField(
+            value = diagramRelationLabel(edge.relation),
+            options = DiagramRelationOptions.map { it.first },
+            onSelect = { label ->
+                if (!locked) {
+                    DiagramRelationOptions.firstOrNull { it.first == label }?.let { (_, relation) ->
+                        state.dispatch(DiagramEditorIntent.SetDiagramEdgeRelation(nodeId, edgeId, relation))
+                    }
+                }
+            },
+            leadingContent = { DiagramRelationPreview(edge.relation, previewStyle) },
+            optionLeadingContent = { label ->
+                DiagramRelationOptions.firstOrNull { it.first == label }
+                    ?.let { DiagramRelationPreview(it.second, previewStyle) }
+            },
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledSelectField(
+        "Routing",
+        diagramRoutingLabel(edge.routing),
+        DiagramRoutingStyle.entries.map { diagramRoutingLabel(it) },
+        enabled = !locked,
+        leadingContent = { DiagramRoutingPreview(edge.routing) },
+        optionLeadingContent = { label ->
+            DiagramRoutingStyle.entries.firstOrNull { diagramRoutingLabel(it) == label }
+                ?.let { DiagramRoutingPreview(it) }
+        },
+    ) { label ->
+        DiagramRoutingStyle.entries.firstOrNull { diagramRoutingLabel(it) == label }
+            ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgeRouting(nodeId, edgeId, it)) }
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledSelectField(
+        "Start head",
+        diagramArrowheadLabel(edge.sourceArrowhead.kind),
+        DiagramArrowheadKind.entries.map { diagramArrowheadLabel(it) },
+        enabled = !locked,
+        leadingContent = { DiagramArrowheadPreview(edge.sourceArrowhead.kind) },
+        optionLeadingContent = { label ->
+            DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }
+                ?.let { DiagramArrowheadPreview(it) }
+        },
+    ) { label ->
+        DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }?.let {
+            state.dispatch(DiagramEditorIntent.SetDiagramEdgeArrowheads(nodeId, edgeId, source = DiagramArrowhead(it)))
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledSelectField(
+        "End head",
+        diagramArrowheadLabel(edge.targetArrowhead.kind),
+        DiagramArrowheadKind.entries.map { diagramArrowheadLabel(it) },
+        enabled = !locked,
+        leadingContent = { DiagramArrowheadPreview(edge.targetArrowhead.kind) },
+        optionLeadingContent = { label ->
+            DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }
+                ?.let { DiagramArrowheadPreview(it) }
+        },
+    ) { label ->
+        DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }?.let {
+            state.dispatch(DiagramEditorIntent.SetDiagramEdgeArrowheads(nodeId, edgeId, target = DiagramArrowhead(it)))
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledSelectField(
+        "Pattern",
+        diagramPatternLabel(edge.style.pattern),
+        DiagramStrokePattern.entries.map { diagramPatternLabel(it) },
+        enabled = !locked,
+        leadingContent = { DiagramPatternPreview(edge.style.pattern) },
+        optionLeadingContent = { label ->
+            DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+                ?.let { DiagramPatternPreview(it) }
+        },
+    ) { label ->
+        DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+            ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgePattern(nodeId, edgeId, it)) }
+    }
+    Spacer(Modifier.height(8.dp))
+    CompactLabeledSelectField(
+        "Line jumps",
+        diagramLineJumpLabel(edge.lineJumps),
+        LineJumpStyle.entries.map { diagramLineJumpLabel(it) },
+        enabled = !locked,
+        leadingContent = { DiagramLineJumpPreview(edge.lineJumps) },
+        optionLeadingContent = { label ->
+            LineJumpStyle.entries.firstOrNull { diagramLineJumpLabel(it) == label }
+                ?.let { DiagramLineJumpPreview(it) }
+        },
+    ) { label ->
+        LineJumpStyle.entries.firstOrNull { diagramLineJumpLabel(it) == label }
+            ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgeLineJumps(nodeId, edgeId, it)) }
+    }
+    Spacer(Modifier.height(10.dp))
+    InspectorSubLabel("Labels")
+    DiagramEdgeLabelPosition.entries.forEach { position ->
+        val current = edge.labels.firstOrNull { it.position == position }?.label?.text.orEmpty()
+        CompactLabeledTextField(
+            diagramEdgeLabelPositionTitle(position),
+            current,
+            "edge-label-$edgeId-$position",
+            enabled = !locked,
+        ) { text ->
+            state.dispatch(
+                DiagramEditorIntent.SetDiagramEdgeLabel(nodeId, edgeId, position, text.takeIf { it.isNotBlank() }),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+    }
+    Spacer(Modifier.height(4.dp))
+    TinyButton("Reverse direction", enabled = !locked) {
+        state.dispatch(DiagramEditorIntent.ReverseDiagramEdge(nodeId, edgeId))
+    }
+}
+
+/** Diagram-level actions: auto-layout, starter template insertion, text import. */
+@Composable
+private fun DiagramCanvasActions(state: MissionEditorStateHolder, nodeId: String, locked: Boolean) {
+    val previewStyle = editorDiagramPreviewStyle()
+    InspectorSubLabel("Diagram")
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TinyButton("Auto-layout", enabled = !locked) {
+            state.dispatch(DiagramEditorIntent.ApplyDiagramAutoLayout(nodeId))
+        }
+        Box {
+            var templatesExpanded by remember(nodeId) { mutableStateOf(false) }
+            TinyButton("Insert template", enabled = !locked) { templatesExpanded = true }
+            EditorDropdownMenu(expanded = templatesExpanded, onDismissRequest = { templatesExpanded = false }) {
+                diagramTemplates().forEach { template ->
+                    EditorDropdownMenuItem(
+                        text = template.name,
+                        leadingContent = {
+                            DiagramNodePreview(diagramTemplatePreviewPayload(template.id), previewStyle)
+                        },
+                        onClick = {
+                            templatesExpanded = false
+                            state.dispatch(DiagramEditorIntent.InsertDiagramTemplate(nodeId, template.id))
+                        },
+                    )
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    InspectorSubLabel("Import text")
+    Spacer(Modifier.height(6.dp))
+    var format by remember(nodeId) { mutableStateOf(DiagramTextFormat.Mermaid) }
+    SegmentedControl(
+        options = DiagramTextFormat.entries.toList(),
+        selected = format,
+        label = { if (it == DiagramTextFormat.Mermaid) "Mermaid" else "PlantUML" },
+        onSelect = { format = it },
+    )
+    Spacer(Modifier.height(6.dp))
+    var importDraft by remember(nodeId) { mutableStateOf("") }
+    DiagramImportTextArea(
+        value = importDraft,
+        enabled = !locked,
+        placeholder = if (format == DiagramTextFormat.Mermaid) "graph TD; A-->B" else "@startuml ...",
+        onChange = { importDraft = it },
+    )
+    Spacer(Modifier.height(6.dp))
+    TinyButton(if (format == DiagramTextFormat.Mermaid) "Import Mermaid" else "Import PlantUML", enabled = !locked) {
+        if (importDraft.isNotBlank()) {
+            state.dispatch(DiagramEditorIntent.ImportDiagramText(nodeId, importDraft, format))
+            importDraft = ""
+        }
+    }
+}
+
+/** Multi-line source field for the text-to-diagram import. */
+@Composable
+private fun DiagramImportTextArea(
+    value: String,
+    enabled: Boolean,
+    placeholder: String,
+    onChange: (String) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(5.dp),
+        color = if (enabled) colors.controlSurface else colors.controlDisabledSurface,
+        border = BorderStroke(1.dp, if (enabled) colors.controlStroke else colors.controlDisabledStroke),
+    ) {
+        Box(Modifier.padding(8.dp)) {
+            if (value.isEmpty()) {
+                Text(placeholder, style = MaterialTheme.typography.bodySmall, color = colors.mutedInk)
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onChange,
+                modifier = Modifier.fillMaxWidth().height(72.dp),
+                enabled = enabled,
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.ink, fontFamily = FontFamily.Monospace),
+            )
+        }
+    }
+}
+
+// --- Diagram labels + previews ----------------------------------------------------
+
+private val DiagramRelationOptions: List<Pair<String, DiagramRelation>> = listOf(
+    "Plain" to DiagramRelation.Plain,
+    "Association" to DiagramRelation.Association(directed = false),
+    "Directed association" to DiagramRelation.Association(directed = true),
+    "Aggregation" to DiagramRelation.Aggregation,
+    "Composition" to DiagramRelation.Composition,
+    "Generalization" to DiagramRelation.Generalization,
+    "Dependency" to DiagramRelation.Dependency,
+    "Realization" to DiagramRelation.Realization,
+    "Transition" to DiagramRelation.Transition,
+    "Include" to DiagramRelation.Include,
+    "Extend" to DiagramRelation.Extend,
+    "Message (sync)" to DiagramRelation.Message(UmlMessageKind.SYNC),
+    "Message (async)" to DiagramRelation.Message(UmlMessageKind.ASYNC),
+    "Message (return)" to DiagramRelation.Message(UmlMessageKind.RETURN),
+    "Message (create)" to DiagramRelation.Message(UmlMessageKind.CREATE),
+    "Message (destroy)" to DiagramRelation.Message(UmlMessageKind.DESTROY),
+    "Entity relation" to DiagramRelation.EntityRelation(),
+)
+
+private fun diagramRelationLabel(relation: DiagramRelation): String = when (relation) {
+    DiagramRelation.Plain -> "Plain"
+    is DiagramRelation.Association -> if (relation.directed) "Directed association" else "Association"
+    DiagramRelation.Aggregation -> "Aggregation"
+    DiagramRelation.Composition -> "Composition"
+    DiagramRelation.Generalization -> "Generalization"
+    DiagramRelation.Dependency -> "Dependency"
+    DiagramRelation.Realization -> "Realization"
+    is DiagramRelation.Message -> when (relation.kind) {
+        UmlMessageKind.SYNC -> "Message (sync)"
+        UmlMessageKind.ASYNC -> "Message (async)"
+        UmlMessageKind.RETURN -> "Message (return)"
+        UmlMessageKind.CREATE -> "Message (create)"
+        UmlMessageKind.DESTROY -> "Message (destroy)"
+    }
+    DiagramRelation.Transition -> "Transition"
+    DiagramRelation.Include -> "Include"
+    DiagramRelation.Extend -> "Extend"
+    is DiagramRelation.EntityRelation -> "Entity relation"
+}
+
+private fun diagramRoutingLabel(style: DiagramRoutingStyle): String = when (style) {
+    DiagramRoutingStyle.STRAIGHT -> "Straight"
+    DiagramRoutingStyle.ORTHOGONAL -> "Orthogonal"
+    DiagramRoutingStyle.SIMPLE -> "Simple"
+    DiagramRoutingStyle.ISOMETRIC -> "Isometric"
+    DiagramRoutingStyle.CURVED -> "Curved"
+    DiagramRoutingStyle.ENTITY_RELATION -> "Entity relation"
+}
+
+private fun diagramPatternLabel(pattern: DiagramStrokePattern): String = when (pattern) {
+    DiagramStrokePattern.SOLID -> "Solid"
+    DiagramStrokePattern.DASHED -> "Dashed"
+    DiagramStrokePattern.DOTTED -> "Dotted"
+}
+
+private fun diagramCornerLabel(style: DiagramCornerStyle): String = when (style) {
+    DiagramCornerStyle.SHARP -> "Sharp"
+    DiagramCornerStyle.ROUNDED -> "Rounded"
+    DiagramCornerStyle.CURVED -> "Curved"
+}
+
+private fun diagramLineJumpLabel(style: LineJumpStyle): String = when (style) {
+    LineJumpStyle.NONE -> "None"
+    LineJumpStyle.ARC -> "Arc"
+    LineJumpStyle.GAP -> "Gap"
+    LineJumpStyle.SHARP -> "Sharp"
+}
+
+private fun diagramArrowheadLabel(kind: DiagramArrowheadKind): String = when (kind) {
+    DiagramArrowheadKind.NONE -> "None"
+    DiagramArrowheadKind.OPEN -> "Open"
+    DiagramArrowheadKind.BLOCK -> "Block"
+    DiagramArrowheadKind.BLOCK_FILLED -> "Block filled"
+    DiagramArrowheadKind.DIAMOND -> "Diamond"
+    DiagramArrowheadKind.DIAMOND_FILLED -> "Diamond filled"
+    DiagramArrowheadKind.TRIANGLE -> "Triangle"
+    DiagramArrowheadKind.TRIANGLE_FILLED -> "Triangle filled"
+    DiagramArrowheadKind.OVAL -> "Oval"
+    DiagramArrowheadKind.OVAL_FILLED -> "Oval filled"
+    DiagramArrowheadKind.CROSS -> "Cross"
+    DiagramArrowheadKind.DASH -> "Dash"
+    DiagramArrowheadKind.ER_ONE -> "ER one"
+    DiagramArrowheadKind.ER_MANY -> "ER many"
+    DiagramArrowheadKind.ER_ONE_OR_MANY -> "ER one or many"
+    DiagramArrowheadKind.ER_ZERO_OR_ONE -> "ER zero or one"
+    DiagramArrowheadKind.ER_ZERO_OR_MANY -> "ER zero or many"
+}
+
+private fun umlVisibilityLabel(visibility: UmlVisibility): String = when (visibility) {
+    UmlVisibility.PUBLIC -> "Public"
+    UmlVisibility.PRIVATE -> "Private"
+    UmlVisibility.PROTECTED -> "Protected"
+    UmlVisibility.PACKAGE -> "Package"
+}
+
+private fun diagramEdgeLabelPositionTitle(position: DiagramEdgeLabelPosition): String = when (position) {
+    DiagramEdgeLabelPosition.SOURCE -> "Start"
+    DiagramEdgeLabelPosition.MIDDLE -> "Middle"
+    DiagramEdgeLabelPosition.TARGET -> "End"
+}
+
+/** Representative payload glyph for a starter template's dropdown row. */
+private fun diagramTemplatePreviewPayload(templateId: String): DiagramNodePayload = when (templateId) {
+    "uml-class" -> UmlClassNode(name = "")
+    "sequence" -> UmlLifelineNode(name = "")
+    "state-machine" -> UmlStateNode(name = "")
+    "activity" -> UmlActivityNode(UmlActivityKind.ACTION)
+    "use-case" -> UmlUseCaseNode(name = "")
+    "component" -> UmlComponentNode(name = "")
+    "deployment" -> UmlDeploymentNode(name = "")
+    "flowchart" -> DiagramNodePayload.FlowchartNode(FlowchartNodeKind.DECISION)
+    "er" -> DiagramNodePayload.ErEntityNode(name = "")
+    else -> DiagramNodePayload.BasicShape()
+}
+
+private fun DiagramColor.toDesignColor(): DesignColor = DesignColor(argb.toLong() and 0xFFFFFFFFL)
+
+private fun DesignColor.toDiagramColor(): DiagramColor = DiagramColor(argb.toULong() and 0xFFFFFFFFu)
+
+@Composable
+private fun UmlVisibilityPreview(visibility: UmlVisibility, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Text(
+            visibility.symbol.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.accent,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun DiagramPatternPreview(pattern: DiagramStrokePattern, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val y = size.height / 2f
+        val effect = when (pattern) {
+            DiagramStrokePattern.SOLID -> null
+            DiagramStrokePattern.DASHED -> androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4f, 3f))
+            DiagramStrokePattern.DOTTED -> androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(1.6f, 2.6f))
+        }
+        drawLine(
+            colors.controlInk,
+            Offset(1.5f, y),
+            Offset(size.width - 1.5f, y),
+            strokeWidth = 1.6f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            pathEffect = effect,
+        )
+    }
+}
+
+@Composable
+private fun DiagramCornerPreview(style: DiagramCornerStyle, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val start = Offset(3f, size.height - 3f)
+        val corner = Offset(3f, 5f)
+        val end = Offset(size.width - 3f, 5f)
+        val path = Path().apply {
+            moveTo(start.x, start.y)
+            when (style) {
+                DiagramCornerStyle.SHARP -> {
+                    lineTo(corner.x, corner.y)
+                    lineTo(end.x, end.y)
+                }
+                DiagramCornerStyle.ROUNDED -> {
+                    lineTo(corner.x, corner.y + 4f)
+                    quadraticTo(corner.x, corner.y, corner.x + 4f, corner.y)
+                    lineTo(end.x, end.y)
+                }
+                DiagramCornerStyle.CURVED -> {
+                    quadraticTo(corner.x, corner.y, end.x, end.y)
+                }
+            }
+        }
+        drawPath(path, colors.controlInk, style = Stroke(1.6f))
+    }
+}
+
+@Composable
+private fun DiagramRoutingPreview(style: DiagramRoutingStyle, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val path = Path().apply {
+            when (style) {
+                DiagramRoutingStyle.STRAIGHT -> {
+                    moveTo(2f, h - 3f)
+                    lineTo(w - 2f, 3f)
+                }
+                DiagramRoutingStyle.ORTHOGONAL -> {
+                    moveTo(2f, h - 3f)
+                    lineTo(w / 2f, h - 3f)
+                    lineTo(w / 2f, 3f)
+                    lineTo(w - 2f, 3f)
+                }
+                DiagramRoutingStyle.SIMPLE -> {
+                    moveTo(2f, h - 3f)
+                    lineTo(2f, 3f)
+                    lineTo(w - 2f, 3f)
+                }
+                DiagramRoutingStyle.ISOMETRIC -> {
+                    moveTo(2f, h - 4f)
+                    lineTo(w / 2f, h / 2f)
+                    lineTo(w / 2f + 3f, h / 2f + 2f)
+                    lineTo(w - 2f, 4f)
+                }
+                DiagramRoutingStyle.CURVED -> {
+                    moveTo(2f, h - 3f)
+                    cubicTo(w / 2f, h - 3f, w / 2f, 3f, w - 2f, 3f)
+                }
+                DiagramRoutingStyle.ENTITY_RELATION -> {
+                    moveTo(2f, h - 4f)
+                    lineTo(6f, h - 4f)
+                    lineTo(w - 6f, 4f)
+                    lineTo(w - 2f, 4f)
+                }
+            }
+        }
+        drawPath(path, colors.controlInk, style = Stroke(1.5f))
+    }
+}
+
+@Composable
+private fun DiagramLineJumpPreview(style: LineJumpStyle, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val y = size.height / 2f
+        val cx = size.width / 2f
+        // The crossed (vertical) edge.
+        drawLine(colors.mutedInk, Offset(cx, 2f), Offset(cx, size.height - 2f), strokeWidth = 1.2f)
+        val path = Path().apply {
+            moveTo(1.5f, y)
+            when (style) {
+                LineJumpStyle.NONE -> lineTo(size.width - 1.5f, y)
+                LineJumpStyle.ARC -> {
+                    lineTo(cx - 3.5f, y)
+                    quadraticTo(cx, y - 6f, cx + 3.5f, y)
+                    lineTo(size.width - 1.5f, y)
+                }
+                LineJumpStyle.GAP -> {
+                    lineTo(cx - 3.5f, y)
+                    moveTo(cx + 3.5f, y)
+                    lineTo(size.width - 1.5f, y)
+                }
+                LineJumpStyle.SHARP -> {
+                    lineTo(cx - 3.5f, y)
+                    lineTo(cx, y - 5f)
+                    lineTo(cx + 3.5f, y)
+                    lineTo(size.width - 1.5f, y)
+                }
+            }
+        }
+        drawPath(path, colors.controlInk, style = Stroke(1.5f))
+    }
+}
+
+@Composable
+private fun DiagramArrowheadPreview(kind: DiagramArrowheadKind, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val y = (size.height / 2f).toDouble()
+        val tip = DiagramPoint((size.width - 2f).toDouble(), y)
+        val geometry = arrowheadPath(
+            DiagramArrowhead(kind, size = size.minDimension * 0.45),
+            tip = tip,
+            direction = DiagramPoint(1.0, 0.0),
+        )
+        drawLine(
+            colors.controlInk,
+            Offset(2f, y.toFloat()),
+            Offset((tip.x - geometry.lineShorten).toFloat(), y.toFloat()),
+            strokeWidth = 1.4f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        val path = geometry.path.toComposePath()
+        if (geometry.filled) {
+            drawPath(path, colors.controlInk)
+        } else {
+            drawPath(path, colors.controlInk, style = Stroke(1.3f))
+        }
+    }
+}

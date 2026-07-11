@@ -1,0 +1,258 @@
+package io.aequicor.visualization.subsystems.diagrams.hittest
+
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
+import io.aequicor.visualization.subsystems.diagrams.model.SwimlaneLane
+import io.aequicor.visualization.subsystems.diagrams.model.TableCell
+import io.aequicor.visualization.subsystems.diagrams.model.TableColumn
+import io.aequicor.visualization.subsystems.diagrams.model.TableNode
+import io.aequicor.visualization.subsystems.diagrams.model.TableRow
+import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlMember
+import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNull
+
+class DiagramHitTestTest {
+
+    @Test
+    fun emptySpaceHitsNothing() {
+        val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0) }
+        assertNull(hitTest(graph, emptyMap(), DiagramPoint(500.0, 500.0)))
+    }
+
+    @Test
+    fun nodeBodyHitsNode() {
+        val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0) }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(50.0, 50.0))
+        assertEquals(DiagramHit.Node(DiagramNodeId("a")), hit)
+    }
+
+    @Test
+    fun portBeatsNodeBody() {
+        val graph = diagramGraph {
+            node(
+                "a",
+                x = 0.0, y = 0.0, width = 100.0, height = 100.0,
+                ports = DiagramPort.standardPorts(),
+            )
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(99.0, 50.0), tolerance = 5.0)
+        assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("right")), hit)
+    }
+
+    @Test
+    fun resizeHandleBeatsPortOnSelectedNode() {
+        val cornerPort = DiagramPort(DiagramPortId("tl"), DiagramPortAnchor.RelativePoint(0.0, 0.0))
+        val graph = diagramGraph {
+            node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0, ports = listOf(cornerPort))
+        }
+        val point = DiagramPoint(0.0, 0.0)
+        val selected = hitTest(
+            graph, emptyMap(), point,
+            tolerance = 5.0,
+            selectedNodeIds = setOf(DiagramNodeId("a")),
+        )
+        assertEquals(DiagramHit.ResizeHandle(DiagramNodeId("a"), DiagramResizeHandle.TOP_LEFT), selected)
+
+        val unselected = hitTest(graph, emptyMap(), point, tolerance = 5.0)
+        assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("tl")), unselected)
+    }
+
+    @Test
+    fun edgeBeatsNodeBody() {
+        val graph = diagramGraph {
+            val a = node("a", x = 0.0, y = 0.0, width = 40.0, height = 40.0)
+            val b = node("b", x = 200.0, y = 0.0, width = 40.0, height = 40.0)
+            node("under", x = 80.0, y = 0.0, width = 60.0, height = 60.0)
+            edge("a-b", a, b)
+        }
+        val routes = mapOf(
+            DiagramEdgeId("a-b") to listOf(DiagramPoint(40.0, 20.0), DiagramPoint(200.0, 20.0)),
+        )
+        val hit = hitTest(graph, routes, DiagramPoint(110.0, 20.0), tolerance = 4.0)
+        assertEquals(DiagramHit.Edge(DiagramEdgeId("a-b"), segmentIndex = 0), hit)
+    }
+
+    @Test
+    fun waypointHandleBeatsEdgeOnSelectedEdge() {
+        val graph = diagramGraph {
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 50.0),
+                target = DiagramEndpoint.FreePoint(100.0, 50.0),
+                waypoints = listOf(DiagramPoint(50.0, 50.0)),
+            )
+        }
+        val point = DiagramPoint(52.0, 50.0)
+        val selected = hitTest(
+            graph, emptyMap(), point,
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertEquals(DiagramHit.WaypointHandle(DiagramEdgeId("e"), waypointIndex = 0), selected)
+
+        val unselected = hitTest(graph, emptyMap(), point)
+        assertIs<DiagramHit.Edge>(unselected)
+    }
+
+    @Test
+    fun labelHandleOnSelectedEdgeAtRouteMidpoint() {
+        val graph = diagramGraph {
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 0.0),
+                target = DiagramEndpoint.FreePoint(100.0, 0.0),
+                label = "hello",
+            )
+        }
+        val hit = hitTest(
+            graph, emptyMap(), DiagramPoint(50.0, 2.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertEquals(
+            DiagramHit.LabelHandle(DiagramEdgeId("e"), DiagramEdgeLabelPosition.MIDDLE),
+            hit,
+        )
+    }
+
+    @Test
+    fun laterNodeInListWinsOverlap() {
+        val graph = diagramGraph {
+            node("back", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+            node("front", x = 50.0, y = 50.0, width = 100.0, height = 100.0)
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(75.0, 75.0))
+        assertEquals(DiagramHit.Node(DiagramNodeId("front")), hit)
+    }
+
+    @Test
+    fun explicitLayerRendersAboveDefaultLayer() {
+        val graph = diagramGraph {
+            val overlay = layer("overlay")
+            node("onLayer", x = 0.0, y = 0.0, width = 100.0, height = 100.0, layerId = overlay)
+            node("onDefault", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(50.0, 50.0))
+        assertEquals(DiagramHit.Node(DiagramNodeId("onLayer")), hit)
+    }
+
+    @Test
+    fun invisibleAndLockedNodesAreTransparent() {
+        val graph = diagramGraph {
+            node("base", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+            node("hidden", x = 0.0, y = 0.0, width = 100.0, height = 100.0, visible = false)
+            node("locked", x = 0.0, y = 0.0, width = 100.0, height = 100.0, locked = true)
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(50.0, 50.0))
+        assertEquals(DiagramHit.Node(DiagramNodeId("base")), hit)
+    }
+
+    @Test
+    fun hiddenLayerIsTransparent() {
+        val graph = diagramGraph {
+            node("base", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+            val hidden = layer("hidden", visible = false)
+            node("ghost", x = 0.0, y = 0.0, width = 100.0, height = 100.0, layerId = hidden)
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(50.0, 50.0))
+        assertEquals(DiagramHit.Node(DiagramNodeId("base")), hit)
+    }
+
+    @Test
+    fun tableCellPartIsReported() {
+        val table = TableNode(
+            rows = listOf(TableRow(32.0), TableRow(32.0)),
+            columns = listOf(TableColumn(60.0), TableColumn(60.0)),
+        )
+        val graph = diagramGraph {
+            node("t", x = 0.0, y = 0.0, width = 120.0, height = 64.0, payload = table)
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(90.0, 50.0))
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("t"), DiagramNodeHitPart.TableCellPart(row = 1, column = 1)),
+            hit,
+        )
+    }
+
+    @Test
+    fun mergedTableCellReportsAnchorPosition() {
+        val table = TableNode(
+            rows = listOf(TableRow(32.0), TableRow(32.0)),
+            columns = listOf(TableColumn(60.0), TableColumn(60.0)),
+            cells = listOf(TableCell(row = 0, column = 0, rowSpan = 2)),
+        )
+        val graph = diagramGraph {
+            node("t", x = 0.0, y = 0.0, width = 120.0, height = 64.0, payload = table)
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(30.0, 50.0))
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("t"), DiagramNodeHitPart.TableCellPart(row = 0, column = 0)),
+            hit,
+        )
+    }
+
+    @Test
+    fun classSectionsSplitTopToBottom() {
+        val payload = UmlClassNode(
+            name = "C",
+            attributes = listOf(UmlMember("a"), UmlMember("b")),
+            operations = listOf(UmlMember("f()"), UmlMember("g()")),
+        )
+        val graph = diagramGraph {
+            node("c", x = 0.0, y = 0.0, width = 160.0, height = 100.0, payload = payload)
+        }
+
+        fun sectionAt(y: Double): UmlClassSection {
+            val hit = hitTest(graph, emptyMap(), DiagramPoint(80.0, y))
+            val node = assertIs<DiagramHit.Node>(hit)
+            return assertIs<DiagramNodeHitPart.ClassSectionPart>(node.part).section
+        }
+
+        assertEquals(UmlClassSection.NAME, sectionAt(10.0))
+        assertEquals(UmlClassSection.ATTRIBUTES, sectionAt(30.0))
+        assertEquals(UmlClassSection.OPERATIONS, sectionAt(90.0))
+    }
+
+    @Test
+    fun swimlaneLaneIndexIsReported() {
+        val payload = DiagramNodePayload.SwimlaneNode(
+            orientation = DiagramOrientation.HORIZONTAL,
+            lanes = listOf(SwimlaneLane(size = 50.0), SwimlaneLane(size = 50.0)),
+        )
+        val graph = diagramGraph {
+            node("pool", x = 0.0, y = 0.0, width = 300.0, height = 100.0, payload = payload)
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(150.0, 75.0))
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("pool"), DiagramNodeHitPart.LanePart(laneIndex = 1)),
+            hit,
+        )
+    }
+
+    @Test
+    fun fallbackRouteUsesEndpointsAndWaypoints() {
+        val graph = diagramGraph {
+            val a = node("a", x = 0.0, y = 0.0, width = 40.0, height = 40.0)
+            val b = node("b", x = 200.0, y = 0.0, width = 40.0, height = 40.0)
+            edge(
+                "e",
+                source = DiagramEndpoint.FloatingAnchor(a),
+                target = DiagramEndpoint.FloatingAnchor(b),
+                waypoints = listOf(DiagramPoint(120.0, 150.0)),
+            )
+        }
+        // Fallback route: center a (20,20) -> waypoint (120,150) -> center b (220,20).
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(120.0, 148.0), tolerance = 5.0)
+        assertIs<DiagramHit.Edge>(hit)
+    }
+}

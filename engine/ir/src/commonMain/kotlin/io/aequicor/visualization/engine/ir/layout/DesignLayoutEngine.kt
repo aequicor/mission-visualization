@@ -127,12 +127,14 @@ class DesignLayoutEngine(
     fun naturalWidth(node: ResolvedNode): Double {
         val fixed = node.size.width
         val intrinsic = node.media?.intrinsicWidth
+            ?: node.diagram?.let(::diagramIntrinsicWidth)
         val width = when {
             node.sizing.horizontal == SizingMode.Fixed && fixed != null -> fixed
-            // A hugging media node without an authored size hugs the asset's intrinsic size.
+            // A hugging media/diagram node without an authored size hugs its intrinsic size.
             node.sizing.horizontal == SizingMode.Hug && fixed == null && intrinsic != null -> intrinsic
             node.text != null -> textNaturalWidth(node)
-            node.children.isEmpty() -> fixed ?: 0.0
+            // Diagram leaves default to the graph's bbox when no size is authored.
+            node.children.isEmpty() -> fixed ?: intrinsic ?: 0.0
             else -> when (node.layout.mode) {
                 LayoutMode.Horizontal -> {
                     val flow = flowChildren(node)
@@ -168,11 +170,12 @@ class DesignLayoutEngine(
     fun naturalHeight(node: ResolvedNode, width: Double): Double {
         val fixed = node.size.height
         val intrinsic = node.media?.intrinsicHeight
+            ?: node.diagram?.let(::diagramIntrinsicHeight)
         val height = when {
             node.sizing.vertical == SizingMode.Fixed && fixed != null -> fixed
             node.sizing.vertical == SizingMode.Hug && fixed == null && intrinsic != null -> intrinsic
             node.text != null -> textNaturalHeight(node, width)
-            node.children.isEmpty() -> fixed ?: 0.0
+            node.children.isEmpty() -> fixed ?: intrinsic ?: 0.0
             else -> when (node.layout.mode) {
                 LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
                     layoutChildren(node, width, null).contentHeight

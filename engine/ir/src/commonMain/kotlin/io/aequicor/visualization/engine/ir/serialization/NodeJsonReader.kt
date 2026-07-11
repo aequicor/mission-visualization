@@ -124,6 +124,7 @@ private fun DesignDocumentReader.readKind(type: String, obj: JsonObject, pointer
         "line" -> shapeKind(ShapeType.Line, obj, pointer)
         "arrow" -> shapeKind(ShapeType.Arrow, obj, pointer)
         "vector" -> shapeKind(ShapeType.Vector, obj, pointer)
+        "diagram" -> readDiagramKind(obj, pointer)
         "instance" -> DesignNodeKind.Instance(
             componentId = readBindableString(obj["componentId"], ""),
             libraryRef = obj.stringOrDefault("libraryRef"),

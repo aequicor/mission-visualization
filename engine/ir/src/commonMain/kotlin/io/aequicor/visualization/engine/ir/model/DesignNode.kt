@@ -1,5 +1,6 @@
 package io.aequicor.visualization.engine.ir.model
 
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.subsystems.figures.ShapeType
@@ -152,6 +153,13 @@ sealed interface DesignNodeKind {
     data object Slice : DesignNodeKind
 
     data class Media(val media: DesignMedia) : DesignNodeKind
+
+    /**
+     * Embedded diagram (draw.io-like graph) carried as a typed payload, like shape/vector.
+     * Graph coordinates are diagram-local: the node's box is the diagram canvas with the
+     * graph origin `(0,0)` at the box's top-left corner.
+     */
+    data class Diagram(val graph: DiagramGraph) : DesignNodeKind
 
     data class Table(val table: DesignTable) : DesignNodeKind
 

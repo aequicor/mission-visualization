@@ -3,6 +3,7 @@ package io.aequicor.visualization.engine.ir.serialization
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.figures.HandleMirror
 import io.aequicor.visualization.subsystems.figures.HandleOffset
 import io.aequicor.visualization.subsystems.figures.VectorNetwork
@@ -280,6 +281,9 @@ private fun JsonObjectBuilder.putKindFields(kind: DesignNodeKind) {
         is DesignNodeKind.Instance -> putInstanceKindFields(kind)
         is DesignNodeKind.BooleanOperation -> put("operation", booleanOperationName(kind.operation))
         is DesignNodeKind.Media -> put("media", writeMedia(kind.media))
+        is DesignNodeKind.Diagram -> {
+            if (kind.graph != DiagramGraph.Empty) put("diagram", writeDiagramGraph(kind.graph))
+        }
         is DesignNodeKind.Table -> put("table", writeTable(kind.table))
         is DesignNodeKind.Slot -> put("slot", kind.slotName)
         is DesignNodeKind.Annotation -> put("annotation", writeAnnotation(kind.annotation))
