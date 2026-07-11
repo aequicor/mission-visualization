@@ -340,26 +340,30 @@ data class CanvasReparentPlacement(
 )
 
 /**
- * Promotes a moved node when its visual center leaves [currentParent]. [upperParents]
- * must be nearest-first and end with the screen's root frame; the page itself is never
- * a target because the artboard renders the root frame tree.
+ * Resolves the container a moved node should drop into: the deepest [candidates] entry
+ * containing the moved visual center — nesting inward into a sibling/cousin frame just as
+ * readily as promoting outward to an ancestor. [candidates] must be deepest-first, exclude
+ * the dragged subtree, and contain the screen's root frame; the page itself is never a
+ * target because the artboard renders the root frame tree.
  *
- * The nearest upper parent containing the moved center wins. If the node was dragged
- * beyond every ancestor, the root frame remains the target so the node stays renderable
- * as root overflow. The returned position is expressed in the target parent's layout
- * coordinate system, and the node's own rotation compensates for any rotated ancestors
- * it stopped inheriting, preserving its on-canvas appearance.
+ * If the node was dragged beyond every container, the root frame ([rootId]) remains the
+ * target so the node stays renderable as root overflow. Returns null when the resolved
+ * target is the node's current parent (a plain move, not a reparent). The returned
+ * position is expressed in the target parent's layout coordinate system, and the node's
+ * own rotation compensates for any rotated ancestors it starts or stops inheriting,
+ * preserving its on-canvas appearance.
  */
-fun reparentPlacementWhenMovedOutside(
+fun reparentDropPlacement(
     movedVisual: EffectiveTransform,
-    currentParent: CanvasParentFrame,
-    upperParents: List<CanvasParentFrame>,
+    candidates: List<CanvasParentFrame>,
+    currentParentId: String,
+    rootId: String,
 ): CanvasReparentPlacement? {
     val center = GeoPoint(movedVisual.box.centerX, movedVisual.box.centerY)
-    if (currentParent.containsVisual(center)) return null
-    val target = upperParents.firstOrNull { it.containsVisual(center) }
-        ?: upperParents.lastOrNull()
+    val target = candidates.firstOrNull { it.containsVisual(center) }
+        ?: candidates.firstOrNull { it.id == rootId }
         ?: return null
+    if (target.id == currentParentId) return null
 
     var layoutCenter = center
     target.childAncestorRotations.asReversed().forEach { transform ->

@@ -65,7 +65,11 @@ edit, so the canvas still reflects it. **Typography** and **structural** edits n
   reducer wrapper `withStructuralSource` recompiles the single owning source and **vetoes** the patch
   (keeping the in-memory edit, every source byte-identical) whenever the recompiled node-id set drifts
   from the expected set — or, for reparent, the moved node's parent isn't the new parent — a
-  non-corrupting id-preservation net.
+  non-corrupting id-preservation net. The identity-fingerprint half of that veto also compares
+  `type`, so `EditorNodeFactory.newScreen` mints the root as `type: "screen"` (what the compiler
+  assigns an H1 screen root) — a `"frame"`-typed root would trip the veto on every later edit and
+  silently downgrade the created screen to in-memory-only persistence
+  (`NewScreenPersistenceTest`).
 
 Some structural moves are deliberately **not expressible** as a single-source patch and stay
 in-memory (canvas reflects them; sources untouched): a **multi-page delete**, a **cross-page reparent**,
@@ -183,12 +187,24 @@ arbitrary position (the layout engine ignores its `position`), so a Move drag on
 previews a reorder within its flow parent: a live insertion-line indicator
 (`flowInsertionIndex`/`flowInsertionLine` in `CanvasGeometry.kt`) tracks the pointer along the
 parent's main axis, and release dispatches `ReparentNode` at the resolved index (one undo
-entry). If the dragged node's visual center leaves its parent, release promotes it to the nearest
-containing ancestor (capped at the screen root), preserves its visual position/rotation/size,
-and makes it absolute; Layers immediately reflects the shallower hierarchy. The inspector's
-"Absolute position inside frame" button remains the explicit way to detach a flow child without
-changing its parent. Grid-mode parents have no within-grid reorder preview, but nested flow
-children still use the same drag-out promotion rule.
+entry). A single-node move drag re-homes on release into the **deepest container frame under
+the moved node's visual center** (`reparentDropPlacement` in `CanvasGeometry.kt`) — nesting
+inward into a sibling/cousin frame just as readily as promoting outward to an ancestor (root
+fallback when dragged beyond every frame); the resolved target frame shows an accent outline
++ tint during the drag, position/rotation/size re-express in the new parent, and a drop into
+an Auto layout target joins its flow (no absolute pin) while a free target pins the node
+absolute. The dragged subtree, instance internals, locked and hidden frames are never targets.
+The inspector's "Absolute position inside frame" button remains the explicit way to detach a
+flow child without changing its parent. Grid-mode parents have no within-grid reorder preview,
+but nested flow children still use the same drop rule.
+
+**Layers drag-and-drop** — dragging a Layers row shows an **insertion line** at the exact slot
+(indented to the destination depth) rather than highlighting the row it will land on: the top
+quarter of a row inserts before it, the bottom quarter after it, past the last row = the end of
+the visible list (back of the paint order), and the middle band of a container row nests into
+it (accent border). The visual gap reverse-maps to a document-order index (the tree is
+front-first) in `resolveLayerDropTarget` (`LayerDropTarget.kt`, pure + unit-tested), including
+the same-parent index shift; drops into the dragged node's own subtree never resolve.
 
 **Appearance / Fill / Stroke (ch. 13–15)** — layer opacity + blend mode + corner radius;
 effects stack (drop/inner shadow, layer/background blur) with per-effect visibility

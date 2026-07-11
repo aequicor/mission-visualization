@@ -134,7 +134,11 @@ object EditorNodeFactory {
         val frameId = uniqueId(document, "frame")
         val rootFrame = DesignNode(
             id = frameId,
-            type = "frame",
+            // "screen" (not "frame"): the SLM compiler types an H1 screen root as "screen",
+            // and the structural write-back's identity-fingerprint veto compares `type` — a
+            // "frame" root would trip it on every later edit, silently downgrading the
+            // created screen to in-memory-only persistence.
+            type = "screen",
             kind = DesignNodeKind.Frame,
             name = title,
             position = DesignPoint(72.0, 72.0),

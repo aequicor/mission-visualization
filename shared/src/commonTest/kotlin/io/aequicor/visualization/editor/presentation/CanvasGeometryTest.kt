@@ -307,7 +307,7 @@ class CanvasGeometryTest {
         assertEquals(150.0, line.x1)
     }
 
-    // --- Drag-out reparent -------------------------------------------------------
+    // --- Drop-target reparent ------------------------------------------------------
 
     private fun parentFrame(
         id: String,
@@ -328,7 +328,7 @@ class CanvasGeometryTest {
         val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
         val moved = EffectiveTransform(BoundsBox(120.0, 130.0, 20.0, 20.0), 0.0, 0.0)
 
-        assertNull(reparentPlacementWhenMovedOutside(moved, current, listOf(root)))
+        assertNull(reparentDropPlacement(moved, listOf(current, root), "current", "root"))
     }
 
     @Test
@@ -337,7 +337,7 @@ class CanvasGeometryTest {
         val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
         val moved = EffectiveTransform(BoundsBox(190.0, 130.0, 20.0, 20.0), 0.0, 0.0)
 
-        assertNull(reparentPlacementWhenMovedOutside(moved, current, listOf(root)))
+        assertNull(reparentDropPlacement(moved, listOf(current, root), "current", "root"))
     }
 
     @Test
@@ -348,7 +348,7 @@ class CanvasGeometryTest {
         val moved = EffectiveTransform(BoundsBox(220.0, 120.0, 20.0, 20.0), 15.0, 15.0)
 
         val placement = assertNotNull(
-            reparentPlacementWhenMovedOutside(moved, current, listOf(grandparent, root)),
+            reparentDropPlacement(moved, listOf(current, grandparent, root), "current", "root"),
         )
         assertEquals("grandparent", placement.parentId)
         assertEquals(170.0, placement.x)
@@ -364,7 +364,7 @@ class CanvasGeometryTest {
         val moved = EffectiveTransform(BoundsBox(600.0, 120.0, 20.0, 20.0), 0.0, 0.0)
 
         val placement = assertNotNull(
-            reparentPlacementWhenMovedOutside(moved, current, listOf(grandparent, root)),
+            reparentDropPlacement(moved, listOf(current, grandparent, root), "current", "root"),
         )
         assertEquals("root", placement.parentId)
         assertEquals(600.0, placement.x)
@@ -383,11 +383,64 @@ class CanvasGeometryTest {
         val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
         val moved = EffectiveTransform(BoundsBox(290.0, 190.0, 20.0, 20.0), 105.0, 15.0)
 
-        val placement = assertNotNull(reparentPlacementWhenMovedOutside(moved, current, listOf(root)))
+        val placement = assertNotNull(reparentDropPlacement(moved, listOf(current, root), "rotated", "root"))
         assertEquals("root", placement.parentId)
         assertEquals(290.0, placement.x)
         assertEquals(190.0, placement.y)
         assertEquals(105.0, placement.rotation)
+    }
+
+    @Test
+    fun movedOverSiblingFrameNestsIntoIt() {
+        // Two frames side by side under the root: dragging out of one and over the
+        // other nests into it (the bug this suite pins: only outward promotion worked).
+        val current = parentFrame("current", BoundsBox(100.0, 100.0, 100.0, 100.0))
+        val sibling = parentFrame("sibling", BoundsBox(300.0, 100.0, 100.0, 100.0))
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(340.0, 130.0, 20.0, 20.0), 0.0, 0.0)
+
+        val placement = assertNotNull(
+            reparentDropPlacement(moved, listOf(current, sibling, root), "current", "root"),
+        )
+        assertEquals("sibling", placement.parentId)
+        assertEquals(40.0, placement.x)
+        assertEquals(30.0, placement.y)
+    }
+
+    @Test
+    fun deepestContainerUnderDropPointWins() {
+        // inner sits inside sibling; the drop center is inside both -> inner (deepest-first).
+        val current = parentFrame("current", BoundsBox(100.0, 100.0, 100.0, 100.0))
+        val inner = parentFrame("inner", BoundsBox(320.0, 120.0, 60.0, 60.0))
+        val sibling = parentFrame("sibling", BoundsBox(300.0, 100.0, 100.0, 100.0))
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(330.0, 130.0, 20.0, 20.0), 0.0, 0.0)
+
+        val placement = assertNotNull(
+            reparentDropPlacement(moved, listOf(inner, current, sibling, root), "current", "root"),
+        )
+        assertEquals("inner", placement.parentId)
+        assertEquals(10.0, placement.x)
+        assertEquals(10.0, placement.y)
+    }
+
+    @Test
+    fun rootChildDroppedOverSiblingNestsDespiteRootBeingCurrentParent() {
+        // A direct child of the root (previously not re-homable at all) nests into a sibling.
+        val sibling = parentFrame("sibling", BoundsBox(300.0, 100.0, 100.0, 100.0))
+        val root = parentFrame("root", BoundsBox(0.0, 0.0, 500.0, 500.0))
+        val moved = EffectiveTransform(BoundsBox(340.0, 130.0, 20.0, 20.0), 0.0, 0.0)
+
+        val placement = assertNotNull(
+            reparentDropPlacement(moved, listOf(sibling, root), "root", "root"),
+        )
+        assertEquals("sibling", placement.parentId)
+    }
+
+    @Test
+    fun emptyCandidatesResolveToNothing() {
+        val moved = EffectiveTransform(BoundsBox(340.0, 130.0, 20.0, 20.0), 0.0, 0.0)
+        assertNull(reparentDropPlacement(moved, emptyList(), "current", "root"))
     }
 
 }

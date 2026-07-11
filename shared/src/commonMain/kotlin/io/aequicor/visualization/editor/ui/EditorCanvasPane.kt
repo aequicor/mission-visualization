@@ -195,7 +195,7 @@ import io.aequicor.visualization.editor.presentation.measureGaps
 import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
-import io.aequicor.visualization.editor.presentation.reparentPlacementWhenMovedOutside
+import io.aequicor.visualization.editor.presentation.reparentDropPlacement
 import io.aequicor.visualization.editor.presentation.resizeCursorKindForHandle
 import io.aequicor.visualization.editor.presentation.rotateAffordancePoint
 import io.aequicor.visualization.editor.presentation.rotatePointAroundCenter
@@ -478,6 +478,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         // Live insertion-line preview while dragging an Auto layout child (design-book §18
         // "Auto layout children should reorder ... during drag"); null outside such a drag.
         var reorderPreview by remember { mutableStateOf<ReorderPreview?>(null) }
+        // Frame the current move drag would re-home the node into on release (accent
+        // outline, mirroring the Layers tree's drop-target affordance); null when the drop
+        // keeps the current parent or no move drag is active.
+        var reparentTargetId by remember { mutableStateOf<String?>(null) }
         // Beautiful-anchor guides drawn while free-moving a node (design-book §18 + "beautiful
         // positions": center, golden ratio, simple proportions); empty outside a move drag.
         var snapGuides by remember { mutableStateOf<List<AnchorGuide>>(emptyList()) }
@@ -897,17 +901,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     CanvasOperation.Move -> if (reorderBaseline != null) {
                                         appliedVisualDx = (accX / zoomPx).toDouble()
                                         appliedVisualDy = (accY / zoomPx).toDouble()
-                                        val outsideParent = moveReparentBaseline?.let { baseline ->
-                                            reparentPlacementWhenMovedOutside(
+                                        val dropPlacement = moveReparentBaseline?.let { baseline ->
+                                            reparentDropPlacement(
                                                 movedVisual = baseline.startVisual.copy(
                                                     box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
                                                 ),
-                                                currentParent = baseline.currentParent,
-                                                upperParents = baseline.upperParents,
+                                                candidates = baseline.candidates,
+                                                currentParentId = baseline.currentParentId,
+                                                rootId = baseline.rootId,
                                             )
-                                        } != null
-                                        if (outsideParent) {
-                                            // Outside the flow container the drop means detach + promote,
+                                        }
+                                        reparentTargetId = dropPlacement?.parentId
+                                        if (dropPlacement != null) {
+                                            // Over another container the drop means re-home,
                                             // not a reorder at the nearest edge.
                                             reorderPreview = null
                                         } else {
@@ -959,6 +965,18 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         appliedVisualDy = totalDy
                                         snapGuides = snap?.guides ?: emptyList()
                                         spacingBars = snap?.spacing ?: emptyList()
+                                        // Live drop-target feedback: the frame this drag would
+                                        // re-home the node into on release (Layers-tree parity).
+                                        reparentTargetId = moveReparentBaseline?.let { baseline ->
+                                            reparentDropPlacement(
+                                                movedVisual = baseline.startVisual.copy(
+                                                    box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
+                                                ),
+                                                candidates = baseline.candidates,
+                                                currentParentId = baseline.currentParentId,
+                                                rootId = baseline.rootId,
+                                            )?.parentId
+                                        }
                                         dragMoveActive = true
                                         badge = null
                                     }
@@ -1070,12 +1088,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     }
                                     CanvasOperation.Move -> {
                                         val reparent = moveReparentBaseline?.takeIf { moved }?.let { baseline ->
-                                            reparentPlacementWhenMovedOutside(
+                                            reparentDropPlacement(
                                                 movedVisual = baseline.startVisual.copy(
                                                     box = baseline.startVisual.box.translate(appliedVisualDx, appliedVisualDy),
                                                 ),
-                                                currentParent = baseline.currentParent,
-                                                upperParents = baseline.upperParents,
+                                                candidates = baseline.candidates,
+                                                currentParentId = baseline.currentParentId,
+                                                rootId = baseline.rootId,
                                             )?.let { placement -> baseline to placement }
                                         }
                                         if (reparent != null) {
@@ -1083,11 +1102,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             val currentRotation = state.designState.document
                                                 ?.nodeById(baseline.nodeId)
                                                 ?.rotation
+                                            // An Auto layout target lays the node out in its flow;
+                                            // absolute coordinates only make sense in a free parent.
+                                            val targetLayoutMode = state.designState.document
+                                                ?.nodeById(placement.parentId)?.layout?.mode
+                                            val flowTarget = when (targetLayoutMode) {
+                                                LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid -> true
+                                                else -> false
+                                            }
                                             state.dispatch(
                                                 DesignEditorIntent.ReparentNode(
                                                     nodeId = baseline.nodeId,
                                                     newParentId = placement.parentId,
-                                                    position = DesignPoint(placement.x, placement.y),
+                                                    position = DesignPoint(placement.x, placement.y).takeUnless { flowTarget },
                                                     size = DesignSize(
                                                         width = baseline.startVisual.box.width,
                                                         height = baseline.startVisual.box.height,
@@ -1178,6 +1205,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             badge = null
                             dragMoveActive = false
                             reorderPreview = null
+                            reparentTargetId = null
                             snapGuides = emptyList()
                             spacingBars = emptyList()
                             resizeMatched = false
@@ -1237,6 +1265,20 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
             reorderPreview?.let { preview ->
                 drawInsertionLine(preview, viewport, colors.accent)
+            }
+            // Drop-target feedback while a move drag hovers another container: outline the
+            // frame the node would re-home into on release (Layers-tree drop parity).
+            reparentTargetId?.let { targetId ->
+                layout?.effectiveTransformFor(targetId)?.let { t ->
+                    if (t.rotation == 0.0) {
+                        drawRect(
+                            colors.accent.copy(alpha = 0.06f),
+                            topLeft = viewport.toScreen(t.box.x, t.box.y),
+                            size = Size((t.box.width * zoomPx).toFloat(), (t.box.height * zoomPx).toFloat()),
+                        )
+                    }
+                    drawRotatedOutline(t.box, t.rotation, viewport, colors.accent, width = 2.5f)
+                }
             }
             // Beautiful-anchor guides (additive to the always-on center anchor lines below):
             // blue alignment lines, amber golden-ratio lines, dashed proportion lines, and green
@@ -2489,12 +2531,17 @@ private data class ReorderPreview(
     val index: Int,
 )
 
-/** Fixed visual/ancestor geometry used to promote a free node on drag release. */
+/**
+ * Fixed visual/container geometry used to re-home a free node on drag release: every
+ * container frame on the screen (deepest-first, the dragged subtree excluded) so the drop
+ * can nest inward into a sibling/cousin frame or promote outward to an ancestor alike.
+ */
 private data class MoveReparentBaseline(
     val nodeId: String,
     val startVisual: EffectiveTransform,
-    val currentParent: CanvasParentFrame,
-    val upperParents: List<CanvasParentFrame>,
+    val currentParentId: String,
+    val rootId: String,
+    val candidates: List<CanvasParentFrame>,
 )
 
 /**
@@ -2815,17 +2862,32 @@ private fun buildMoveReparentBaseline(
 ): MoveReparentBaseline? {
     if (document.nodeById(nodeId)?.anchors != null) return null
     val nodePath = layout?.pathToSourceId(nodeId) ?: return null
-    val parentPath = nodePath.dropLast(1)
-    if (parentPath.size < 2) return null
+    if (nodePath.size < 2) return null // the root frame itself is not re-homable
     val node = nodePath.last()
-    val frames = parentPath.indices.reversed().map { index ->
-        canvasParentFrame(parentPath.take(index + 1))
+    // Every container frame on the screen, excluding the dragged subtree (a node can't
+    // land inside itself), instance internals (atomic), and hidden nodes. Deepest-first
+    // so the innermost frame under the drop point wins — the drop can nest inward into
+    // a sibling/cousin just as readily as promote outward to an ancestor.
+    val candidatePaths = mutableListOf<List<LayoutBox>>()
+    fun collect(box: LayoutBox, path: List<LayoutBox>) {
+        val sourceId = box.node.sourceId
+        if (sourceId == nodeId) return
+        if (sourceId != box.node.selectableId) return
+        val docNode = document.nodeById(sourceId)
+        if (docNode?.visible?.literalOrNull() == false) return
+        val container = docNode != null &&
+            (docNode.kind is DesignNodeKind.Frame || docNode.children.isNotEmpty())
+        if (container && docNode?.locked != true) candidatePaths += path
+        box.children.forEach { child -> collect(child, path + child) }
     }
+    collect(layout, listOf(layout))
+    if (candidatePaths.isEmpty()) return null
     return MoveReparentBaseline(
         nodeId = nodeId,
         startVisual = effectiveTransform(node.toBoundsBox(), node.node.rotation, ancestorRotationsOf(nodePath)),
-        currentParent = frames.first(),
-        upperParents = frames.drop(1),
+        currentParentId = nodePath[nodePath.size - 2].node.sourceId,
+        rootId = layout.node.sourceId,
+        candidates = candidatePaths.sortedByDescending { it.size }.map { canvasParentFrame(it) },
     )
 }
 
@@ -3474,8 +3536,10 @@ private fun commitCreate(
     dragged: Boolean,
 ) {
     val layout = state.artboardLayout
-    // Which node contains the creation origin? Fall back to the root frame.
-    val parentId = hitNode(layout, state.designState.document, viewport, start).ifBlank { rootId }
+    // Which container holds the creation origin? A leaf hit resolves to its nearest
+    // enclosing container frame; empty area falls back to the root frame.
+    val hitId = hitNode(layout, state.designState.document, viewport, start)
+    val parentId = createParentFor(layout, state.designState.document, hitId, rootId)
     val parentBox = layout?.findBySourceId(parentId) ?: layout
     val docStartX = viewport.toDocX(min(start.x, end.x))
     val docStartY = viewport.toDocY(min(start.y, end.y))
@@ -3513,7 +3577,8 @@ private fun commitPenStart(
     rootId: String,
 ) {
     val layout = state.artboardLayout
-    val parentId = hitNode(layout, state.designState.document, viewport, start).ifBlank { rootId }
+    val hitId = hitNode(layout, state.designState.document, viewport, start)
+    val parentId = createParentFor(layout, state.designState.document, hitId, rootId)
     val parentBox = layout?.findBySourceId(parentId) ?: layout
     val docX = viewport.toDocX(start.x)
     val docY = viewport.toDocY(start.y)
@@ -3544,6 +3609,24 @@ private fun commitPenStart(
 }
 
 // --- Hit-testing helpers -----------------------------------------------------
+
+/**
+ * The container a newly created object should live in: the hit node itself when it is a
+ * container (frame / has children), otherwise the nearest enclosing container up its
+ * layout path. A leaf (text, shape) can't parent a frame — creating "into" one would
+ * strand the new node outside the render tree the user sees.
+ */
+private fun createParentFor(layout: LayoutBox?, document: DesignDocument?, hitId: String, rootId: String): String {
+    if (hitId.isBlank()) return rootId
+    val doc = document ?: return rootId
+    fun isContainer(id: String): Boolean {
+        val node = doc.nodeById(id) ?: return false
+        return node.kind is DesignNodeKind.Frame || node.children.isNotEmpty()
+    }
+    if (isContainer(hitId)) return hitId
+    val path = layout?.pathToSourceId(hitId) ?: return rootId
+    return path.asReversed().drop(1).firstOrNull { isContainer(it.node.sourceId) }?.node?.sourceId ?: rootId
+}
 
 private fun hitNode(layout: LayoutBox?, document: DesignDocument?, viewport: CanvasViewport, pos: Offset): String {
     layout ?: return ""
