@@ -54,8 +54,11 @@ data class EditorColors(
     val selectionFill: Color = Color(0xFFEAF4FF),
     val selectionStroke: Color = Color(0xFFE2F0FF),
     val thumbnailSelectedStroke: Color = Color(0xFFB9D9FF),
+    // Canvas pane background — deliberately darker than paneSurface so the white
+    // artboard reads as a distinct surface floating above the working area.
+    val canvasSurface: Color = Color(0xFFDCE6F0),
     // Preview canvas aids (dot grid, dimension badges, anchor widget, thumbnails).
-    val canvasDot: Color = Color(0xFFE4ECF5),
+    val canvasDot: Color = Color(0xFFA6BAD1),
     val badgeSurface: Color = Color(0xFFF8FBFF),
     val badgeStroke: Color = Color(0xFFBFD8F5),
     val anchorDot: Color = Color(0xFFC8D3DF),
