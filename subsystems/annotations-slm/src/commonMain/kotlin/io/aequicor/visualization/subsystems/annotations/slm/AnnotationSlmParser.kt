@@ -13,13 +13,18 @@ public data class AnnotationSlmWarning(val line: Int, val message: String)
 /**
  * Result of parsing a sidecar file. [needsRewrite] is true when at least one section
  * carried no explicit `{id=...}` marker, so a deterministic id was synthesized — the
- * caller should write the layer back once to pin the ids in the source (the same
- * id-stability invariant as structural SLM edits).
+ * caller should pin the ids back into the source once (surgically via
+ * [AnnotationSlmPatcher.pinIds]; the patcher's upsert/delete also pin on their own)
+ * — the same id-stability invariant as structural SLM edits.
  */
 public data class AnnotationSlmParseResult(
     val layer: AnnotationLayer,
     val warnings: List<AnnotationSlmWarning> = emptyList(),
     val needsRewrite: Boolean = false,
+    /** Ids synthesized for sections without a `{id=...}` marker, keyed by 1-based header line. */
+    val synthesizedIds: Map<Int, String> = emptyMap(),
+    /** 1-based header line of every parsed annotation, by id (skipped sections are absent). */
+    val sectionLines: Map<String, Int> = emptyMap(),
 )
 
 /**
@@ -34,6 +39,8 @@ public object AnnotationSlmParser {
         val warnings = mutableListOf<AnnotationSlmWarning>()
         val annotations = mutableListOf<Annotation>()
         val usedIds = mutableSetOf<String>()
+        val synthesizedIds = LinkedHashMap<Int, String>()
+        val sectionLines = LinkedHashMap<String, Int>()
         var needsRewrite = false
 
         splitSections(text).forEachIndexed { index, section ->
@@ -50,8 +57,12 @@ public object AnnotationSlmParser {
                 )
                 return@forEachIndexed
             }
-            val id = explicitId ?: synthesizeId(index, usedIds).also { needsRewrite = true }
+            val id = explicitId ?: synthesizeId(index, usedIds).also { synthesized ->
+                needsRewrite = true
+                synthesizedIds[section.headerLineNumber] = synthesized
+            }
             usedIds += id
+            sectionLines[id] = section.headerLineNumber
 
             val (body, image) = parseBody(section.bodyLines)
             annotations += Annotation(
@@ -70,6 +81,8 @@ public object AnnotationSlmParser {
             layer = AnnotationLayer(screenFileName = fileName, annotations = annotations),
             warnings = warnings,
             needsRewrite = needsRewrite,
+            synthesizedIds = synthesizedIds,
+            sectionLines = sectionLines,
         )
     }
 
@@ -82,7 +95,9 @@ public object AnnotationSlmParser {
     )
 
     private fun splitSections(text: String): List<Section> {
-        val lines = text.split('\n')
+        // CRLF input is normalized per line (same precedent as SlmMarkdownParser), so
+        // carriage returns never leak into headers or body text.
+        val lines = text.split('\n').map { it.removeSuffix("\r") }
         val headerIndices = lines.indices.filter { lines[it].startsWith(AnnotationSlmFormat.HEADER_PREFIX) }
         return headerIndices.mapIndexed { position, headerIndex ->
             val end = headerIndices.getOrElse(position + 1) { lines.size }
@@ -110,14 +125,16 @@ public object AnnotationSlmParser {
 
     /**
      * The first line shaped like a markdown image becomes the embedded image; the rest,
-     * with trailing/leading blank lines dropped (they are section framing, not content),
-     * is the plain-text body.
+     * with trailing/leading blank lines dropped (they are section framing, not content)
+     * and writer escapes stripped ([AnnotationSlmFormat.unescapeBodyLine]), is the
+     * plain-text body.
      */
     private fun parseBody(lines: List<String>): Pair<AnnotationBody, AnnotationImage?> {
         val imageIndex = lines.indexOfFirst { AnnotationSlmFormat.imageLineRegex.matches(it) }
         val image = if (imageIndex >= 0) AnnotationSlmFormat.parseImageLine(lines[imageIndex]) else null
         val bodyLines = lines
             .filterIndexed { index, _ -> index != imageIndex }
+            .map(AnnotationSlmFormat::unescapeBodyLine)
             .dropWhile { it.isBlank() }
             .dropLastWhile { it.isBlank() }
         return AnnotationBody(bodyLines.joinToString("\n")) to image
@@ -151,8 +168,7 @@ public object AnnotationSlmParser {
             if (cursor.atEnd) break
             when {
                 cursor.consume("+@") -> {
-                    val nodeId = cursor.takeWhile(AnnotationSlmFormat::isIdChar)
-                    if (nodeId.isEmpty()) return null
+                    val nodeId = parseNodeId(cursor) ?: return null
                     references += nodeId
                 }
                 cursor.consume(AnnotationSlmFormat.EXPANDED_FLAG) -> expanded = true
@@ -181,14 +197,23 @@ public object AnnotationSlmParser {
             val (x, y) = parsePair(cursor) ?: return null
             return AnnotationAnchor.FreePoint(x, y)
         }
-        val nodeId = cursor.takeWhile(AnnotationSlmFormat::isIdChar)
-        if (nodeId.isEmpty()) return null
+        val nodeId = parseNodeId(cursor) ?: return null
         if (!cursor.consume("(")) return AnnotationAnchor.NodeAnchor(nodeId)
         val (dx, dy) = parsePair(cursor) ?: return null
         return AnnotationAnchor.NodeAnchor(nodeId, dx, dy)
     }
 
-    /** Parses `x,y)` (the opening paren is already consumed). */
+    /**
+     * A node id token: bare (id chars only) or quoted with escapes — the form
+     * [AnnotationSlmFormat.renderNodeId] writes for ids outside the bare charset.
+     * Null when empty or unterminated.
+     */
+    private fun parseNodeId(cursor: Cursor): String? {
+        if (cursor.consume("\"")) return cursor.takeQuoted()
+        return cursor.takeWhile(AnnotationSlmFormat::isIdChar).ifEmpty { null }
+    }
+
+    /** Parses `x,y)` (the opening paren is already consumed); `-0` folds to `0.0`. */
     private fun parsePair(cursor: Cursor): Pair<Double, Double>? {
         val content = cursor.takeWhile { it != ')' }
         if (!cursor.consume(")")) return null
@@ -196,7 +221,7 @@ public object AnnotationSlmParser {
         if (parts.size != 2) return null
         val x = parts[0].trim().toDoubleOrNull() ?: return null
         val y = parts[1].trim().toDoubleOrNull() ?: return null
-        return x to y
+        return AnnotationSlmFormat.canonicalCoord(x) to AnnotationSlmFormat.canonicalCoord(y)
     }
 
     /** Minimal sequential scanner over a header line. */
@@ -219,6 +244,39 @@ public object AnnotationSlmParser {
             val start = position
             while (position < text.length && predicate(text[position])) position++
             return text.substring(start, position)
+        }
+
+        /**
+         * Reads a quoted token body up to the closing `"` (the opening quote is already
+         * consumed), resolving `\"`, `\\`, `\n` and `\r` escapes; null when unterminated
+         * or empty.
+         */
+        fun takeQuoted(): String? {
+            val builder = StringBuilder()
+            while (position < text.length) {
+                when (val char = text[position]) {
+                    '"' -> {
+                        position++
+                        return builder.toString().ifEmpty { null }
+                    }
+                    '\\' -> {
+                        if (position + 1 >= text.length) return null
+                        builder.append(
+                            when (val escaped = text[position + 1]) {
+                                'n' -> '\n'
+                                'r' -> '\r'
+                                else -> escaped
+                            },
+                        )
+                        position += 2
+                    }
+                    else -> {
+                        builder.append(char)
+                        position++
+                    }
+                }
+            }
+            return null
         }
     }
 }

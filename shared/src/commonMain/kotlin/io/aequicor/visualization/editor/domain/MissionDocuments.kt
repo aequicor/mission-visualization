@@ -34,17 +34,22 @@ data class MissionDocuments(
  * into one multi-page [MissionDocuments]. Shared by the initial bundled load and by
  * draft restore (which recompiles the persisted SLM text). Annotation sidecars
  * (`*.annotations.md`) are never compiled as SLM: they get a placeholder compile entry
- * (null document, skipped by the merge) that keeps the two lists index-aligned.
+ * (null document, skipped by the merge, carrying the sidecar parse warnings as
+ * diagnostics) that keeps the two lists index-aligned. Sidecar sources are normalized
+ * once at this load boundary ([normalizeAnnotationSidecarSources]): synthesized ids are
+ * pinned and cross-file id collisions re-minted, so annotation ids are stable and
+ * globally unique before any surgical edit.
  */
 fun compileMissionDocuments(sources: List<MissionDocumentSource>): MissionDocuments {
-    val compiled = sources.map { source ->
+    val normalized = normalizeAnnotationSidecarSources(sources)
+    val compiled = normalized.map { source ->
         if (isAnnotationSidecarFileName(source.fileName)) {
-            annotationSidecarCompileResult(source.content)
+            annotationSidecarCompileResult(source.fileName, source.content)
         } else {
             compileSlm(source.content, SlmCompileOptions(fileName = source.fileName))
         }
     }
-    return mergeMissionDocuments(sources, compiled)
+    return mergeMissionDocuments(normalized, compiled)
 }
 
 /**

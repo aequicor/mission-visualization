@@ -26,9 +26,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -112,12 +118,15 @@ import io.aequicor.visualization.editor.presentation.AncestorRotation
 import io.aequicor.visualization.editor.presentation.AnnotationTool
 import io.aequicor.visualization.editor.presentation.InspectorTab
 import io.aequicor.visualization.editor.presentation.annotationAnchorForPress
+import io.aequicor.visualization.editor.presentation.annotationMoveCommitTarget
+import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
 import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
-import io.aequicor.visualization.subsystems.annotations.AnnotationRect
+import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
 import io.aequicor.visualization.subsystems.annotations.ExportScope
 import io.aequicor.visualization.subsystems.annotations.compose.AnnotationOverlay
 import io.aequicor.visualization.subsystems.annotations.compose.AnnotationViewTransform
+import androidx.compose.ui.platform.LocalClipboardManager
 import io.aequicor.visualization.editor.presentation.BoundsBox
 import io.aequicor.visualization.editor.presentation.CanvasParentFrame
 import io.aequicor.visualization.editor.presentation.CanvasOperation
@@ -192,7 +201,6 @@ import io.aequicor.visualization.editor.presentation.rotatedHandlePoints
 import io.aequicor.visualization.editor.presentation.snapAngleToIncrement
 import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
-import io.aequicor.visualization.editor.platform.platformCopyTextToClipboard
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
@@ -258,25 +266,24 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
         }
 
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .horizontalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxWidth().height(56.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            FloatingToolbar(state, ws.tool, ws.lastShapeTool) { tool ->
-                state.updateWorkspace {
-                    it.copy(
-                        tool = tool,
-                        lastShapeTool = if (tool.isShapeTool) tool else it.lastShapeTool,
-                        // Picking a canvas tool leaves annotation mode (one axis active at a time).
-                        annotationTool = AnnotationTool.None,
-                    )
-                }
-            }
             DeviceControl(ws.deviceMode) { mode -> state.updateWorkspace { it.copy(deviceMode = mode) } }
             SceneModeToggle(ws.mode) { mode -> state.updateWorkspace { it.copy(mode = mode) } }
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                FloatingToolbar(state, ws.tool, ws.lastShapeTool) { tool ->
+                    state.updateWorkspace {
+                        it.copy(
+                            tool = tool,
+                            lastShapeTool = if (tool.isShapeTool) tool else it.lastShapeTool,
+                            // Picking a canvas tool leaves annotation mode (one axis active at a time).
+                            annotationTool = AnnotationTool.None,
+                        )
+                    }
+                }
+            }
             ZoomControls(state)
         }
     }
@@ -782,7 +789,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 // Bail under any inherited rotation (parent's own + every ancestor) so the
                                 // snapped resize runs in an axis-aligned frame — this keeps handleRotation == 0
                                 // in the apply/commit path, where snapped deltas assume the document frame.
-                                val parentFrameRotation = pressLayout.pathToSourceId(parentBox.node.sourceId).orEmpty().sumOf { it.node.rotation }
+                                val parentFrameRotation = pressLayout?.pathToSourceId(parentBox.node.sourceId)?.sumOf { it.node.rotation } ?: 0.0
                                 if (parentFrameRotation != 0.0) return@let null
                                 collectSnapContext(pressDocument, pressLayout, parentBox, setOf(id))
                             }
@@ -1324,16 +1331,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 design.screenFileNamesByPageId()[pageId]
             }
             val annotationLayer = annotationScreenFile?.let { design.annotationLayers[it] }
+            // Transient badge drag: view state only (like node-drag's in-gesture offset) —
+            // the badge follows the pointer without touching the document, and release
+            // commits exactly ONE MoveAnnotation (one sidecar patch, one history entry).
+            var annotationDrag by remember(pageId) { mutableStateOf<Pair<String, AnnotationPoint>?>(null) }
             if (annotationLayer != null && annotationLayer.annotations.isNotEmpty()) {
                 AnnotationOverlay(
                     layer = annotationLayer,
                     expandedIds = ws.expandedAnnotationIds,
                     selectedId = ws.selectedAnnotationId.takeIf { it.isNotBlank() },
-                    nodeBounds = { nodeId ->
-                        layout?.findBySourceId(nodeId)?.let { box ->
-                            AnnotationRect.fromSize(box.x, box.y, box.width, box.height)
-                        }
-                    },
+                    // Anchors resolve through the node's effective (post-rotation) bounds, the
+                    // same transform path the selection overlay uses — raw layout boxes are
+                    // pre-rotation and would detach badges after any ancestor rotate.
+                    nodeBounds = { nodeId -> annotationNodeVisualBounds(layout, nodeId) },
                     transform = AnnotationViewTransform(viewport.zoom, viewport.panX, viewport.panY),
                     colors = annotationOverlayColors(),
                     onToggleExpand = { id -> state.dispatch(DesignEditorIntent.ToggleAnnotationExpanded(id)) },
@@ -1343,6 +1353,26 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         state.updateWorkspace { it.copy(inspectorTab = InspectorTab.Comments) }
                     },
                     modifier = Modifier.matchParentSize(),
+                    dragOffsets = annotationDrag?.let { (id, offset) -> mapOf(id to offset) } ?: emptyMap(),
+                    onMoveBy = { id, dx, dy ->
+                        val current = annotationDrag?.takeIf { it.first == id }?.second ?: AnnotationPoint(0.0, 0.0)
+                        annotationDrag = id to AnnotationPoint(current.x + dx, current.y + dy)
+                    },
+                    onMoveEnd = { id ->
+                        val drag = annotationDrag?.takeIf { it.first == id }?.second
+                        annotationDrag = null
+                        if (drag != null && (drag.x != 0.0 || drag.y != 0.0)) {
+                            state.designState.annotationLayers[annotationScreenFile]?.annotations
+                                ?.firstOrNull { it.id == id }
+                                ?.let { annotation ->
+                                    val target = annotationMoveCommitTarget(annotation.anchor, drag.x, drag.y)
+                                    state.dispatch(
+                                        DesignEditorIntent.MoveAnnotation(annotationScreenFile, id, target.x, target.y),
+                                    )
+                                }
+                        }
+                    },
+                    onMoveCancel = { annotationDrag = null },
                 )
             }
         }
@@ -3807,14 +3837,30 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
  * «Выгрузить замечания»: builds the AI fix-prompt from the issue annotations in the
  * picked scope (selected / current screen / whole document) and copies it to the
  * clipboard. Each scope row carries its own left icon per the dropdown rules.
+ *
+ * The copy is never silent: a confirmation popup always opens with the prompt text
+ * selectable for manual copy — on web the clipboard API is a silent no-op outside a
+ * secure context (plain-http remote host), so feedback plus a manual path is the only
+ * way the feature's single output can't be lost.
  */
 @Composable
 private fun ExportIssuesAction(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val clipboard = LocalClipboardManager.current
     var expanded by remember { mutableStateOf(false) }
+    var exportedPrompt by remember { mutableStateOf<String?>(null) }
     val shape = RoundedCornerShape(8.dp)
     fun copyPrompt(scope: ExportScope) {
-        platformCopyTextToClipboard(state.exportIssuesPrompt(scope))
+        val prompt = state.exportIssuesPrompt(scope)
+        clipboard.setText(AnnotatedString(prompt))
+        exportedPrompt = prompt
+    }
+    exportedPrompt?.let { prompt ->
+        ExportPromptPopup(
+            prompt = prompt,
+            onCopyAgain = { clipboard.setText(AnnotatedString(prompt)) },
+            onDismiss = { exportedPrompt = null },
+        )
     }
     Box {
         Box(
@@ -3863,6 +3909,89 @@ private fun ExportIssuesAction(state: MissionEditorStateHolder) {
     }
 }
 
+/**
+ * Confirmation of the issue-prompt export: states the clipboard attempt and offers the
+ * prompt text for manual selection/copy — the fallback for insecure-context web where
+ * `navigator.clipboard` is unavailable and the copy silently does nothing.
+ */
+@Composable
+private fun ExportPromptPopup(prompt: String, onCopyAgain: () -> Unit, onDismiss: () -> Unit) {
+    val colors = LocalEditorColors.current
+    Popup(
+        alignment = Alignment.Center,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
+    ) {
+        Surface(
+            modifier = Modifier.widthIn(max = 460.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = colors.raisedSurface,
+            border = BorderStroke(1.dp, colors.panelStroke),
+            shadowElevation = 10.dp,
+        ) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Экспорт замечаний",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.ink,
+                )
+                Text(
+                    if (prompt.isBlank()) {
+                        "В выбранной области нет issue-аннотаций — промпт пуст."
+                    } else {
+                        "Промпт скопирован в буфер обмена. Если вставка не сработала " +
+                            "(например, страница открыта по HTTP), выделите и скопируйте текст вручную:"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.mutedInk,
+                )
+                if (prompt.isNotBlank()) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp)
+                            .background(colors.paneSurface, RoundedCornerShape(6.dp))
+                            .border(1.dp, colors.softStroke, RoundedCornerShape(6.dp))
+                            .padding(8.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                prompt,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = colors.codeInk,
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (prompt.isNotBlank()) {
+                        ExportPromptButton("Скопировать ещё раз", onClick = onCopyAgain)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    ExportPromptButton("Закрыть", onClick = onDismiss)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExportPromptButton(label: String, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        modifier = Modifier.height(26.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
+    ) {
+        Box(Modifier.padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = colors.controlInk)
+        }
+    }
+}
+
 /** The [AnnotationKind] a workspace annotation tool creates, or null for [AnnotationTool.None]. */
 private fun AnnotationTool.annotationKind(): AnnotationKind? = when (this) {
     AnnotationTool.None -> null
@@ -3895,9 +4024,9 @@ private fun commitAddAnnotation(
     val docX = viewport.toDocX(position.x)
     val docY = viewport.toDocY(position.y)
     val hitId = hitNode(layout, document, viewport, position)
-    val hitBounds = hitId.takeIf { it.isNotBlank() }
-        ?.let { layout?.findBySourceId(it) }
-        ?.let { AnnotationRect.fromSize(it.x, it.y, it.width, it.height) }
+    // Visual (post-rotation) bounds: the anchor offset must live in the same space the
+    // overlay re-applies it in, or the badge would drift on rotated nodes.
+    val hitBounds = annotationNodeVisualBounds(layout, hitId)
     val anchor = annotationAnchorForPress(docX, docY, hitId, hitBounds)
     val idsBefore = design.annotationLayers[screenFileName]?.annotations?.mapTo(mutableSetOf()) { it.id }.orEmpty()
     state.dispatch(DesignEditorIntent.AddAnnotation(screenFileName, anchor, kind))

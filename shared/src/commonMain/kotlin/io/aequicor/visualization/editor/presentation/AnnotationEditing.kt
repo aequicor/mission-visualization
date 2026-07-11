@@ -3,15 +3,22 @@ package io.aequicor.visualization.editor.presentation
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.annotationSidecarCompileResult
 import io.aequicor.visualization.editor.domain.annotationSidecarFileName
+import io.aequicor.visualization.editor.domain.normalizeAnnotationSidecarContent
 import io.aequicor.visualization.editor.domain.screenFileNameForSidecar
+import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
+import io.aequicor.visualization.engine.ir.layout.LayoutBox
+import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.subsystems.annotations.Annotation
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
+import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
 import io.aequicor.visualization.subsystems.annotations.AnnotationRect
 import io.aequicor.visualization.subsystems.annotations.addAnnotation
+import io.aequicor.visualization.subsystems.annotations.annotationBadgePosition
+import io.aequicor.visualization.subsystems.annotations.detachAnnotationsFromNodes
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmParser
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmPatcher
-import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmWriter
 
 /**
  * Annotation editing over [DesignEditorState]: every document-side annotation intent
@@ -50,12 +57,6 @@ internal fun DesignEditorState.writeBackAnnotations(
     val oldById = layer.annotations.associateBy { it.id }
     val newIds = newLayer.annotations.map { it.id }.toSet()
     var text = if (index >= 0) sources[index].content else ""
-    if (index >= 0) {
-        val parsed = AnnotationSlmParser.parse(screenFileName, text)
-        if (parsed.needsRewrite) {
-            text = AnnotationSlmWriter.write(parsed.layer)
-        }
-    }
     layer.annotations.filterNot { it.id in newIds }.forEach { dropped ->
         text = AnnotationSlmPatcher.deleteSection(text, dropped.id)
     }
@@ -63,7 +64,7 @@ internal fun DesignEditorState.writeBackAnnotations(
         text = AnnotationSlmPatcher.upsertSection(text, changed)
     }
 
-    val compiled = annotationSidecarCompileResult(text)
+    val compiled = annotationSidecarCompileResult(sidecarName, text)
     val newSources: List<MissionDocumentSource>
     val newCompiled = compiledResults.toMutableList()
     if (index >= 0) {
@@ -108,17 +109,27 @@ private fun DesignEditorState.mintAnnotationId(): String {
 /**
  * Direct sidecar source editing (the SLM pane on a `*.annotations.md` file): replaces
  * the source text and re-parses the screen's layer tolerantly — a malformed section is
- * skipped with a warning, never failing the file. The sidecar is not SLM, so no
+ * skipped with a warning, never failing the file. The stored text is normalized the same
+ * way the load boundary normalizes ([normalizeAnnotationSidecarContent]): synthesized
+ * ids are pinned into the headers and ids colliding with other screens' annotations are
+ * re-minted, keeping the id-stability invariant through hand edits. Parse warnings
+ * refresh the editor diagnostics (file + 1-based line). The sidecar is not SLM, so no
  * compile/merge runs; the placeholder compile entry is refreshed to keep the lists
- * index-aligned.
+ * index-aligned. Like SLM `EditSource`, no source-history (undo) entry is recorded.
  */
 internal fun DesignEditorState.editAnnotationSidecarSource(index: Int, content: String): DesignEditorState {
     val source = sources[index]
     val screenFileName = screenFileNameForSidecar(source.fileName)
-    val parsed = AnnotationSlmParser.parse(screenFileName, content)
-    val newSources = sources.toMutableList().apply { this[index] = source.copy(content = content) }.toList()
-    val newCompiled = if (compiledResults.size == sources.size) {
-        compiledResults.toMutableList().apply { this[index] = annotationSidecarCompileResult(content) }.toList()
+    val idsUsedElsewhere = annotationLayers
+        .filterKeys { it != screenFileName }
+        .values
+        .flatMapTo(mutableSetOf()) { layer -> layer.annotations.map { it.id } }
+    val normalized = normalizeAnnotationSidecarContent(source.fileName, content, idsUsedElsewhere)
+    val parsed = AnnotationSlmParser.parse(screenFileName, normalized)
+    val newSources = sources.toMutableList().apply { this[index] = source.copy(content = normalized) }.toList()
+    val aligned = compiledResults.size == sources.size
+    val newCompiled = if (aligned) {
+        compiledResults.toMutableList().apply { this[index] = annotationSidecarCompileResult(source.fileName, normalized) }.toList()
     } else {
         compiledResults
     }
@@ -126,6 +137,9 @@ internal fun DesignEditorState.editAnnotationSidecarSource(index: Int, content: 
         sources = newSources,
         compiledResults = newCompiled,
         annotationLayers = annotationLayers + (screenFileName to parsed.layer),
+        // Rebuild from the per-source compiles (the edited entry now carries the fresh
+        // sidecar warnings) — the same surface SLM source-edit diagnostics land on.
+        diagnostics = if (aligned) newCompiled.flatMap { it.diagnostics } else diagnostics,
     )
 }
 
@@ -158,6 +172,98 @@ internal fun annotationAnchorForPress(
         offsetX = docX - nodeBounds.centerX,
         offsetY = docY - nodeBounds.top,
     )
+}
+
+/**
+ * Commit target of a badge drag-to-move: the `MoveAnnotation` intent's (x, y) for
+ * [anchor] displaced by the accumulated document-space drag delta ([dx], [dy]) — the
+ * new top-center offset for a node anchor, the new absolute point for a free point.
+ * The drag itself is transient view state; exactly one intent commits on release.
+ */
+fun annotationMoveCommitTarget(anchor: AnnotationAnchor, dx: Double, dy: Double): AnnotationPoint = when (anchor) {
+    is AnnotationAnchor.NodeAnchor -> AnnotationPoint(anchor.offsetX + dx, anchor.offsetY + dy)
+    is AnnotationAnchor.FreePoint -> AnnotationPoint(anchor.x + dx, anchor.y + dy)
+}
+
+/**
+ * Visual (post-rotation) bounds of the node [nodeId] within the root [layout]: the
+ * axis-aligned bounding box of the node's layout box carried through its own and every
+ * ancestor's rotation — the same effective transform the renderer nests and the
+ * selection overlay follows. Null when the node does not resolve. Annotation anchors
+ * are computed AND re-applied in this visual space, so a badge pinned inside a rotated
+ * (or later-rotated) frame follows the node on screen instead of floating at its
+ * pre-rotation layout position.
+ */
+fun annotationNodeVisualBounds(layout: LayoutBox?, nodeId: String): AnnotationRect? {
+    if (nodeId.isBlank()) return null
+    val path = layout?.pathToSource(nodeId) ?: return null
+    val target = path.last()
+    val ancestors = path.dropLast(1).asReversed().mapNotNull { box ->
+        box.node.rotation.takeIf { it != 0.0 }?.let { degrees ->
+            AncestorRotation(GeoPoint(box.x + box.width / 2.0, box.y + box.height / 2.0), degrees)
+        }
+    }
+    val transform = effectiveTransform(
+        box = BoundsBox(target.x, target.y, target.width, target.height),
+        ownRotation = target.node.rotation,
+        ancestors = ancestors,
+    )
+    val bounds = if (transform.rotation == 0.0) {
+        transform.box
+    } else {
+        axisAlignedBounds(rotatedCorners(transform.box, transform.rotation))
+    }
+    return AnnotationRect.fromSize(bounds.x, bounds.y, bounds.width, bounds.height)
+}
+
+/** Path of layout boxes from this (root) box down to the node with [sourceId], inclusive. */
+private fun LayoutBox.pathToSource(sourceId: String): List<LayoutBox>? {
+    if (node.sourceId == sourceId) return listOf(this)
+    children.forEach { child -> child.pathToSource(sourceId)?.let { return listOf(this) + it } }
+    return null
+}
+
+/**
+ * Freezes every annotation anchored to a node in [deletedIds] (or any of their
+ * descendants) as a [AnnotationAnchor.FreePoint] at its current on-canvas badge
+ * position, resolved from PRE-delete bounds — so deleting a node keeps its badges
+ * where they were instead of collapsing them onto the dangling near-origin fallback.
+ * Runs before the nodes leave the tree; each affected screen gets one sidecar
+ * write-back. A node whose pre-delete bounds cannot be resolved keeps its (now
+ * dangling) node anchor — the keep-not-lose behavior.
+ */
+internal fun DesignEditorState.detachAnnotationsForNodeDelete(deletedIds: Set<String>): DesignEditorState {
+    val document = document ?: return this
+    if (deletedIds.isEmpty()) return this
+    val goneIds = deletedIds.flatMapTo(mutableSetOf()) { id ->
+        document.nodeById(id)?.let { node -> listOf(node.id) + node.allDescendants().map { it.id } } ?: listOf(id)
+    }
+    val pageIdByScreen = screenFileNamesByPageId().entries.associate { (pageId, screen) -> screen to pageId }
+    var state = this
+    annotationLayers.forEach { (screenFileName, layer) ->
+        val affected = layer.annotations.any { (it.anchor as? AnnotationAnchor.NodeAnchor)?.nodeId in goneIds }
+        if (!affected) return@forEach
+        // Pre-delete layout of the owning page, computed once per affected screen with
+        // the same pure resolve+layout pipeline the artboard uses.
+        val layout = pageIdByScreen[screenFileName]?.let { pageId -> pageLayoutFor(document, pageId) }
+        state = state.writeBackAnnotations(screenFileName) { current ->
+            current.detachAnnotationsFromNodes(goneIds) { annotation ->
+                val anchor = annotation.anchor as? AnnotationAnchor.NodeAnchor
+                    ?: return@detachAnnotationsFromNodes null
+                annotationNodeVisualBounds(layout, anchor.nodeId)?.let { bounds ->
+                    annotationBadgePosition(anchor, bounds)
+                }
+            }
+        }
+    }
+    return state
+}
+
+/** Pure resolve + layout of the page [pageId]; null when the page or its root frame is absent. */
+private fun pageLayoutFor(document: DesignDocument, pageId: String): LayoutBox? {
+    val page = document.pages.firstOrNull { it.id == pageId } ?: return null
+    val resolved = runCatching { DesignResolver(document).resolvePage(page).firstOrNull() }.getOrNull() ?: return null
+    return runCatching { DesignLayoutEngine().layout(resolved) }.getOrNull()
 }
 
 /**

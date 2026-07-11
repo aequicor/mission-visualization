@@ -578,13 +578,17 @@ private fun DesignEditorState.deleteNodesWriteBack(ids: Set<String>): DesignEdit
     val document = document ?: return this
     val deletable = ids.filter { document.nodeById(it)?.locked == false }.toSet()
     if (deletable.isEmpty()) return this
-    val inMemory = deleteNodes(deletable)
     // Nothing actually left the tree (e.g. only unknown/locked ids): don't touch sources.
-    if (inMemory === this) return this
+    if (deleteNodes(deletable) === this) return this
+    // Freeze annotation badges anchored inside the deleted subtrees at their pre-delete
+    // on-canvas positions (FreePoint write-back per affected screen) BEFORE the nodes
+    // leave the tree — a dangling node anchor would fall back near the document origin.
+    val base = detachAnnotationsForNodeDelete(deletable)
+    val inMemory = base.deleteNodes(deletable)
 
     // Source write-back only when every deleted node shares one owning SLM source; a
     // cross-page selection (or an unresolvable owner) keeps the in-memory delete.
-    val ownerIndices = deletable.map { owningSourceIndex(it) }
+    val ownerIndices = deletable.map { base.owningSourceIndex(it) }
     val owner = ownerIndices.firstOrNull()
     if (owner == null || ownerIndices.any { it != owner }) return inMemory
 
@@ -595,9 +599,9 @@ private fun DesignEditorState.deleteNodesWriteBack(ids: Set<String>): DesignEdit
     val deletedSubtreeIds = deletable.flatMap { id ->
         document.nodeById(id)?.let { node -> listOf(node.id) + node.allDescendants().map { it.id } } ?: listOf(id)
     }.toSet()
-    val ownerIds = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
+    val ownerIds = base.compiledResults[owner].document?.pageTreeIds() ?: return inMemory
     val expected = ownerIds - deletedSubtreeIds
-    return withStructuralSource(deletable.first(), edits, inMemory, expected)
+    return base.withStructuralSource(deletable.first(), edits, inMemory, expected)
 }
 
 /**
@@ -1702,6 +1706,7 @@ private fun DesignNode.applyStrokeOp(op: StrokeOp): DesignNode = when (op) {
             is StrokeOp.SetJoin -> strokes.copy(join = op.join)
             is StrokeOp.SetDashed -> strokes.copy(dashPattern = if (op.dashed) listOf(6.0, 4.0) else emptyList())
             is StrokeOp.SetPerSide -> strokes.copy(weightPerSide = strokes.weightPerSide.mergePerSide(op))
+            else -> strokes
         }
         copy(strokes = next, strokeStyleId = "")
     }

@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
@@ -23,7 +24,9 @@ val AnnotationBadgeHeight: Dp = 26.dp
 /**
  * Collapsed annotation marker: a droplet/pin whose tail points at the anchored spot.
  * Issue badges take the warning tokens, notes the neutral ones; a selected badge gets
- * an extra selection outline. Click toggles the expanded card.
+ * an extra selection outline. A [dangling] badge (its anchor node no longer resolves)
+ * renders muted with a dashed outline so the broken pin is visible at a glance.
+ * Click toggles the expanded card.
  */
 @Composable
 fun AnnotationBadge(
@@ -31,6 +34,7 @@ fun AnnotationBadge(
     colors: AnnotationOverlayColors,
     modifier: Modifier = Modifier,
     selected: Boolean = false,
+    dangling: Boolean = false,
     onToggleExpand: () -> Unit = {},
 ) {
     Canvas(
@@ -43,14 +47,21 @@ fun AnnotationBadge(
             ),
     ) {
         val droplet = dropletPath()
-        drawPath(droplet, colors.badgeFill(kind))
-        drawPath(droplet, colors.badgeStroke(kind), style = Stroke(1.5.dp.toPx()))
+        val fill = if (dangling) colors.danglingFill else colors.badgeFill(kind)
+        val stroke = if (dangling) colors.danglingStroke else colors.badgeStroke(kind)
+        val dash = if (dangling) {
+            PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.dp.toPx()))
+        } else {
+            null
+        }
+        drawPath(droplet, fill)
+        drawPath(droplet, stroke, style = Stroke(1.5.dp.toPx(), pathEffect = dash))
         if (selected) {
             drawPath(droplet, colors.selectionStroke, style = Stroke(3.dp.toPx()))
         }
         // Inner dot so the droplet reads as a comment marker, not a plain pin.
         drawCircle(
-            colors.badgeStroke(kind),
+            stroke,
             radius = size.width * 0.14f,
             center = Offset(size.width / 2f, size.width / 2f),
         )

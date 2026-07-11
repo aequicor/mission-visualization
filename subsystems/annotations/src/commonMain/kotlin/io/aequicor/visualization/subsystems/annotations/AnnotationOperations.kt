@@ -17,9 +17,13 @@ public fun AnnotationLayer.addAnnotation(annotation: Annotation): AnnotationLaye
     return copy(annotations = updated)
 }
 
-/** Replaces the plain-text body of the annotation with [id]. */
+/**
+ * Replaces the plain-text body of the annotation with [id]. The text is canonicalized
+ * via [normalizeAnnotationBodyText] (blank-line framing dropped), so the in-memory
+ * layer always matches what a sidecar save/reload round-trip yields.
+ */
 public fun AnnotationLayer.updateAnnotationText(id: String, text: String): AnnotationLayer =
-    mapAnnotation(id) { it.copy(body = AnnotationBody(text)) }
+    mapAnnotation(id) { it.copy(body = AnnotationBody(normalizeAnnotationBodyText(text))) }
 
 /** Switches the annotation between note and issue. */
 public fun AnnotationLayer.setAnnotationKind(id: String, kind: AnnotationKind): AnnotationLayer =
@@ -41,20 +45,29 @@ public fun AnnotationLayer.detachAnnotationImage(id: String): AnnotationLayer =
 public fun AnnotationLayer.moveAnnotation(id: String, x: Double, y: Double): AnnotationLayer =
     mapAnnotation(id) { annotation ->
         val moved = when (val anchor = annotation.anchor) {
-            is AnnotationAnchor.NodeAnchor -> anchor.copy(offsetX = x, offsetY = y)
-            is AnnotationAnchor.FreePoint -> AnnotationAnchor.FreePoint(x, y)
+            is AnnotationAnchor.NodeAnchor -> anchor.copy(offsetX = x.canonical(), offsetY = y.canonical())
+            is AnnotationAnchor.FreePoint -> AnnotationAnchor.FreePoint(x.canonical(), y.canonical())
         }
         annotation.copy(anchor = moved)
     }
 
-/** Re-pins the annotation to [nodeId] with the given offset from the node's top-center. */
+/**
+ * Re-pins the annotation to [nodeId] with the given offset from the node's top-center.
+ * A now-redundant extra reference to [nodeId] is dropped — the anchor already carries
+ * that node's context.
+ */
 public fun AnnotationLayer.attachAnnotationToNode(
     id: String,
     nodeId: String,
     offsetX: Double = 0.0,
     offsetY: Double = 0.0,
 ): AnnotationLayer =
-    mapAnnotation(id) { it.copy(anchor = AnnotationAnchor.NodeAnchor(nodeId, offsetX, offsetY)) }
+    mapAnnotation(id) { annotation ->
+        annotation.copy(
+            anchor = AnnotationAnchor.NodeAnchor(nodeId, offsetX.canonical(), offsetY.canonical()),
+            references = annotation.references - nodeId,
+        )
+    }
 
 /**
  * Detaches a node-anchored annotation into a free point at [resolvedPosition] — the
@@ -68,15 +81,45 @@ public fun AnnotationLayer.detachAnnotationAnchor(
     mapAnnotation(id) { annotation ->
         when (annotation.anchor) {
             is AnnotationAnchor.NodeAnchor ->
-                annotation.copy(anchor = AnnotationAnchor.FreePoint(resolvedPosition.x, resolvedPosition.y))
+                annotation.copy(
+                    anchor = AnnotationAnchor.FreePoint(resolvedPosition.x.canonical(), resolvedPosition.y.canonical()),
+                )
             is AnnotationAnchor.FreePoint -> annotation
         }
     }
 
-/** Adds an extra node reference; duplicates are ignored. */
+/**
+ * Converts every annotation anchored to a node in [nodeIds] into a free point frozen
+ * at the position [resolvedPosition] returns for it — call this when nodes are deleted,
+ * with the badge positions resolved from the pre-delete bounds (see
+ * [annotationBadgePosition]), so badges keep their on-canvas spot instead of falling
+ * back to the dangling near-origin fallback. A null [resolvedPosition] result keeps
+ * the node anchor as-is (the keep-not-lose dangling behavior).
+ */
+public fun AnnotationLayer.detachAnnotationsFromNodes(
+    nodeIds: Set<String>,
+    resolvedPosition: (Annotation) -> AnnotationPoint?,
+): AnnotationLayer {
+    if (nodeIds.isEmpty()) return this
+    var changed = false
+    val detached = annotations.map { annotation ->
+        val anchor = annotation.anchor
+        if (anchor !is AnnotationAnchor.NodeAnchor || anchor.nodeId !in nodeIds) return@map annotation
+        val position = resolvedPosition(annotation) ?: return@map annotation
+        changed = true
+        annotation.copy(anchor = AnnotationAnchor.FreePoint(position.x.canonical(), position.y.canonical()))
+    }
+    return if (changed) copy(annotations = detached) else this
+}
+
+/**
+ * Adds an extra node reference; duplicates are ignored, and so is the anchor's own
+ * node — the anchor already carries that node's context.
+ */
 public fun AnnotationLayer.addAnnotationReference(id: String, nodeId: String): AnnotationLayer =
     mapAnnotation(id) { annotation ->
-        if (nodeId in annotation.references) annotation
+        val anchorNodeId = (annotation.anchor as? AnnotationAnchor.NodeAnchor)?.nodeId
+        if (nodeId == anchorNodeId || nodeId in annotation.references) annotation
         else annotation.copy(references = annotation.references + nodeId)
     }
 
@@ -89,6 +132,9 @@ public fun AnnotationLayer.deleteAnnotation(id: String): AnnotationLayer {
     val remaining = annotations.filterNot { it.id == id }
     return if (remaining.size == annotations.size) this else copy(annotations = remaining)
 }
+
+/** Folds `-0.0` to `0.0` so anchors compare (and serialize) sign-canonically. */
+private fun Double.canonical(): Double = this + 0.0
 
 private inline fun AnnotationLayer.mapAnnotation(
     id: String,

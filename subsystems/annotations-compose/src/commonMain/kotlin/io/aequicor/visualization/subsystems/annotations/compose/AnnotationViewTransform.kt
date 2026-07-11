@@ -26,6 +26,10 @@ data class AnnotationViewTransform(
     /** Screen-space drag delta → document-space delta (for move callbacks). */
     fun toDocDelta(screenDelta: Offset): AnnotationPoint =
         AnnotationPoint((screenDelta.x / zoom).toDouble(), (screenDelta.y / zoom).toDouble())
+
+    /** Document-space displacement → screen-space displacement (pan-free, for transient drag offsets). */
+    fun toScreenDelta(docDelta: AnnotationPoint): Offset =
+        Offset((docDelta.x * zoom).toFloat(), (docDelta.y * zoom).toFloat())
 }
 
 /**

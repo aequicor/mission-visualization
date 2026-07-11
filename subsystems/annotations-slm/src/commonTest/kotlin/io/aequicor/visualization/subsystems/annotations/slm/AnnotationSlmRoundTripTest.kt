@@ -229,6 +229,150 @@ class AnnotationSlmRoundTripTest {
     }
 
     @Test
+    fun bodyLineStartingWithHeaderPrefixRoundTrips() {
+        assertStable(
+            AnnotationLayer(
+                "overview.annotations.md",
+                listOf(
+                    Annotation(
+                        id = "ann-1",
+                        kind = AnnotationKind.Note,
+                        anchor = AnnotationAnchor.NodeAnchor("node-a"),
+                        body = AnnotationBody("Intro\n## Header in body\nTail"),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun bodyLineShapedLikeMarkdownImageRoundTrips() {
+        assertStable(
+            AnnotationLayer(
+                "overview.annotations.md",
+                listOf(
+                    Annotation(
+                        id = "ann-1",
+                        kind = AnnotationKind.Note,
+                        anchor = AnnotationAnchor.NodeAnchor("node-a"),
+                        body = AnnotationBody("See ref:\n![screenshot](assets/shot.png)"),
+                        image = null,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun bodyWithLeadingBackslashBeforeStructuralLineRoundTrips() {
+        assertStable(
+            AnnotationLayer(
+                "overview.annotations.md",
+                listOf(
+                    Annotation(
+                        id = "ann-1",
+                        kind = AnnotationKind.Note,
+                        anchor = AnnotationAnchor.NodeAnchor("node-a"),
+                        body = AnnotationBody("\\## already escaped\n\\\\## doubly escaped\n\\plain backslash"),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun imageShapedBodyLineCoexistsWithRealImage() {
+        assertStable(
+            AnnotationLayer(
+                "overview.annotations.md",
+                listOf(
+                    Annotation(
+                        id = "ann-1",
+                        kind = AnnotationKind.Issue,
+                        anchor = AnnotationAnchor.NodeAnchor("node-a"),
+                        body = AnnotationBody("Compare with:\n![old](assets/old.png)"),
+                        image = AnnotationImage("data:image/png;base64,AAAA", width = 64.0, height = 64.0),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun nodeIdWithSpacesAndParensRoundTrips() {
+        assertStable(
+            AnnotationLayer(
+                "overview.annotations.md",
+                listOf(
+                    Annotation(
+                        id = "ann-1",
+                        kind = AnnotationKind.Issue,
+                        anchor = AnnotationAnchor.NodeAnchor("hero (main)", offsetX = 8.0, offsetY = -12.0),
+                        body = AnnotationBody("Weird but legal explicit SLM id."),
+                        references = listOf("other node", "plain-node"),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun nonBmpNodeIdRoundTrips() {
+        assertStable(
+            AnnotationLayer(
+                "overview.annotations.md",
+                listOf(
+                    Annotation(
+                        id = "ann-1",
+                        kind = AnnotationKind.Note,
+                        anchor = AnnotationAnchor.NodeAnchor("🚀-hero"),
+                        body = AnnotationBody("Emoji id."),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun nodeIdWithQuotesAndBackslashesRoundTrips() {
+        assertStable(
+            AnnotationLayer(
+                "overview.annotations.md",
+                listOf(
+                    Annotation(
+                        id = "ann-1",
+                        kind = AnnotationKind.Note,
+                        anchor = AnnotationAnchor.NodeAnchor("""he said "hi" \ done"""),
+                        body = AnnotationBody("Escapes inside quotes."),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun writerCanonicalizesBodyBlankLineFraming() {
+        fun layerWithBody(text: String) = AnnotationLayer(
+            "overview.annotations.md",
+            listOf(
+                Annotation(
+                    id = "ann-1",
+                    kind = AnnotationKind.Note,
+                    anchor = AnnotationAnchor.NodeAnchor("node-a"),
+                    body = AnnotationBody(text),
+                ),
+            ),
+        )
+
+        // Framing blank lines are section separators in the format; the writer folds
+        // them away, so write ∘ parse ∘ write is stable (no phantom diffs on reload).
+        assertEquals(AnnotationSlmWriter.write(layerWithBody("Body.")), AnnotationSlmWriter.write(layerWithBody("Body.\n")))
+        assertEquals(AnnotationSlmWriter.write(layerWithBody("")), AnnotationSlmWriter.write(layerWithBody(" \n ")))
+        assertEquals("Body.", roundTrip(layerWithBody("\n\nBody.\n")).layer.annotations.single().body.text)
+        assertStable(roundTrip(layerWithBody("Body.\n\n")).layer)
+    }
+
+    @Test
     fun writerEmitsCanonicalFormat() {
         val layer = AnnotationLayer(
             "overview.annotations.md",

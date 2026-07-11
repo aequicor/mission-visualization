@@ -45,6 +45,24 @@ class AnnotationOperationsTest {
     }
 
     @Test
+    fun updateTextNormalizesBlankLineFraming() {
+        val updated = layer(note("a1")).updateAnnotationText("a1", "\nBody.\n\n")
+        assertEquals(AnnotationBody("Body."), updated.annotations.single().body)
+    }
+
+    @Test
+    fun updateTextWhitespaceOnlyBecomesEmpty() {
+        val updated = layer(note("a1")).updateAnnotationText("a1", " \n\t\n")
+        assertEquals(AnnotationBody(""), updated.annotations.single().body)
+    }
+
+    @Test
+    fun updateTextKeepsInternalBlankLinesAndWhitespace() {
+        val updated = layer(note("a1")).updateAnnotationText("a1", "First.\n\nSecond  spaced.")
+        assertEquals(AnnotationBody("First.\n\nSecond  spaced."), updated.annotations.single().body)
+    }
+
+    @Test
     fun setKindSwitchesNoteToIssue() {
         val updated = layer(note("a1")).setAnnotationKind("a1", AnnotationKind.Issue)
         assertEquals(AnnotationKind.Issue, updated.annotations.single().kind)
@@ -106,12 +124,66 @@ class AnnotationOperationsTest {
     }
 
     @Test
+    fun moveFoldsNegativeZeroOffsets() {
+        val updated = layer(note("a1")).moveAnnotation("a1", -0.0, 5.0)
+        assertEquals(AnnotationAnchor.NodeAnchor("node-1", 0.0, 5.0), updated.annotations.single().anchor)
+    }
+
+    @Test
+    fun attachToNodeFoldsNegativeZeroOffsets() {
+        val updated = layer(note("a1")).attachAnnotationToNode("a1", "node-2", offsetX = -0.0, offsetY = -0.0)
+        assertEquals(AnnotationAnchor.NodeAnchor("node-2", 0.0, 0.0), updated.annotations.single().anchor)
+    }
+
+    @Test
+    fun attachToNodeDropsNewAnchorNodeFromReferences() {
+        val updated = layer(note("a1").copy(references = listOf("node-9", "node-3")))
+            .attachAnnotationToNode("a1", "node-9")
+        val annotation = updated.annotations.single()
+        assertEquals(AnnotationAnchor.NodeAnchor("node-9"), annotation.anchor)
+        assertEquals(listOf("node-3"), annotation.references)
+    }
+
+    @Test
+    fun detachFromDeletedNodesFreezesResolvedPositions() {
+        val original = layer(
+            note("a1"),
+            note("a2", anchor = AnnotationAnchor.NodeAnchor("node-2", 1.0, 2.0)),
+            note("a3", anchor = AnnotationAnchor.FreePoint(9.0, 9.0)),
+        )
+        val updated = original.detachAnnotationsFromNodes(setOf("node-1")) { annotation ->
+            AnnotationPoint(500.0, 800.0).takeIf { annotation.id == "a1" }
+        }
+        assertEquals(AnnotationAnchor.FreePoint(500.0, 800.0), updated.annotations[0].anchor)
+        assertEquals(AnnotationAnchor.NodeAnchor("node-2", 1.0, 2.0), updated.annotations[1].anchor)
+        assertEquals(AnnotationAnchor.FreePoint(9.0, 9.0), updated.annotations[2].anchor)
+    }
+
+    @Test
+    fun detachFromNodesWithUnresolvedPositionKeepsNodeAnchor() {
+        val original = layer(note("a1"))
+        assertSame(original, original.detachAnnotationsFromNodes(setOf("node-1")) { null })
+    }
+
+    @Test
+    fun detachFromNodesWithEmptySetIsNoOp() {
+        val original = layer(note("a1"))
+        assertSame(original, original.detachAnnotationsFromNodes(emptySet()) { AnnotationPoint(0.0, 0.0) })
+    }
+
+    @Test
     fun addReferenceAppendsAndDeduplicates() {
         val updated = layer(note("a1"))
             .addAnnotationReference("a1", "node-2")
             .addAnnotationReference("a1", "node-3")
             .addAnnotationReference("a1", "node-2")
         assertEquals(listOf("node-2", "node-3"), updated.annotations.single().references)
+    }
+
+    @Test
+    fun addReferenceOfTheAnchorsOwnNodeIsNoOp() {
+        val original = layer(note("a1"))
+        assertSame(original, original.addAnnotationReference("a1", "node-1"))
     }
 
     @Test

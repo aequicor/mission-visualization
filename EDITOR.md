@@ -245,10 +245,21 @@ selection and the active annotation tool are **view state**
 authored `defaultExpanded` hint. Anchoring is dual: a press on a node pins a
 `NodeAnchor(nodeId, offset)` — the badge follows the node's top-center plus the offset,
 so it moves with the node — while a press on empty canvas (or an explicit detach in the
-inspector) yields a `FreePoint(x, y)`. Deleting the anchored node makes the annotation
-**dangling**, never lost: `annotationBadgePosition` falls back to a deterministic point
-(the raw offset as absolute coordinates), the inspector shows a dangling marker, and the
-prompt exporter reports "node deleted or unresolved".
+inspector) yields a `FreePoint(x, y)`. Node anchors are computed and re-applied in
+**visual (post-rotation) space** (`annotationNodeVisualBounds`: the same effective
+transform the renderer nests and the selection overlay follows), so a badge pinned
+inside a rotated — or later-rotated — frame stays on the node instead of floating at
+its pre-rotation layout position. Badges are **draggable**: the drag is transient view
+state (the badge follows the pointer with zero document intents), release commits
+exactly one `MoveAnnotation` (one sidecar patch, one source-history entry;
+`annotationMoveCommitTarget`), a cancelled gesture commits nothing. **Deleting a node
+freezes** the annotations anchored to it (or to its descendants) as free points at
+their pre-delete badge positions (`detachAnnotationsForNodeDelete` → the core
+`detachAnnotationsFromNodes`), so nothing jumps to the fallback. An annotation whose
+node still can't be resolved is **dangling**, never lost: `annotationBadgePosition`
+falls back to a deterministic point, the badge renders in a muted **dashed** style,
+the inspector states "Pinned node is missing: `<id>`" (detach/delete stay available),
+and the prompt exporter reports "node deleted or unresolved".
 
 *Persistence:* annotations live in a **sidecar** `<screen>.annotations.md` next to the
 screen's `*.layout.md` (never mixed into design SLM). Every document-side annotation
@@ -259,16 +270,25 @@ op to the screen's `AnnotationLayer` and mirrors it into the sidecar via **surgi
 annotation on a screen creates the sidecar source. Sidecars ride in the same
 `MissionDocumentSource` list as SLM screens — drafts/autosave/Save/Reset/restore work
 for free — but are routed to the tolerant `AnnotationSlmParser` instead of the SLM
-compiler (placeholder compile entry keeps the lists index-aligned). Editing the sidecar
-text directly in the Source pane re-parses the layer tolerantly. Ids are stable via an
-explicit `{id=...}` marker (same invariant as structural SLM edits).
+compiler (placeholder compile entry keeps the lists index-aligned; sidecar parse
+warnings ride its diagnostics onto the editor's `state.diagnostics` with file + 1-based
+line, refreshed on load and on sidecar `EditSource`). Editing the sidecar text directly
+in the Source pane re-parses the layer tolerantly. Ids are stable via an explicit
+`{id=...}` marker (same invariant as structural SLM edits); the load boundary
+normalizes once (`normalizeAnnotationSidecarSources` in `compileMissionDocuments`, no
+undo entry): sections authored without a marker get their synthesized id **pinned**
+into the header, and ids colliding across two screens' sidecars are **re-minted** to be
+globally unique — id-keyed selection/edit/export can never target the wrong screen's
+annotation. Sidecar `EditSource` applies the same normalization per file.
 
 *Issues prompt export:* `ExportIssuesPromptUseCase` builds an AI-agent prompt from the
 **issue** annotations only (notes never export) over one of three scopes — selected
 annotations / current screen / whole document — with per-issue node context (id, label,
 type, screen, bounds) resolved from the layout, dangling anchors flagged, attached
-images marked. The toolbar export action shows a scope menu and copies the prompt to the
-clipboard.
+images marked. The toolbar export action shows a scope menu, copies the prompt to the
+clipboard and always opens a confirmation popup with the prompt text selectable for
+manual copy — on web the clipboard API silently no-ops outside a secure context
+(plain-http remote host), so the feature's only output is never lost without feedback.
 
 *v1 limitations:* no freehand-ink drawing (only an embedded image); the body is plain
 text (`AnnotationBody` keeps the door open for RichText); references and anchors are
@@ -295,6 +315,12 @@ per-screen node ids — no cross-screen references.
   `AnnotationAnchorForPressTest` — annotation intents with surgical sidecar write-back,
   draft round-trip of `*.annotations.md` sources, node-vs-free anchor resolution for a
   canvas press (subsystem internals are covered in `:subsystems:annotations*` commonTest).
+- `AnnotationSidecarNormalizationTest` — load-boundary id pinning (`needsRewrite`),
+  cross-file duplicate-id re-minting, parse warnings as editor diagnostics (file+line,
+  refreshed on sidecar `EditSource`), `EditSource` normalization without history entries.
+- `AnnotationCanvasGeometryTest` / `AnnotationDetachOnDeleteTest` — badge drag commit
+  targets (one intent, one patch, one history entry), rotation-aware annotation node
+  bounds, and freezing anchors as free points at pre-delete positions on node delete.
 - `CanvasGeometryTest` — rotated corner/handle geometry, rotation-aware resize cursor
   bucketing, move-drag center anchor lines, Alt-measurement gap math, and beautiful-anchor
   snapping (golden ratio, thirds/quarters, equal spacing / equal margin / match gap, priority

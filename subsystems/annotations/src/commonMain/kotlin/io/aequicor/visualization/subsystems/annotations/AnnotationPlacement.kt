@@ -7,7 +7,10 @@ package io.aequicor.visualization.subsystems.annotations
  *   the anchor offset;
  * - dangling node anchor (`nodeBounds == null`, node deleted/unresolved) — a
  *   deterministic fallback: the raw offset treated as an absolute point, so the badge
- *   stays stable and hit-testable instead of disappearing;
+ *   stays hit-testable instead of disappearing. Note the fallback point is NOT the
+ *   node's last on-canvas position (offsets are node-relative, so it lands near the
+ *   document origin); callers deleting nodes should freeze the badge position first
+ *   via [detachAnnotationsFromNodes] with the pre-delete bounds;
  * - [AnnotationAnchor.FreePoint] — the point itself.
  */
 public fun annotationBadgePosition(

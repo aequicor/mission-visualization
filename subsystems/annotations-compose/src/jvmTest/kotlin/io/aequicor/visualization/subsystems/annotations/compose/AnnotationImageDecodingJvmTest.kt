@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 class AnnotationImageDecodingJvmTest {
 
@@ -30,5 +31,22 @@ class AnnotationImageDecodingJvmTest {
         assertNull(decodeAnnotationImage("data:image/png;base64,%%%not-base64%%%"))
         assertNull(decodeAnnotationImage("data:image/png;base64,QUJD")) // "ABC" is not a bitmap
         assertNull(decodeAnnotationImage("assets/screenshot.png"))
+    }
+
+    @Test
+    fun cacheReturnsTheSameDecodedBitmapInstanceAcrossHits() {
+        val cache = AnnotationImageCache()
+        val source = "data:image/png;base64,$onePixelPng"
+        val bitmap = decodeAnnotationImage(source)
+        assertNotNull(bitmap)
+
+        cache.put(source, bitmap)
+
+        val first = cache.get(source)
+        val second = cache.get(source)
+        assertNotNull(first)
+        assertNotNull(second)
+        assertSame(bitmap, first.bitmap, "cache must hand back the decoded bitmap, not re-decode")
+        assertSame(bitmap, second.bitmap, "repeated hits (e.g. expand/collapse) reuse one instance")
     }
 }

@@ -19,6 +19,10 @@ data class AnnotationOverlayColors(
     val cardSurface: Color,    // expanded card background
     val cardStroke: Color,     // expanded note card border
     val selectionStroke: Color, // selected badge/card outline
+    /** Dangling badge fill (node anchor no longer resolves); defaults keep old callers working. */
+    val danglingFill: Color = cardSurface,
+    /** Dangling badge dashed outline + inner dot. */
+    val danglingStroke: Color = mutedInk,
 )
 
 /** Badge fill for [kind]: issue-yellow vs neutral note. */

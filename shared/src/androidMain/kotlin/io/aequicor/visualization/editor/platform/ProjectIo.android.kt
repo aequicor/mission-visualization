@@ -18,6 +18,4 @@ internal actual fun platformFinishPdfExport(fileName: String) = Unit
 
 internal actual fun platformToggleFullscreen() = Unit
 
-internal actual fun platformCopyTextToClipboard(text: String) = Unit
-
 internal actual fun platformOpenUrl(url: String) = Unit

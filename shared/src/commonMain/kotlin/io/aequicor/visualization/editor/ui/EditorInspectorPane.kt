@@ -83,7 +83,7 @@ import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationImage
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
-import io.aequicor.visualization.subsystems.annotations.AnnotationRect
+import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
 import io.aequicor.visualization.subsystems.annotations.annotationBadgePosition
 import io.aequicor.visualization.subsystems.annotations.compose.rememberAnnotationImage
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
@@ -3340,21 +3340,31 @@ private fun AnnotationImagePreview(image: AnnotationImage) {
     )
 }
 
-/** Anchor summary: pinned node (with dangling marker) + «Открепить», or the free point. */
+/** Anchor summary: pinned node (with an explicit missing-node warning when dangling) + «Открепить», or the free point. */
 @Composable
 private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
+    val colors = LocalEditorColors.current
     val design = state.designState
     when (val anchor = annotation.anchor) {
         is AnnotationAnchor.NodeAnchor -> {
             val node = design.document?.nodeById(anchor.nodeId)
-            val label = node?.name?.ifBlank { anchor.nodeId } ?: "${anchor.nodeId} (deleted)"
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                MutedNote("Pinned to $label")
+                if (node == null) {
+                    // Dangling anchor: keep-not-lose — say exactly which node is gone while
+                    // still offering detach (freeze in place) and delete below.
+                    Text(
+                        "Pinned node is missing: ${anchor.nodeId}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.statusWarning,
+                    )
+                } else {
+                    MutedNote("Pinned to ${node.name.ifBlank { anchor.nodeId }}")
+                }
                 TinyButton("Открепить") {
-                    // Freeze the badge where it currently renders so detaching is visually a no-op.
-                    val bounds = state.artboardLayout?.findBySourceId(anchor.nodeId)?.let { box ->
-                        AnnotationRect.fromSize(box.x, box.y, box.width, box.height)
-                    }
+                    // Freeze the badge where it currently renders (visual, rotation-aware
+                    // bounds — the same space the overlay positions badges in) so detaching
+                    // is visually a no-op.
+                    val bounds = annotationNodeVisualBounds(state.artboardLayout, anchor.nodeId)
                     val point = annotationBadgePosition(anchor, bounds)
                     state.dispatch(
                         DesignEditorIntent.DetachAnnotationAnchor(screenFileName, annotation.id, point.x, point.y),
@@ -3398,7 +3408,12 @@ private fun AnnotationReferences(state: MissionEditorStateHolder, screenFileName
             }
         }
         val selectedNodeId = design.selectedNodeId
-        val canAdd = selectedNodeId.isNotBlank() && selectedNodeId !in annotation.references
+        // The anchor's own node is never an extra reference (the core op no-ops on it),
+        // so the button disables for it too instead of appearing to do nothing.
+        val anchorNodeId = (annotation.anchor as? AnnotationAnchor.NodeAnchor)?.nodeId
+        val canAdd = selectedNodeId.isNotBlank() &&
+            selectedNodeId !in annotation.references &&
+            selectedNodeId != anchorNodeId
         TinyButton("Add selected node", enabled = canAdd) {
             state.dispatch(DesignEditorIntent.AddAnnotationReference(screenFileName, annotation.id, selectedNodeId))
         }

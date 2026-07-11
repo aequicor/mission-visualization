@@ -249,31 +249,6 @@ class AnnotationReducerWriteBackTest {
     }
 
     @Test
-    fun writeBackPinsSynthesizedIdsBeforePatchingLegacySidecars() {
-        val plain = legacyMissionDocuments()
-        val state = createDesignEditorState(
-            compileMissionDocuments(
-                plain.sources + MissionDocumentSource(
-                    sidecarFile,
-                    "## issue @tile_1\nLegacy issue without an explicit id.\n",
-                ),
-            ),
-        )
-
-        val next = reduceDesignEditor(
-            state,
-            DesignEditorIntent.SetAnnotationText(screenFile, "ann-1", "Edited without duplicating the section."),
-        )
-
-        assertEquals(listOf("ann-1"), next.layer().annotations.map { it.id })
-        assertEquals(
-            "## issue @tile_1 {id=ann-1}\nEdited without duplicating the section.\n",
-            next.sidecarContent(),
-            "legacy unmarked section is pinned before surgical patching",
-        )
-    }
-
-    @Test
     fun editingTheSidecarSourceReparsesTheLayer() {
         val state = freshState().withIssueOnTile()
         val index = state.sources.indexOfFirst { it.fileName == sidecarFile }

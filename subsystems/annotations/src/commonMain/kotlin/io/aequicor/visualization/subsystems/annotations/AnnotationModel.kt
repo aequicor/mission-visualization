@@ -30,6 +30,18 @@ public sealed interface AnnotationAnchor {
 /** Annotation text body. v1 is plain text; a distinct type keeps the door open for RichText. */
 public data class AnnotationBody(val text: String)
 
+/**
+ * Canonical body text: leading and trailing blank lines are dropped (in the sidecar
+ * format they are section framing, not content); internal newlines and whitespace are
+ * preserved. The editor operations and the sidecar writer both canonicalize through
+ * this, so a layer built through them round-trips the sidecar byte-stably.
+ */
+public fun normalizeAnnotationBodyText(text: String): String =
+    text.split('\n')
+        .dropWhile { it.isBlank() }
+        .dropLastWhile { it.isBlank() }
+        .joinToString("\n")
+
 /** An image attached to an annotation; [source] is a data-URI or an asset reference. */
 public data class AnnotationImage(
     val source: String,

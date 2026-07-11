@@ -85,28 +85,6 @@ private fun ensureProjectIoInstalled() {
             window.location.reload();
           }
 
-          function copyText(text) {
-            var value = String(text || "");
-            function fallback() {
-              try {
-                var area = document.createElement("textarea");
-                area.value = value;
-                area.setAttribute("readonly", "");
-                area.style.position = "fixed";
-                area.style.left = "-10000px";
-                document.body.appendChild(area);
-                area.select();
-                document.execCommand("copy");
-                area.remove();
-              } catch (e) {}
-            }
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(value).catch(fallback);
-            } else {
-              fallback();
-            }
-          }
-
           function sourceLike(name) {
             var lower = String(name || "").toLowerCase();
             return lower.endsWith(".layout.md") || lower.endsWith(".slm.md") || lower.endsWith(".slm") || lower.endsWith(".md");
@@ -481,8 +459,7 @@ private fun ensureProjectIoInstalled() {
               if (!pdfPages.length) throw new Error("No screens were captured for PDF export.");
               downloadBlob(makePdf(pdfPages), safeName(fileName, "screens.pdf"));
               pdfPages = [];
-            },
-            copyText: function (text) { copyText(text); }
+            }
           };
         })();
         """
@@ -553,12 +530,6 @@ internal actual fun platformToggleFullscreen() {
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
-internal actual fun platformCopyTextToClipboard(text: String) {
-    ensureProjectIoInstalled()
-    callCopyText(text)
-}
-
-@OptIn(ExperimentalWasmJsInterop::class)
 private fun callOpenZip(): Unit = js("window.__mvProjectIo.openZip()")
 
 @OptIn(ExperimentalWasmJsInterop::class)
@@ -588,10 +559,6 @@ private fun callFinishPdf(fileName: String): Unit = js("window.__mvProjectIo.fin
 private fun callToggleFullscreen(): Unit =
     js("(function(){if(document.fullscreenElement){if(document.exitFullscreen)document.exitFullscreen();}else{var el=document.documentElement;if(el.requestFullscreen)el.requestFullscreen().catch(function(){});}})()")
 
-@OptIn(ExperimentalWasmJsInterop::class)
-private fun callCopyText(text: String): Unit = js("window.__mvProjectIo.copyText(text)")
-
-@OptIn(ExperimentalWasmJsInterop::class)
 private fun openUrlInBrowser(url: String): Unit = js("{ window.open(url, '_blank'); }")
 
 internal actual fun platformOpenUrl(url: String) = openUrlInBrowser(url)

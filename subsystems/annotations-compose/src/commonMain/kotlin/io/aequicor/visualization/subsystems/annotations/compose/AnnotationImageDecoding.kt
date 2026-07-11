@@ -1,9 +1,13 @@
 package io.aequicor.visualization.subsystems.annotations.compose
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.io.encoding.Base64
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.decodeToImageBitmap
 
 /** Base64 tolerant of data URIs that omit trailing padding. */
@@ -33,7 +37,68 @@ fun decodeAnnotationImage(source: String): ImageBitmap? {
     return runCatching { DataUriBase64.decode(payload).decodeToImageBitmap() }.getOrNull()
 }
 
-/** [decodeAnnotationImage] memoized per [source] across recompositions. */
+/** A recorded decode outcome; [bitmap] is null when the source was not decodable. */
+data class AnnotationImageDecodeResult(val bitmap: ImageBitmap?)
+
+/**
+ * Small LRU of decode results keyed by the image source, shared across composition sites
+ * (canvas card, inspector preview) so one attachment is decoded at most once instead of
+ * on every card expand. Failed decodes are cached too, so an undecodable payload is not
+ * re-parsed on each recomposition. Not thread-safe: confine to the UI thread (composition).
+ */
+class AnnotationImageCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
+
+    init {
+        require(maxEntries > 0) { "maxEntries must be positive, was $maxEntries" }
+    }
+
+    private val entries = LinkedHashMap<String, AnnotationImageDecodeResult>()
+
+    /** Number of cached decode results (successful and failed). */
+    val size: Int get() = entries.size
+
+    /** Cached decode result for [source], or null when it has not been decoded yet. */
+    fun get(source: String): AnnotationImageDecodeResult? {
+        val result = entries.remove(source) ?: return null
+        entries[source] = result // Refresh recency.
+        return result
+    }
+
+    /** Records a decode outcome for [source], evicting the least recently used entry. */
+    fun put(source: String, bitmap: ImageBitmap?) {
+        entries.remove(source)
+        entries[source] = AnnotationImageDecodeResult(bitmap)
+        while (entries.size > maxEntries) {
+            entries.remove(entries.keys.first())
+        }
+    }
+
+    companion object {
+        private const val DEFAULT_MAX_ENTRIES = 8
+
+        /** Process-wide cache used by [rememberAnnotationImage] by default. */
+        val Shared: AnnotationImageCache = AnnotationImageCache()
+    }
+}
+
+/**
+ * [decodeAnnotationImage] memoized per [source] in [cache] (shared across composition
+ * sites and expand/collapse cycles) and executed off the composition pass on
+ * [decodeDispatcher]. Returns null until the decode lands or when the source is not
+ * decodable; callers simply omit the image then.
+ */
 @Composable
-fun rememberAnnotationImage(source: String): ImageBitmap? =
-    remember(source) { decodeAnnotationImage(source) }
+fun rememberAnnotationImage(
+    source: String,
+    cache: AnnotationImageCache = AnnotationImageCache.Shared,
+    decodeDispatcher: CoroutineDispatcher = Dispatchers.Default,
+): ImageBitmap? {
+    val cached = cache.get(source)
+    if (cached != null) return cached.bitmap
+    val decoded by produceState<ImageBitmap?>(initialValue = null, source, cache, decodeDispatcher) {
+        val result = withContext(decodeDispatcher) { decodeAnnotationImage(source) }
+        cache.put(source, result)
+        value = result
+    }
+    return decoded
+}

@@ -75,26 +75,31 @@ public object AnnotationPromptExporter {
             is AnnotationAnchor.NodeAnchor -> {
                 val ref = nodeContext(anchor.nodeId)
                 if (ref != null) appendLine("   Node: ${ref.describe()}")
-                else appendLine("   Node: ${anchor.nodeId} (node deleted or unresolved)")
+                else appendLine("   Node: ${anchor.nodeId.singleLine()} (node deleted or unresolved)")
             }
             is AnnotationAnchor.FreePoint ->
                 appendLine("   Location: free point at (${anchor.x.fmt()}, ${anchor.y.fmt()})")
         }
         if (annotation.references.isNotEmpty()) {
             val refs = annotation.references.joinToString(", ") { nodeId ->
-                nodeContext(nodeId)?.describe() ?: "$nodeId (node deleted or unresolved)"
+                nodeContext(nodeId)?.describe() ?: "${nodeId.singleLine()} (node deleted or unresolved)"
             }
             appendLine("   Also references: $refs")
         }
-        appendLine("   Issue: ${annotation.body.text.ifBlank { "(no text)" }}")
+        // Continuation lines of a multi-line body are indented deeper than the item's
+        // own fields, so a body line like "2. Screen: ..." can never masquerade as a
+        // real numbered item and the body stays visually inside its item.
+        val bodyLines = annotation.body.text.ifBlank { "(no text)" }.split('\n')
+        appendLine("   Issue: ${bodyLines.first()}")
+        bodyLines.drop(1).forEach { line -> appendLine("      $line") }
         if (annotation.image != null) appendLine("   [attached image]")
     }
 
     private fun AnnotatedNodeRef.describe(): String = buildString {
-        append(nodeId)
-        if (label != null) append(" \"$label\"")
-        if (type != null) append(" ($type)")
-        if (screenFileName != null) append(" on $screenFileName")
+        append(nodeId.singleLine())
+        if (label != null) append(" \"${label.singleLine()}\"")
+        if (type != null) append(" (${type.singleLine()})")
+        if (screenFileName != null) append(" on ${screenFileName.singleLine()}")
         if (bounds != null) {
             append(
                 ", bounds ${bounds.width.fmt()}x${bounds.height.fmt()}" +
@@ -102,6 +107,9 @@ public object AnnotationPromptExporter {
             )
         }
     }
+
+    /** Flattens embedded line breaks so interpolated names cannot break the prompt structure. */
+    private fun String.singleLine(): String = replace('\r', ' ').replace('\n', ' ')
 
     /** Trims a trailing `.0` so integral coordinates read naturally in the prompt. */
     private fun Double.fmt(): String {

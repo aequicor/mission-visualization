@@ -35,6 +35,9 @@ internal fun annotationOverlayColors(): AnnotationOverlayColors {
         cardSurface = colors.raisedSurface,
         cardStroke = colors.panelStroke,
         selectionStroke = colors.accent,
+        // Dangling badge (anchor node gone): muted, dashed — visible but clearly inert.
+        danglingFill = colors.raisedSurface,
+        danglingStroke = colors.mutedInk,
     )
 }
 
