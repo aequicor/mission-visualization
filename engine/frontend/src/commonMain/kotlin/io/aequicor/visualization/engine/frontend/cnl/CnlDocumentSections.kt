@@ -182,7 +182,8 @@ internal object CnlDocumentSections {
     private fun paragraphLines(block: ParagraphBlock): List<LogicalLine> =
         block.inlines
             .groupBy { it.line }
-            .toSortedMap()
+            .entries
+            .sortedBy { it.key }
             .mapNotNull { (line, inlines) ->
                 val text = inlines.sortedBy { it.column }.joinToString("") { renderInline(it) }.trim()
                 text.takeIf { it.isNotEmpty() }?.let { LogicalLine(it, line) }
