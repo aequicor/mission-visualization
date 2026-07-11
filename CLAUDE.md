@@ -55,6 +55,17 @@ Compose-превью с оверлеями (выделение, инспекто
     JetBrains Mono). `:engine:backend-compose` потребляет `-compose` (адаптер
     `ResolvedText`→`RichText`), редактор (`:shared`) — оба (span-алгебра в редьюсере
     `TextRangeEditing`, шрифты в артборде).
+  - `:subsystems:annotations` / `:subsystems:annotations-compose` / `:subsystems:annotations-slm` —
+    аннотации/комментарии как отдельный review-слой поверх дизайна: чистое ядро (модель
+    `Annotation`/`AnnotationKind` note|issue/`AnnotationAnchor` node|free/`AnnotationLayer`,
+    чистые операции слоя, `annotationBadgePosition`, `AnnotationPromptExporter` — промпт для
+    ИИ-агента только из issue, scope selected/screen/document, контекст узлов через
+    `nodeContext`-лямбду), compose-рендерер (`AnnotationBadge` капля / `AnnotationCard`
+    табличка с data-URI-картинкой / `AnnotationOverlay` поверх артборда с pan/zoom;
+    issue = `statusWarning`) и sidecar-формат `*.annotations.md` (`AnnotationSlmParser`
+    толерантный / `AnnotationSlmWriter` round-trip / `AnnotationSlmPatcher` хирургический
+    upsert/delete секции; спека — `design-book/annotations-sidecar-format.md`). Потребитель —
+    `:shared` (интенты + `writeBackAnnotations`, оверлей в канве, секция инспектора, экспорт).
 - `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — тонкие обёртки над shared UI.
 
 Документация конвейера — `engine/README.md`; спецификация SLM —

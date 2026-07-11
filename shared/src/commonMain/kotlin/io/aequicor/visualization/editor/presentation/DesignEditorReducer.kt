@@ -2,6 +2,7 @@ package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.editorSlmCompileOptions
+import io.aequicor.visualization.editor.domain.isAnnotationSidecarFileName
 import io.aequicor.visualization.editor.domain.mergeMissionDocuments
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.compileSlm
@@ -101,6 +102,17 @@ import io.aequicor.visualization.subsystems.figures.toSvgPathData
 import io.aequicor.visualization.subsystems.figures.translateSvgPoint
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
+import io.aequicor.visualization.subsystems.annotations.addAnnotationReference
+import io.aequicor.visualization.subsystems.annotations.attachAnnotationImage
+import io.aequicor.visualization.subsystems.annotations.attachAnnotationToNode
+import io.aequicor.visualization.subsystems.annotations.deleteAnnotation
+import io.aequicor.visualization.subsystems.annotations.detachAnnotationAnchor
+import io.aequicor.visualization.subsystems.annotations.detachAnnotationImage
+import io.aequicor.visualization.subsystems.annotations.moveAnnotation
+import io.aequicor.visualization.subsystems.annotations.removeAnnotationReference
+import io.aequicor.visualization.subsystems.annotations.setAnnotationKind
+import io.aequicor.visualization.subsystems.annotations.updateAnnotationText
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -408,6 +420,46 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.CommitVectorNetwork ->
             state.commitVectorNetwork(intent.nodeId) { it }
 
+        // --- Annotations (review layer; sidecar write-back via writeBackAnnotations) ---
+        is DesignEditorIntent.AddAnnotation -> state.addAnnotationWriteBack(intent)
+        is DesignEditorIntent.SetAnnotationText -> state.writeBackAnnotations(intent.screenFileName) {
+            it.updateAnnotationText(intent.annotationId, intent.text)
+        }
+        is DesignEditorIntent.SetAnnotationKind -> state.writeBackAnnotations(intent.screenFileName) {
+            it.setAnnotationKind(intent.annotationId, intent.kind)
+        }
+        is DesignEditorIntent.AttachAnnotationImage -> state.writeBackAnnotations(intent.screenFileName) {
+            it.attachAnnotationImage(intent.annotationId, intent.image)
+        }
+        is DesignEditorIntent.DetachAnnotationImage -> state.writeBackAnnotations(intent.screenFileName) {
+            it.detachAnnotationImage(intent.annotationId)
+        }
+        is DesignEditorIntent.MoveAnnotation -> state.writeBackAnnotations(intent.screenFileName) {
+            it.moveAnnotation(intent.annotationId, intent.x, intent.y)
+        }
+        is DesignEditorIntent.AttachAnnotationToNode -> state.writeBackAnnotations(intent.screenFileName) {
+            it.attachAnnotationToNode(intent.annotationId, intent.nodeId, intent.offsetX, intent.offsetY)
+        }
+        is DesignEditorIntent.DetachAnnotationAnchor -> state.writeBackAnnotations(intent.screenFileName) {
+            it.detachAnnotationAnchor(intent.annotationId, AnnotationPoint(intent.x, intent.y))
+        }
+        is DesignEditorIntent.AddAnnotationReference -> state.writeBackAnnotations(intent.screenFileName) {
+            it.addAnnotationReference(intent.annotationId, intent.nodeId)
+        }
+        is DesignEditorIntent.RemoveAnnotationReference -> state.writeBackAnnotations(intent.screenFileName) {
+            it.removeAnnotationReference(intent.annotationId, intent.nodeId)
+        }
+        is DesignEditorIntent.DeleteAnnotation -> state.writeBackAnnotations(intent.screenFileName) {
+            it.deleteAnnotation(intent.annotationId)
+        }
+
+        // --- Annotations (view; the document state is untouched) ---
+        // Handled by reduceAnnotationWorkspace against EditorWorkspaceState.
+        is DesignEditorIntent.ToggleAnnotationExpanded,
+        is DesignEditorIntent.SelectAnnotation,
+        is DesignEditorIntent.SetAnnotationTool,
+        -> state
+
         // --- Diagram canvas (see DiagramEditing.kt) ---
         is DiagramEditorIntent -> state.reduceDiagramIntent(intent)
 
@@ -529,13 +581,17 @@ private fun DesignEditorState.deleteNodesWriteBack(ids: Set<String>): DesignEdit
     val document = document ?: return this
     val deletable = ids.filter { document.nodeById(it)?.locked == false }.toSet()
     if (deletable.isEmpty()) return this
-    val inMemory = deleteNodes(deletable)
     // Nothing actually left the tree (e.g. only unknown/locked ids): don't touch sources.
-    if (inMemory === this) return this
+    if (deleteNodes(deletable) === this) return this
+    // Freeze annotation badges anchored inside the deleted subtrees at their pre-delete
+    // on-canvas positions (FreePoint write-back per affected screen) BEFORE the nodes
+    // leave the tree — a dangling node anchor would fall back near the document origin.
+    val base = detachAnnotationsForNodeDelete(deletable)
+    val inMemory = base.deleteNodes(deletable)
 
     // Source write-back only when every deleted node shares one owning SLM source; a
     // cross-page selection (or an unresolvable owner) keeps the in-memory delete.
-    val ownerIndices = deletable.map { owningSourceIndex(it) }
+    val ownerIndices = deletable.map { base.owningSourceIndex(it) }
     val owner = ownerIndices.firstOrNull()
     if (owner == null || ownerIndices.any { it != owner }) return inMemory
 
@@ -546,9 +602,9 @@ private fun DesignEditorState.deleteNodesWriteBack(ids: Set<String>): DesignEdit
     val deletedSubtreeIds = deletable.flatMap { id ->
         document.nodeById(id)?.let { node -> listOf(node.id) + node.allDescendants().map { it.id } } ?: listOf(id)
     }.toSet()
-    val ownerIds = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
+    val ownerIds = base.compiledResults[owner].document?.pageTreeIds() ?: return inMemory
     val expected = ownerIds - deletedSubtreeIds
-    return withStructuralSource(deletable.first(), edits, inMemory, expected)
+    return base.withStructuralSource(deletable.first(), edits, inMemory, expected)
 }
 
 /**
@@ -924,6 +980,8 @@ private fun DesignEditorState.editSource(intent: DesignEditorIntent.EditSource):
     if (index !in sources.indices) return this
     val source = sources[index]
     if (source.content == intent.content) return this
+    // Annotation sidecars are not SLM: re-parse the review layer instead of compiling.
+    if (isAnnotationSidecarFileName(source.fileName)) return editAnnotationSidecarSource(index, intent.content)
 
     val nextSources = sources.toMutableList().apply {
         this[index] = source.copy(content = intent.content)
