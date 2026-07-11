@@ -1,9 +1,9 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
+import io.aequicor.visualization.editor.domain.editorSlmCompileOptions
 import io.aequicor.visualization.editor.domain.isAnnotationSidecarFileName
 import io.aequicor.visualization.editor.domain.mergeMissionDocuments
-import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.edit.DeleteSection
@@ -460,6 +460,9 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.SetAnnotationTool,
         -> state
 
+        // --- Diagram canvas (see DiagramEditing.kt) ---
+        is DiagramEditorIntent -> state.reduceDiagramIntent(intent)
+
         // --- Interaction checkpoints ---
         DesignEditorIntent.BeginInteraction -> state.beginInteraction()
         DesignEditorIntent.EndInteraction -> state.endInteraction()
@@ -893,7 +896,7 @@ private fun DesignEditorState.createScreenWriteBack(intent: DesignEditorIntent.C
     val fileName = "${page.id}.layout.md"
     val sourceLocale = document.i18n.sourceLocale.ifBlank { "en-US" }
     val text = ScreenSourceWriter.render(page, sourceLocale)
-    val options = SlmCompileOptions(fileName = fileName)
+    val options = editorSlmCompileOptions(fileName)
     val compiled = compileSlm(text, options)
     val compiledDocument = compiled.document ?: return inMemory
     // Id-preservation net: the rendered document must recompile to exactly the screen id we
@@ -983,7 +986,7 @@ private fun DesignEditorState.editSource(intent: DesignEditorIntent.EditSource):
     val nextSources = sources.toMutableList().apply {
         this[index] = source.copy(content = intent.content)
     }.toList()
-    val recompiled = compileSlm(intent.content, SlmCompileOptions(fileName = source.fileName))
+    val recompiled = compileSlm(intent.content, editorSlmCompileOptions(source.fileName))
 
     if (!recompiled.isSuccess || compiledResults.size != sources.size) {
         val diagnostics = sourceEditDiagnostics(index, recompiled.diagnostics)
@@ -1074,7 +1077,7 @@ private fun DesignEditorState.writeBackEdits(
     var preferredFailure: List<DesignDiagnostic> = emptyList()
     candidateSourceIndices(nodeId).forEachIndexed { attempt, index ->
         val source = sources[index]
-        val options = SlmCompileOptions(fileName = source.fileName)
+        val options = editorSlmCompileOptions(source.fileName)
         val result = applySlmEdits(source.content, edits, compiledResults[index], options)
         val newSource = result.newSource
         if (newSource == null) {
@@ -1394,7 +1397,7 @@ private fun DesignEditorState.candidateSourceIndices(nodeId: String): List<Int> 
 }
 
 /** The single SLM source index that owns [nodeId]'s page, or null when it can't be resolved. */
-private fun DesignEditorState.owningSourceIndex(nodeId: String): Int? {
+internal fun DesignEditorState.owningSourceIndex(nodeId: String): Int? {
     val pageId = document?.pageOfNode(nodeId)?.id ?: return null
     return compiledResults.indices.firstOrNull { index ->
         val compiledDocument = compiledResults[index].document ?: return@firstOrNull false
@@ -1437,7 +1440,7 @@ private fun DesignEditorState.withStructuralSource(
     if (sources.isEmpty() || sources.size != compiledResults.size) return inMemory
     val index = owningSourceIndex(ownerNodeId) ?: return inMemory
     val source = sources[index]
-    val options = SlmCompileOptions(fileName = source.fileName)
+    val options = editorSlmCompileOptions(source.fileName)
     val result = applySlmEdits(source.content, edits, compiledResults[index], options)
     val newSource = result.newSource ?: return inMemory
     val recompiled = compileSlm(newSource, options)

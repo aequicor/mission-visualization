@@ -3015,8 +3015,8 @@ internal object CnlParser {
             if (parts.isEmpty()) return null
             val parsed = parseSlmYaml("$key: { ${parts.joinToString(", ")} }", diagnostics, startLine = line)
             val value = (parsed as? YamlMap)?.entries?.get(key) ?: return null
-            val kind = TypedBlockKind.fromKey(key) ?: return null
-            return TypedEntry(kind, value, SlmSourceSpan(line, line))
+            if (TypedBlockKind.fromKey(key) == null) return null
+            return TypedEntry(key, value, SlmSourceSpan(line, line))
         }
     }
 }

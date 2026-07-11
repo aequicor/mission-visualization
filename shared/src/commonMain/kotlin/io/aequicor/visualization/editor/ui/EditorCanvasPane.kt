@@ -134,6 +134,9 @@ import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
+import io.aequicor.visualization.editor.presentation.DiagramSelection
+import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.DocumentRect
 import io.aequicor.visualization.editor.presentation.DeviceMode
 import io.aequicor.visualization.editor.presentation.EditorMode
@@ -205,6 +208,8 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import io.aequicor.visualization.engine.backend.compose.selectableNodeId
+import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.figures.Affine2D
 import io.aequicor.visualization.subsystems.figures.compose.FigurePreviewStyle
 import io.aequicor.visualization.subsystems.figures.compose.FigureShapePreview
@@ -456,6 +461,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         val primarySelectionRotation = primarySelectionTransform?.rotation ?: 0.0
         val primarySelectionLocked = primarySelectionId?.let { document?.nodeById(it)?.locked == true } ?: false
         val primarySelectionInVectorEdit = primarySelectionId != null && primarySelectionId == ws.vectorEditNodeId
+        val primarySelectionInDiagramEdit = primarySelectionId != null && primarySelectionId == ws.diagramEditNodeId
         val parentOfPrimarySelection = primarySelectionId
             ?.let { document?.parentNodeOf(it)?.id }
             ?.let { layout?.effectiveTransformFor(it) }
@@ -589,6 +595,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             hoverCursor = resolveHandleCursor(
                                                 liveDesign, liveLayout, viewport, change.position, ws.tool, latestSpaceHeld,
                                                 vectorEditNodeId = state.workspace.vectorEditNodeId,
+                                                diagramEditNodeId = state.workspace.diagramEditNodeId,
                                             )
                                         }
                                     }
@@ -654,6 +661,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val selectionLocked = pressDesign.selectedNodeIds.any { id -> pressDocument.nodeById(id)?.locked == true }
                             val isSingleSelection = pressDesign.selectedNodeIds.size == 1
                             val inVectorEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.vectorEditNodeId
+                            val inDiagramEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.diagramEditNodeId
                             val multiSelectionUnion = if (pressDesign.selectedNodeIds.size > 1) {
                                 selectionHandleBounds(pressLayout, pressDesign.selectedNodeIds)
                             } else {
@@ -669,7 +677,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
                             val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit
+                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
                             val handle = handleGeometryBox?.takeIf { handlesActive }
                                 ?.let { box -> rotatedHandleAt(box, handleRotation, viewport, start) }
                             val rotateHit = handle == null && isSingleSelection &&
@@ -1256,9 +1264,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 }
 
                 drawRotatedOutline(primarySelectionBox, primarySelectionRotation, viewport, colors.accent, width = 1.5f)
-                // Point-edit mode replaces object handles with path anchors (VectorEditOverlay),
-                // so suppress handles and the rotate affordance but keep the rest of the overlay.
-                if (!primarySelectionLocked && !primarySelectionInVectorEdit) {
+                // Point-edit mode replaces object handles with path anchors (VectorEditOverlay);
+                // diagram edit mode replaces them with the diagram element overlays — both
+                // suppress handles and the rotate affordance but keep the rest of the overlay.
+                if (!primarySelectionLocked && !primarySelectionInVectorEdit && !primarySelectionInDiagramEdit) {
                     drawRotatedHandles(primarySelectionBox, primarySelectionRotation, viewport, colors.accent)
                     if (!dragMoveActive && !rotateDragActive) {
                         val offsetDoc = (RotateHandleScreenOffsetPx / zoomPx).toDouble()
@@ -1309,6 +1318,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         if (ws.mode == EditorMode.Canvas) {
             // Vector edit mode: draw/drag path anchors of the target shape.
             VectorEditOverlay(state, layout, viewport, zoomPx)
+
+            // Diagram edit mode: selection/ports/waypoints overlays + element gestures.
+            DiagramEditOverlay(state, layout, viewport, zoomPx)
 
             // On-canvas arc handles for a single, unlocked ellipse authored with an arc/donut, while
             // the Select tool is active and it is not in point-edit mode.
@@ -2298,6 +2310,9 @@ private fun enterEditMode(state: MissionEditorStateHolder, nodeId: String) {
             state.dispatch(DesignEditorIntent.ConvertToEditableVector(nodeId))
             state.updateWorkspace { it.copy(vectorEditNodeId = nodeId, vectorSelectedPoint = null, vectorSelectedVertex = null) }
         }
+        kind is DesignNodeKind.Diagram -> state.updateWorkspace {
+            it.copy(diagramEditNodeId = nodeId, diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+        }
         else -> Unit
     }
 }
@@ -2335,6 +2350,22 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         key == Key.DirectionRight -> nudge(step, 0.0)
         key == Key.DirectionUp -> nudge(0.0, -step)
         key == Key.DirectionDown -> nudge(0.0, step)
+        // In diagram edit mode Delete/Backspace removes the selected diagram elements —
+        // and with nothing selected it must never fall through to deleting the diagram node.
+        (key == Key.Delete || key == Key.Backspace) && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            val ws = state.workspace
+            if (!ws.diagramSelection.isEmpty) {
+                state.dispatch(
+                    DiagramEditorIntent.DeleteDiagramElement(
+                        ws.diagramEditNodeId,
+                        ws.diagramSelection.elementIds,
+                        ws.diagramSelection.edgeIds,
+                    ),
+                )
+                state.updateWorkspace { it.copy(diagramSelection = DiagramSelection.Empty) }
+            }
+            true
+        }
         // In vector-edit mode Delete/Backspace removes the selected vertex, not the node.
         (key == Key.Delete || key == Key.Backspace) &&
             state.workspace.vectorEditNodeId.isNotBlank() && state.workspace.vectorSelectedVertex != null -> {
@@ -2365,10 +2396,18 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
             true
         }
+        // Enter likewise finishes a diagram edit session, keeping the diagram node selected.
+        (key == Key.Enter || key == Key.NumPadEnter) && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            state.updateWorkspace { it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty) }
+            true
+        }
         key == Key.Escape -> {
             when {
                 // A live drag takes priority: abort it (revert + no undo entry).
                 state.activeDrag -> state.requestCancelDrag()
+                state.workspace.diagramEditNodeId.isNotBlank() -> state.updateWorkspace {
+                    it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+                }
                 state.workspace.vectorEditNodeId.isNotBlank() -> state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                 state.designState.editingTextNodeId.isNotBlank() -> state.dispatch(DesignEditorIntent.SetEditingText(""))
                 state.workspace.isMainOnly -> state.updateWorkspace { it.copy(focusMode = FocusMode.Normal) }
@@ -2901,6 +2940,7 @@ private fun resolveHandleCursor(
     tool: EditorTool,
     spaceHeld: Boolean,
     vectorEditNodeId: String,
+    diagramEditNodeId: String,
 ): PointerIcon? {
     if (spaceHeld || tool != EditorTool.Select) return null
     val document = design.document ?: return null
@@ -2912,8 +2952,8 @@ private fun resolveHandleCursor(
         return cursorForResizeKind(resizeCursorKindForHandle(handle, 0.0))
     }
     val id = design.selectedNodeId.takeIf { it.isNotBlank() } ?: return null
-    // Point-edit mode replaces object handles with path anchors; no resize cursor there.
-    if (id == vectorEditNodeId) return null
+    // Point-edit / diagram-edit modes replace object handles; no resize cursor there.
+    if (id == vectorEditNodeId || id == diagramEditNodeId) return null
     if (document.nodeById(id)?.locked == true) return null
     val transform = layout?.effectiveTransformFor(id) ?: return null
     val handle = rotatedHandleAt(transform.box, transform.rotation, viewport, pos) ?: return null
@@ -3743,7 +3783,7 @@ private fun FloatingToolbar(
     // the annotation kinds into the comment flyout slot.
     val slots = listOf(EditorTool.Select, EditorTool.Frame, EditorTool.Pen, EditorTool.Text, EditorTool.Link, EditorTool.Code)
     Surface(
-        modifier = Modifier.height(50.dp).widthIn(max = 560.dp),
+        modifier = Modifier.height(50.dp).widthIn(max = 610.dp),
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
         border = BorderStroke(1.dp, colors.panelStroke),
@@ -3759,6 +3799,7 @@ private fun FloatingToolbar(
             ShapeToolFlyout(selected, lastShapeTool, onSelect)
             ToolbarButton(EditorTool.Pen, selected, onSelect)
             ToolbarButton(EditorTool.Text, selected, onSelect)
+            DiagramToolFlyout(state)
             AnnotationToolFlyout(state)
             ToolbarButton(EditorTool.Link, selected, onSelect)
             ToolbarButton(EditorTool.Code, selected, onSelect)
@@ -3826,6 +3867,63 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
                     onClick = {
                         expanded = false
                         activate(kind.annotationTool())
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The diagram toolbar slot: a flyout listing every diagram node type (basic shapes, table,
+ * container/swimlane, UML, flowchart, ER, BPMN), each row with its [DiagramNodePreview]
+ * mini glyph. Picking a type arms [DiagramTool.AddNode] on the targeted diagram node
+ * (the one being edited, the selected one, or the page's first diagram) and enters its
+ * edit mode; the next canvas press inside the diagram stamps the element.
+ */
+@Composable
+private fun DiagramToolFlyout(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
+    val ws = state.workspace
+    val active = ws.diagramEditNodeId.isNotBlank()
+    val shape = RoundedCornerShape(8.dp)
+    var expanded by remember { mutableStateOf(false) }
+    val previewStyle = editorDiagramPreviewStyle()
+    Box {
+        Box(
+            modifier = Modifier.size(36.dp)
+                .background(if (active) colors.accent else colors.controlSurface, shape)
+                .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                .clip(shape)
+                .clickable { expanded = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            EditorSvgIcon(
+                icon = EditorIcon.Diagram,
+                contentDescription = "Diagram tools",
+                modifier = Modifier.size(24.dp),
+                tint = if (active) Color.White else colors.ink,
+            )
+            Box(
+                modifier = Modifier.align(Alignment.BottomEnd).size(12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                EditorSvgIcon(
+                    icon = EditorIcon.ChevronDown,
+                    contentDescription = "Choose diagram node type",
+                    modifier = Modifier.size(10.dp),
+                    tint = if (active) Color.White else colors.mutedInk,
+                )
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DiagramNodePalette.forEach { entry ->
+                EditorDropdownMenuItem(
+                    text = entry.label,
+                    leadingContent = { DiagramNodePreview(entry.payload, previewStyle, Modifier.size(18.dp)) },
+                    onClick = {
+                        expanded = false
+                        armDiagramAddNode(state, entry.payload)
                     },
                 )
             }
@@ -4041,6 +4139,37 @@ private fun commitAddAnnotation(
         state.updateWorkspace { it.copy(inspectorTab = InspectorTab.Comments) }
     }
     state.dispatch(DesignEditorIntent.SetAnnotationTool(AnnotationTool.None))
+}
+
+/**
+ * Arms the diagram Add-node tool: targets the diagram already being edited, else the
+ * selected diagram node, else the page's first diagram node; no diagram — no-op.
+ */
+private fun armDiagramAddNode(state: MissionEditorStateHolder, payload: DiagramNodePayload) {
+    val design = state.designState
+    val document = design.document ?: return
+    val targetId = state.workspace.diagramEditNodeId.takeIf { it.isNotBlank() }
+        ?: design.selectedNodeId.takeIf { it.isNotBlank() && document.nodeById(it)?.kind is DesignNodeKind.Diagram }
+        ?: firstDiagramNodeId(document, design.selectedPageId)
+        ?: return
+    if (design.selectedNodeId != targetId) state.dispatch(DesignEditorIntent.SelectNode(targetId))
+    state.updateWorkspace {
+        it.copy(
+            tool = EditorTool.Select,
+            diagramEditNodeId = targetId,
+            diagramTool = DiagramTool.AddNode(payload),
+            diagramSelection = DiagramSelection.Empty,
+        )
+    }
+}
+
+/** Depth-first id of the first diagram node on [pageId], or null when the page has none. */
+private fun firstDiagramNodeId(document: DesignDocument, pageId: String): String? {
+    fun walk(node: io.aequicor.visualization.engine.ir.model.DesignNode): String? {
+        if (node.kind is DesignNodeKind.Diagram) return node.id
+        return node.children.firstNotNullOfOrNull { walk(it) }
+    }
+    return document.pageById(pageId)?.children?.firstNotNullOfOrNull { walk(it) }
 }
 
 @Composable

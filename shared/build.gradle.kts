@@ -120,6 +120,12 @@ kotlin {
                 // types cross into editor state/intents) + Compose overlay & previews (implementation).
                 api(projects.subsystems.figures)
                 implementation(projects.subsystems.figuresCompose)
+                // Diagrams subsystem: pure graph model/routing/editing ops (api — editor state and
+                // intents expose its types) + Compose canvas/preview renderer (implementation)
+                // + SLM parse/write-back adapter wired at the composition root.
+                api(projects.subsystems.diagrams)
+                implementation(projects.subsystems.diagramsCompose)
+                api(projects.subsystems.diagramsSlm)
                 // Typography subsystem: pure span algebra / selection contracts (api — reducer and
                 // intents expose its types) + Compose selection geometry and font provider.
                 api(projects.subsystems.typography)
