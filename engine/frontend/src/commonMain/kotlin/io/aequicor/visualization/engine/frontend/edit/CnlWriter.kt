@@ -197,6 +197,11 @@ internal object CnlWriter {
     }
 
     private fun textStylePlan(element: CnlElement, style: DesignTextStyle, lineIndex: LineIndex, line: Int): WritePlan {
+        // Variable axes and OpenType features render as `(key value)` groups with no single value
+        // span the surgical tiers can replace or append cleanly; defer to tier-3 whole-sentence
+        // re-emit, which regenerates `features (…)` / `axes (…)` from the patched node. Without a
+        // patched node the caller falls back in-memory rather than silently dropping them.
+        if (style.fontFeatures.isNotEmpty() || style.variableAxes.isNotEmpty()) return failed(line)
         val ops = mutableListOf<TextOp>()
         val appendPhrases = mutableListOf<String>()
 
