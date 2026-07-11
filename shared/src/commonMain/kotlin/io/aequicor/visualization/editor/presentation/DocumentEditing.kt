@@ -7,6 +7,7 @@ import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.SizingMode
 
 /**
@@ -117,6 +118,9 @@ internal fun DesignDocument.reorderSibling(nodeId: String, newIndex: Int): Desig
 /**
  * Moves [nodeId] to become a child of [newParentId] at [index]. No-op when the move
  * would create a cycle (target is the node or a descendant) or either end is missing.
+ * A node dropped into an Auto layout parent (row/column/grid) joins its flow — like
+ * Figma, and mirroring object creation — while a positioned drop into a free parent
+ * pins it at absolute coordinates.
  */
 internal fun DesignDocument.reparent(
     nodeId: String,
@@ -131,6 +135,10 @@ internal fun DesignDocument.reparent(
     val source = nodeById(nodeId) ?: return this
     val validParent = newParentId in pages.map { it.id } || nodeById(newParentId) != null
     if (!validParent) return this
+    val flowParent = when (nodeById(newParentId)?.layout?.mode) {
+        LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid -> true
+        else -> false
+    }
     val moving = source.copy(
         position = position ?: source.position,
         size = size ?: source.size,
@@ -144,7 +152,11 @@ internal fun DesignDocument.reparent(
         },
         rotation = rotation ?: source.rotation,
         constraints = if (position != null) DesignConstraints() else source.constraints,
-        layoutChild = if (position != null) source.layoutChild.copy(absolute = true) else source.layoutChild,
+        layoutChild = when {
+            flowParent -> source.layoutChild.copy(absolute = false)
+            position != null -> source.layoutChild.copy(absolute = true)
+            else -> source.layoutChild
+        },
     )
     return removeNodes(setOf(nodeId)).insertNode(newParentId, moving, index)
 }

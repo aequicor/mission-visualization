@@ -43,6 +43,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -51,6 +52,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -64,6 +66,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.aequicor.visualization.AppBuildInfo
@@ -81,21 +84,19 @@ import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
+import io.aequicor.visualization.editor.presentation.LayerDropTarget
+import io.aequicor.visualization.editor.presentation.LayerTreeRow
 import io.aequicor.visualization.editor.presentation.PendingFit
 import io.aequicor.visualization.editor.presentation.ScreenPreset
 import io.aequicor.visualization.editor.presentation.SourceTab
 import io.aequicor.visualization.editor.presentation.ZOrderMove
-import io.aequicor.visualization.editor.presentation.isSelfOrAncestor
-import io.aequicor.visualization.editor.presentation.parentNodeOf
-import io.aequicor.visualization.editor.presentation.siblingsOf
-import io.aequicor.visualization.editor.presentation.topLevelOwnerPage
+import io.aequicor.visualization.editor.presentation.resolveLayerDropTarget
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 /** Left column: Source / Resources / Layers tabs plus the Screens list. */
 @Composable
@@ -449,11 +450,27 @@ private fun LayersTree(state: MissionEditorStateHolder) {
         page?.let { flattenLayers(it, ws.collapsedLayers) } ?: emptyList()
     }
     val rowHeightPx = with(LocalDensity.current) { LayerRowHeight.toPx() }
-    // Drag-to-reorder / reparent state, local to the tree.
+    // Drag-to-reorder / reparent state, local to the tree. The pointer's absolute Y
+    // (from the top of the tree) resolves through the pure banding/index mapping in
+    // [resolveLayerDropTarget]: an insertion LINE between rows (before/after — including
+    // "after the last row" = the visual end of the list) or a container highlight.
+    val rowModels = remember(rows) {
+        rows.map { row ->
+            LayerTreeRow(
+                nodeId = row.node.id,
+                depth = row.depth,
+                isContainer = row.node.kind is io.aequicor.visualization.engine.ir.model.DesignNodeKind.Frame ||
+                    row.node.children.isNotEmpty(),
+            )
+        }
+    }
     var dragId by remember { mutableStateOf("") }
-    var dragFrom by remember { mutableStateOf(-1) }
-    var dragAccumY by remember { mutableStateOf(0f) }
-    var dragOver by remember { mutableStateOf(-1) }
+    var dragPointerY by remember { mutableStateOf(0f) }
+    var dropTarget by remember { mutableStateOf<LayerDropTarget?>(null) }
+    fun clearDrag() {
+        dragId = ""
+        dropTarget = null
+    }
     Column(
         modifier = Modifier.fillMaxSize().background(colors.paneSurface)
             .focusRequester(focusRequester)
@@ -469,24 +486,36 @@ private fun LayersTree(state: MissionEditorStateHolder) {
             }
             .verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
     ) {
+        val gap = dropTarget as? LayerDropTarget.InsertGap
         rows.forEachIndexed { index, row ->
             LayerRowView(
                 state = state,
                 row = row,
-                isDropTarget = dragId.isNotEmpty() && dragOver == index && row.node.id != dragId,
+                isDropTarget = dragId.isNotEmpty() &&
+                    (dropTarget as? LayerDropTarget.IntoContainer)?.rowIndex == index,
+                dropLineAbove = dragId.isNotEmpty() && gap?.gapIndex == index,
+                dropLineBelow = dragId.isNotEmpty() && index == rows.lastIndex && gap?.gapIndex == rows.size,
+                dropLineIndent = (8 + (gap?.depth ?: 0) * 16).dp,
                 onRequestFocus = { runCatching { focusRequester.requestFocus() } },
-                onDragStart = { dragId = row.node.id; dragFrom = index; dragAccumY = 0f; dragOver = index },
+                onDragStart = { localY ->
+                    dragId = row.node.id
+                    dragPointerY = index * rowHeightPx + localY
+                    dropTarget = null
+                },
                 onDrag = { dy ->
-                    if (dragFrom >= 0) {
-                        dragAccumY += dy
-                        dragOver = (dragFrom + (dragAccumY / rowHeightPx).roundToInt()).coerceIn(0, rows.size - 1)
+                    if (dragId.isNotEmpty()) {
+                        dragPointerY += dy
+                        dropTarget = state.designState.document?.let { doc ->
+                            resolveLayerDropTarget(doc, rowModels, dragId, (dragPointerY / rowHeightPx).toDouble())
+                        }
                     }
                 },
                 onDrop = {
-                    if (dragId.isNotEmpty() && dragOver in rows.indices) applyLayerDrop(state, rows, dragId, dragOver)
-                    dragId = ""; dragFrom = -1; dragOver = -1
+                    val target = dropTarget
+                    if (dragId.isNotEmpty() && target != null) applyLayerDrop(state, target, dragId)
+                    clearDrag()
                 },
-                onDragCancel = { dragId = ""; dragFrom = -1; dragOver = -1 },
+                onDragCancel = { clearDrag() },
             )
         }
         if (rows.isEmpty()) {
@@ -498,24 +527,15 @@ private fun LayersTree(state: MissionEditorStateHolder) {
 private val LayerRowHeight = 30.dp
 
 /**
- * Resolves a layers drag drop: dropping onto a frame/container reparents into it,
- * otherwise the node reorders next to the target within the target's parent. Invalid
- * drops (self / own descendant) are rejected here and again by the reducer.
+ * Dispatches a resolved layers drop: a gap inserts at its (already reverse-mapped)
+ * document index, a container drop nests into it at the paint-order front. Invalid
+ * drops never resolve (see [resolveLayerDropTarget]), and the reducer re-validates.
  */
-private fun applyLayerDrop(state: MissionEditorStateHolder, rows: List<LayerRow>, dragId: String, overIndex: Int) {
-    val doc = state.designState.document ?: return
-    val overNode = rows.getOrNull(overIndex)?.node ?: return
-    if (overNode.id == dragId) return
-    if (doc.isSelfOrAncestor(overNode.id, dragId)) return
-    val dragParent = doc.parentNodeOf(dragId)?.id ?: doc.topLevelOwnerPage(dragId)?.id
-    val overIsContainer = overNode.kind is io.aequicor.visualization.engine.ir.model.DesignNodeKind.Frame || overNode.children.isNotEmpty()
-    if (overIsContainer && overNode.id != dragParent) {
-        state.dispatch(DesignEditorIntent.ReparentNode(dragId, overNode.id))
-        return
+private fun applyLayerDrop(state: MissionEditorStateHolder, target: LayerDropTarget, dragId: String) {
+    when (target) {
+        is LayerDropTarget.IntoContainer -> state.dispatch(DesignEditorIntent.ReparentNode(dragId, target.nodeId))
+        is LayerDropTarget.InsertGap -> state.dispatch(DesignEditorIntent.ReparentNode(dragId, target.parentId, target.index))
     }
-    val overParent = doc.parentNodeOf(overNode.id)?.id ?: doc.topLevelOwnerPage(overNode.id)?.id ?: return
-    val targetIndex = doc.siblingsOf(overNode.id).indexOfFirst { it.id == overNode.id }
-    state.dispatch(DesignEditorIntent.ReparentNode(dragId, overParent, targetIndex))
 }
 
 @Composable
@@ -523,8 +543,11 @@ private fun LayerRowView(
     state: MissionEditorStateHolder,
     row: LayerRow,
     isDropTarget: Boolean,
+    dropLineAbove: Boolean,
+    dropLineBelow: Boolean,
+    dropLineIndent: Dp,
     onRequestFocus: () -> Unit,
-    onDragStart: () -> Unit,
+    onDragStart: (Float) -> Unit,
     onDrag: (Float) -> Unit,
     onDrop: () -> Unit,
     onDragCancel: () -> Unit,
@@ -548,6 +571,28 @@ private fun LayerRowView(
                 },
             )
             .then(if (isDropTarget) Modifier.border(BorderStroke(1.5.dp, colors.accent)) else Modifier)
+            .drawWithContent {
+                drawContent()
+                // Insertion line: the exact slot a dragged layer will land in, indented
+                // to the destination depth. Drawn on the row boundary (above, or below
+                // the last row for "end of the list").
+                if (dropLineAbove || dropLineBelow) {
+                    val y = if (dropLineAbove) 1.dp.toPx() else size.height - 1.dp.toPx()
+                    val indent = dropLineIndent.toPx()
+                    drawLine(
+                        color = colors.accent,
+                        start = Offset(indent, y),
+                        end = Offset(size.width - 8.dp.toPx(), y),
+                        strokeWidth = 2.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+                    drawCircle(
+                        color = colors.accent,
+                        radius = 3.dp.toPx(),
+                        center = Offset(indent, y),
+                    )
+                }
+            }
             .pointerInput(node.id) {
                 awaitPointerEventScope {
                     while (true) {
@@ -559,7 +604,7 @@ private fun LayerRowView(
             }
             .pointerInput(node.id) {
                 detectDragGestures(
-                    onDragStart = { onRequestFocus(); onDragStart() },
+                    onDragStart = { offset -> onRequestFocus(); onDragStart(offset.y) },
                     onDragEnd = { onDrop() },
                     onDragCancel = { onDragCancel() },
                 ) { change, dragAmount -> change.consume(); onDrag(dragAmount.y) }
