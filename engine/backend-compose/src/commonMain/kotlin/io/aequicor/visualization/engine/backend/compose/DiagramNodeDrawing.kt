@@ -10,7 +10,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
-import io.aequicor.visualization.subsystems.diagrams.routing.routeEdge
+import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
 
 /**
  * Caches edge routes per [DiagramGraph] so the (potentially obstacle-aware A*) router does
@@ -28,13 +28,7 @@ internal class DiagramRouteCache {
     fun routesFor(graph: DiagramGraph): Map<DiagramEdgeId, RoutedEdge> {
         routesByGraph[graph]?.let { return it }
         if (routesByGraph.size >= MAX_CACHED_DIAGRAM_GRAPHS) routesByGraph.clear()
-        val routes = buildMap {
-            graph.edges.forEach { edge ->
-                runCatching { routeEdge(graph, edge, RoutingOptions.Default) }
-                    .getOrNull()
-                    ?.let { put(edge.id, it) }
-            }
-        }
+        val routes = routeAllEdgesLenient(graph, RoutingOptions.Default)
         routesByGraph[graph] = routes
         return routes
     }

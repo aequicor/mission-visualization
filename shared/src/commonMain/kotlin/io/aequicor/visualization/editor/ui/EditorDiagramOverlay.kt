@@ -98,7 +98,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
-import io.aequicor.visualization.subsystems.diagrams.routing.routeEdge
+import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -502,11 +502,8 @@ internal fun DiagramEditOverlay(
                         return@awaitEachGesture
                     }
 
-                    val routedPoints = live.edges.mapNotNull { edge ->
-                        runCatching { routeEdge(live, edge, RoutingOptions.Default) }.getOrNull()
-                            ?.points
-                            ?.let { edge.id to it }
-                    }.toMap()
+                    val routedPoints = routeAllEdgesLenient(live, RoutingOptions.Default)
+                        .mapValues { (_, routed) -> routed.points }
                     val typedSelectedNodes = state.workspace.diagramSelection.elementIds.map(::DiagramNodeId).toSet()
                     val typedSelectedEdges = state.workspace.diagramSelection.edgeIds.map(::DiagramEdgeId).toSet()
                     val hit = hitTest(live, routedPoints, point, tolerance, typedSelectedNodes, typedSelectedEdges)
