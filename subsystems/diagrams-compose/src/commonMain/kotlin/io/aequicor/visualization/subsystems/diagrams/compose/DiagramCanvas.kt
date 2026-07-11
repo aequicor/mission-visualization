@@ -23,7 +23,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramLayerId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
-import io.aequicor.visualization.subsystems.diagrams.routing.routeEdge
+import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
 import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
 import io.aequicor.visualization.subsystems.typography.compose.FontProvider
 import io.aequicor.visualization.subsystems.typography.compose.NoFonts
@@ -63,13 +63,7 @@ fun rememberDiagramRoutes(
     graph: DiagramGraph,
     options: RoutingOptions = RoutingOptions.Default,
 ): Map<DiagramEdgeId, RoutedEdge> = remember(graph, options) {
-    buildMap {
-        graph.edges.forEach { edge ->
-            runCatching { routeEdge(graph, edge, options) }
-                .getOrNull()
-                ?.let { put(edge.id, it) }
-        }
-    }
+    routeAllEdgesLenient(graph, options)
 }
 
 /**
