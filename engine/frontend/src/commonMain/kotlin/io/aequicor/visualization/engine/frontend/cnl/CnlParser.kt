@@ -1298,16 +1298,15 @@ internal object CnlParser {
     }
 
     /**
-     * Formats a grid-track / gap / min value for the enclosing `{ … }` flow mapping. A `$var` /
-     * `$prop.x` token ref is written verbatim so the reader sees a [Bindable.VarRef]/[Bindable.PropRef];
-     * a `{{expr}}` binding (optionally `fr`-suffixed) is quoted so the `{` does not open a nested
-     * mapping; literals (`200`, `1fr`, `hug`) pass through unchanged.
+     * Formats a grid-track / gap / min value for the enclosing `{ … }` flow mapping. A braceless
+     * `$var` / `$prop.x` token ref is written verbatim so the reader sees a [Bindable.VarRef] /
+     * [Bindable.PropRef]. Any value carrying braces — a `{{expr}}` binding, a `{{expr}}fr` flex
+     * binding, or a braced flex ref `${id}fr` — is quoted so its `{`/`}` neither open nor close a
+     * nested mapping. Literals (`200`, `1fr`, `hug`) and braceless refs (`$rail`, `$railfr`) pass
+     * through unchanged.
      */
-    private fun trackValueYaml(text: String): String = when {
-        text.startsWith("$") -> text
-        text.startsWith("{{") -> yamlString(text)
-        else -> text
-    }
+    private fun trackValueYaml(text: String): String =
+        if (text.any { it == '{' || it == '}' }) yamlString(text) else text
 
     /** `place ( column N row N columnSpan N rowSpan N )` → `layout.placement`. */
     private fun consumePlace(

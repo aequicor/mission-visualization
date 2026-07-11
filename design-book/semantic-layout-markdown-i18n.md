@@ -212,7 +212,7 @@ Keyword `effect`, одна `effect ( … )` на эффект.
 - `columns (count N track <track>)` или `columns (tracks (<track> …))` — 55.
 - `rows (…)` — 56; implicit `rows (auto track <track> min N)`.
 - Track-слово: `N` (fixed), `Nfr` (flex), `hug`. count/track/min принимают `$var`/`{{expr}}`/`$prop.x`.
-- **⚠ EDGE #3 — $-ref/fr grid-track:** `GridTrack.Flex` рендерит `${token}fr`; VarRef/DataRef flex-track эмитит `$idfr`/`{{expr}}fr` — неоднозначно/неразбираемо на reparse.
+- **Bound flex-track:** flex-вес с ref-привязкой эмитит **braced**-форму `${id}fr` / `${prop.x}fr` (DataRef — `{{expr}}fr`), а **bare** `$id` / `$prop.x` — всегда Fixed, даже если id кончается на `fr` (`$railfr` = Fixed ref к `railfr`). Так `Fixed(VarRef)` и `Flex(VarRef)` однозначно различимы на reparse (S28 fix; ранее EDGE #3).
 - `place (column N row N columnSpan N rowSpan N)` — 57 (дефолт 0/0/1/1 опущены).
 - `guides (horizontal N) (vertical N) …` — 58.
 - `grids (columns|rows|grid count N size N gutter N margin N alignment start|center|end|stretch color #hex visible false) …` — 59.
@@ -295,11 +295,12 @@ Keyword `effect`, одна `effect ( … )` на эффект.
 - `# Styles` + строки `Paint|TextStyle|Effect|Grid <id> <cnl-properties>`
 - `# Component: <title> <id/component-name/set/axis/prop phrases>` + дочернее subtree. Definition-side keywords (`component-name`, `set <id>`, `axis <name> (values)`, `prop <name> (text|boolean|instanceSwap|variant|slot|number|string|dataBinding default … preferred (…) min N max N allow (…))`) эмитит `emitComponentDefinition`.
 
-### 3 flagged edge-ограничения (сводка)
+### 2 flagged edge-ограничения (сводка)
 
 1. **renderLinks emit order** — `link`-спаны эмитятся отсортированными по `(start,end)`, не в IR-порядке (spans сохраняют IR-порядок); авторский порядок links может перемешаться на round-trip.
 2. **fill-paint focal ref** — `image`/`video` fill `focus (x y)` рендерит литерал `num(orZero)`, так что bound-focal (`$var`/`{{expr}}`) теряется как `0`; только *media*-узловые focal-привязки round-trip'ятся.
-3. **$-ref/fr grid-track** — bound `GridTrack.Flex` эмитит `$idfr`/`{{expr}}fr`, неоднозначно/неразбираемо на reparse.
+
+Закрыто: **$-ref/fr grid-track** — bound `GridTrack.Flex` теперь эмитит braced `${id}fr`, bare `$id`/`$prop.x` всегда Fixed; `Fixed`/`Flex` ref-треки однозначны на reparse (см. Grid 55–59).
 
 ## Уровни полноты
 
