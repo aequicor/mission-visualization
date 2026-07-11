@@ -72,7 +72,10 @@
    semantic extraction, language-neutral IR and i18n resources.
 21. [Аудит полноты SLM относительно Figma-фич](slm-feature-completeness-audit.md) -
    проверка, может ли SLM описать любой Figma screen.
-22. [Источники](sources.md) - официальные ссылки Figma.
+22. [Формат sidecar-файла аннотаций](annotations-sidecar-format.md) -
+   review-слой note/issue: грамматика заголовка, тело/картинка, толерантный
+   парсер, round-trip writer и хирургический патчер.
+23. [Источники](sources.md) - официальные ссылки Figma.
 
 ## Большая карта фич
 
