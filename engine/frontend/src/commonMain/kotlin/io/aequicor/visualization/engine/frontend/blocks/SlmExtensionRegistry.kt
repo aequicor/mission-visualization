@@ -1,5 +1,7 @@
 package io.aequicor.visualization.engine.frontend.blocks
 
+import io.aequicor.visualization.engine.ir.model.DesignNode
+
 /**
  * Immutable set of [TypedBlockExtension]s keyed by block kind, passed to the
  * compiler via `SlmCompileOptions.extensions`. The default everywhere is
@@ -20,6 +22,14 @@ class SlmExtensionRegistry private constructor(
 
     /** The extension registered for [kind], or null. */
     fun find(kind: String): TypedBlockExtension<*>? = extensionsByKind[kind]
+
+    /**
+     * Canonical block texts for every registered extension whose payload [node] carries
+     * ([TypedBlockExtension.payloadOf]), in registration order. Structural write-back
+     * appends these under the node's freshly inserted heading section.
+     */
+    fun blockTextsFor(node: DesignNode): List<String> =
+        extensionsByKind.values.mapNotNull { it.blockTextOrNull(node) }
 
     companion object {
         /** No extensions; the compiler behaves exactly as before the registry. */

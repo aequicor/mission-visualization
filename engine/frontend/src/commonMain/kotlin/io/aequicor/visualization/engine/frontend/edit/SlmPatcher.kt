@@ -2,6 +2,7 @@ package io.aequicor.visualization.engine.frontend.edit
 
 import io.aequicor.visualization.engine.frontend.SlmCompileOptions
 import io.aequicor.visualization.engine.frontend.SlmCompileResult
+import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.fnv1a64
@@ -24,9 +25,10 @@ fun applySlmEdit(
     edit: SlmEdit,
     compiled: SlmCompileResult,
     patchedNode: DesignNode? = null,
+    options: SlmCompileOptions = SlmCompileOptions(),
 ): SlmEditResult {
     staleResult(source, compiled)?.let { return it }
-    return applyResolved(source, edit, compiled.editIndex, DefaultFileName, patchedNode)
+    return applyResolved(source, edit, compiled.editIndex, DefaultFileName, patchedNode, options.extensions)
 }
 
 /**
@@ -50,7 +52,7 @@ fun applySlmEdits(
     var currentIndex = compiled.editIndex
     val diagnostics = mutableListOf<DesignDiagnostic>()
     edits.forEachIndexed { index, edit ->
-        val result = applyResolved(currentSource, edit, currentIndex, options.fileName, patchedNode)
+        val result = applyResolved(currentSource, edit, currentIndex, options.fileName, patchedNode, options.extensions)
         diagnostics += result.diagnostics
         currentSource = result.newSource
             ?: return SlmEditResult(newSource = null, appliedRange = null, diagnostics = diagnostics)
@@ -96,6 +98,7 @@ private fun applyResolved(
     editIndex: SlmEditIndex,
     fileName: String,
     patchedNode: DesignNode? = null,
+    extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
 ): SlmEditResult {
     val diagnostics = DiagnosticCollector(fileName)
 
@@ -116,7 +119,7 @@ private fun applyResolved(
         anchorLine = cnlSpan.startLine
         CnlWriter.plan(source, cnlSpan, edit, lineIndex, patchedNode)
     } else if (edit is StructuralSlmEdit) {
-        structuralPlan(edit, editIndex, source, lineIndex, fileName)
+        structuralPlan(edit, editIndex, source, lineIndex, fileName, extensions)
     } else {
         WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), anchorLine)
     }
@@ -153,8 +156,9 @@ private fun structuralPlan(
     source: String,
     lineIndex: LineIndex,
     fileName: String,
+    extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
 ): WritePlan {
-    val writer = SectionWriter(source, lineIndex, fileName)
+    val writer = SectionWriter(source, lineIndex, fileName, extensions)
     return when (edit) {
         is DeleteSection -> {
             val span = editIndex.anchorOwners[edit.nodeId]

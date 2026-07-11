@@ -158,6 +158,24 @@ sealed interface DesignEditorIntent {
     /** Creates a new screen (top-level frame + its own page). */
     data class CreateScreen(val preset: ScreenPreset, val title: String) : DesignEditorIntent
 
+    /**
+     * Creates a new diagram canvas node under [parentId] at parent-relative (x,y) with (w,h),
+     * seeded with one diagram element of [payload] type centered in the canvas (an empty
+     * `diagram:` block would not round-trip, and the picked shape appearing immediately is the
+     * expected UX). Structural write-back emits the section with its `diagram:` typed block.
+     */
+    data class CreateDiagramObject(
+        val parentId: String,
+        val payload: io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload,
+        val x: Double,
+        val y: Double,
+        val width: Double,
+        val height: Double,
+        val elementWidth: Double = 160.0,
+        val elementHeight: Double = 80.0,
+        val elementLabel: String? = null,
+    ) : DesignEditorIntent
+
     // --- Source ------------------------------------------------------------
 
     /** Replaces one authored SLM source file and recompiles it for the live preview. */

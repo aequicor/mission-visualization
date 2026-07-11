@@ -85,6 +85,12 @@ data class EditorWorkspaceState(
      * graph edits cannot resurrect a stale selection.
      */
     val diagramSelection: DiagramSelection = DiagramSelection.Empty,
+    /**
+     * Live palette→canvas diagram-shape drag (draw.io-style), or null when idle. Window
+     * coordinates because the palette (inspector pane) and the canvas are sibling
+     * composables; the drop handler maps window → canvas-local → document coordinates.
+     */
+    val diagramPaletteDrag: DiagramPaletteDrag? = null,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -120,6 +126,15 @@ sealed interface DiagramTool {
 
     data class DrawEdge(val relation: DiagramRelation = DiagramRelation.Plain) : DiagramTool
 }
+
+/** An in-flight palette→canvas diagram-shape drag: payload + stamp size + pointer (window px). */
+data class DiagramPaletteDrag(
+    val payload: DiagramNodePayload,
+    val width: Double,
+    val height: Double,
+    val windowX: Float,
+    val windowY: Float,
+)
 
 /** Selected elements of the diagram graph being edited (ids are graph-local strings). */
 data class DiagramSelection(

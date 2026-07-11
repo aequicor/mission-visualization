@@ -12,6 +12,11 @@ import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.figures.DesignViewBox
 import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.subsystems.figures.VectorNetwork
@@ -83,6 +88,44 @@ object EditorNodeFactory {
             layoutChild = io.aequicor.visualization.engine.ir.model.DesignLayoutChild(absolute = true),
         )
         return decorate(base, kind)
+    }
+
+    /**
+     * New diagram canvas node seeded with one diagram element of [payload] type centered in
+     * the canvas. Seeding matters twice: the picked shape appears immediately (draw.io UX) and
+     * a non-empty graph guarantees the structural write-back emits a round-trippable
+     * `diagram:` block (an empty block would parse back to nothing).
+     */
+    fun newDiagram(
+        document: DesignDocument?,
+        payload: DiagramNodePayload,
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+        elementWidth: Double,
+        elementHeight: Double,
+        elementLabel: String? = null,
+    ): DesignNode {
+        val seed = DiagramNode(
+            id = DiagramNodeId("node-1"),
+            x = ((width - elementWidth) / 2).coerceAtLeast(0.0),
+            y = ((height - elementHeight) / 2).coerceAtLeast(0.0),
+            width = elementWidth.coerceAtLeast(0.0),
+            height = elementHeight.coerceAtLeast(0.0),
+            payload = payload,
+            labels = elementLabel?.let { listOf(DiagramLabel(it)) }.orEmpty(),
+        )
+        return DesignNode(
+            id = uniqueId(document, "diagram"),
+            type = "diagram",
+            kind = DesignNodeKind.Diagram(DiagramGraph(nodes = listOf(seed))),
+            name = "Diagram",
+            position = DesignPoint(x, y),
+            size = DesignSize(width, height),
+            sizing = DesignSizing(SizingMode.Fixed, SizingMode.Fixed),
+            layoutChild = io.aequicor.visualization.engine.ir.model.DesignLayoutChild(absolute = true),
+        )
     }
 
     /** New screen = a page holding a single root frame sized to the preset. */

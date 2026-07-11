@@ -39,7 +39,10 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isAltPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -48,6 +51,7 @@ import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramSelection
 import io.aequicor.visualization.editor.presentation.DiagramTool
+import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
@@ -256,6 +260,7 @@ internal fun DiagramEditOverlay(
     layout: LayoutBox?,
     viewport: CanvasViewport,
     zoomPx: Float,
+    panActive: Boolean = false,
 ) {
     val colors = LocalEditorColors.current
     val editId = state.workspace.diagramEditNodeId
@@ -267,6 +272,8 @@ internal fun DiagramEditOverlay(
     val routes = rememberDiagramRoutes(graph)
     val latestViewport by rememberUpdatedState(viewport)
     val latestZoomPx by rememberUpdatedState(zoomPx)
+    val latestPanActive by rememberUpdatedState(panActive)
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
 
     val selection = state.workspace.diagramSelection
     val selectedNodeIds = selection.elementIds.map(::DiagramNodeId).toSet()
@@ -326,11 +333,43 @@ internal fun DiagramEditOverlay(
         Modifier
             .fillMaxSize()
             .pointerInput(editId) {
-                // Hover tracking for the directional arrows / port hints.
+                // Hover tracking for the directional arrows / port hints. This overlay sits ON TOP
+                // of the canvas gesture surface (a sibling, not a child), so pointer events over it
+                // never reach the canvas pane's handlers — viewport scroll gestures (wheel pan,
+                // ctrl/meta-wheel zoom) must be replayed here or zoom/pan dies in edit mode.
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
                         when (event.type) {
+                            PointerEventType.Scroll -> {
+                                val change = event.changes.firstOrNull() ?: continue
+                                val modifiers = event.keyboardModifiers
+                                if (state.workspace.pendingZoomTo != null) {
+                                    state.updateWorkspace { it.copy(pendingZoomTo = null) }
+                                }
+                                if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
+                                    val factor = zoomFactorForScroll(-change.scrollDelta.y)
+                                    if (factor != 1f) {
+                                        state.updateWorkspace {
+                                            it.copy(
+                                                viewport = it.viewport.zoomAround(
+                                                    change.position.x,
+                                                    change.position.y,
+                                                    factor,
+                                                    density,
+                                                ),
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    val scrollX = if (modifiers.isShiftPressed) change.scrollDelta.y else change.scrollDelta.x
+                                    val scrollY = if (modifiers.isShiftPressed) 0f else change.scrollDelta.y
+                                    state.updateWorkspace {
+                                        it.copy(viewport = it.viewport.panByScreenDelta(-scrollX, -scrollY, density))
+                                    }
+                                }
+                                change.consume()
+                            }
                             PointerEventType.Move -> {
                                 val change = event.changes.firstOrNull() ?: continue
                                 if (!change.pressed) {
@@ -356,6 +395,30 @@ internal fun DiagramEditOverlay(
             .pointerInput(editId) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
+                    // Pan gestures (space-drag / middle-button) belong to the canvas viewport, not
+                    // the diagram. The canvas pane's pan handler never sees this press (the overlay
+                    // covers it as a top sibling), so the overlay drives the same viewport pan here.
+                    if (latestPanActive || currentEvent.buttons.isTertiaryPressed) {
+                        down.consume()
+                        var last = down.position
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            if (change.changedToUp()) {
+                                change.consume()
+                                break
+                            }
+                            val delta = change.position - last
+                            last = change.position
+                            if (delta != Offset.Zero) {
+                                state.updateWorkspace {
+                                    it.copy(viewport = it.viewport.panByScreenDelta(delta.x, delta.y, density))
+                                }
+                            }
+                            change.consume()
+                        }
+                        return@awaitEachGesture
+                    }
                     val live = liveGraph() ?: return@awaitEachGesture
                     val liveBox = state.artboardLayout?.findBySourceId(editId) ?: return@awaitEachGesture
                     val zoom = latestZoomPx
@@ -928,7 +991,7 @@ private fun waypointInsertionIndex(
 }
 
 /** Fresh graph-unique id `prefix-N` across nodes, edges, layers and groups. */
-private fun mintDiagramId(graph: DiagramGraph, prefix: String): String {
+internal fun mintDiagramId(graph: DiagramGraph, prefix: String): String {
     val taken = buildSet {
         graph.nodes.forEach { add(it.id.value) }
         graph.edges.forEach { add(it.id.value) }

@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -44,6 +46,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -65,6 +71,7 @@ import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramSelection
 import io.aequicor.visualization.editor.presentation.DiagramTextFormat
+import io.aequicor.visualization.editor.presentation.DiagramPaletteDrag
 import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.EditorLayoutMode
 import io.aequicor.visualization.editor.presentation.EffectOp
@@ -190,7 +197,16 @@ fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Mo
                     onSelect = { tab -> state.updateWorkspace { it.copy(inspectorTab = tab) } },
                 )
                 when (state.workspace.inspectorTab) {
-                    InspectorTab.Design -> InspectorDesign(state)
+                    // A focused diagram node turns the Design pane into the dedicated
+                    // draw.io-style diagram editor (palette / outline / properties / actions).
+                    InspectorTab.Design -> {
+                        val node = state.designState.selectedNode
+                        if (node?.kind is DesignNodeKind.Diagram) {
+                            InspectorDiagramEditor(state, node)
+                        } else {
+                            InspectorDesign(state)
+                        }
+                    }
                     InspectorTab.Prototype -> InspectorPrototype(state)
                     InspectorTab.Comments -> InspectorComments(state)
                 }
@@ -3529,6 +3545,537 @@ private fun DiagramSection(state: MissionEditorStateHolder, node: DesignNode, vi
         DiagramCanvasActions(state, nodeId, locked)
     }
 }
+
+// --- Draw.io-style diagram editor pane ------------------------------------------
+
+/**
+ * The dedicated diagram editor the Design tab becomes while a diagram node is focused
+ * (draw.io-style): a grouped shape palette (click = insert at the canvas center with a
+ * cascade offset), an outline of every element and edge (select / delete), the contextual
+ * properties of the current selection and the diagram-level actions (auto-layout,
+ * templates, Mermaid/PlantUML import). Everything dispatches the same [DiagramEditorIntent]s
+ * as the on-canvas overlay, so each edit persists through the `diagram:` write-back.
+ */
+@Composable
+private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: DesignNode) {
+    val colors = LocalEditorColors.current
+    val kind = node.kind as? DesignNodeKind.Diagram ?: return
+    val nodeId = node.id
+    val graph = kind.graph
+    val ws = state.workspace
+    val locked = state.designState.isNodeLocked(nodeId)
+    val editing = ws.diagramEditNodeId == nodeId
+    val selection = if (editing) ws.diagramSelection else DiagramSelection.Empty
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        // Header: diagram identity + edit-mode toggle.
+        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditorSvgIcon(EditorIcon.Diagram, contentDescription = null, modifier = Modifier.size(18.dp), tint = colors.ink)
+                Text(
+                    node.name.ifBlank { "Diagram" },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.ink,
+                    modifier = Modifier.weight(1f),
+                )
+                TinyButton(if (editing) "Done" else "Edit", enabled = !locked) {
+                    state.updateWorkspace {
+                        if (editing) {
+                            it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+                        } else {
+                            it.copy(diagramEditNodeId = nodeId, diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Shape palette, grouped by family; a click inserts at the canvas center.
+        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+            InspectorSubLabel("Shapes")
+            Spacer(Modifier.height(8.dp))
+            DiagramPaletteGrid(state, nodeId, locked)
+        }
+
+        // Mini-map: graph overview + the live viewport rectangle; click/drag pans the canvas.
+        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+            InspectorSubLabel("Map")
+            Spacer(Modifier.height(6.dp))
+            DiagramMiniMap(state, nodeId, graph)
+        }
+
+        // Outline: every element and edge, selectable and deletable.
+        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+            InspectorSubLabel("Outline")
+            Spacer(Modifier.height(6.dp))
+            DiagramOutline(state, nodeId, graph, selection, locked)
+        }
+
+        // Contextual properties of the selected element / edge.
+        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+            val selectedElement = selection.elementIds.singleOrNull()?.let { graph.nodeById(DiagramNodeId(it)) }
+            val selectedEdge = selection.edgeIds.singleOrNull()?.let { graph.edgeById(DiagramEdgeId(it)) }
+            when {
+                selectedElement != null -> DiagramNodeControls(state, nodeId, selectedElement, locked)
+                selectedEdge != null -> DiagramEdgeControls(state, nodeId, selectedEdge, locked)
+                else -> MutedNote("Select an element in the outline or on the canvas.")
+            }
+        }
+
+        // Diagram-level actions: auto-layout, templates, text import.
+        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+            DiagramCanvasActions(state, nodeId, locked)
+        }
+    }
+}
+
+/** Palette families shown as labeled groups, in [DiagramNodePalette] order. */
+private fun diagramPaletteFamily(label: String): String = when {
+    label.startsWith("UML") -> "UML"
+    label.startsWith("Flowchart") -> "Flowchart"
+    label.startsWith("ER") -> "ER"
+    label.startsWith("BPMN") -> "BPMN"
+    label in setOf("Table", "Container", "Swimlane") -> "Structure"
+    else -> "Basic"
+}
+
+/**
+ * The clickable shape palette: one bordered cell per [DiagramNodePalette] entry with its
+ * mini glyph, chunked into rows, grouped under family sub-labels. A click stamps the shape
+ * into the diagram at its center (cascade offset per existing element count), enters edit
+ * mode and selects the fresh element.
+ */
+@Composable
+private fun DiagramPaletteGrid(state: MissionEditorStateHolder, nodeId: String, locked: Boolean) {
+    val colors = LocalEditorColors.current
+    val previewStyle = editorDiagramPreviewStyle()
+    val groups = DiagramNodePalette.groupBy { diagramPaletteFamily(it.label) }
+    groups.forEach { (family, entries) ->
+        Text(family, style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
+        Spacer(Modifier.height(4.dp))
+        entries.chunked(5).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                row.forEach { entry -> DiagramPaletteCell(state, nodeId, entry, locked, previewStyle) }
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/**
+ * One palette cell: a tap inserts the shape at the diagram center; a drag carries it onto
+ * the canvas draw.io-style — the workspace tracks the pointer in window coordinates (the
+ * canvas is a sibling composable), the canvas draws the ghost, and release drops the
+ * element at the pointer ([commitDiagramPaletteDrop]).
+ */
+@Composable
+private fun DiagramPaletteCell(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    entry: DiagramPaletteEntry,
+    locked: Boolean,
+    previewStyle: io.aequicor.visualization.subsystems.diagrams.compose.DiagramPreviewStyle,
+) {
+    val colors = LocalEditorColors.current
+    var cellOrigin by remember { mutableStateOf(Offset.Zero) }
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .background(colors.controlSurface, RoundedCornerShape(6.dp))
+            .border(1.dp, colors.controlStroke, RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(6.dp))
+            .onGloballyPositioned { cellOrigin = it.boundsInWindow().topLeft }
+            .pointerInput(entry.label, locked) {
+                if (locked) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    val slop = viewConfiguration.touchSlop
+                    var dragging = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: break
+                        if (change.changedToUp()) {
+                            change.consume()
+                            break
+                        }
+                        if (!dragging && (change.position - down.position).getDistance() >= slop) dragging = true
+                        if (dragging) {
+                            val window = cellOrigin + change.position
+                            state.updateWorkspace {
+                                it.copy(
+                                    diagramPaletteDrag = DiagramPaletteDrag(
+                                        payload = entry.payload,
+                                        width = entry.width,
+                                        height = entry.height,
+                                        windowX = window.x,
+                                        windowY = window.y,
+                                    ),
+                                )
+                            }
+                        }
+                        change.consume()
+                    }
+                    if (dragging) {
+                        commitDiagramPaletteDrop(state)
+                        state.updateWorkspace { it.copy(diagramPaletteDrag = null) }
+                    } else {
+                        insertDiagramElementFromPalette(state, nodeId, entry)
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        DiagramNodePreview(entry.payload, previewStyle, Modifier.size(24.dp))
+    }
+}
+
+/**
+ * Drops the in-flight palette drag at the pointer: inside an existing diagram box the
+ * element lands at that graph point; over plain canvas a new diagram node is created
+ * centered on the drop (persisted via the structural `diagram:` write-back); outside the
+ * canvas the drag is discarded.
+ */
+private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
+    val drag = state.workspace.diagramPaletteDrag ?: return
+    val bounds = state.canvasExportBounds ?: return
+    val localX = drag.windowX - bounds.left.toFloat()
+    val localY = drag.windowY - bounds.top.toFloat()
+    if (localX < 0f || localY < 0f || localX > bounds.width || localY > bounds.height) return
+    val layout = state.artboardLayout ?: return
+    val document = state.designState.document ?: return
+    val density = bounds.density
+    val viewport = state.workspace.viewport
+    val docX = viewport.toDocumentX(localX, density)
+    val docY = viewport.toDocumentY(localY, density)
+
+    // Topmost diagram box under the drop point wins; otherwise a fresh diagram is created.
+    val target = layout.allBoxes().lastOrNull { box ->
+        document.nodeById(box.node.sourceId)?.kind is DesignNodeKind.Diagram &&
+            docX >= box.x && docX <= box.right && docY >= box.y && docY <= box.bottom
+    }
+    if (target != null) {
+        val targetId = target.node.sourceId
+        val graph = (document.nodeById(targetId)?.kind as? DesignNodeKind.Diagram)?.graph ?: return
+        val elementId = mintDiagramId(graph, "node")
+        state.dispatch(
+            DiagramEditorIntent.AddDiagramNode(
+                nodeId = targetId,
+                elementId = elementId,
+                payload = drag.payload,
+                x = docX - target.x - drag.width / 2,
+                y = docY - target.y - drag.height / 2,
+                width = drag.width,
+                height = drag.height,
+            ),
+        )
+        state.updateWorkspace {
+            it.copy(
+                diagramEditNodeId = targetId,
+                diagramTool = DiagramTool.Select,
+                diagramSelection = DiagramSelection(elementIds = setOf(elementId)),
+            )
+        }
+        if (state.designState.selectedNodeId != targetId) state.dispatch(DesignEditorIntent.SelectNode(targetId))
+    } else {
+        // Root-frame-relative placement centered on the drop point (the layout root IS the frame).
+        state.dispatch(
+            DesignEditorIntent.CreateDiagramObject(
+                parentId = layout.node.sourceId,
+                payload = drag.payload,
+                x = (docX - layout.x - NewDiagramWidth / 2).coerceAtLeast(0.0),
+                y = (docY - layout.y - NewDiagramHeight / 2).coerceAtLeast(0.0),
+                width = NewDiagramWidth,
+                height = NewDiagramHeight,
+                elementWidth = drag.width,
+                elementHeight = drag.height,
+            ),
+        )
+        val newId = state.designState.selectedNodeId
+        if (newId.isNotBlank() && state.designState.document?.nodeById(newId)?.kind is DesignNodeKind.Diagram) {
+            state.updateWorkspace {
+                it.copy(
+                    diagramEditNodeId = newId,
+                    diagramTool = DiagramTool.Select,
+                    diagramSelection = DiagramSelection(elementIds = setOf("node-1")),
+                )
+            }
+        }
+    }
+}
+
+/** Stamps [entry]'s shape into the diagram center (cascading), selects it in edit mode. */
+private fun insertDiagramElementFromPalette(
+    state: MissionEditorStateHolder,
+    diagramNodeId: String,
+    entry: DiagramPaletteEntry,
+) {
+    val document = state.designState.document ?: return
+    val node = document.nodeById(diagramNodeId) ?: return
+    val graph = (node.kind as? DesignNodeKind.Diagram)?.graph ?: return
+    val cascade = (graph.nodes.size % 6) * 24.0
+    val elementId = mintDiagramId(graph, "node")
+    state.dispatch(
+        DiagramEditorIntent.AddDiagramNode(
+            nodeId = diagramNodeId,
+            elementId = elementId,
+            payload = entry.payload,
+            x = (((node.size.width ?: entry.width) - entry.width) / 2 + cascade).coerceAtLeast(0.0),
+            y = (((node.size.height ?: entry.height) - entry.height) / 2 + cascade).coerceAtLeast(0.0),
+            width = entry.width,
+            height = entry.height,
+        ),
+    )
+    state.updateWorkspace {
+        it.copy(
+            diagramEditNodeId = diagramNodeId,
+            diagramTool = DiagramTool.Select,
+            diagramSelection = DiagramSelection(elementIds = setOf(elementId)),
+        )
+    }
+}
+
+/** Outline of the diagram: selectable, deletable rows for every element and edge. */
+@Composable
+private fun DiagramOutline(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    graph: io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph,
+    selection: DiagramSelection,
+    locked: Boolean,
+) {
+    val colors = LocalEditorColors.current
+    val previewStyle = editorDiagramPreviewStyle()
+    if (graph.nodes.isEmpty() && graph.edges.isEmpty()) {
+        MutedNote("The diagram is empty — add a shape from the palette above.")
+        return
+    }
+
+    fun select(elements: Set<String> = emptySet(), edges: Set<String> = emptySet()) {
+        state.updateWorkspace {
+            it.copy(
+                diagramEditNodeId = nodeId,
+                diagramTool = DiagramTool.Select,
+                diagramSelection = DiagramSelection(elementIds = elements, edgeIds = edges),
+            )
+        }
+    }
+
+    graph.nodes.forEach { element ->
+        val elementId = element.id.value
+        val selected = elementId in selection.elementIds
+        DiagramOutlineRow(
+            selected = selected,
+            title = element.labels.firstOrNull()?.text?.takeIf { it.isNotBlank() }
+                ?: diagramPayloadTypeLabel(element.payload),
+            subtitle = elementId,
+            locked = locked,
+            leading = { DiagramNodePreview(element.payload, previewStyle, Modifier.size(16.dp)) },
+            onSelect = { select(elements = setOf(elementId)) },
+            onDelete = { state.dispatch(DiagramEditorIntent.DeleteDiagramElement(nodeId, elementIds = setOf(elementId))) },
+        )
+    }
+    graph.edges.forEach { edge ->
+        val edgeId = edge.id.value
+        val selected = edgeId in selection.edgeIds
+        DiagramOutlineRow(
+            selected = selected,
+            title = edge.labels.firstOrNull()?.label?.text?.takeIf { it.isNotBlank() }
+                ?: diagramRelationLabel(edge.relation),
+            subtitle = "${diagramEndpointLabel(edge.source)} → ${diagramEndpointLabel(edge.target)}",
+            locked = locked,
+            leading = { DiagramRelationPreview(edge.relation, previewStyle) },
+            onSelect = { select(edges = setOf(edgeId)) },
+            onDelete = { state.dispatch(DiagramEditorIntent.DeleteDiagramElement(nodeId, edgeIds = setOf(edgeId))) },
+        )
+    }
+}
+
+/** One outline row: glyph + title/subtitle, click = select, trash = delete. */
+@Composable
+private fun DiagramOutlineRow(
+    selected: Boolean,
+    title: String,
+    subtitle: String,
+    locked: Boolean,
+    leading: @Composable () -> Unit,
+    onSelect: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(5.dp))
+            .background(if (selected) colors.selectionFill else Color.Transparent)
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        leading()
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.mutedInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (!locked) {
+            Box(
+                modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)).clickable(onClick = onDelete),
+                contentAlignment = Alignment.Center,
+            ) {
+                EditorSvgIcon(EditorIcon.Trash, contentDescription = "Delete", modifier = Modifier.size(14.dp), tint = colors.mutedInk)
+            }
+        }
+    }
+}
+
+/**
+ * Mini-map of the diagram: every element as a filled rect scaled into the map box, the
+ * canvas viewport as an accent rectangle. A press or drag centers the canvas viewport on
+ * the corresponding document point (draw.io navigator).
+ */
+@Composable
+private fun DiagramMiniMap(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    graph: io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph,
+) {
+    val colors = LocalEditorColors.current
+    val diagramBox = state.artboardLayout?.findBySourceId(nodeId)
+    if (diagramBox == null) {
+        MutedNote("The diagram is not on the current page.")
+        return
+    }
+    // Content = the diagram canvas rect united with every element (elements may overflow).
+    var left = 0.0
+    var top = 0.0
+    var right = diagramBox.width
+    var bottom = diagramBox.height
+    graph.nodes.forEach { element ->
+        left = minOf(left, element.x)
+        top = minOf(top, element.y)
+        right = maxOf(right, element.x + element.width)
+        bottom = maxOf(bottom, element.y + element.height)
+    }
+    val contentW = (right - left).coerceAtLeast(1.0)
+    val contentH = (bottom - top).coerceAtLeast(1.0)
+
+    fun centerViewportOn(mapX: Float, mapY: Float, mapSize: Size, scale: Double, offset: Offset) {
+        val bounds = state.canvasExportBounds ?: return
+        val graphX = left + (mapX - offset.x) / scale
+        val graphY = top + (mapY - offset.y) / scale
+        val docX = diagramBox.x + graphX
+        val docY = diagramBox.y + graphY
+        val density = bounds.density
+        state.updateWorkspace {
+            val zoomPx = it.viewport.zoomPx(density)
+            it.copy(
+                viewport = it.viewport.copy(
+                    panOffsetXDp = ((bounds.width / 2 - docX * zoomPx) / density).toFloat(),
+                    panOffsetYDp = ((bounds.height / 2 - docY * zoomPx) / density).toFloat(),
+                ),
+            )
+        }
+    }
+
+    // The scale/offset are recomputed inside the draw + gesture scopes from the live size.
+    var mapSize by remember { mutableStateOf(Size.Zero) }
+    fun mapScale(size: Size): Double =
+        minOf(size.width / contentW, size.height / contentH).coerceAtLeast(0.0001)
+    fun mapOffset(size: Size, scale: Double): Offset = Offset(
+        ((size.width - contentW * scale) / 2).toFloat(),
+        ((size.height - contentH * scale) / 2).toFloat(),
+    )
+
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .background(colors.controlSurface, RoundedCornerShape(6.dp))
+            .border(1.dp, colors.controlStroke, RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(6.dp))
+            .pointerInput(nodeId, contentW, contentH) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    val scale = mapScale(mapSize)
+                    val offset = mapOffset(mapSize, scale)
+                    centerViewportOn(down.position.x, down.position.y, mapSize, scale, offset)
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: break
+                        if (change.changedToUp()) {
+                            change.consume()
+                            break
+                        }
+                        centerViewportOn(change.position.x, change.position.y, mapSize, scale, offset)
+                        change.consume()
+                    }
+                }
+            },
+    ) {
+        mapSize = size
+        val scale = mapScale(size)
+        val offset = mapOffset(size, scale)
+        fun mapX(graphX: Double): Float = (offset.x + (graphX - left) * scale).toFloat()
+        fun mapY(graphY: Double): Float = (offset.y + (graphY - top) * scale).toFloat()
+
+        // Diagram canvas footprint.
+        drawRect(
+            color = colors.paneSurface,
+            topLeft = Offset(mapX(0.0), mapY(0.0)),
+            size = Size((diagramBox.width * scale).toFloat(), (diagramBox.height * scale).toFloat()),
+        )
+        // Elements.
+        graph.nodes.forEach { element ->
+            drawRect(
+                color = colors.thumbnailBlock,
+                topLeft = Offset(mapX(element.x), mapY(element.y)),
+                size = Size(
+                    (element.width * scale).toFloat().coerceAtLeast(2f),
+                    (element.height * scale).toFloat().coerceAtLeast(2f),
+                ),
+            )
+        }
+        // Canvas viewport rectangle mapped into diagram-local coordinates.
+        state.canvasExportBounds?.let { bounds ->
+            val viewport = state.workspace.viewport
+            val density = bounds.density
+            val visibleLeft = viewport.toDocumentX(0f, density) - diagramBox.x
+            val visibleTop = viewport.toDocumentY(0f, density) - diagramBox.y
+            val visibleW = bounds.width / viewport.zoomPx(density)
+            val visibleH = bounds.height / viewport.zoomPx(density)
+            drawRect(
+                color = colors.accent,
+                topLeft = Offset(mapX(visibleLeft), mapY(visibleTop)),
+                size = Size((visibleW * scale).toFloat(), (visibleH * scale).toFloat()),
+                style = Stroke(width = 1.5f),
+            )
+        }
+    }
+}
+
+/** Short human label of an edge endpoint for the outline subtitle. */
+private fun diagramEndpointLabel(endpoint: io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint): String =
+    when (endpoint) {
+        is io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint.FloatingAnchor -> endpoint.nodeId.value
+        is io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint.FixedPort ->
+            "${endpoint.nodeId.value}.${endpoint.portId.value}"
+        is io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint.FreePoint -> "(free)"
+    }
 
 /** Type / label / style controls for a selected diagram node (+ table / UML structure). */
 @Composable

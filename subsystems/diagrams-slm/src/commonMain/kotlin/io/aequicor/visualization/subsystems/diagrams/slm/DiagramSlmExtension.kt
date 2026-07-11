@@ -73,6 +73,9 @@ public object DiagramSlmExtension : TypedBlockExtension<DiagramGraph> {
 
     override fun write(payload: DiagramGraph): String = DiagramYamlWriter.blockText(payload)
 
+    override fun payloadOf(node: DesignNode): DiagramGraph? =
+        (node.kind as? DesignNodeKind.Diagram)?.graph
+
     /** A registry containing just this extension, ready for `SlmCompileOptions.extensions`. */
     public fun registry(): SlmExtensionRegistry = SlmExtensionRegistry.of(DiagramSlmExtension)
 }
