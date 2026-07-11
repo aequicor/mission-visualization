@@ -266,7 +266,7 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
         Surface(
             modifier = Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(8.dp),
-            color = colors.paneSurface,
+            color = colors.canvasSurface,
             shadowElevation = 0.dp,
         ) {
             CanvasSurface(state)
