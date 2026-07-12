@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,6 +71,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.aequicor.visualization.AppBuildInfo
+import io.aequicor.visualization.FolderSyncPresence
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
 import io.aequicor.visualization.editor.platform.CanvasExportCrop
@@ -113,6 +115,7 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
         ) {
             Column(Modifier.fillMaxSize()) {
                 SourcePaneHeader(state)
+                FolderSyncBanner(state)
                 when (state.workspace.sourceTab) {
                     SourceTab.Markdown -> SourceMarkdown(state)
                     SourceTab.Resources -> EmptyTab(LocalStrings.current.labels.sourceTab(SourceTab.Resources))
@@ -177,6 +180,23 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             closeMenu()
                             platformToggleFullscreen()
                         }
+                        when (state.folderSync) {
+                            FolderSyncPresence.ReconnectNeeded -> EditorDropdownMenuItem(
+                                strings.menu.folderReconnect(state.folderName ?: ""),
+                                leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) },
+                            ) {
+                                closeMenu()
+                                state.reconnectFolder()
+                            }
+                            FolderSyncPresence.Watching -> EditorDropdownMenuItem(
+                                strings.menu.folderDisconnect,
+                                leadingContent = { DropdownMenuIcon(EditorIcon.Folder) },
+                            ) {
+                                closeMenu()
+                                state.disconnectFolder()
+                            }
+                            else -> Unit
+                        }
                     }
                     ProjectMenuPane.Open -> {
                         EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
@@ -192,6 +212,12 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             EditorDropdownMenuItem(strings.menu.openFolder, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) {
                                 closeMenu()
                                 platformOpenProjectFolder()
+                            }
+                        }
+                        if (state.supportsFolderSync) {
+                            EditorDropdownMenuItem(strings.menu.connectFolder, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) {
+                                closeMenu()
+                                state.connectFolder()
                             }
                         }
                     }
@@ -252,6 +278,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 }
             }
         }
+        FolderSyncChip(state)
         Box(Modifier.weight(1f)) {
             TabStrip(
                 tabs = SourceTab.entries,
@@ -260,6 +287,97 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 icon = ::sourceTabIcon,
                 onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
             )
+        }
+    }
+}
+
+/**
+ * Compact live-folder status chip in the source-pane header: a coloured dot plus the folder name
+ * when watching, or a one-tap "Reconnect" when the browser dropped permission after a reload.
+ * Renders nothing when no folder is connected.
+ */
+@Composable
+private fun FolderSyncChip(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    val name = state.folderName.orEmpty()
+    when (state.folderSync) {
+        FolderSyncPresence.Idle -> Unit
+        FolderSyncPresence.Connecting -> FolderChipContent(colors.mutedInk, name.ifBlank { "…" }, colors)
+        FolderSyncPresence.Watching -> FolderChipContent(colors.statusPositive, name, colors, label = strings.menu.folderWatching)
+        FolderSyncPresence.ReconnectNeeded -> Box(
+            Modifier.padding(horizontal = 6.dp).clickable { state.reconnectFolder() },
+        ) {
+            FolderChipContent(colors.statusWarning, strings.menu.folderReconnect(name), colors)
+        }
+    }
+}
+
+@Composable
+private fun FolderChipContent(dot: Color, text: String, colors: io.aequicor.visualization.editor.ui.theme.EditorColors, label: String? = null) {
+    Row(
+        modifier = Modifier.padding(horizontal = 8.dp).widthIn(max = 180.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+        if (label != null) {
+            Text(label, color = colors.mutedInk, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Text(
+            text,
+            color = colors.ink,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Non-blocking notice strip under the header: surfaces a compile error in the connected folder
+ * (canvas keeps its last good state) and a recoverable "your edit was replaced" conflict backup.
+ * Renders nothing when there is nothing to report.
+ */
+@Composable
+private fun FolderSyncBanner(state: MissionEditorStateHolder) {
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    val backup = state.folderConflictBackup
+    when {
+        backup != null -> Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colors.statusWarning.copy(alpha = 0.14f))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(strings.menu.folderConflict, color = colors.ink, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Text(
+                strings.menu.folderRestoreEdit,
+                color = colors.accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable { state.restoreFolderConflictBackup() },
+            )
+            Text(
+                strings.menu.folderDismiss,
+                color = colors.mutedInk,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable { state.dismissFolderConflictBackup() },
+            )
+        }
+        state.folderExternalError -> Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colors.statusDanger.copy(alpha = 0.12f))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(colors.statusDanger))
+            Text(strings.menu.folderExternalError, color = colors.ink, fontSize = 12.sp)
         }
     }
 }
