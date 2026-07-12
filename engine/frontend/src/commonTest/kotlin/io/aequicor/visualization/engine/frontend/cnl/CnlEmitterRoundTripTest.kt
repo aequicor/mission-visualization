@@ -739,6 +739,11 @@ class CnlEmitterRoundTripTest {
     fun imageMediaFitMode() =
         assertLeafRoundTrips("Image media (asset icons/avatar fit)") { it is DesignNodeKind.Media }
 
+    @Test
+    fun imageMediaResourcePath() =
+        // A dropped/pasted resource ref (res/<name>.<ext>) must round-trip as an asset id token.
+        assertLeafRoundTrips("Image media (asset res/photo.png fill)") { it is DesignNodeKind.Media }
+
     // --- S28c: bindable media string slots (assetId / posterAssetId) round-trip through CNL ---
 
     @Test

@@ -20,6 +20,10 @@ interface SourceStrings {
     val screens: CompactLabel
     val createScreen: String
     fun screenPreset(preset: ScreenPreset): String
+    val resourcesEmptyTitle: String
+    val resourcesEmptyHint: String
+    val resourceMissing: String
+    fun resourceUsage(count: Int): String
 }
 
 object SourceStringsEn : SourceStrings {
@@ -43,6 +47,10 @@ object SourceStringsEn : SourceStrings {
         ScreenPreset.Mobile -> "Mobile"
         ScreenPreset.Square -> "Square"
     }
+    override val resourcesEmptyTitle = "No images yet"
+    override val resourcesEmptyHint = "Drop or paste an image onto the canvas to add it to res/."
+    override val resourceMissing = "Missing bytes"
+    override fun resourceUsage(count: Int): String = if (count == 1) "1 use" else "$count uses"
 }
 
 object SourceStringsRu : SourceStrings {
@@ -65,5 +73,13 @@ object SourceStringsRu : SourceStrings {
         ScreenPreset.Tablet -> "Планшет"
         ScreenPreset.Mobile -> "Мобильный"
         ScreenPreset.Square -> "Квадрат"
+    }
+    override val resourcesEmptyTitle = "Пока нет изображений"
+    override val resourcesEmptyHint = "Перетащите или вставьте изображение на холст — оно попадёт в res/."
+    override val resourceMissing = "Нет байтов"
+    override fun resourceUsage(count: Int): String = when {
+        count % 10 == 1 && count % 100 != 11 -> "$count использование"
+        count % 10 in 2..4 && count % 100 !in 12..14 -> "$count использования"
+        else -> "$count использований"
     }
 }

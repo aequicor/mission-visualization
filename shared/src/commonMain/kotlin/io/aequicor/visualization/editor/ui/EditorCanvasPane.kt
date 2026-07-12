@@ -205,6 +205,15 @@ import io.aequicor.visualization.editor.presentation.rotatedHandlePoints
 import io.aequicor.visualization.editor.presentation.snapAngleToIncrement
 import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
+import io.aequicor.visualization.editor.platform.ProjectResourceStore
+import io.aequicor.visualization.editor.platform.createProjectResourceStore
+import io.aequicor.visualization.editor.platform.IngestionError
+import io.aequicor.visualization.editor.platform.installResourceIngestion
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
@@ -313,6 +322,35 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
     // Bundled Google Fonts so document text renders in its authored family (skiko ships no
     // system fonts on wasm); shared with the inline text-edit overlay for aligned metrics.
     val fontProvider = rememberBundledFontProvider()
+
+    // Project resource store (IndexedDB on web) shared by the render provider and drag/paste
+    // ingestion, so dropped bytes are visible to the image provider under the same path.
+    val resourceStore = remember { createProjectResourceStore() }
+    val ingestScope = rememberCoroutineScope()
+    // Drag-over affordance + transient ingestion-error state, driven by the DOM listeners.
+    val dragActive = remember { mutableStateOf(false) }
+    val ingestError = remember { mutableStateOf<IngestionError?>(null) }
+    LaunchedEffect(ingestError.value) {
+        if (ingestError.value != null) {
+            delay(3500)
+            ingestError.value = null
+        }
+    }
+    DisposableEffect(state, resourceStore) {
+        val handle = installResourceIngestion(
+            onDrop = { base64, name, w, h, clientX, clientY ->
+                ingestScope.launch {
+                    ingestDroppedResource(state, resourceStore, base64, name, w, h, clientX, clientY)
+                }
+            },
+            onPaste = { base64, name, w, h ->
+                ingestScope.launch { ingestPastedResource(state, resourceStore, base64, name, w, h) }
+            },
+            onDragOver = { active -> dragActive.value = active },
+            onError = { error -> ingestError.value = error },
+        )
+        onDispose { handle.dispose() }
+    }
 
     BoxWithConstraints(
         Modifier
@@ -1258,6 +1296,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     interactive = false,
                     showSelection = false,
                     vectorAssets = rememberVectorAssetProvider(document),
+                    imageAssets = rememberImageAssetProvider(document, resourceStore),
                     fontProvider = fontProvider,
                     onLayoutComputed = state::onArtboardLayout,
                 )
@@ -1464,6 +1503,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
         }
         CanvasScrollbars(state, scrollbars)
+        // Drop affordance + transient error banner, on top of every canvas overlay.
+        ResourceDropOverlay(dragActive.value, ingestError.value)
     }
 }
 
@@ -3610,6 +3651,127 @@ private fun commitCreate(
         ),
     )
 }
+
+// --- External resource ingestion (drag-drop / paste) ------------------------
+
+/**
+ * Maps an OS file drop (CSS-pixel client coords) into the canvas and places the image there. The
+ * drop point outside the canvas surface is ignored (drops onto other panes do nothing).
+ */
+internal suspend fun ingestDroppedResource(
+    state: MissionEditorStateHolder,
+    store: ProjectResourceStore,
+    base64: String,
+    fileName: String,
+    intrinsicWidth: Double,
+    intrinsicHeight: Double,
+    clientX: Double,
+    clientY: Double,
+) {
+    val bounds = state.canvasExportBounds ?: return
+    // DOM clientX/Y are CSS px; the canvas (and boundsInWindow) are backing px = css * density.
+    val localX = (clientX * bounds.density - bounds.left).toFloat()
+    val localY = (clientY * bounds.density - bounds.top).toFloat()
+    if (localX < 0f || localY < 0f || localX > bounds.width.toFloat() || localY > bounds.height.toFloat()) return
+    placeResourceMedia(state, store, base64, fileName, intrinsicWidth, intrinsicHeight, localX, localY, bounds.density)
+}
+
+/** Places a pasted image at the canvas centre (paste carries no drop point). */
+internal suspend fun ingestPastedResource(
+    state: MissionEditorStateHolder,
+    store: ProjectResourceStore,
+    base64: String,
+    fileName: String,
+    intrinsicWidth: Double,
+    intrinsicHeight: Double,
+) {
+    val bounds = state.canvasExportBounds ?: return
+    placeResourceMedia(
+        state, store, base64, fileName, intrinsicWidth, intrinsicHeight,
+        (bounds.width / 2.0).toFloat(), (bounds.height / 2.0).toFloat(), bounds.density,
+    )
+}
+
+@OptIn(ExperimentalEncodingApi::class)
+private suspend fun placeResourceMedia(
+    state: MissionEditorStateHolder,
+    store: ProjectResourceStore,
+    base64: String,
+    fileName: String,
+    intrinsicWidth: Double,
+    intrinsicHeight: Double,
+    localX: Float,
+    localY: Float,
+    density: Float,
+) {
+    val bytes = runCatching { Base64.decode(base64) }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return
+    val document = state.designState.document ?: return
+    val layout = state.artboardLayout
+    // Place into the screen's top-level frame at the drop point: always visible, never clipped by a
+    // nested clip-content panel the pointer happened to land on. The user can reparent afterwards.
+    val parentId = layout?.node?.sourceId
+        ?: document.pageById(state.designState.selectedPageId)?.children?.firstOrNull()?.id
+        ?: return
+    val vm = state.workspace.viewport
+    val viewport = CanvasViewport(vm.zoomPx(density), vm.panXPx(density), vm.panYPx(density))
+    val (w, h) = resourceMediaSize(intrinsicWidth, intrinsicHeight, layout)
+    val relX = viewport.toDocX(localX) - w / 2.0 - (layout?.x ?: 0.0)
+    val relY = viewport.toDocY(localY) - h / 2.0 - (layout?.y ?: 0.0)
+    // De-dupe against both the store and the document so a re-drop of a same-named file coexists.
+    val existing = store.list().toSet() + collectResourceImageRefs(document)
+    val resPath = uniqueResourcePath(fileName, existing)
+    store.put(resPath, bytes)
+    state.dispatch(
+        DesignEditorIntent.AddResourceMedia(
+            parentId = parentId,
+            resPath = resPath,
+            name = resourceDisplayName(fileName),
+            x = relX,
+            y = relY,
+            width = w,
+            height = h,
+        ),
+    )
+}
+
+/** Fit the image within ~90% of the target container, preserving aspect, never upscaling. */
+private fun resourceMediaSize(
+    intrinsicWidth: Double,
+    intrinsicHeight: Double,
+    parentBox: LayoutBox?,
+): Pair<Double, Double> {
+    val w0 = if (intrinsicWidth > 0.0) intrinsicWidth else 240.0
+    val h0 = if (intrinsicHeight > 0.0) intrinsicHeight else 160.0
+    val maxW = (parentBox?.width ?: 640.0).let { if (it > 0.0) it * 0.9 else 640.0 }
+    val maxH = (parentBox?.height ?: 640.0).let { if (it > 0.0) it * 0.9 else 640.0 }
+    val scale = minOf(1.0, maxW / w0, maxH / h0)
+    return w0 * scale to h0 * scale
+}
+
+/** `res/<name>`; on a name already taken (store or document) suffix `-1`, `-2`, … before the ext. */
+private fun uniqueResourcePath(fileName: String, existing: Set<String>): String {
+    val safe = sanitizeResourceFileName(fileName)
+    val dot = safe.lastIndexOf('.')
+    val stem = if (dot > 0) safe.substring(0, dot) else safe
+    val ext = if (dot > 0) safe.substring(dot) else ""
+    if ("res/$safe" !in existing) return "res/$safe"
+    var n = 1
+    while ("res/$stem-$n$ext" in existing) n++
+    return "res/$stem-$n$ext"
+}
+
+/** Base file name reduced to a safe, separator-free token; empty falls back to `image.png`. */
+private fun sanitizeResourceFileName(fileName: String): String {
+    val base = fileName.substringAfterLast('/').substringAfterLast('\\').trim()
+    val cleaned = base
+        .map { ch -> if (ch.isLetterOrDigit() || ch == '.' || ch == '-' || ch == '_') ch else '-' }
+        .joinToString("")
+        .trim('.', '-')
+    return cleaned.ifBlank { "image.png" }
+}
+
+private fun resourceDisplayName(fileName: String): String =
+    fileName.substringAfterLast('/').substringAfterLast('\\').ifBlank { "Image" }
 
 /**
  * Pen tool, first click: creates a single-vertex `shape: vector` node ([NewObjectKind.Vector], seeded
