@@ -583,7 +583,7 @@ private fun ensureFolderSyncInstalled() {
           var ECHO_WINDOW_MS = 4000;
           var POLL_MS = 500;
 
-          var state = { handle: null, status: "idle", folderName: null, revision: 0, snapshotJson: null };
+          var state = { handle: null, status: "idle", folderName: null, revision: 0, snapshotJson: null, activeId: null, lastError: null };
           var meta = {};             // path -> { mtime, size }
           var publishedByName = {};  // path -> content: our notion of what is on disk (the base)
           var writtenEcho = {};      // path -> { hash, expiry }: suppress our own writes
@@ -632,6 +632,7 @@ private fun ensureFolderSyncInstalled() {
           function idbGet(key) { return idbReq("readonly", function (s) { return s.get(key); }); }
           function idbPut(key, val) { return idbReq("readwrite", function (s) { s.put(val, key); return null; }); }
           function idbDelete(key) { return idbReq("readwrite", function (s) { s.delete(key); return null; }); }
+          function idbKeys() { return idbReq("readonly", function (s) { return s.getAllKeys(); }); }
 
           async function walk(dir, prefix, out) {
             for await (var pair of dir.entries()) {
@@ -734,20 +735,72 @@ private fun ensureFolderSyncInstalled() {
             return await dir.getFileHandle(safeSeg(segs[segs.length - 1]), { create: create });
           }
 
+          function mintId() {
+            if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+            return "f-" + Date.now().toString(36) + "-" + Math.floor(Math.random() * 1e9).toString(36);
+          }
+
+          // Reuse the same id when the user re-picks a folder we already know (so recents upsert
+          // rather than duplicate). File System Access exposes isSameEntry for exactly this.
+          async function resolveIdFor(handle) {
+            try {
+              var keys = (await idbKeys()) || [];
+              for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (typeof k === "string" && k.indexOf("handles/") === 0) {
+                  var saved = await idbGet(k);
+                  if (saved && typeof saved.isSameEntry === "function") {
+                    try { if (await saved.isSameEntry(handle)) return k.slice("handles/".length); } catch (e) {}
+                  }
+                }
+              }
+            } catch (e) { console.error(e); }
+            return mintId();
+          }
+
+          async function adoptHandle(handle, id) {
+            state.handle = handle;
+            state.folderName = handle.name;
+            state.activeId = id;
+            state.lastError = null;
+            try { await idbPut("handles/" + id, handle); } catch (e) { console.error(e); }
+            try { await idbPut("root", handle); } catch (e) { console.error(e); }  // legacy "last active" pointer
+            await initialScan();
+            state.status = "watching";
+            startWatcher();
+          }
+
           async function connect() {
             state.status = "connecting";
             try {
               var handle = await window.showDirectoryPicker({ id: "mv-folder-sync", mode: "readwrite" });
-              state.handle = handle;
-              state.folderName = handle.name;
-              try { await idbPut("root", handle); } catch (e) { console.error(e); }
-              await initialScan();
-              state.status = "watching";
-              startWatcher();
+              await adoptHandle(handle, await resolveIdFor(handle));
             } catch (err) {
               console.error(err);
               state.status = "idle"; // user dismissed the picker or permission failed
             }
+          }
+
+          // Reconnect a specific saved folder by id. MUST be invoked from a user gesture: when the
+          // browser reset the grant to "prompt", requestPermission needs transient activation.
+          async function connectById(id) {
+            try {
+              state.status = "connecting";
+              var h = await idbGet("handles/" + id);
+              if (!h) { state.status = "idle"; state.lastError = "missing"; return; }
+              state.handle = h; state.folderName = h.name; state.activeId = id;
+              var perm = await h.queryPermission({ mode: "readwrite" });
+              if (perm !== "granted") perm = await h.requestPermission({ mode: "readwrite" });
+              if (perm !== "granted") { state.status = "reconnect-needed"; state.lastError = "denied"; return; }
+              try { await idbPut("root", h); } catch (e) {}
+              await initialScan();
+              state.status = "watching";
+              startWatcher();
+            } catch (err) { console.error(err); state.status = "reconnect-needed"; state.lastError = "error"; }
+          }
+
+          async function forget(id) {
+            try { await idbDelete("handles/" + id); } catch (e) { console.error(e); }
           }
 
           async function grantAndWatch() {
@@ -767,6 +820,9 @@ private fun ensureFolderSyncInstalled() {
                 state.handle = h; state.folderName = h.name;
               }
               state.status = "connecting";
+              // Recover the folder's stable id so this counts as an explicit user connect (an
+              // id-less folder is treated as a gesture-free probe resume and dropped by the editor).
+              state.activeId = await resolveIdFor(state.handle);
               await grantAndWatch();
             } catch (err) { console.error(err); state.status = "reconnect-needed"; }
           }
@@ -787,7 +843,11 @@ private fun ensureFolderSyncInstalled() {
             state.handle = null;
             state.status = "idle";
             state.snapshotJson = null;
+            state.activeId = null;
+            state.lastError = null;
             meta = {}; publishedByName = {}; writtenEcho = {};
+            // Only forget the "last active" pointer — the per-id handle stays so its recent card
+            // can reconnect later.
             idbDelete("root").catch(function () {});
           }
 
@@ -817,9 +877,13 @@ private fun ensureFolderSyncInstalled() {
             get status() { return state.status; },
             get folderName() { return state.folderName; },
             get snapshotJson() { return state.snapshotJson; },
+            get activeId() { return state.activeId; },
+            get lastError() { return state.lastError; },
             connect: function () { connect(); },
+            connectById: function (id) { connectById(id); },
             reconnect: function () { reconnect(); },
             disconnect: function () { disconnect(); },
+            forget: function (id) { forget(id); },
             writeFile: function (name, content) { writeFile(name, content); }
           };
           probe();
@@ -882,3 +946,397 @@ internal actual fun folderSyncStatus(): String? =
 internal actual fun platformWriteFolderFile(fileName: String, content: String) {
     js("if (window.__mvFolderSync) window.__mvFolderSync.writeFile(fileName, content)")
 }
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun jsEpochMillis(): Double = js("Date.now()")
+
+internal actual fun platformEpochMillis(): Long = jsEpochMillis().toLong()
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformActiveFolderId(): String? =
+    js("(window.__mvFolderSync ? (window.__mvFolderSync.activeId || null) : null)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformForgetFolder(id: String) {
+    js("if (window.__mvFolderSync) window.__mvFolderSync.forget(id)")
+}
+
+// --- Startup landing (window.__mvLanding) -----------------------------------------------------
+// A DOM overlay shown over #compose-root on boot (below the #mv-loader intro, which fades to reveal
+// it). Renders the recent-project list + the always-present Welcome card from a JSON config Kotlin
+// builds (localized strings + theme colors + recents). Folder cards reconnect via
+// window.__mvFolderSync.connectById inside the click gesture (so a permission re-grant is allowed).
+// The user's choice is read back through a small polled action queue (pendingAction).
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun ensureLandingInstalled() {
+    js(
+        """
+        (function () {
+          if (window.__mvLanding) return;
+
+          var ROOT_ID = "mv-landing";
+          var STYLE_ID = "mv-landing-style";
+          var Z = 2147482000;
+          var actions = [];
+          var cfg = null;
+          var STR = {};            // strings for the currently-selected language
+          var cards = [];
+          var selected = 0;
+          var keyHandler = null;
+          var folderTimer = 0;
+          var langMenuEl = null;
+
+          function queue(a) { actions.push(a); }
+
+          function currentStrings() {
+            return (cfg && cfg.stringsByLang && cfg.stringsByLang[cfg.currentLanguage]) || {};
+          }
+          function langNativeName(code) {
+            var list = (cfg && cfg.languages) || [];
+            for (var i = 0; i < list.length; i++) { if (list[i].code === code) return list[i].nativeName; }
+            return code;
+          }
+          function closeLangMenu() { if (langMenuEl) langMenuEl.classList.remove("mvl-open"); }
+
+          function cssText() {
+            return "" +
+              "#mv-landing{position:fixed;inset:0;z-index:" + Z + ";display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto;" +
+              "background:var(--mvl-backdrop);font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;opacity:0;transition:opacity .28s ease;}" +
+              "#mv-landing.mvl-in{opacity:1;}" +
+              "#mv-landing.mvl-out{opacity:0;pointer-events:none;}" +
+              "#mv-landing *{box-sizing:border-box;}" +
+              ".mvl-panel{width:100%;max-width:760px;margin:auto;}" +
+              ".mvl-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}" +
+              ".mvl-app{font-size:13px;font-weight:600;letter-spacing:.3px;color:var(--mvl-accent);}" +
+              ".mvl-title{font-size:24px;font-weight:700;color:var(--mvl-ink);margin:2px 0 4px;}" +
+              ".mvl-sub{font-size:14px;color:var(--mvl-muted);margin:0 0 8px;}" +
+              ".mvl-close{border:0;background:transparent;color:var(--mvl-muted);font-size:22px;line-height:1;cursor:pointer;padding:6px 10px;border-radius:8px;}" +
+              ".mvl-close:hover{background:var(--mvl-card-hover);color:var(--mvl-ink);}" +
+              ".mvl-section{font-size:12px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--mvl-muted);margin:18px 0 10px;}" +
+              ".mvl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;}" +
+              ".mvl-card{position:relative;text-align:left;border:1px solid var(--mvl-stroke);background:var(--mvl-card);border-radius:14px;padding:16px;cursor:pointer;display:flex;gap:12px;align-items:flex-start;transition:border-color .15s ease,background .15s ease,transform .05s ease;font:inherit;}" +
+              ".mvl-card:hover{background:var(--mvl-card-hover);border-color:var(--mvl-accent);}" +
+              ".mvl-card:active{transform:translateY(1px);}" +
+              ".mvl-card.mvl-selected{border-color:var(--mvl-accent);box-shadow:0 0 0 2px var(--mvl-accent) inset;}" +
+              ".mvl-ic{flex:0 0 auto;width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:var(--mvl-accent-soft);color:var(--mvl-on-accent-soft);font-size:17px;}" +
+              ".mvl-body{min-width:0;flex:1 1 auto;}" +
+              ".mvl-name{font-size:15px;font-weight:600;color:var(--mvl-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" +
+              ".mvl-meta{font-size:12px;color:var(--mvl-muted);margin-top:3px;line-height:1.35;overflow-wrap:anywhere;}" +
+              ".mvl-x{position:absolute;top:8px;right:8px;border:0;background:transparent;color:var(--mvl-muted);font-size:14px;line-height:1;cursor:pointer;padding:4px 6px;border-radius:7px;opacity:0;transition:opacity .12s ease;}" +
+              ".mvl-card:hover .mvl-x{opacity:1;}" +
+              ".mvl-x:hover{background:var(--mvl-card-hover);color:var(--mvl-danger);}" +
+              ".mvl-add{align-items:center;color:var(--mvl-accent);border-style:dashed;}" +
+              ".mvl-add .mvl-name{color:var(--mvl-accent);}" +
+              ".mvl-note{font-size:12px;color:var(--mvl-muted);margin-top:16px;}" +
+              ".mvl-actions{display:flex;align-items:flex-start;gap:8px;flex:0 0 auto;}" +
+              ".mvl-lang-wrap{position:relative;}" +
+              ".mvl-lang{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--mvl-stroke);background:var(--mvl-card);color:var(--mvl-ink);border-radius:9px;padding:7px 10px;font:inherit;font-size:13px;font-weight:600;line-height:1;cursor:pointer;}" +
+              ".mvl-lang:hover{background:var(--mvl-card-hover);border-color:var(--mvl-accent);}" +
+              ".mvl-lang-ic{font-size:14px;}" +
+              ".mvl-lang-chev{color:var(--mvl-muted);font-size:10px;}" +
+              ".mvl-lang-menu{position:absolute;top:calc(100% + 6px);right:0;min-width:170px;background:var(--mvl-card);border:1px solid var(--mvl-stroke);border-radius:12px;box-shadow:0 12px 34px rgba(15,23,42,.16);padding:6px;z-index:5;display:none;}" +
+              ".mvl-lang-menu.mvl-open{display:block;}" +
+              ".mvl-lang-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;color:var(--mvl-ink);border-radius:8px;padding:9px 10px;font:inherit;font-size:14px;cursor:pointer;}" +
+              ".mvl-lang-item:hover{background:var(--mvl-card-hover);}" +
+              ".mvl-lang-check{width:16px;flex:0 0 auto;display:inline-flex;justify-content:center;color:var(--mvl-accent);}" +
+              "@media (max-width:520px){.mvl-title{font-size:20px;}.mvl-grid{grid-template-columns:1fr;}}";
+          }
+
+          function ensureStyle() {
+            if (document.getElementById(STYLE_ID)) return;
+            var s = document.createElement("style");
+            s.id = STYLE_ID;
+            s.textContent = cssText();
+            document.head.appendChild(s);
+          }
+
+          function el(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
+
+          function makeCard(glyph, name, meta, onOpen, onRemove) {
+            // A div (not a button) so the optional remove <button> can nest without invalid markup.
+            var card = el("div", "mvl-card");
+            card.setAttribute("role", "button");
+            card.tabIndex = -1;   // keyboard is driven by the overlay's own arrow/Enter handling
+            card.setAttribute("aria-label", meta ? (name + " — " + meta) : name);
+            var ic = el("div", "mvl-ic"); ic.textContent = glyph; ic.setAttribute("aria-hidden", "true"); card.appendChild(ic);
+            var body = el("div", "mvl-body");
+            var nm = el("div", "mvl-name"); nm.textContent = name; nm.title = name; body.appendChild(nm);
+            if (meta) { var mt = el("div", "mvl-meta"); mt.textContent = meta; body.appendChild(mt); }
+            card.appendChild(body);
+            card.__open = onOpen;
+            card.addEventListener("click", function (e) { e.preventDefault(); onOpen(); });
+            if (onRemove) {
+              var x = el("button", "mvl-x"); x.type = "button"; x.textContent = "✕";
+              x.title = STR.remove; x.setAttribute("aria-label", STR.remove);
+              x.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); onRemove(card); });
+              card.appendChild(x);
+            }
+            return card;
+          }
+
+          function applyColors(root) {
+            var c = (cfg && cfg.colors) || {};
+            function set(k, v) { if (v) root.style.setProperty(k, v); }
+            set("--mvl-backdrop", c.backdrop);
+            set("--mvl-card", c.card);
+            set("--mvl-card-hover", c.cardHover);
+            set("--mvl-stroke", c.stroke);
+            set("--mvl-ink", c.ink);
+            set("--mvl-muted", c.muted);
+            set("--mvl-accent", c.accent);
+            set("--mvl-accent-soft", c.accentSoft);
+            set("--mvl-on-accent-soft", c.onAccentSoft);
+            set("--mvl-danger", c.danger);
+          }
+
+          function applySelected() {
+            for (var i = 0; i < cards.length; i++) {
+              if (i === selected) cards[i].classList.add("mvl-selected");
+              else cards[i].classList.remove("mvl-selected");
+            }
+          }
+          function move(d) {
+            if (!cards.length) return;
+            selected = (selected + d + cards.length) % cards.length;
+            applySelected();
+            if (cards[selected].scrollIntoView) cards[selected].scrollIntoView({ block: "nearest" });
+          }
+
+          function stopFolderTimer() { if (folderTimer) { clearInterval(folderTimer); folderTimer = 0; } }
+
+          function hide() {
+            stopFolderTimer();
+            var root = document.getElementById(ROOT_ID);
+            if (root) {
+              root.classList.remove("mvl-in");
+              root.classList.add("mvl-out");
+              setTimeout(function () { if (root.parentNode) root.parentNode.removeChild(root); }, 340);
+            }
+            if (keyHandler) { window.removeEventListener("keydown", keyHandler, true); keyHandler = null; }
+          }
+
+          function openWelcome() { queue({ type: "openWelcome" }); hide(); }
+          function openRecovery() { queue({ type: "openRecovery" }); hide(); }
+          function dismiss() { queue({ type: "dismiss" }); hide(); }
+
+          // Folder open (existing by id, or a fresh pick). The connect call runs inside this click
+          // gesture so a permission re-grant is permitted. Hides the overlay once the folder starts
+          // watching; Kotlin's folder-sync loop then adopts the snapshot and records the recent.
+          function startConnect(initiator) {
+            if (!window.__mvFolderSync) return;
+            var fs = window.__mvFolderSync;
+            try { initiator(); } catch (e) { console.error(e); }
+            stopFolderTimer();
+            var waited = 0, sawConnecting = false;
+            folderTimer = setInterval(function () {
+              waited += 200;
+              var st = fs.status;
+              if (st === "connecting") sawConnecting = true;
+              if (st === "watching") { stopFolderTimer(); hide(); }
+              // Denied / missing handle after a connecting phase: stop polling and leave the overlay
+              // open so the user can retry or pick another project (rather than spin for 120s).
+              else if (sawConnecting && (st === "idle" || st === "reconnect-needed")) { stopFolderTimer(); }
+              else if (waited > 120000) { stopFolderTimer(); }
+            }, 200);
+          }
+          function openFolder(id) { startConnect(function () { window.__mvFolderSync.connectById(id); }); }
+          function openNewFolder() { startConnect(function () { window.__mvFolderSync.connect(); }); }
+          function dropCard(cardEl) {
+            var idx = cards.indexOf(cardEl);
+            if (idx >= 0) {
+              cards.splice(idx, 1);
+              if (idx < selected) selected -= 1;   // keep the highlight on the same card it was on
+            }
+            if (cardEl.parentNode) cardEl.parentNode.removeChild(cardEl);
+            if (selected >= cards.length) selected = Math.max(0, cards.length - 1);
+            if (selected < 0) selected = 0;
+            applySelected();
+          }
+          function removeRecent(id, cardEl) {
+            if (window.__mvFolderSync) window.__mvFolderSync.forget(id);
+            queue({ type: "remove", id: id });
+            dropCard(cardEl);
+          }
+          function discardRecovery(cardEl) {
+            queue({ type: "clearRecovery" });
+            dropCard(cardEl);
+          }
+
+          function deepLinkToken() {
+            var h = window.location.hash || "";
+            var t = h.replace(/^#\/?/, "");
+            t = t.split("?")[0].split("/")[0].trim();
+            return t;
+          }
+
+          // Switch the overlay's language: re-render locally (all languages ship in the config) and
+          // queue the choice so Kotlin re-localizes the editor underneath and persists it.
+          function selectLanguage(code) {
+            closeLangMenu();
+            if (!cfg || code === cfg.currentLanguage) return;
+            cfg.currentLanguage = code;
+            queue({ type: "setLanguage", id: code });
+            render(deepLinkToken());
+          }
+
+          function makeLangDropdown() {
+            var wrap = el("div", "mvl-lang-wrap");
+            var trigger = el("button", "mvl-lang"); trigger.type = "button";
+            trigger.setAttribute("aria-haspopup", "true");
+            trigger.setAttribute("aria-label", STR.language || "Language");
+            trigger.title = STR.language || "Language";
+            var gic = el("span", "mvl-lang-ic"); gic.textContent = "🌐"; gic.setAttribute("aria-hidden", "true"); trigger.appendChild(gic);
+            var lbl = el("span"); lbl.textContent = langNativeName(cfg.currentLanguage); trigger.appendChild(lbl);
+            var chev = el("span", "mvl-lang-chev"); chev.textContent = "▾"; chev.setAttribute("aria-hidden", "true"); trigger.appendChild(chev);
+            var menu = el("div", "mvl-lang-menu");
+            var langs = (cfg && cfg.languages) || [];
+            for (var i = 0; i < langs.length; i++) {
+              (function (lang) {
+                var item = el("button", "mvl-lang-item"); item.type = "button";
+                item.setAttribute("aria-label", lang.nativeName);
+                var chk = el("span", "mvl-lang-check"); chk.textContent = (lang.code === cfg.currentLanguage) ? "✓" : ""; item.appendChild(chk);
+                var nm = el("span"); nm.textContent = lang.nativeName; item.appendChild(nm);
+                item.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); selectLanguage(lang.code); });
+                menu.appendChild(item);
+              })(langs[i]);
+            }
+            trigger.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); menu.classList.toggle("mvl-open"); });
+            wrap.appendChild(trigger); wrap.appendChild(menu);
+            langMenuEl = menu;
+            return wrap;
+          }
+
+          function render(token) {
+            // Idempotent: drop any prior overlay + its listener/timer so a re-render (language switch)
+            // or a repeated install never stacks a second overlay or leaks a keydown handler.
+            var existing = document.getElementById(ROOT_ID);
+            var wasShowing = !!existing;   // a re-render (e.g. language switch) should swap instantly
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+            if (keyHandler) { window.removeEventListener("keydown", keyHandler, true); keyHandler = null; }
+            stopFolderTimer();
+            ensureStyle();
+            STR = currentStrings();
+            langMenuEl = null;
+            cards = [];
+            selected = 0;
+            var root = el("div"); root.id = ROOT_ID;
+            applyColors(root);
+            // A click anywhere outside the language menu closes it; a click on the backdrop dismisses.
+            root.addEventListener("click", function (e) { closeLangMenu(); if (e.target === root) dismiss(); });
+
+            var panel = el("div", "mvl-panel");
+            var head = el("div", "mvl-head");
+            var headText = el("div");
+            var app = el("div", "mvl-app"); app.textContent = cfg.appName || "Mission Visualization"; headText.appendChild(app);
+            var title = el("div", "mvl-title"); title.textContent = STR.heading; headText.appendChild(title);
+            var sub = el("div", "mvl-sub"); sub.textContent = STR.subtitle; headText.appendChild(sub);
+            head.appendChild(headText);
+            // Top-right actions: language switcher + close.
+            var actionsBar = el("div", "mvl-actions");
+            actionsBar.appendChild(makeLangDropdown());
+            var close = el("button", "mvl-close"); close.type = "button"; close.textContent = "✕";
+            close.title = STR.dismiss; close.setAttribute("aria-label", STR.dismiss);
+            close.addEventListener("click", function (e) { e.preventDefault(); dismiss(); });
+            actionsBar.appendChild(close);
+            head.appendChild(actionsBar);
+            panel.appendChild(head);
+
+            var grid = el("div", "mvl-grid");
+
+            var welcome = makeCard("✦", STR.welcomeTitle, STR.welcomeSubtitle, openWelcome, null);
+            grid.appendChild(welcome); cards.push(welcome);
+
+            if (cfg.hasRecovery) {
+              var rec = makeCard("↺", STR.recoverTitle, STR.recoverSubtitle, openRecovery,
+                function (cardEl) { discardRecovery(cardEl); });
+              grid.appendChild(rec); cards.push(rec);
+            }
+
+            var recents = (cfg.recents || []);
+            for (var i = 0; i < recents.length; i++) {
+              (function (r) {
+                if (r.kind !== "localFolder") return;
+                var card = makeCard("📁", r.displayName || STR.localFolder, STR.localFolder,
+                  function () { openFolder(r.id); },
+                  function (cardEl) { removeRecent(r.id, cardEl); });
+                card.setAttribute("data-mvl-id", r.id);
+                grid.appendChild(card); cards.push(card);
+              })(recents[i]);
+            }
+
+            if (cfg.supportsFolders) {
+              var add = makeCard("+", STR.connectFolder, "", openNewFolder, null);
+              add.classList.add("mvl-add");
+              grid.appendChild(add); cards.push(add);
+            }
+
+            panel.appendChild(grid);
+
+            if (!cfg.supportsFolders) {
+              var note = el("div", "mvl-note"); note.textContent = STR.foldersUnavailable; panel.appendChild(note);
+            }
+
+            root.appendChild(panel);
+            document.body.appendChild(root);
+
+            // Preselect the deep-linked folder card if present, else Welcome.
+            if (token) {
+              for (var s = 0; s < cards.length; s++) {
+                if (cards[s].getAttribute && cards[s].getAttribute("data-mvl-id") === token) { selected = s; break; }
+              }
+            }
+            applySelected();
+
+            keyHandler = function (e) {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                if (langMenuEl && langMenuEl.classList.contains("mvl-open")) closeLangMenu(); else dismiss();
+              }
+              else if (e.key === "Enter") { e.preventDefault(); if (cards[selected] && cards[selected].__open) cards[selected].__open(); }
+              else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); move(1); }
+              else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+            };
+            window.addEventListener("keydown", keyHandler, true);
+
+            // Initial install fades in; a re-render (language switch) swaps in place without a flash.
+            if (wasShowing) root.classList.add("mvl-in");
+            else requestAnimationFrame(function () { root.classList.add("mvl-in"); });
+          }
+
+          window.__mvLanding = {
+            install: function (configJson) {
+              try { cfg = JSON.parse(configJson); } catch (e) { console.error(e); return; }
+              var prev = document.getElementById(ROOT_ID);
+              if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+              var token = deepLinkToken();
+              if (token === "welcome") { queue({ type: "openWelcome" }); return; }  // deep-link straight to Welcome
+              render(token);
+            },
+            hide: function () { hide(); },
+            pendingAction: function () { return actions.length ? JSON.stringify(actions.shift()) : null; }
+          };
+        })();
+        """
+    )
+}
+
+internal actual val platformSupportsLanding: Boolean = true
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformInstallLanding(configJson: String) {
+    ensureLandingInstalled()
+    callLandingInstall(configJson)
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun callLandingInstall(configJson: String): Unit = js("window.__mvLanding.install(configJson)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformHideLanding() {
+    js("if (window.__mvLanding) window.__mvLanding.hide()")
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformLandingPendingActionJson(): String? =
+    js("(window.__mvLanding ? window.__mvLanding.pendingAction() : null)")

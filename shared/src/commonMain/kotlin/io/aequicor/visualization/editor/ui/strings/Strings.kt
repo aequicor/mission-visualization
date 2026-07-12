@@ -23,6 +23,7 @@ interface Strings {
     val diagram: DiagramStrings
     val canvas: CanvasStrings
     val colorPicker: ColorPickerStrings
+    val landing: LandingStrings
 }
 
 /** English catalog (also the default / fallback). */
@@ -36,6 +37,7 @@ object StringsEn : Strings {
     override val diagram = DiagramStringsEn
     override val canvas = CanvasStringsEn
     override val colorPicker = ColorPickerStringsEn
+    override val landing = LandingStringsEn
 }
 
 /** Russian catalog. */
@@ -49,6 +51,7 @@ object StringsRu : Strings {
     override val diagram = DiagramStringsRu
     override val canvas = CanvasStringsRu
     override val colorPicker = ColorPickerStringsRu
+    override val landing = LandingStringsRu
 }
 
 /** Maps the chosen [AppLanguage] to its catalog. */

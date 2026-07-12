@@ -15,6 +15,9 @@ data class CanvasExportCrop(
     val height: Double,
 )
 
+/** Wall-clock time in epoch milliseconds; used to stamp recent-project recency. */
+internal expect fun platformEpochMillis(): Long
+
 /**
  * True where the open/save-project-to-disk actions are actually implemented (web today);
  * platforms with stub actuals hide those menu items instead of silently doing nothing.
@@ -96,3 +99,36 @@ internal expect fun folderSyncStatus(): String?
  * not mistake this echo for an external change. No-op when not connected.
  */
 internal expect fun platformWriteFolderFile(fileName: String, content: String)
+
+/** Id of the folder currently connected/watched, or null when none — used to record recents. */
+internal expect fun platformActiveFolderId(): String?
+
+/** Forgets a saved folder's directory handle by [id] (IndexedDB). No-op where unsupported. */
+internal expect fun platformForgetFolder(id: String)
+
+// --- Startup landing ("recent projects + Welcome") --------------------------------------------
+// A DOM overlay (window.__mvLanding, a sibling of window.__mvProjectIo / window.__mvFolderSync)
+// shown over the editor on boot. Kotlin owns the copy (localized string catalog) and colors
+// (theme tokens) and hands them to the overlay as a JSON config; the overlay owns the DOM,
+// the URL-hash deep-link, the click gestures (folder re-grant must run inside the click) and the
+// IndexedDB handle list. The user's choice is read back through a small polled action queue.
+// Real only on wasmJs; every other target stubs these out (the landing is a web-startup concept).
+
+/** True where the startup landing overlay is available (web). */
+internal expect val platformSupportsLanding: Boolean
+
+/**
+ * Renders (or re-renders) the landing overlay from [configJson]: localized strings, theme colors,
+ * the recent-project list, feature flags and the URL-hash deep-link target. Safe to call repeatedly.
+ */
+internal expect fun platformInstallLanding(configJson: String)
+
+/** Hides and tears down the landing overlay (the user picked a project or dismissed it). */
+internal expect fun platformHideLanding()
+
+/**
+ * Dequeues the next user action from the landing as JSON (`{"type":…,"id":…}`), or null when the
+ * queue is empty. Polled by the state holder to drive the editor (open Welcome / a folder / recover,
+ * remove a recent, or dismiss).
+ */
+internal expect fun platformLandingPendingActionJson(): String?
