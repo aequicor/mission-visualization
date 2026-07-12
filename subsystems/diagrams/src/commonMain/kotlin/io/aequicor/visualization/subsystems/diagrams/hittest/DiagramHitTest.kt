@@ -208,6 +208,16 @@ const val EDGE_LABEL_LINE_GAP: Double = 13.0
  * connector does not cross the text, plus the label's manual offset (drag override) on top.
  */
 fun edgeLabelAnchorPoint(route: List<DiagramPoint>, label: DiagramEdgeLabel): DiagramPoint {
+    selfLoopTopAnchor(route)?.let { top ->
+        // A self-message loop (see routeMessage): the caption reads *above* the loop's top
+        // edge, centered on it. Anchoring along the arc would land the label beside the loop's
+        // right side at mid-height, where a wide centered caption bleeds left over the lifeline
+        // and buries the arrow start.
+        return DiagramPoint(
+            top.x + label.offsetX,
+            top.y - EDGE_LABEL_LINE_GAP + label.offsetY,
+        )
+    }
     val fraction = when (label.position) {
         DiagramEdgeLabelPosition.SOURCE -> 0.1
         DiagramEdgeLabelPosition.MIDDLE -> 0.5
@@ -219,6 +229,20 @@ fun edgeLabelAnchorPoint(route: List<DiagramPoint>, label: DiagramEdgeLabel): Di
         base.x + lift.x + label.offsetX,
         base.y + lift.y + label.offsetY,
     )
+}
+
+/**
+ * Midpoint of the top edge of a right-side self-message loop, or `null` when [route] is not
+ * such a loop. Matches the exact 4-point shape emitted by the sequence router's `routeMessage`:
+ * `(x0,y0) → (x1,y0) → (x1,y1) → (x0,y1)` with `x1 > x0` (bulges right off the lifeline).
+ */
+internal fun selfLoopTopAnchor(route: List<DiagramPoint>): DiagramPoint? {
+    if (route.size != 4) return null
+    val (p0, p1, p2, p3) = route
+    val flat = p0.y == p1.y && p2.y == p3.y
+    val verticals = p0.x == p3.x && p1.x == p2.x
+    if (!flat || !verticals || p1.x <= p0.x) return null
+    return DiagramPoint((p0.x + p1.x) / 2.0, p0.y)
 }
 
 /**

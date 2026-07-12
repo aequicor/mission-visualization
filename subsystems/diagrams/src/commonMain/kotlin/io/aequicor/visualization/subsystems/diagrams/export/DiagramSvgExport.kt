@@ -4,6 +4,8 @@ import io.aequicor.visualization.subsystems.diagrams.arrows.ArrowheadGeometry
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadsForRelation
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
+import io.aequicor.visualization.subsystems.diagrams.hittest.EDGE_LABEL_LINE_GAP
+import io.aequicor.visualization.subsystems.diagrams.hittest.selfLoopTopAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramColor
@@ -383,13 +385,20 @@ private fun StringBuilder.appendEdge(
     appendArrowheadMarker(sourceGeometry, stroke, options)
     appendArrowheadMarker(targetGeometry, stroke, options)
 
+    val selfLoopTop = selfLoopTopAnchor(points)
     for (edgeLabel in edge.labels) {
-        val fraction = when (edgeLabel.position) {
-            DiagramEdgeLabelPosition.SOURCE -> 0.15
-            DiagramEdgeLabelPosition.MIDDLE -> 0.5
-            DiagramEdgeLabelPosition.TARGET -> 0.85
+        // A self-message loop reads its caption above the loop's top edge, so a wide label
+        // never lands beside the loop and buries the arrow start (mirrors the on-canvas anchor).
+        val anchor = if (selfLoopTop != null) {
+            DiagramPoint(selfLoopTop.x, selfLoopTop.y - EDGE_LABEL_LINE_GAP)
+        } else {
+            val fraction = when (edgeLabel.position) {
+                DiagramEdgeLabelPosition.SOURCE -> 0.15
+                DiagramEdgeLabelPosition.MIDDLE -> 0.5
+                DiagramEdgeLabelPosition.TARGET -> 0.85
+            }
+            pointAlongPolyline(points, fraction)
         }
-        val anchor = pointAlongPolyline(points, fraction)
         svgText(
             x = anchor.x + edgeLabel.offsetX,
             y = anchor.y + edgeLabel.offsetY - options.fontSize / 2.0 - 2.0,

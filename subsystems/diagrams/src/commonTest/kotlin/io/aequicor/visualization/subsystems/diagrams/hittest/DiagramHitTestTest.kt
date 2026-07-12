@@ -1,7 +1,9 @@
 package io.aequicor.visualization.subsystems.diagrams.hittest
 
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
@@ -24,6 +26,30 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 class DiagramHitTestTest {
+
+    @Test
+    fun selfLoopLabelAnchorsAboveTheLoopTop() {
+        // A self-message loop (routeMessage shape): (x0,y) → (x1,y) → (x1,y+lh) → (x0,y+lh).
+        val loop = listOf(
+            DiagramPoint(415.0, 100.0),
+            DiagramPoint(449.0, 100.0),
+            DiagramPoint(449.0, 118.0),
+            DiagramPoint(415.0, 118.0),
+        )
+        val anchor = edgeLabelAnchorPoint(loop, DiagramEdgeLabel(DiagramLabel("do work")))
+        // Centered on the top edge (x0..x1) and lifted clear above it, never beside the loop.
+        assertEquals(432.0, anchor.x, 1e-9)
+        assertEquals(100.0 - EDGE_LABEL_LINE_GAP, anchor.y, 1e-9)
+    }
+
+    @Test
+    fun straightEdgeLabelIsUnaffectedBySelfLoopRule() {
+        // A plain horizontal segment must keep the arc-length + perpendicular-lift placement.
+        val line = listOf(DiagramPoint(0.0, 50.0), DiagramPoint(200.0, 50.0))
+        val anchor = edgeLabelAnchorPoint(line, DiagramEdgeLabel(DiagramLabel("x")))
+        assertEquals(100.0, anchor.x, 1e-9)
+        assertEquals(50.0 - EDGE_LABEL_LINE_GAP, anchor.y, 1e-9)
+    }
 
     @Test
     fun emptySpaceHitsNothing() {
