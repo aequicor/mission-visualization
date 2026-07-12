@@ -1,6 +1,9 @@
 package io.aequicor.visualization.editor.presentation
 
+import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 
 /**
  * Pure resolution of a layers-tree drag to its drop target. The tree is rendered
@@ -64,6 +67,38 @@ fun resolveLayerDropTarget(
     // true when [parentId] is [dragId] itself or a node inside its subtree.
     if (document.isSelfOrAncestor(dragId, parentId)) return null
     return target
+}
+
+/**
+ * Position — in the new parent's layout coordinate space — that keeps [dragId] visually
+ * put when a layers-tree drop reparents it into a *free* (`mode:none`) container. A canvas
+ * drag carries pointer coordinates (see [reparentDropPlacement]); a layers-tree drop does
+ * not, so without this the node keeps its old parent-relative position and jumps to a wrong
+ * spot in the new container — vanishing outright if that container clips its content. The
+ * returned offset is `nodeBox - parentBox` in root-layout space, which a Left/Top absolute
+ * child reproduces exactly (`childX = parentX + position.x`).
+ *
+ * Returns null — leaving prior behavior untouched — when the move needs no repositioning or
+ * can't be repositioned by a plain offset:
+ *  - the target is an Auto-layout container (the node joins its flow; `position` is ignored);
+ *  - it's a same-parent move (parent unchanged — a pure reorder, must stay in flow);
+ *  - the node is anchored (logical anchors reposition it and win over `position`); or
+ *  - either box is absent from [layout] (e.g. the node/parent is off the current artboard).
+ */
+fun layerReparentKeepPutPosition(
+    document: DesignDocument,
+    layout: LayoutBox?,
+    dragId: String,
+    newParentId: String,
+): DesignPoint? {
+    val parentNode = document.nodeById(newParentId) ?: return null
+    if (parentNode.layout.mode != LayoutMode.None) return null
+    val node = document.nodeById(dragId) ?: return null
+    if (node.anchors != null) return null
+    if (document.parentNodeOf(dragId)?.id == newParentId) return null
+    val nodeBox = layout?.findBySourceId(dragId) ?: return null
+    val parentBox = layout.findBySourceId(newParentId) ?: return null
+    return DesignPoint(nodeBox.x - parentBox.x, nodeBox.y - parentBox.y)
 }
 
 private fun insertGapTarget(

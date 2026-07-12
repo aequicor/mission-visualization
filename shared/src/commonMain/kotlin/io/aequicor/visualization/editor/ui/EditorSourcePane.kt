@@ -105,6 +105,7 @@ import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.LayerDropTarget
 import io.aequicor.visualization.editor.presentation.LayerTreeRow
 import io.aequicor.visualization.editor.presentation.PendingFit
+import io.aequicor.visualization.editor.presentation.layerReparentKeepPutPosition
 import io.aequicor.visualization.editor.presentation.ScreenPreset
 import io.aequicor.visualization.editor.presentation.SourceTab
 import io.aequicor.visualization.editor.presentation.ZOrderMove
@@ -967,9 +968,21 @@ private val LayerRowHeight = 30.dp
  * drops never resolve (see [resolveLayerDropTarget]), and the reducer re-validates.
  */
 private fun applyLayerDrop(state: MissionEditorStateHolder, target: LayerDropTarget, dragId: String) {
+    val document = state.designState.document
+    val layout = state.artboardLayout
+    // A layers-tree drop carries no pointer coordinates, so re-base the node into the new
+    // free container's frame to keep it visually put (a canvas drag does this via pointer
+    // geometry). Null leaves flow / same-parent / anchored moves untouched.
+    val newParentId = when (target) {
+        is LayerDropTarget.IntoContainer -> target.nodeId
+        is LayerDropTarget.InsertGap -> target.parentId
+    }
+    val position = document?.let { layerReparentKeepPutPosition(it, layout, dragId, newParentId) }
     when (target) {
-        is LayerDropTarget.IntoContainer -> state.dispatch(DesignEditorIntent.ReparentNode(dragId, target.nodeId))
-        is LayerDropTarget.InsertGap -> state.dispatch(DesignEditorIntent.ReparentNode(dragId, target.parentId, target.index))
+        is LayerDropTarget.IntoContainer ->
+            state.dispatch(DesignEditorIntent.ReparentNode(dragId, target.nodeId, position = position))
+        is LayerDropTarget.InsertGap ->
+            state.dispatch(DesignEditorIntent.ReparentNode(dragId, target.parentId, target.index, position = position))
     }
 }
 
