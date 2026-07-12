@@ -12,14 +12,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import io.aequicor.visualization.subsystems.diagrams.hittest.ConnectTarget
+import io.aequicor.visualization.subsystems.diagrams.hittest.connectionPorts
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 
 /**
@@ -98,21 +97,55 @@ fun DiagramPortsOverlay(
 }
 
 internal fun DrawScope.drawPortIndicators(node: DiagramNode, style: DiagramOverlayStyle) {
-    val occupiedSides = node.ports
-        .mapNotNull { (it.anchor as? DiagramPortAnchor.SideOffset)?.side }
-        .toSet()
-
-    // Floating hints on free side midpoints.
-    DiagramNodeSide.entries.forEach { side ->
-        if (side in occupiedSides) return@forEach
-        val point = node.portPosition(DiagramPort.side(side))
-        drawCircle(style.floatingIndicator, radius = 2.5f, center = Offset(point.x.toFloat(), point.y.toFloat()))
-    }
-
-    // Fixed ports: × markers.
-    node.ports.forEach { port ->
+    // Every connection point (declared ports + the standard side midpoints) drawn as a green ×
+    // — the draw.io "you can connect here" affordance shown while hovering a node.
+    node.connectionPorts().forEach { port ->
         val point = node.portPosition(port)
         drawFixedPortMarker(Offset(point.x.toFloat(), point.y.toFloat()), style.fixedIndicator)
+    }
+}
+
+/**
+ * Live feedback while dragging an edge out: the node the pointer is over lights up so the
+ * user sees where the connector will land and whether it will pin (green cross, fixed) or
+ * float (blue perimeter). Driven by the overlay's per-frame [ConnectTarget].
+ */
+@Composable
+fun DiagramConnectTargetOverlay(
+    graph: DiagramGraph,
+    target: ConnectTarget?,
+    modifier: Modifier = Modifier,
+    style: DiagramOverlayStyle = DiagramOverlayStyle(),
+) {
+    Canvas(modifier) {
+        when (target) {
+            is ConnectTarget.Port -> {
+                val node = graph.nodeById(target.nodeId) ?: return@Canvas
+                node.connectionPorts().forEach { port ->
+                    val point = node.portPosition(port)
+                    drawFixedPortMarker(Offset(point.x.toFloat(), point.y.toFloat()), style.fixedIndicator)
+                }
+                // The point being snapped to reads brighter, with a filled ring.
+                val snap = Offset(target.snapPoint.x.toFloat(), target.snapPoint.y.toFloat())
+                drawCircle(style.fixedIndicator.copy(alpha = 0.22f), radius = 6f, center = snap)
+                drawCircle(style.fixedIndicator, radius = 6f, center = snap, style = Stroke(1.6f))
+            }
+
+            is ConnectTarget.Floating -> {
+                val node = graph.nodeById(target.nodeId) ?: return@Canvas
+                val bounds = node.bounds
+                drawRect(
+                    color = style.floatingIndicator,
+                    topLeft = Offset(bounds.left.toFloat(), bounds.top.toFloat()),
+                    size = Size(bounds.width.toFloat(), bounds.height.toFloat()),
+                    style = Stroke(1.8f),
+                )
+                val snap = Offset(target.snapPoint.x.toFloat(), target.snapPoint.y.toFloat())
+                drawCircle(style.floatingIndicator, radius = 3.5f, center = snap)
+            }
+
+            is ConnectTarget.Free, null -> Unit
+        }
     }
 }
 
@@ -181,30 +214,37 @@ fun DiagramDirectionalArrowsOverlay(
     Canvas(modifier) {
         val node = nodeId?.let { graph.nodeById(it) } ?: return@Canvas
         val bounds = node.bounds
-        drawDirectionalChevron(Offset(bounds.centerX.toFloat(), bounds.top.toFloat() - distance), dx = 0f, dy = -1f, style = style)
-        drawDirectionalChevron(Offset(bounds.right.toFloat() + distance, bounds.centerY.toFloat()), dx = 1f, dy = 0f, style = style)
-        drawDirectionalChevron(Offset(bounds.centerX.toFloat(), bounds.bottom.toFloat() + distance), dx = 0f, dy = 1f, style = style)
-        drawDirectionalChevron(Offset(bounds.left.toFloat() - distance, bounds.centerY.toFloat()), dx = -1f, dy = 0f, style = style)
+        drawDirectionalArrow(Offset(bounds.centerX.toFloat(), bounds.top.toFloat() - distance), dx = 0f, dy = -1f, style = style)
+        drawDirectionalArrow(Offset(bounds.right.toFloat() + distance, bounds.centerY.toFloat()), dx = 1f, dy = 0f, style = style)
+        drawDirectionalArrow(Offset(bounds.centerX.toFloat(), bounds.bottom.toFloat() + distance), dx = 0f, dy = 1f, style = style)
+        drawDirectionalArrow(Offset(bounds.left.toFloat() - distance, bounds.centerY.toFloat()), dx = -1f, dy = 0f, style = style)
     }
 }
 
-private fun DrawScope.drawDirectionalChevron(
+/**
+ * One hover directional arrow: a filled translucent triangle pointing outward (draw.io's
+ * blue directional-arrow affordance), with a slightly stronger outline so it stays legible
+ * on top of the shape and the canvas dots.
+ */
+private fun DrawScope.drawDirectionalArrow(
     tip: Offset,
     dx: Float,
     dy: Float,
     style: DiagramOverlayStyle,
-    size: Float = 6f,
+    size: Float = 7f,
 ) {
-    // Perpendicular of the pointing direction.
+    // Perpendicular of the pointing direction, so the base spans across the arrow.
     val px = -dy
     val py = dx
     val base = Offset(tip.x - dx * size, tip.y - dy * size)
-    val path = Path().apply {
+    val triangle = Path().apply {
         moveTo(base.x + px * size, base.y + py * size)
         lineTo(tip.x, tip.y)
         lineTo(base.x - px * size, base.y - py * size)
+        close()
     }
-    drawPath(path, style.accent, style = Stroke(2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    drawPath(triangle, style.accent.copy(alpha = 0.5f))
+    drawPath(triangle, style.accent.copy(alpha = 0.9f), style = Stroke(1.2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
 }
 
 /** Free helper for hosts that already own a Canvas: same chrome, no extra composable. */

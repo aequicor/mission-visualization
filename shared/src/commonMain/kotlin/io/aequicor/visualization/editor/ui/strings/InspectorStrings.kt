@@ -205,6 +205,7 @@ interface InspectorStrings {
     val shapes: String
     val map: String
     val outline: String
+    val layers: String
     val selectElementHint: String
     val diagramEmpty: String
     val diagramNotOnPage: String
@@ -432,6 +433,7 @@ object InspectorStringsEn : InspectorStrings {
     override val shapes = "Shapes"
     override val map = "Map"
     override val outline = "Outline"
+    override val layers = "Layers"
     override val selectElementHint = "Select an element in the outline or on the canvas."
     override val diagramEmpty = "The diagram is empty — add a shape from the palette above."
     override val diagramNotOnPage = "The diagram is not on the current page."
@@ -827,6 +829,7 @@ object InspectorStringsRu : InspectorStrings {
     override val shapes = "Фигуры"
     override val map = "Карта"
     override val outline = "Структура"
+    override val layers = "Слои"
     override val selectElementHint = "Выберите элемент в структуре или на холсте."
     override val diagramEmpty = "Диаграмма пуста — добавьте фигуру из палитры выше."
     override val diagramNotOnPage = "Диаграмма не на текущей странице."

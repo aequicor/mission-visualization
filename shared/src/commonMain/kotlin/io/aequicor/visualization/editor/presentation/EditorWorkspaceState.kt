@@ -86,6 +86,12 @@ data class EditorWorkspaceState(
      */
     val diagramSelection: DiagramSelection = DiagramSelection.Empty,
     /**
+     * One-shot request to open the inline label editor for this diagram element id (F2 /
+     * begin-rename), consumed by the diagram overlay's LaunchedEffect and then cleared.
+     * A view concern like [diagramSelection] — never part of the document.
+     */
+    val diagramTextEditRequest: String? = null,
+    /**
      * Live palette→canvas diagram-shape drag (draw.io-style), or null when idle. Window
      * coordinates because the palette (inspector pane) and the canvas are sibling
      * composables; the drop handler maps window → canvas-local → document coordinates.

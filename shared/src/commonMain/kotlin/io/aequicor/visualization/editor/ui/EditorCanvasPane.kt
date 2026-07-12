@@ -2548,6 +2548,20 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
     val design = state.designState
     val selection = design.selectedNodeIds
     val step = if (shift) 10.0 else 1.0
+    // In diagram edit mode, arrow keys nudge the selected diagram element(s) — never the whole
+    // diagram IR node. Consumed even with an empty selection, so an arrow press can't fall
+    // through to moving the diagram container.
+    fun diagramNudge(dx: Double, dy: Double): Boolean {
+        val ws = state.workspace
+        if (ws.diagramEditNodeId.isBlank()) return false
+        val ids = ws.diagramSelection.elementIds
+        if (ids.isNotEmpty()) {
+            state.dispatch(DesignEditorIntent.BeginInteraction)
+            ids.forEach { state.dispatch(DiagramEditorIntent.MoveDiagramNode(ws.diagramEditNodeId, it, dx, dy)) }
+            state.dispatch(DesignEditorIntent.EndInteraction)
+        }
+        return true
+    }
     fun nudge(dx: Double, dy: Double): Boolean {
         if (selection.isEmpty()) return false
         val startPositions = design.document?.let { document ->
@@ -2572,10 +2586,22 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         return true
     }
     return when {
-        key == Key.DirectionLeft -> nudge(-step, 0.0)
-        key == Key.DirectionRight -> nudge(step, 0.0)
-        key == Key.DirectionUp -> nudge(0.0, -step)
-        key == Key.DirectionDown -> nudge(0.0, step)
+        key == Key.DirectionLeft -> diagramNudge(-step, 0.0) || nudge(-step, 0.0)
+        key == Key.DirectionRight -> diagramNudge(step, 0.0) || nudge(step, 0.0)
+        key == Key.DirectionUp -> diagramNudge(0.0, -step) || nudge(0.0, -step)
+        key == Key.DirectionDown -> diagramNudge(0.0, step) || nudge(0.0, step)
+        // F2 renames the single selected diagram element (opens its inline label editor).
+        key == Key.F2 && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            val ids = state.workspace.diagramSelection.elementIds
+            if (ids.size == 1) state.updateWorkspace { it.copy(diagramTextEditRequest = ids.first()) }
+            true
+        }
+        // Tab / Shift+Tab cycle the diagram selection through the graph's nodes; consumed so
+        // Compose focus traversal doesn't move focus off the canvas.
+        key == Key.Tab && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            cycleDiagramSelection(state, forward = !shift)
+            true
+        }
         // In diagram edit mode Delete/Backspace removes the selected diagram elements —
         // and with nothing selected it must never fall through to deleting the diagram node.
         (key == Key.Delete || key == Key.Backspace) && state.workspace.diagramEditNodeId.isNotBlank() -> {
@@ -2631,8 +2657,13 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             when {
                 // A live drag takes priority: abort it (revert + no undo entry).
                 state.activeDrag -> state.requestCancelDrag()
+                // Two-step exit (draw.io): first Escape clears the element selection, second leaves
+                // diagram edit mode entirely.
+                state.workspace.diagramEditNodeId.isNotBlank() &&
+                    !state.workspace.diagramSelection.isEmpty ->
+                    state.updateWorkspace { it.copy(diagramSelection = DiagramSelection.Empty) }
                 state.workspace.diagramEditNodeId.isNotBlank() -> state.updateWorkspace {
-                    it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+                    it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select)
                 }
                 state.workspace.vectorEditNodeId.isNotBlank() -> state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                 state.designState.editingTextNodeId.isNotBlank() -> state.dispatch(DesignEditorIntent.SetEditingText(""))
@@ -2643,6 +2674,22 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         }
         else -> false
     }
+}
+
+/** Advances the diagram element selection to the next / previous graph node (Tab / Shift+Tab). */
+private fun cycleDiagramSelection(state: MissionEditorStateHolder, forward: Boolean) {
+    val ws = state.workspace
+    val graph = (state.designState.document?.nodeById(ws.diagramEditNodeId)?.kind as? DesignNodeKind.Diagram)?.graph
+        ?: return
+    val order = graph.nodes.filter { it.visible && !it.locked }.map { it.id.value }
+    if (order.isEmpty()) return
+    val index = order.indexOf(ws.diagramSelection.elementIds.firstOrNull())
+    val next = when {
+        index < 0 -> order.first()
+        forward -> order[(index + 1) % order.size]
+        else -> order[(index - 1 + order.size) % order.size]
+    }
+    state.updateWorkspace { it.copy(diagramSelection = DiagramSelection(elementIds = setOf(next))) }
 }
 
 // --- Gesture model -----------------------------------------------------------
