@@ -684,8 +684,22 @@ private fun AppearanceSection(state: MissionEditorStateHolder, node: DesignNode,
         state.dispatch(DesignEditorIntent.SetBlendMode(nodeId, it))
     }
     Spacer(Modifier.height(8.dp))
-    val radius = node.cornerRadius?.topLeft?.literalOrNull() ?: 0.0
-    CompactLabeledNumberField(strings.inspector.radius, radius.formatPx(), "radius-$nodeId") {
+    val radii = node.cornerRadius?.let {
+        listOf(
+            it.topLeft.literalOrNull() ?: 0.0,
+            it.topRight.literalOrNull() ?: 0.0,
+            it.bottomRight.literalOrNull() ?: 0.0,
+            it.bottomLeft.literalOrNull() ?: 0.0,
+        )
+    } ?: listOf(0.0, 0.0, 0.0, 0.0)
+    val uniformRadius = radii.first().takeIf { first -> radii.all { it == first } }
+    CompactLabeledNumberField(
+        label = strings.inspector.radius,
+        value = uniformRadius?.formatPx().orEmpty(),
+        resetKey = "radius-$nodeId",
+        enabled = !locked,
+        placeholder = strings.common.mixed,
+    ) {
         state.dispatch(DesignEditorIntent.UpdateCornerRadius(nodeId, it))
     }
 }

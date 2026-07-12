@@ -597,6 +597,50 @@ class DesignEditorReducerCommandsTest {
     }
 
     @Test
+    fun cornerRadiusDragPreviewsInMemoryAndCommitsAsOneUndoEntry() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        val documentBefore = state.document
+        val sourcesBefore = state.sources
+        val undoBefore = state.undoStack.size
+
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        repeat(4) { step ->
+            val radius = 8.0 + step
+            state = reduceDesignEditor(
+                state,
+                DesignEditorIntent.PreviewCornerRadiusPerCorner(root, radius, radius, radius, radius),
+            )
+        }
+        assertEquals(sourcesBefore, state.sources, "live preview must not recompile the source per frame")
+        state = reduceDesignEditor(state, DesignEditorIntent.UpdateCornerRadiusPerCorner(root, 11.0, 11.0, 11.0, 11.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
+
+        assertEquals(undoBefore + 1, state.undoStack.size, "whole radius drag has one checkpoint")
+        assertEquals(documentBefore, state.undoStack.lastOrNull())
+        assertTrue(state.sources != sourcesBefore, "pointer-up persists the radius")
+        state = reduceDesignEditor(state, DesignEditorIntent.Undo)
+        assertEquals(documentBefore, state.document)
+    }
+
+    @Test
+    fun cancelCornerRadiusDragRestoresDocumentWithoutTouchingSource() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        val documentBefore = state.document
+        val sourcesBefore = state.sources
+        val undoBefore = state.undoStack.size
+
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        state = reduceDesignEditor(state, DesignEditorIntent.PreviewCornerRadiusPerCorner(root, 2.0, 4.0, 6.0, 8.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.CancelInteraction)
+
+        assertEquals(documentBefore, state.document)
+        assertEquals(sourcesBefore, state.sources)
+        assertEquals(undoBefore, state.undoStack.size)
+    }
+
+    @Test
     fun reparentIntoOwnDescendantIsRejected() {
         var state = freshState()
         val root = state.rootFrameId()

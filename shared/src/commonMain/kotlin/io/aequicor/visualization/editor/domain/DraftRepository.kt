@@ -16,6 +16,10 @@ data class WorkspaceDraft(
     val schemaVersion: Int,
     val files: List<MissionDocumentSource>,
     val projectName: String = "",
+    /** Folder handle id for a pending disk-sync copy; null for a browser-only project. */
+    val folderId: String? = null,
+    /** Stable URL/deep-link id for a browser-only project. */
+    val projectId: String? = null,
 )
 
 /**

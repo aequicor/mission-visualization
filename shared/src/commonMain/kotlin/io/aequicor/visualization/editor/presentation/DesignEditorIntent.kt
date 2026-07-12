@@ -215,6 +215,15 @@ sealed interface DesignEditorIntent {
         val bottomLeft: Double? = null,
     ) : DesignEditorIntent
 
+    /** In-memory live preview for a canvas radius drag; persisted once on pointer-up. */
+    data class PreviewCornerRadiusPerCorner(
+        val nodeId: String,
+        val topLeft: Double,
+        val topRight: Double,
+        val bottomRight: Double,
+        val bottomLeft: Double,
+    ) : DesignEditorIntent
+
     /** Legacy convenience kept for the single-swatch inspector path. */
     data class UpdateSolidFill(val nodeId: String, val color: DesignColor) : DesignEditorIntent
 

@@ -97,6 +97,27 @@ class Tier1WriteBackTest {
     }
 
     @Test
+    fun perCornerRadiusWritesAllFourValues() {
+        val before = freshState()
+        val next = reduceDesignEditor(
+            before,
+            DesignEditorIntent.UpdateCornerRadiusPerCorner(
+                nodeId = nodeId,
+                topLeft = 4.0,
+                topRight = 8.0,
+                bottomRight = 12.0,
+                bottomLeft = 16.0,
+            ),
+        )
+        val radius = assertNotNull(next.document?.nodeById(nodeId)?.cornerRadius)
+        assertEquals(4.0, radius.topLeft.literalOrNull())
+        assertEquals(8.0, radius.topRight.literalOrNull())
+        assertEquals(12.0, radius.bottomRight.literalOrNull())
+        assertEquals(16.0, radius.bottomLeft.literalOrNull())
+        next.assertWroteBack(before)
+    }
+
+    @Test
     fun layoutModeWritesLayoutMode() {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutMode(nodeId, EditorLayoutMode.Horizontal))

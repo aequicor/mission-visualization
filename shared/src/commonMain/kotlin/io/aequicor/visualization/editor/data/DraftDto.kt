@@ -10,6 +10,8 @@ internal data class DraftEnvelopeDto(
     val schemaVersion: Int,
     val files: List<DraftFileDto>,
     val projectName: String = "",
+    val folderId: String? = null,
+    val projectId: String? = null,
 )
 
 @Serializable
@@ -19,7 +21,7 @@ internal data class DraftFileDto(
 )
 
 internal fun WorkspaceDraft.toDto(): DraftEnvelopeDto =
-    DraftEnvelopeDto(schemaVersion, files.map { DraftFileDto(it.fileName, it.content) }, projectName)
+    DraftEnvelopeDto(schemaVersion, files.map { DraftFileDto(it.fileName, it.content) }, projectName, folderId, projectId)
 
 internal fun DraftEnvelopeDto.toDomain(): WorkspaceDraft =
-    WorkspaceDraft(schemaVersion, files.map { MissionDocumentSource(it.fileName, it.content) }, projectName)
+    WorkspaceDraft(schemaVersion, files.map { MissionDocumentSource(it.fileName, it.content) }, projectName, folderId, projectId)

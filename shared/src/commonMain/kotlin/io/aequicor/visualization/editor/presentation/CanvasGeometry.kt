@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.round
 import kotlin.math.sin
 
 /**
@@ -29,6 +30,33 @@ data class BoundsBox(
 
 /** A point in document coordinates. */
 data class GeoPoint(val x: Double, val y: Double)
+
+/** The four Figma-like corner-radius controls exposed by a selected rectangle. */
+enum class CornerRadiusHandle { TopLeft, TopRight, BottomRight, BottomLeft }
+
+/** Per-corner values used by the radius overlay and its absolute drag baseline. */
+data class CornerRadii(
+    val topLeft: Double = 0.0,
+    val topRight: Double = 0.0,
+    val bottomRight: Double = 0.0,
+    val bottomLeft: Double = 0.0,
+) {
+    operator fun get(handle: CornerRadiusHandle): Double = when (handle) {
+        CornerRadiusHandle.TopLeft -> topLeft
+        CornerRadiusHandle.TopRight -> topRight
+        CornerRadiusHandle.BottomRight -> bottomRight
+        CornerRadiusHandle.BottomLeft -> bottomLeft
+    }
+
+    fun with(handle: CornerRadiusHandle, value: Double): CornerRadii = when (handle) {
+        CornerRadiusHandle.TopLeft -> copy(topLeft = value)
+        CornerRadiusHandle.TopRight -> copy(topRight = value)
+        CornerRadiusHandle.BottomRight -> copy(bottomRight = value)
+        CornerRadiusHandle.BottomLeft -> copy(bottomLeft = value)
+    }
+
+    fun all(value: Double): CornerRadii = CornerRadii(value, value, value, value)
+}
 
 /** A line segment in document coordinates. */
 data class LineSegment(val x1: Double, val y1: Double, val x2: Double, val y2: Double)
@@ -107,6 +135,62 @@ fun rotatedHandlePoints(box: BoundsBox, degrees: Double): Map<ResizeHandle, GeoP
         ResizeHandle.BottomRight to GeoPoint(box.right, box.bottom),
     )
     return local.mapValues { (_, point) -> rotatePointAroundCenter(point, center, degrees) }
+}
+
+/**
+ * Positions the four radius controls in the rectangle's local corners and then applies the same
+ * effective rotation as the selection outline. [minimumInset] is expressed in document units so
+ * callers can keep the zero-radius controls a fixed screen distance from a sharp corner.
+ */
+fun cornerRadiusHandlePoints(
+    box: BoundsBox,
+    degrees: Double,
+    radii: CornerRadii,
+    minimumInset: Double,
+): Map<CornerRadiusHandle, GeoPoint> {
+    val maxInsetX = (box.width / 2.0).coerceAtLeast(0.0)
+    val maxInsetY = (box.height / 2.0).coerceAtLeast(0.0)
+    val center = GeoPoint(box.centerX, box.centerY)
+    fun inset(radius: Double): Pair<Double, Double> {
+        val requested = radius.coerceAtLeast(0.0) + minimumInset.coerceAtLeast(0.0)
+        return min(requested, maxInsetX) to min(requested, maxInsetY)
+    }
+    fun point(handle: CornerRadiusHandle): GeoPoint {
+        val (ix, iy) = inset(radii[handle])
+        val local = when (handle) {
+            CornerRadiusHandle.TopLeft -> GeoPoint(box.x + ix, box.y + iy)
+            CornerRadiusHandle.TopRight -> GeoPoint(box.right - ix, box.y + iy)
+            CornerRadiusHandle.BottomRight -> GeoPoint(box.right - ix, box.bottom - iy)
+            CornerRadiusHandle.BottomLeft -> GeoPoint(box.x + ix, box.bottom - iy)
+        }
+        return rotatePointAroundCenter(local, center, degrees)
+    }
+    return CornerRadiusHandle.entries.associateWith(::point)
+}
+
+/**
+ * Converts a pointer in document space to a one-pixel-stepped radius. The effective selection
+ * rotation is undone first; then the pointer is projected onto the active corner's inward diagonal.
+ */
+fun cornerRadiusFromPointer(
+    box: BoundsBox,
+    degrees: Double,
+    handle: CornerRadiusHandle,
+    pointer: GeoPoint,
+    minimumInset: Double,
+): Double {
+    val local = rotatePointAroundCenter(pointer, GeoPoint(box.centerX, box.centerY), -degrees)
+    val inwardX = when (handle) {
+        CornerRadiusHandle.TopLeft, CornerRadiusHandle.BottomLeft -> local.x - box.x
+        CornerRadiusHandle.TopRight, CornerRadiusHandle.BottomRight -> box.right - local.x
+    }
+    val inwardY = when (handle) {
+        CornerRadiusHandle.TopLeft, CornerRadiusHandle.TopRight -> local.y - box.y
+        CornerRadiusHandle.BottomLeft, CornerRadiusHandle.BottomRight -> box.bottom - local.y
+    }
+    val projected = (inwardX + inwardY) / 2.0 - minimumInset.coerceAtLeast(0.0)
+    val maximum = (min(box.width, box.height) / 2.0).coerceAtLeast(0.0)
+    return round(projected).coerceIn(0.0, maximum)
 }
 
 /**

@@ -131,6 +131,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import io.aequicor.visualization.editor.presentation.BoundsBox
 import io.aequicor.visualization.editor.presentation.CanvasParentFrame
 import io.aequicor.visualization.editor.presentation.CanvasOperation
+import io.aequicor.visualization.editor.presentation.CornerRadii
+import io.aequicor.visualization.editor.presentation.CornerRadiusHandle
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
@@ -164,6 +166,8 @@ import io.aequicor.visualization.editor.presentation.EffectiveTransform
 import io.aequicor.visualization.editor.presentation.LineSegment
 import io.aequicor.visualization.editor.presentation.computeResize
 import io.aequicor.visualization.editor.presentation.canvasScrollbarsFor
+import io.aequicor.visualization.editor.presentation.cornerRadiusFromPointer
+import io.aequicor.visualization.editor.presentation.cornerRadiusHandlePoints
 import io.aequicor.visualization.editor.presentation.toMovingEdges
 import io.aequicor.visualization.editor.presentation.toSnapBox
 import io.aequicor.visualization.subsystems.anchoring.AnchorGuide
@@ -228,6 +232,7 @@ import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.DesignSize
+import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.LayoutMode
@@ -466,6 +471,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         val primarySelectionLocked = primarySelectionId?.let { document?.nodeById(it)?.locked == true } ?: false
         val primarySelectionInVectorEdit = primarySelectionId != null && primarySelectionId == ws.vectorEditNodeId
         val primarySelectionInDiagramEdit = primarySelectionId != null && primarySelectionId == ws.diagramEditNodeId
+        val primaryRectangleRadii = primarySelectionId
+            ?.let { document?.nodeById(it) }
+            ?.takeIf { it.isRectangleShape() }
+            ?.cornerRadii()
         val parentOfPrimarySelection = primarySelectionId
             ?.let { document?.parentNodeOf(it)?.id }
             ?.let { layout?.effectiveTransformFor(it) }
@@ -494,6 +503,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         // Live rotation-snap feedback (angle + whether magnetically caught); null outside a rotate drag.
         var rotateIndicator by remember { mutableStateOf<RotateIndicator?>(null) }
         var rotateDragActive by remember { mutableStateOf(false) }
+        var radiusIndicator by remember { mutableStateOf<RadiusIndicator?>(null) }
 
         // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Space
         // for pan, Alt for the read-only measurement overlay).
@@ -711,7 +721,18 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 )
                                 return@awaitEachGesture
                             }
+                            val radiusRadii = if (handlesActive && isSingleSelection && handleGeometryBox != null) {
+                                pressDocument.nodeById(pressDesign.selectedNodeId)
+                                    ?.takeIf { it.isRectangleShape() }
+                                    ?.cornerRadii()
+                            } else {
+                                null
+                            }
+                            val radiusHandle = radiusRadii?.let { radii ->
+                                cornerRadiusHandleAt(handleGeometryBox!!, handleRotation, radii, viewport, start)
+                            }
                             val handle = handleGeometryBox?.takeIf { handlesActive }
+                                ?.takeIf { radiusHandle == null }
                                 ?.let { box -> rotatedHandleAt(box, handleRotation, viewport, start) }
                             val rotateHit = handle == null && isSingleSelection &&
                                 handleGeometryBox?.takeIf { handlesActive }?.let { box ->
@@ -720,7 +741,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
                             val hitId = hitNode(pressLayout, pressDocument, viewport, start)
-                            val mode = resolveCanvasOperation(pressWorkspace.tool, forcePan, handle, rotateHit, hitId)
+                            val mode = resolveCanvasOperation(pressWorkspace.tool, forcePan, radiusHandle, handle, rotateHit, hitId)
 
                             // A press whose top-most hit is the current selection — or a descendant
                             // showing through inside a selected container — drags the selection instead
@@ -866,6 +887,16 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             } else {
                                 null
                             }
+                            val radiusBaseline = if (mode is CanvasOperation.AdjustCornerRadius && handleGeometryBox != null && radiusRadii != null) {
+                                RadiusBaseline(
+                                    nodeId = pressDesign.selectedNodeId,
+                                    box = handleGeometryBox,
+                                    rotation = handleRotation,
+                                    radii = radiusRadii,
+                                )
+                            } else {
+                                null
+                            }
                             var accX = 0f
                             var accY = 0f
                             // Total snapped displacement already dispatched this drag, so each frame
@@ -907,7 +938,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     state.beginDrag()
                                     operationBegan = true
                                 }
-                                if (!documentBegan && (mode == CanvasOperation.Move || mode is CanvasOperation.Resize || mode == CanvasOperation.Rotate)) {
+                                if (!documentBegan && (mode == CanvasOperation.Move || mode is CanvasOperation.Resize || mode == CanvasOperation.Rotate || mode is CanvasOperation.AdjustCornerRadius)) {
                                     state.dispatch(DesignEditorIntent.BeginInteraction)
                                     documentBegan = true
                                 }
@@ -1049,6 +1080,31 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 resizeMatched = snap.output?.match?.let { it.widthMatched || it.heightMatched } == true
                                             }
                                         }
+                                        badge = null
+                                    }
+                                    is CanvasOperation.AdjustCornerRadius -> if (radiusBaseline != null) {
+                                        val radius = cornerRadiusFromPointer(
+                                            box = radiusBaseline.box,
+                                            degrees = radiusBaseline.rotation,
+                                            handle = mode.handle,
+                                            pointer = GeoPoint(viewport.toDocX(pos.x), viewport.toDocY(pos.y)),
+                                            minimumInset = CornerRadiusHandleInsetPx / zoomPx,
+                                        )
+                                        val next = if (altHeld) {
+                                            radiusBaseline.radii.with(mode.handle, radius)
+                                        } else {
+                                            radiusBaseline.radii.all(radius)
+                                        }
+                                        state.dispatch(
+                                            DesignEditorIntent.PreviewCornerRadiusPerCorner(
+                                                nodeId = radiusBaseline.nodeId,
+                                                topLeft = next.topLeft,
+                                                topRight = next.topRight,
+                                                bottomRight = next.bottomRight,
+                                                bottomLeft = next.bottomLeft,
+                                            ),
+                                        )
+                                        radiusIndicator = RadiusIndicator(mode.handle, radius)
                                         badge = null
                                     }
                                     CanvasOperation.Rotate -> if (rotateBaseline != null) {
@@ -1222,6 +1278,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             ?: rotateBaseline.startRotation
                                         state.dispatch(DesignEditorIntent.RotateNode(rotateBaseline.nodeId, finalAngle))
                                     }
+                                    is CanvasOperation.AdjustCornerRadius -> if (moved && radiusBaseline != null) {
+                                        state.designState.document?.nodeById(radiusBaseline.nodeId)?.cornerRadii()?.let { final ->
+                                            state.dispatch(
+                                                DesignEditorIntent.UpdateCornerRadiusPerCorner(
+                                                    nodeId = radiusBaseline.nodeId,
+                                                    topLeft = final.topLeft,
+                                                    topRight = final.topRight,
+                                                    bottomRight = final.bottomRight,
+                                                    bottomLeft = final.bottomLeft,
+                                                ),
+                                            )
+                                        }
+                                    }
                                     else -> Unit
                                 }
                                 if (documentBegan) state.dispatch(DesignEditorIntent.EndInteraction)
@@ -1238,6 +1307,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             resizeMatched = false
                             rotateIndicator = null
                             rotateDragActive = false
+                            radiusIndicator = null
                         }
                     }
                     .pointerHoverIcon(
@@ -1340,7 +1410,16 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 // suppress handles and the rotate affordance but keep the rest of the overlay.
                 if (!primarySelectionLocked && !primarySelectionInVectorEdit && !primarySelectionInDiagramEdit) {
                     drawRotatedHandles(primarySelectionBox, primarySelectionRotation, viewport, colors.accent)
-                    if (!dragMoveActive && !rotateDragActive) {
+                    if (ws.tool == EditorTool.Select && primaryRectangleRadii != null) {
+                        drawCornerRadiusHandles(
+                            primarySelectionBox,
+                            primarySelectionRotation,
+                            primaryRectangleRadii,
+                            viewport,
+                            colors.accent,
+                        )
+                    }
+                    if (!dragMoveActive && !rotateDragActive && radiusIndicator == null) {
                         val offsetDoc = (RotateHandleScreenOffsetPx / zoomPx).toDouble()
                         drawRotateAffordance(primarySelectionBox, primarySelectionRotation, offsetDoc, viewport, colors.accent)
                     }
@@ -1357,9 +1436,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     val bg = if (ind.caught) colors.statusPositive else colors.accent
                     drawFilledBadge("${ind.angle.roundToInt()}°", viewport.toScreen(at.x, at.y), bg, textMeasurer)
                 }
+                radiusIndicator?.let { ind ->
+                    val point = cornerRadiusHandlePoints(
+                        primarySelectionBox,
+                        primarySelectionRotation,
+                        primaryRectangleRadii ?: CornerRadii().all(ind.radius),
+                        CornerRadiusHandleInsetPx / zoomPx,
+                    ).getValue(ind.handle)
+                    val at = viewport.toScreen(point.x, point.y)
+                    drawFilledBadge("Radius ${ind.radius.roundToInt()}", Offset(at.x, at.y - 20f), colors.accent, textMeasurer)
+                }
             }
 
-            if (altHeld && primarySelectionBox != null) {
+            if (altHeld && radiusIndicator == null && primarySelectionBox != null) {
                 val altTargetBox = altMeasurementTarget(design, hoveredNodeId, layout, parentOfPrimarySelection, primarySelectionId)
                 if (altTargetBox != null) {
                     drawAltMeasurement(
@@ -2520,12 +2609,14 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
 private fun resolveCanvasOperation(
     tool: EditorTool,
     forcePan: Boolean,
+    radiusHandle: CornerRadiusHandle?,
     handle: ResizeHandle?,
     rotateHit: Boolean,
     hitId: String,
 ): CanvasOperation = when {
     forcePan -> CanvasOperation.Pan
     tool.creates != null -> CanvasOperation.Create(tool.creates)
+    radiusHandle != null -> CanvasOperation.AdjustCornerRadius(radiusHandle)
     handle != null -> CanvasOperation.Resize(handle)
     rotateHit -> CanvasOperation.Rotate
     hitId.isNotBlank() -> CanvasOperation.Move
@@ -2556,6 +2647,15 @@ private data class RotateBaseline(
 
 /** Live rotation-snap feedback while rotating: the applied [angle] and whether it magnetically caught. */
 private data class RotateIndicator(val angle: Double, val caught: Boolean)
+
+private data class RadiusBaseline(
+    val nodeId: String,
+    val box: BoundsBox,
+    val rotation: Double,
+    val radii: CornerRadii,
+)
+
+private data class RadiusIndicator(val handle: CornerRadiusHandle, val radius: Double)
 
 /**
  * Fixed drag-start reference for reordering an Auto layout child: its parent and flow
@@ -2962,6 +3062,10 @@ private fun canvasParentFrame(path: List<LayoutBox>): CanvasParentFrame {
 
 private const val HandleHitRadiusPx = 11f
 
+private const val CornerRadiusHandleInsetPx = 12.0
+
+private const val CornerRadiusHandleHitRadiusPx = 10f
+
 /** Screen-space radius within which a free-move drag magnetically *catches* an alignment line. */
 private const val SnapCatchPx = 7f
 
@@ -3043,6 +3147,23 @@ private fun rotatedHandleAt(box: BoundsBox, rotationDegrees: Double, viewport: C
         ?.first
 }
 
+private fun cornerRadiusHandleAt(
+    box: BoundsBox,
+    rotationDegrees: Double,
+    radii: CornerRadii,
+    viewport: CanvasViewport,
+    pos: Offset,
+): CornerRadiusHandle? = cornerRadiusHandlePoints(
+    box = box,
+    degrees = rotationDegrees,
+    radii = radii,
+    minimumInset = CornerRadiusHandleInsetPx / viewport.zoom,
+).entries
+    .map { (handle, point) -> handle to viewport.toScreen(point.x, point.y) }
+    .minByOrNull { (_, screenPoint) -> (screenPoint - pos).getDistanceSquared() }
+    ?.takeIf { (_, screenPoint) -> (screenPoint - pos).getDistance() <= CornerRadiusHandleHitRadiusPx }
+    ?.first
+
 /**
  * Cursor for the current pointer position: a rotation-aware resize cursor when hovering a
  * handle of the (single or multi) selection, else the active tool's default cursor. Runs
@@ -3072,6 +3193,11 @@ private fun resolveHandleCursor(
     if (id == vectorEditNodeId || id == diagramEditNodeId) return null
     if (document.nodeById(id)?.locked == true) return null
     val transform = layout?.effectiveTransformFor(id) ?: return null
+    val node = document.nodeById(id)
+    if (node?.isRectangleShape() == true) {
+        val radiusHandle = cornerRadiusHandleAt(transform.box, transform.rotation, node.cornerRadii(), viewport, pos)
+        if (radiusHandle != null) return PointerIcon.Hand
+    }
     val handle = rotatedHandleAt(transform.box, transform.rotation, viewport, pos) ?: return null
     return cursorForResizeKind(resizeCursorKindForHandle(handle, transform.rotation))
 }
@@ -3107,6 +3233,35 @@ private fun DrawScope.drawRotatedHandles(box: BoundsBox, rotationDegrees: Double
         drawRect(color = color, topLeft = topLeft, size = Size(handle, handle), style = Stroke(width = 1.5f))
     }
 }
+
+private fun DrawScope.drawCornerRadiusHandles(
+    box: BoundsBox,
+    rotationDegrees: Double,
+    radii: CornerRadii,
+    viewport: CanvasViewport,
+    color: Color,
+) {
+    cornerRadiusHandlePoints(
+        box = box,
+        degrees = rotationDegrees,
+        radii = radii,
+        minimumInset = CornerRadiusHandleInsetPx / viewport.zoom,
+    ).values.forEach { point ->
+        val center = viewport.toScreen(point.x, point.y)
+        drawCircle(Color.White, radius = 4.5f, center = center)
+        drawCircle(color, radius = 4.5f, center = center, style = Stroke(width = 1.5f))
+    }
+}
+
+private fun DesignNode.isRectangleShape(): Boolean =
+    (kind as? DesignNodeKind.Shape)?.shape == ShapeType.Rectangle
+
+private fun DesignNode.cornerRadii(): CornerRadii = CornerRadii(
+    topLeft = cornerRadius?.topLeft?.literalOrNull() ?: 0.0,
+    topRight = cornerRadius?.topRight?.literalOrNull() ?: 0.0,
+    bottomRight = cornerRadius?.bottomRight?.literalOrNull() ?: 0.0,
+    bottomLeft = cornerRadius?.bottomLeft?.literalOrNull() ?: 0.0,
+)
 
 private fun DrawScope.drawRotateAffordance(
     box: BoundsBox,

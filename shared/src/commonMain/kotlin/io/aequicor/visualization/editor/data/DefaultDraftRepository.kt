@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 
 /** Storage key; the `v1` suffix pairs with [WorkspaceDraft] schema versioning. */
 internal const val DraftStorageKey: String = "mv.slm.draft.v1"
+internal const val FolderPendingStorageKey: String = "mv.folder.pending.v1"
 
 private val DraftJson: Json = Json { ignoreUnknownKeys = true }
 

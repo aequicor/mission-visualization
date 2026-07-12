@@ -24,12 +24,25 @@ class DraftController(
     suspend fun restore(): WorkspaceDraft? = restoreDraftSources()
 
     /** Persists [sources] and project metadata now, suspending until written (used by autosave). */
-    suspend fun save(sources: List<MissionDocumentSource>, projectName: String) = saveDraft(sources, projectName)
+    suspend fun save(
+        sources: List<MissionDocumentSource>,
+        projectName: String,
+        folderId: String? = null,
+        projectId: String? = null,
+    ) = saveDraft(sources, projectName, folderId, projectId)
 
     /** Fire-and-forget explicit save (the Save button). */
-    fun saveNow(sources: List<MissionDocumentSource>, projectName: String) {
-        scope.launch { saveDraft(sources, projectName) }
+    fun saveNow(
+        sources: List<MissionDocumentSource>,
+        projectName: String,
+        folderId: String? = null,
+        projectId: String? = null,
+    ) {
+        scope.launch { saveDraft(sources, projectName, folderId, projectId) }
     }
+
+    /** Removes the stored browser project / pending-sync safety copy before returning. */
+    suspend fun clear() = clearDraft()
 
     /** Clears the draft, then runs [onCleared] to reseed the editor (the Reset button). */
     fun reset(onCleared: () -> Unit) {

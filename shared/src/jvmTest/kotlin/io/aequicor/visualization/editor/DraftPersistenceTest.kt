@@ -55,6 +55,22 @@ class DraftPersistenceTest {
     }
 
     @Test
+    fun pendingFolderSnapshotRoundTripsFolderId() = runBlocking {
+        val repo = repository(FakeKeyValueStore())
+        SaveDraftUseCase(repo)(sample, projectName = "Orbit Console", folderId = "folder-42")
+        val restored = RestoreDraftSourcesUseCase(repo)()
+        assertEquals(sample, restored?.files)
+        assertEquals("folder-42", restored?.folderId)
+    }
+
+    @Test
+    fun browserProjectRoundTripsStableProjectId() = runBlocking {
+        val repo = repository(FakeKeyValueStore())
+        SaveDraftUseCase(repo)(sample, projectName = "Browser project", projectId = "browser-42")
+        assertEquals("browser-42", RestoreDraftSourcesUseCase(repo)()?.projectId)
+    }
+
+    @Test
     fun restoreSupportsLegacyDraftWithoutProjectName() = runBlocking {
         val store = FakeKeyValueStore()
         store.putString(
@@ -64,6 +80,8 @@ class DraftPersistenceTest {
         val restored = RestoreDraftSourcesUseCase(repository(store))()
         assertEquals(listOf(MissionDocumentSource("legacy.layout.md", "# Legacy")), restored?.files)
         assertEquals("", restored?.projectName)
+        assertNull(restored?.folderId)
+        assertNull(restored?.projectId)
     }
 
     @Test
@@ -79,10 +97,10 @@ class DraftPersistenceTest {
     }
 
     @Test
-    fun restoreTreatsEmptyDraftAsAbsent() = runBlocking {
+    fun restoreKeepsEmptyBrowserProject() = runBlocking {
         val repo = repository(FakeKeyValueStore())
         repo.save(WorkspaceDraft(DraftSchemaVersion, emptyList()))
-        assertNull(RestoreDraftSourcesUseCase(repo)())
+        assertEquals(emptyList(), RestoreDraftSourcesUseCase(repo)()?.files)
     }
 
     @Test

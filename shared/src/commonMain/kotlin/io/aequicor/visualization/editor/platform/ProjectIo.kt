@@ -47,6 +47,9 @@ internal expect fun platformToggleFullscreen()
 /** Opens an external URL in the platform browser (best-effort; no-op where unavailable). */
 internal expect fun platformOpenUrl(url: String)
 
+/** Replaces the current URL hash with the active project's stable id. */
+internal expect fun platformSetActiveProjectId(id: String)
+
 // --- Live local-folder sync (the "browser IDE" mode) ------------------------------------------
 // Real only on wasmJs (Chromium File System Access API): a picked folder's handle is persisted in
 // IndexedDB, a watcher re-reads externally-changed *.layout.md into the canvas, and editor edits
@@ -69,6 +72,9 @@ internal expect fun platformInitFolderSync()
 
 /** Picks a folder (readwrite), persists its handle, enumerates sources and starts the watcher. */
 internal expect fun platformConnectFolderLive()
+
+/** Creates a live folder project from the current in-memory sources. */
+internal expect fun platformCreateFolderProject(sourcesJson: String)
 
 /**
  * Re-establishes access to the previously connected folder. Must be called from a user gesture:

@@ -63,6 +63,7 @@
         var finished = false;
         var easeTimer = 0;
         var creepTimer = 0;
+        var bytesHideTimer = 0;
 
         var els = { resolved: false, fill: null, pct: null, wrap: null, bytes: null };
         function resolveDom() {
@@ -90,9 +91,18 @@
         function renderBytes(recvBytes, totalBytes) {
           resolveDom();
           if (!els.bytes) return;
+          if (bytesHideTimer) { clearTimeout(bytesHideTimer); bytesHideTimer = 0; }
           els.bytes.textContent = totalBytes > 0
             ? (formatMb(recvBytes) + ' / ' + formatMb(totalBytes) + ' MB')
             : (formatMb(recvBytes) + ' MB');
+        }
+        function hideBytes(delay) {
+          if (bytesHideTimer) clearTimeout(bytesHideTimer);
+          bytesHideTimer = setTimeout(function () {
+            bytesHideTimer = 0;
+            resolveDom();
+            if (els.bytes) els.bytes.textContent = '';
+          }, delay || 0);
         }
         // Eased via setTimeout (not requestAnimationFrame): rAF is fully paused
         // in a hidden/background tab, which would freeze the meter if the user
@@ -145,7 +155,15 @@
           frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
           var t = frac * 90;       // downloads occupy 0..90; 90..99 is compile/mount
           if (t > targetPct) { targetPct = t; schedule(); }
-          if (frac >= 0.999) startCreep();
+          if (frac >= 0.999) {
+            startCreep();
+            // The byte counter describes network/body activity only. Remove it
+            // once the stream is exhausted, while the percentage can continue
+            // to represent wasm compilation and the first Compose frame. A tiny
+            // delay avoids flicker between the two wasm fetches; cache hits
+            // normally finish before the progress UI has even faded in.
+            hideBytes(120);
+          }
         }
 
         // ---- SINGLE interception point: window.fetch ----------------------
@@ -225,9 +243,7 @@
             if (creepTimer) { clearInterval(creepTimer); creepTimer = 0; }
             targetPct = 100;
             schedule();
-            // Snap the byte read-out to "complete" too, matching the 100% hand-off
-            // (guards against a manifest total that undershot the true byte count).
-            if (manifestTotal > 0) renderBytes(manifestTotal, manifestTotal);
+            hideBytes(0);
           }
         };
       })();

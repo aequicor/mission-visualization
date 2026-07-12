@@ -19,6 +19,7 @@ import io.aequicor.visualization.engine.frontend.edit.SetMotion
 import io.aequicor.visualization.engine.frontend.edit.SetLayoutProperty
 import io.aequicor.visualization.engine.frontend.edit.SetNodeConstraints
 import io.aequicor.visualization.engine.frontend.edit.SetBooleanOp
+import io.aequicor.visualization.engine.frontend.edit.SetCornerRadii
 import io.aequicor.visualization.engine.frontend.edit.SetStrokes
 import io.aequicor.visualization.engine.frontend.edit.SetSizing
 import io.aequicor.visualization.engine.frontend.edit.SetNodePosition
@@ -116,6 +117,16 @@ import io.aequicor.visualization.subsystems.annotations.setAnnotationKind
 import io.aequicor.visualization.subsystems.annotations.updateAnnotationText
 import kotlin.math.cos
 import kotlin.math.sin
+
+private fun DesignCornerRadius?.orDefault(): DesignCornerRadius = this ?: DesignCornerRadius()
+
+private fun DesignCornerRadius.withUpdates(intent: DesignEditorIntent.UpdateCornerRadiusPerCorner): DesignCornerRadius =
+    copy(
+        topLeft = intent.topLeft?.coerceAtLeast(0.0)?.bindable() ?: topLeft,
+        topRight = intent.topRight?.coerceAtLeast(0.0)?.bindable() ?: topRight,
+        bottomRight = intent.bottomRight?.coerceAtLeast(0.0)?.bindable() ?: bottomRight,
+        bottomLeft = intent.bottomLeft?.coerceAtLeast(0.0)?.bindable() ?: bottomLeft,
+    )
 
 /**
  * Pure `(State, Intent) -> State` reducer. Selection and workspace-independent document
@@ -263,13 +274,27 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
             intent.nodeId,
             listOf(SetStyleProperty(intent.nodeId, StyleProp.Radius, YamlScalarValue.Num(intent.radius.coerceAtLeast(0.0)))),
         ) { it.copy(cornerRadius = DesignCornerRadius.all(intent.radius.coerceAtLeast(0.0).bindable())) }
-        is DesignEditorIntent.UpdateCornerRadiusPerCorner -> state.editUnlockedNode(intent.nodeId) { node ->
+        is DesignEditorIntent.UpdateCornerRadiusPerCorner -> state.writeBackEdits(
+            intent.nodeId,
+            listOf(SetCornerRadii(intent.nodeId, state.document?.nodeById(intent.nodeId)?.cornerRadius
+                .orDefault()
+                .withUpdates(intent))),
+        ) { node ->
             val current = node.cornerRadius ?: DesignCornerRadius()
             node.copy(cornerRadius = current.copy(
                 topLeft = intent.topLeft?.coerceAtLeast(0.0)?.bindable() ?: current.topLeft,
                 topRight = intent.topRight?.coerceAtLeast(0.0)?.bindable() ?: current.topRight,
                 bottomRight = intent.bottomRight?.coerceAtLeast(0.0)?.bindable() ?: current.bottomRight,
                 bottomLeft = intent.bottomLeft?.coerceAtLeast(0.0)?.bindable() ?: current.bottomLeft,
+            ))
+        }
+        is DesignEditorIntent.PreviewCornerRadiusPerCorner -> state.editUnlockedNode(intent.nodeId) { node ->
+            node.copy(cornerRadius = DesignCornerRadius(
+                topLeft = intent.topLeft.coerceAtLeast(0.0).bindable(),
+                topRight = intent.topRight.coerceAtLeast(0.0).bindable(),
+                bottomRight = intent.bottomRight.coerceAtLeast(0.0).bindable(),
+                bottomLeft = intent.bottomLeft.coerceAtLeast(0.0).bindable(),
+                smoothing = node.cornerRadius?.smoothing ?: 0.0,
             ))
         }
         is DesignEditorIntent.UpdateSolidFill -> state.fillsWriteBack(intent.nodeId) { node ->

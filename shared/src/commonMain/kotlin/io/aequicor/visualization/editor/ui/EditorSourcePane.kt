@@ -75,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import io.aequicor.visualization.AppBuildInfo
 import io.aequicor.visualization.FolderSyncPresence
 import io.aequicor.visualization.MissionEditorStateHolder
@@ -90,10 +91,13 @@ import io.aequicor.visualization.editor.platform.platformDownloadAgentFile
 import io.aequicor.visualization.editor.platform.platformDownloadProjectZip
 import io.aequicor.visualization.editor.platform.platformExportCanvasPng
 import io.aequicor.visualization.editor.platform.platformFinishPdfExport
+import io.aequicor.visualization.editor.platform.platformInstallLanding
 import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
 import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
 import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
+import io.aequicor.visualization.editor.platform.platformSetActiveProjectId
 import io.aequicor.visualization.editor.platform.platformSupportsAgentFileExport
+import io.aequicor.visualization.editor.platform.platformSupportsLanding
 import io.aequicor.visualization.editor.platform.platformSupportsProjectDiskIo
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
@@ -184,6 +188,29 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 ProjectMenuTitleBar(projectName = state.displayProjectName, version = AppBuildInfo.VERSION)
                 when (menuPane) {
                     ProjectMenuPane.Root -> {
+                        FolderSyncMenuStatus(state)
+                        if (platformSupportsLanding) {
+                            EditorDropdownMenuItem(
+                                strings.menu.projects,
+                                leadingContent = { DropdownMenuIcon(EditorIcon.Home) },
+                            ) {
+                                closeMenu()
+                                scope.launch {
+                                    if (state.folderSync != FolderSyncPresence.Idle) state.disconnectFolder()
+                                    platformSetActiveProjectId("")
+                                    platformInstallLanding(
+                                        buildLandingConfigJson(
+                                            colors = colors,
+                                            recents = state.recentProjectsList(),
+                                            supportsFolders = state.supportsFolderSync,
+                                            hasRecovery = state.hasRecoveryDraft(),
+                                            browserProjectId = state.storedBrowserProjectId(),
+                                            language = state.language,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
                         EditorDropdownMenuItem(strings.menu.open, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) { menuPane = ProjectMenuPane.Open }
                         EditorDropdownMenuItem(strings.menu.save, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) { menuPane = ProjectMenuPane.Save }
                         EditorDropdownMenuItem(strings.menu.export, leadingContent = { DropdownMenuIcon(EditorIcon.Export) }) { menuPane = ProjectMenuPane.Export }
@@ -230,15 +257,18 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                                 closeMenu()
                                 platformOpenProjectZipArchive()
                             }
+                        }
+                        if (state.supportsFolderSync) {
+                            EditorDropdownMenuItem(strings.menu.openFolder, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) {
+                                closeMenu()
+                                state.connectFolder()
+                            }
+                        } else if (platformSupportsProjectDiskIo) {
+                            // Browsers without the File System Access API can only import a folder
+                            // once; keep the same user-facing action as a graceful fallback.
                             EditorDropdownMenuItem(strings.menu.openFolder, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) {
                                 closeMenu()
                                 platformOpenProjectFolder()
-                            }
-                        }
-                        if (state.supportsFolderSync) {
-                            EditorDropdownMenuItem(strings.menu.connectFolder, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) {
-                                closeMenu()
-                                state.connectFolder()
                             }
                         }
                     }
@@ -356,7 +386,6 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 }
             }
         }
-        FolderSyncChip(state)
         Box(Modifier.weight(1f)) {
             TabStrip(
                 tabs = SourceTab.entries,
@@ -398,45 +427,57 @@ private fun ProjectMenuSectionTitle(title: String) {
     )
 }
 
-/**
- * Compact live-folder status chip in the source-pane header: a coloured dot plus the folder name
- * when watching, or a one-tap "Reconnect" when the browser dropped permission after a reload.
- * Renders nothing when no folder is connected.
- */
 @Composable
-private fun FolderSyncChip(state: MissionEditorStateHolder) {
+private fun FolderSyncMenuStatus(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
     val name = state.folderName.orEmpty()
     when (state.folderSync) {
         FolderSyncPresence.Idle -> Unit
-        FolderSyncPresence.Connecting -> FolderChipContent(colors.mutedInk, name.ifBlank { "…" }, colors)
-        FolderSyncPresence.Watching -> FolderChipContent(colors.statusPositive, name, colors, label = strings.menu.folderWatching)
-        FolderSyncPresence.ReconnectNeeded -> Box(
-            Modifier.padding(horizontal = 6.dp).clickable { state.reconnectFolder() },
-        ) {
-            FolderChipContent(colors.statusWarning, strings.menu.folderReconnect(name), colors)
-        }
+        FolderSyncPresence.Connecting -> FolderSyncMenuStatusContent(
+            dot = colors.mutedInk,
+            title = strings.menu.folderConnecting,
+            description = name,
+        )
+        FolderSyncPresence.Watching -> FolderSyncMenuStatusContent(
+            dot = colors.statusPositive,
+            title = strings.menu.folderWatching,
+            description = strings.menu.folderWatchingDescription(name),
+        )
+        FolderSyncPresence.ReconnectNeeded -> FolderSyncMenuStatusContent(
+            dot = colors.statusWarning,
+            title = strings.menu.folderAccessRequired,
+            description = strings.menu.folderAccessRequiredDescription(name),
+        )
     }
 }
 
 @Composable
-private fun FolderChipContent(dot: Color, text: String, colors: io.aequicor.visualization.editor.ui.theme.EditorColors, label: String? = null) {
-    Row(
-        modifier = Modifier.padding(horizontal = 8.dp).widthIn(max = 180.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+private fun FolderSyncMenuStatusContent(dot: Color, title: String, description: String) {
+    val colors = LocalEditorColors.current
+    Column(
+        modifier = Modifier.width(280.dp).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
-        if (label != null) {
-            Text(label, color = colors.mutedInk, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+            Text(
+                text = title,
+                color = colors.ink,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
         Text(
-            text,
-            color = colors.ink,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            text = description,
+            modifier = Modifier.padding(start = 16.dp),
+            color = colors.mutedInk,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            maxLines = 2,
         )
     }
 }
@@ -489,44 +530,73 @@ private fun FolderSyncBanner(state: MissionEditorStateHolder) {
     }
 }
 
-/**
- * Always-visible top strip nudging the user to save a browser-only project — a freshly-edited
- * in-memory Welcome, or a recovered draft — to disk. Renders nothing once dismissed, saved, or
- * reseeded (see [MissionEditorStateHolder.browserSaveNoticeVisible]).
- */
+/** Prompts for a storage mode after the first edit to the in-memory Welcome tour. */
 @Composable
 fun EditorBrowserSaveBanner(state: MissionEditorStateHolder) {
     if (!state.browserSaveNoticeVisible) return
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(colors.statusWarning.copy(alpha = 0.14f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(strings.menu.browserOnlyNotice, color = colors.ink, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        if (platformSupportsProjectDiskIo) {
-            Text(
-                strings.menu.saveToDisk,
-                color = colors.accent,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable {
-                    platformSaveProjectFolder(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources)) {
-                        state.saveDraftNow()
-                        state.dismissBrowserSaveNotice()
-                    }
-                },
-            )
+    Dialog(onDismissRequest = state::dismissBrowserSaveNotice) {
+        Surface(
+            modifier = Modifier.width(420.dp),
+            shape = RoundedCornerShape(14.dp),
+            color = colors.raisedSurface,
+            shadowElevation = 12.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    text = strings.menu.createProjectTitle,
+                    color = colors.ink,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = strings.menu.createProjectMessage,
+                    color = colors.mutedInk,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                ProjectCreationChoice(
+                    text = strings.menu.createProjectInBrowser,
+                    accent = true,
+                    onClick = state::createBrowserProject,
+                )
+                if (state.supportsFolderSync) {
+                    ProjectCreationChoice(
+                        text = strings.menu.createProjectOnDisk,
+                        accent = false,
+                        onClick = state::createFolderProject,
+                    )
+                }
+                Text(
+                    text = strings.menu.cancel,
+                    modifier = Modifier.align(Alignment.End).clickable { state.dismissBrowserSaveNotice() }.padding(8.dp),
+                    color = colors.mutedInk,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun ProjectCreationChoice(text: String, accent: Boolean, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = if (accent) colors.accent else colors.raisedSurface,
+        border = if (accent) null else BorderStroke(1.dp, colors.panelStroke),
+    ) {
         Text(
-            strings.menu.folderDismiss,
-            color = colors.mutedInk,
-            fontSize = 12.sp,
-            modifier = Modifier.clickable { state.dismissBrowserSaveNotice() },
+            text = text,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            color = if (accent) Color.White else colors.ink,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
         )
     }
 }
