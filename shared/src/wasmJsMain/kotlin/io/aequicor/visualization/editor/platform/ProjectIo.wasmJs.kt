@@ -1029,6 +1029,8 @@ private fun ensureLandingInstalled() {
               ".mvl-add{align-items:center;color:var(--mvl-accent);border-style:dashed;}" +
               ".mvl-add .mvl-name{color:var(--mvl-accent);}" +
               ".mvl-note{font-size:12px;color:var(--mvl-muted);margin-top:16px;}" +
+              ".mvl-flag-copy{display:inline-flex;align-items:center;margin-left:6px;border:1px solid var(--mvl-stroke);background:var(--mvl-card);color:var(--mvl-accent);border-radius:7px;padding:3px 8px;font:inherit;font-size:11px;font-weight:600;line-height:1.4;cursor:pointer;white-space:nowrap;}" +
+              ".mvl-flag-copy:hover{background:var(--mvl-card-hover);border-color:var(--mvl-accent);}" +
               ".mvl-actions{display:flex;align-items:flex-start;gap:8px;flex:0 0 auto;}" +
               ".mvl-lang-wrap{position:relative;}" +
               ".mvl-lang{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--mvl-stroke);background:var(--mvl-card);color:var(--mvl-ink);border-radius:9px;padding:7px 10px;font:inherit;font-size:13px;font-weight:600;line-height:1;cursor:pointer;}" +
@@ -1274,7 +1276,36 @@ private fun ensureLandingInstalled() {
             panel.appendChild(grid);
 
             if (!cfg.supportsFolders) {
-              var note = el("div", "mvl-note"); note.textContent = STR.foldersUnavailable; panel.appendChild(note);
+              var note = el("div", "mvl-note");
+              var isBrave = (typeof navigator !== "undefined" && !!navigator.brave);
+              if (isBrave) {
+                note.textContent = STR.foldersUnavailableBrave + " ";
+                var copyBtn = el("button", "mvl-flag-copy");
+                copyBtn.type = "button";
+                copyBtn.textContent = STR.copyFlagAddress;
+                copyBtn.addEventListener("click", function (e) {
+                  e.preventDefault();
+                  var flagUrl = "brave://flags/#file-system-access-api";
+                  function done() {
+                    copyBtn.textContent = STR.flagAddressCopied;
+                    setTimeout(function () { copyBtn.textContent = STR.copyFlagAddress; }, 1600);
+                  }
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(flagUrl).then(done, done);
+                  } else {
+                    var ta = document.createElement("textarea");
+                    ta.value = flagUrl; ta.style.position = "fixed"; ta.style.opacity = "0";
+                    document.body.appendChild(ta); ta.select();
+                    try { document.execCommand("copy"); } catch (err) {}
+                    document.body.removeChild(ta);
+                    done();
+                  }
+                });
+                note.appendChild(copyBtn);
+              } else {
+                note.textContent = STR.foldersUnavailable;
+              }
+              panel.appendChild(note);
             }
 
             root.appendChild(panel);
