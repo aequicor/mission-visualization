@@ -10,14 +10,15 @@ import kotlin.math.hypot
 
 /**
  * The connection points offered while wiring an edge to [this] node: its declared [ports]
- * plus the standard side-midpoint ports not already covered by a declared one. These are a
- * render + hit-test convenience (draw.io's green connection crosses) — the standard ones are
+ * plus the draw.io-style connection-point grid (mid-sides, side quarter-points and corners;
+ * see [DiagramPort.connectionPointGrid]) not already covered by a declared one. These are a
+ * render + hit-test convenience (draw.io's green connection crosses) — the grid ones are
  * NOT stored on the node until an edge actually pins to one (then it is materialized so the
  * fixed attachment resolves and round-trips).
  */
 fun DiagramNode.connectionPorts(): List<DiagramPort> {
     val declaredIds = ports.map { it.id }.toSet()
-    return ports + DiagramPort.standardPorts().filter { it.id !in declaredIds }
+    return ports + DiagramPort.connectionPointGrid().filter { it.id !in declaredIds }
 }
 
 /**
