@@ -115,14 +115,22 @@ class DiagramHitTestTest {
                 label = "hello",
             )
         }
+        // The label is lifted EDGE_LABEL_LINE_GAP above a horizontal edge, so its grab handle
+        // sits above the midpoint, not on the line.
         val hit = hitTest(
-            graph, emptyMap(), DiagramPoint(50.0, 2.0),
+            graph, emptyMap(), DiagramPoint(50.0, -EDGE_LABEL_LINE_GAP + 1.0),
             selectedEdgeIds = setOf(DiagramEdgeId("e")),
         )
         assertEquals(
             DiagramHit.LabelHandle(DiagramEdgeId("e"), DiagramEdgeLabelPosition.MIDDLE),
             hit,
         )
+        // The bare midpoint on the line is now the edge line, not the label handle.
+        val onLine = hitTest(
+            graph, emptyMap(), DiagramPoint(50.0, 0.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertIs<DiagramHit.Edge>(onLine)
     }
 
     @Test
