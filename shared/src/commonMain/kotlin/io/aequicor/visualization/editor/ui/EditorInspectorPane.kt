@@ -97,6 +97,7 @@ import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
 import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
 import io.aequicor.visualization.subsystems.annotations.annotationBadgePosition
 import io.aequicor.visualization.subsystems.annotations.compose.rememberAnnotationImage
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.AlignItems
@@ -181,6 +182,7 @@ import kotlin.math.roundToInt
 @Composable
 fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Modifier) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     Column(modifier) {
         Surface(
             modifier = Modifier.fillMaxSize(),
@@ -192,7 +194,7 @@ fun EditorInspectorPane(state: MissionEditorStateHolder, modifier: Modifier = Mo
                 TabStrip(
                     tabs = InspectorTab.entries,
                     selected = state.workspace.inspectorTab,
-                    title = { it.label },
+                    title = { strings.labels.inspectorTab(it) },
                     icon = ::inspectorTabIcon,
                     onSelect = { tab -> state.updateWorkspace { it.copy(inspectorTab = tab) } },
                 )
@@ -225,10 +227,11 @@ internal fun EmptyInspector(text: String) {
 
 @Composable
 private fun InspectorDesign(state: MissionEditorStateHolder) {
+    val strings = LocalStrings.current
     val design = state.designState
     val node = design.selectedNode
     if (node == null) {
-        EmptyInspector("Nothing selected — select an object on the canvas or in Layers.")
+        EmptyInspector(strings.inspector.nothingSelected)
         return
     }
     val box = state.artboardLayout?.findBySourceId(design.selectedNodeId)
@@ -256,6 +259,7 @@ private fun InspectorDesign(state: MissionEditorStateHolder) {
 @Composable
 private fun SelectionHeader(state: MissionEditorStateHolder, node: DesignNode) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val design = state.designState
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
@@ -263,7 +267,7 @@ private fun SelectionHeader(state: MissionEditorStateHolder, node: DesignNode) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            if (design.hasMultiSelection) "${design.selectedNodeIds.size} selected" else node.name.ifBlank { node.id },
+            if (design.hasMultiSelection) strings.inspector.selectedCount(design.selectedNodeIds.size) else node.name.ifBlank { node.id },
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
@@ -273,10 +277,10 @@ private fun SelectionHeader(state: MissionEditorStateHolder, node: DesignNode) {
             overflow = TextOverflow.Ellipsis,
         )
         if (!design.hasMultiSelection && node.locked) {
-            Text("Locked", style = MaterialTheme.typography.labelSmall, color = colors.statusWarning, fontWeight = FontWeight.SemiBold)
+            Text(strings.inspector.locked, style = MaterialTheme.typography.labelSmall, color = colors.statusWarning, fontWeight = FontWeight.SemiBold)
         }
-        SmallIconButton(EditorIcon.Duplicate, contentDescription = "Duplicate selection", onClick = { state.dispatch(DesignEditorIntent.DuplicateNodes(design.selectedNodeIds)) })
-        SmallIconButton(EditorIcon.Trash, contentDescription = "Delete selection", onClick = { state.dispatch(DesignEditorIntent.DeleteNodes(design.selectedNodeIds)) })
+        SmallIconButton(EditorIcon.Duplicate, contentDescription = strings.inspector.duplicateSelection, onClick = { state.dispatch(DesignEditorIntent.DuplicateNodes(design.selectedNodeIds)) })
+        SmallIconButton(EditorIcon.Trash, contentDescription = strings.inspector.deleteSelection, onClick = { state.dispatch(DesignEditorIntent.DeleteNodes(design.selectedNodeIds)) })
     }
 }
 
@@ -289,6 +293,8 @@ internal fun Section(
 ) {
     if (!visible) return
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    val sectionLabel = strings.labels.inspectorSection(section)
     val expanded = section in state.workspace.expandedSections
     val headerInteraction = remember { MutableInteractionSource() }
     Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
@@ -304,19 +310,19 @@ internal fun Section(
         ) {
             EditorSvgIcon(
                 icon = inspectorSectionIcon(section),
-                contentDescription = section.title,
+                contentDescription = sectionLabel.full,
                 modifier = Modifier.size(18.dp),
                 tint = colors.mutedInk,
             )
             CompactText(
-                label = section.label,
+                label = sectionLabel,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             EditorSvgIcon(
                 icon = if (expanded) EditorIcon.ChevronUp else EditorIcon.ChevronDown,
-                contentDescription = if (expanded) "Collapse section" else "Expand section",
+                contentDescription = if (expanded) strings.common.collapseSection else strings.common.expandSection,
                 modifier = Modifier.size(14.dp),
                 tint = colors.controlInk,
             )
@@ -336,6 +342,7 @@ private fun PositionSection(state: MissionEditorStateHolder, node: DesignNode, b
         MultiPositionSection(state)
         return
     }
+    val strings = LocalStrings.current
     val design = state.designState
     val nodeId = node.id
     val document = design.document
@@ -345,11 +352,11 @@ private fun PositionSection(state: MissionEditorStateHolder, node: DesignNode, b
     val x = if (positioned) node.position?.x?.orZero ?: 0.0 else (box?.x ?: 0.0) - (parentBox?.x ?: 0.0)
     val y = if (positioned) node.position?.y?.orZero ?: 0.0 else (box?.y ?: 0.0) - (parentBox?.y ?: 0.0)
 
-    InspectorSubLabel("Alignment")
+    InspectorSubLabel(strings.inspector.alignment)
     AlignmentControls(state, enabled = positioned && !locked && state.artboardLayout != null)
     Spacer(Modifier.height(8.dp))
 
-    InspectorSubLabel("Position")
+    InspectorSubLabel(strings.inspector.position)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val fieldWidth = inspectorPairFieldWidth(maxWidth)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -364,16 +371,16 @@ private fun PositionSection(state: MissionEditorStateHolder, node: DesignNode, b
 
     if (!positioned) {
         Spacer(Modifier.height(8.dp))
-        MutedNote("Auto layout child — position follows the flow. Drag on canvas to reorder.")
+        MutedNote(strings.inspector.autoLayoutChildNote)
         Spacer(Modifier.height(6.dp))
-        TinyButton("Absolute position inside frame", enabled = !locked) {
+        TinyButton(strings.inspector.absolutePositionInsideFrame, enabled = !locked) {
             state.dispatch(DesignEditorIntent.SetAbsolutePosition(nodeId, x = x, y = y))
         }
     }
 
     if (positioned) {
         Spacer(Modifier.height(8.dp))
-        InspectorSubLabel("Constraints")
+        InspectorSubLabel(strings.inspector.constraints)
         ConstraintsControls(
             horizontal = node.constraints.horizontal,
             vertical = node.constraints.vertical,
@@ -384,12 +391,13 @@ private fun PositionSection(state: MissionEditorStateHolder, node: DesignNode, b
     }
 
     Spacer(Modifier.height(8.dp))
-    InspectorSubLabel("Rotation")
+    InspectorSubLabel(strings.inspector.rotation)
     RotationControls(state, value = node.rotation.formatPx(), resetKey = "rot-$nodeId", enabled = !locked)
 }
 
 @Composable
 private fun MultiPositionSection(state: MissionEditorStateHolder) {
+    val strings = LocalStrings.current
     val design = state.designState
     val document = design.document
     val ids = selectedIds(state)
@@ -415,20 +423,20 @@ private fun MultiPositionSection(state: MissionEditorStateHolder) {
         return if (values.all { it == first }) first else null
     }
 
-    InspectorSubLabel("Alignment")
+    InspectorSubLabel(strings.inspector.alignment)
     AlignmentControls(state, enabled = state.artboardLayout != null && ids.isNotEmpty())
     Spacer(Modifier.height(8.dp))
 
     val x = sharedDouble { it.position?.x?.orZero }
     val y = sharedDouble { it.position?.y?.orZero }
-    InspectorSubLabel("Position")
+    InspectorSubLabel(strings.inspector.position)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val fieldWidth = inspectorPairFieldWidth(maxWidth)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactNumberField("X", x?.formatPx() ?: "", "mx-$key", Modifier.width(fieldWidth), enabled = canPosition, placeholder = "Mixed") { v ->
+            CompactNumberField("X", x?.formatPx() ?: "", "mx-$key", Modifier.width(fieldWidth), enabled = canPosition, placeholder = strings.common.mixed) { v ->
                 bulkPosition(state, x = v)
             }
-            CompactNumberField("Y", y?.formatPx() ?: "", "my-$key", Modifier.width(fieldWidth), enabled = canPosition, placeholder = "Mixed") { v ->
+            CompactNumberField("Y", y?.formatPx() ?: "", "my-$key", Modifier.width(fieldWidth), enabled = canPosition, placeholder = strings.common.mixed) { v ->
                 bulkPosition(state, y = v)
             }
         }
@@ -436,7 +444,7 @@ private fun MultiPositionSection(state: MissionEditorStateHolder) {
 
     if (document != null && ids.any { document.isCoordinatePositioned(it) }) {
         Spacer(Modifier.height(8.dp))
-        InspectorSubLabel("Constraints")
+        InspectorSubLabel(strings.inspector.constraints)
         ConstraintsControls(
             horizontal = sharedHorizontal(),
             vertical = sharedVertical(),
@@ -448,22 +456,23 @@ private fun MultiPositionSection(state: MissionEditorStateHolder) {
 
     val rotation = sharedDouble { it.rotation }
     Spacer(Modifier.height(8.dp))
-    InspectorSubLabel("Rotation")
+    InspectorSubLabel(strings.inspector.rotation)
     RotationControls(
         state = state,
         value = rotation?.formatPx() ?: "",
         resetKey = "mrot-$key",
         enabled = ids.any { !design.isNodeLocked(it) },
-        placeholder = "Mixed",
+        placeholder = strings.common.mixed,
     )
     Spacer(Modifier.height(8.dp))
-    MutedNote("${ids.size} layers selected; locked layers are skipped.")
+    MutedNote(strings.inspector.layersSelectedNote(ids.size))
 }
 
 // --- Layout ------------------------------------------------------------------
 
 @Composable
 private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box: LayoutBox?, isFrame: Boolean) {
+    val strings = LocalStrings.current
     DimensionsBlock(state, node, box)
     if (state.designState.hasMultiSelection) return
 
@@ -474,9 +483,9 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
         // layout). Detaching bakes it into an editable Frame, after which these controls apply.
         if (node.kind is DesignNodeKind.Instance) {
             Spacer(Modifier.height(12.dp))
-            MutedNote("Component instance — detach to edit its layout.")
+            MutedNote(strings.inspector.componentInstanceNote)
             Spacer(Modifier.height(6.dp))
-            TinyButton("Detach instance", enabled = !state.designState.isNodeLocked(node.id)) {
+            TinyButton(strings.inspector.detachInstance, enabled = !state.designState.isNodeLocked(node.id)) {
                 state.dispatch(DesignEditorIntent.DetachInstance(node.id))
             }
         }
@@ -491,22 +500,22 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
         LayoutMode.Grid -> EditorLayoutMode.Grid
         LayoutMode.None -> EditorLayoutMode.Free
     }
-    InspectorSubLabel("Auto layout")
+    InspectorSubLabel(strings.inspector.autoLayout)
     SegmentedControl(
         options = listOf(EditorLayoutMode.Free, EditorLayoutMode.Vertical, EditorLayoutMode.Horizontal, EditorLayoutMode.Grid),
         selected = current,
-        label = { it.displayName.take(4) },
+        label = { strings.inspector.layoutMode(it) },
         onSelect = { state.dispatch(DesignEditorIntent.SetLayoutMode(nodeId, it)) },
         modifier = Modifier.fillMaxWidth(),
     )
     if (node.layout.mode != LayoutMode.None) {
         Spacer(Modifier.height(10.dp))
         val gap = (node.layout.gap as? io.aequicor.visualization.engine.ir.model.DesignGap.Fixed)?.value?.literalOrNull() ?: 0.0
-        CompactLabeledNumberField("Gap", gap.formatPx(), "gap-$nodeId") {
+        CompactLabeledNumberField(strings.inspector.gap, gap.formatPx(), "gap-$nodeId") {
             state.dispatch(DesignEditorIntent.SetLayoutGap(nodeId, it))
         }
         Spacer(Modifier.height(8.dp))
-        InspectorSubLabel("Padding")
+        InspectorSubLabel(strings.inspector.padding)
         val pad = node.layout.padding
         PaddingControls(
             top = (pad.top.literalOrNull() ?: 0.0).formatPx(),
@@ -517,28 +526,28 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
             onChange = { side, value -> state.dispatch(DesignEditorIntent.SetLayoutPadding(nodeId, side, value)) },
         )
         Spacer(Modifier.height(10.dp))
-        LabeledField("Align") {
+        LabeledField(strings.inspector.align) {
             SegmentedControl(
                 options = listOf(AlignItems.Start, AlignItems.Center, AlignItems.End, AlignItems.Stretch),
                 selected = node.layout.alignItems,
-                label = { it.alignItemsLabel() },
+                label = { strings.inspector.alignItems(it) },
                 onSelect = { state.dispatch(DesignEditorIntent.SetLayoutAlign(nodeId, alignItems = it)) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
         Spacer(Modifier.height(8.dp))
-        LabeledField("Distribute") {
+        LabeledField(strings.inspector.distribute) {
             SegmentedControl(
                 options = listOf(JustifyContent.Start, JustifyContent.Center, JustifyContent.End, JustifyContent.SpaceBetween),
                 selected = node.layout.justifyContent,
-                label = { it.justifyLabel() },
+                label = { strings.inspector.justifyContent(it) },
                 onSelect = { state.dispatch(DesignEditorIntent.SetLayoutAlign(nodeId, justifyContent = it)) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
     }
     Spacer(Modifier.height(8.dp))
-    CheckRow("Clip content", node.layout.clipsContent) { state.dispatch(DesignEditorIntent.SetClipsContent(nodeId, it)) }
+    CheckRow(strings.inspector.clipContent, node.layout.clipsContent) { state.dispatch(DesignEditorIntent.SetClipsContent(nodeId, it)) }
 }
 
 @Composable
@@ -547,13 +556,14 @@ private fun DimensionsBlock(state: MissionEditorStateHolder, node: DesignNode, b
         MultiDimensionsBlock(state)
         return
     }
+    val strings = LocalStrings.current
     val nodeId = node.id
     val locked = state.designState.isNodeLocked(nodeId)
     val ws = state.workspace
     val width = box?.width ?: node.size.width ?: 0.0
     val height = box?.height ?: node.size.height ?: 0.0
 
-    InspectorSubLabel("Dimensions")
+    InspectorSubLabel(strings.inspector.dimensions)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val fieldWidth = inspectorPairFieldWidth(maxWidth, reserved = 50.dp, minWidth = 58.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -567,7 +577,7 @@ private fun DimensionsBlock(state: MissionEditorStateHolder, node: DesignNode, b
             }
             SmallIconButton(
                 icon = EditorIcon.AspectRatio,
-                contentDescription = "Lock aspect ratio",
+                contentDescription = strings.inspector.lockAspectRatio,
                 active = ws.lockAspectRatio,
                 onClick = { state.updateWorkspace { it.copy(lockAspectRatio = !it.lockAspectRatio) } },
             )
@@ -577,6 +587,7 @@ private fun DimensionsBlock(state: MissionEditorStateHolder, node: DesignNode, b
 
 @Composable
 private fun MultiDimensionsBlock(state: MissionEditorStateHolder) {
+    val strings = LocalStrings.current
     val design = state.designState
     val ids = selectedIds(state)
     val nodes = design.selectedNodes
@@ -590,19 +601,19 @@ private fun MultiDimensionsBlock(state: MissionEditorStateHolder) {
         return if (values.all { it == first }) first else null
     }
 
-    InspectorSubLabel("Dimensions")
+    InspectorSubLabel(strings.inspector.dimensions)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val fieldWidth = inspectorPairFieldWidth(maxWidth, reserved = 50.dp, minWidth = 58.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            CompactNumberField("W", shared { it.size.width }?.formatPx() ?: "", "mw-$key", Modifier.width(fieldWidth), enabled = canResize, placeholder = "Mixed") { value ->
+            CompactNumberField("W", shared { it.size.width }?.formatPx() ?: "", "mw-$key", Modifier.width(fieldWidth), enabled = canResize, placeholder = strings.common.mixed) { value ->
                 bulkResize(state, width = value, keepRatio = ws.lockAspectRatio)
             }
-            CompactNumberField("H", shared { it.size.height }?.formatPx() ?: "", "mh-$key", Modifier.width(fieldWidth), enabled = canResize, placeholder = "Mixed") { value ->
+            CompactNumberField("H", shared { it.size.height }?.formatPx() ?: "", "mh-$key", Modifier.width(fieldWidth), enabled = canResize, placeholder = strings.common.mixed) { value ->
                 bulkResize(state, height = value, keepRatio = ws.lockAspectRatio)
             }
             SmallIconButton(
                 icon = EditorIcon.AspectRatio,
-                contentDescription = "Lock aspect ratio",
+                contentDescription = strings.inspector.lockAspectRatio,
                 active = ws.lockAspectRatio,
                 onClick = { state.updateWorkspace { it.copy(lockAspectRatio = !it.lockAspectRatio) } },
             )
@@ -612,20 +623,23 @@ private fun MultiDimensionsBlock(state: MissionEditorStateHolder) {
 
 @Composable
 private fun SizingControls(state: MissionEditorStateHolder, node: DesignNode) {
+    val strings = LocalStrings.current
     val nodeId = node.id
-    InspectorSubLabel("Resizing")
+    fun sizingFromLabel(label: String): SizingMode =
+        SizingMode.entries.firstOrNull { strings.inspector.sizingMode(it) == label } ?: SizingMode.Fixed
+    InspectorSubLabel(strings.inspector.resizing)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         CompactSelectField(
-            value = (node.sizing?.horizontal ?: SizingMode.Fixed).sizingLabel(),
-            options = SizingMode.entries.map { it.sizingLabel() },
+            value = strings.inspector.sizingMode(node.sizing?.horizontal ?: SizingMode.Fixed),
+            options = SizingMode.entries.map { strings.inspector.sizingMode(it) },
             onSelect = { state.dispatch(DesignEditorIntent.UpdateSizingMode(nodeId, horizontal = sizingFromLabel(it))) },
             modifier = Modifier.weight(1f),
             leadingContent = { SizingModePreview(node.sizing?.horizontal ?: SizingMode.Fixed) },
             optionLeadingContent = { label -> SizingModePreview(sizingFromLabel(label)) },
         )
         CompactSelectField(
-            value = (node.sizing?.vertical ?: SizingMode.Fixed).sizingLabel(),
-            options = SizingMode.entries.map { it.sizingLabel() },
+            value = strings.inspector.sizingMode(node.sizing?.vertical ?: SizingMode.Fixed),
+            options = SizingMode.entries.map { strings.inspector.sizingMode(it) },
             onSelect = { state.dispatch(DesignEditorIntent.UpdateSizingMode(nodeId, vertical = sizingFromLabel(it))) },
             modifier = Modifier.weight(1f),
             leadingContent = { SizingModePreview(node.sizing?.vertical ?: SizingMode.Fixed) },
@@ -639,11 +653,12 @@ private fun SizingControls(state: MissionEditorStateHolder, node: DesignNode) {
 @Composable
 private fun AppearanceSection(state: MissionEditorStateHolder, node: DesignNode, box: LayoutBox?) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val nodeId = node.id
     val locked = state.designState.isNodeLocked(nodeId)
     val opacity = (node.opacity.literalOrNull() ?: 1.0)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Opacity", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text(strings.inspector.opacity, style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
         Text("${(opacity * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
         // Whole drag = one undo entry (layer opacity, separate from fill opacity); applies
         // across the whole selection so a multi-selection opacity edit is uniform.
@@ -659,7 +674,7 @@ private fun AppearanceSection(state: MissionEditorStateHolder, node: DesignNode,
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        label = "Blend",
+        label = strings.inspector.blend,
         value = node.blendMode.ifBlank { "normal" },
         options = BlendModes,
         maxFieldWidth = 220.dp,
@@ -670,7 +685,7 @@ private fun AppearanceSection(state: MissionEditorStateHolder, node: DesignNode,
     }
     Spacer(Modifier.height(8.dp))
     val radius = node.cornerRadius?.topLeft?.literalOrNull() ?: 0.0
-    CompactLabeledNumberField("Radius", radius.formatPx(), "radius-$nodeId") {
+    CompactLabeledNumberField(strings.inspector.radius, radius.formatPx(), "radius-$nodeId") {
         state.dispatch(DesignEditorIntent.UpdateCornerRadius(nodeId, it))
     }
 }
@@ -679,12 +694,13 @@ private fun AppearanceSection(state: MissionEditorStateHolder, node: DesignNode,
 
 @Composable
 private fun FillSection(state: MissionEditorStateHolder, node: DesignNode) {
+    val strings = LocalStrings.current
     val nodeId = node.id
     val enabled = !state.designState.isNodeLocked(nodeId)
     val fills = node.fills.orEmpty()
-    SectionHeaderAdd("Fills") { if (enabled) state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.Add)) }
+    SectionHeaderAdd(strings.inspector.fills) { if (enabled) state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.Add)) }
     if (fills.isEmpty()) {
-        MutedNote("No fills. Add one with +.")
+        MutedNote(strings.inspector.noFills)
         return
     }
     fills.forEachIndexed { index, paint ->
@@ -707,6 +723,7 @@ private fun FillRow(
     enabled: Boolean,
     onOp: (FillOp) -> Unit,
 ) {
+    val strings = LocalStrings.current
     val kind = paint.fillKind()
     val visible = paint.visible.literalOrNull() ?: true
     val opacity = paint.opacity.literalOrNull() ?: 1.0
@@ -727,16 +744,16 @@ private fun FillRow(
                     )
                 }
                 is DesignPaint.Gradient -> GradientPreview(state, paint)
-                else -> FillTypeChip(kind.displayName)
+                else -> FillTypeChip(strings.inspector.fillKind(kind))
             }
         }
         SmallSelect(
-            value = kind.displayName,
-            options = FillKind.entries.map { it.displayName },
+            value = strings.inspector.fillKind(kind),
+            options = FillKind.entries.map { strings.inspector.fillKind(it) },
             leadingContent = { FillKindPreview(kind) },
-            optionLeadingContent = { label -> FillKind.entries.firstOrNull { it.displayName == label }?.let { FillKindPreview(it) } },
+            optionLeadingContent = { label -> FillKind.entries.firstOrNull { strings.inspector.fillKind(it) == label }?.let { FillKindPreview(it) } },
         ) { label ->
-            FillKind.entries.firstOrNull { it.displayName == label }?.let { onOp(FillOp.SetType(index, it)) }
+            FillKind.entries.firstOrNull { strings.inspector.fillKind(it) == label }?.let { onOp(FillOp.SetType(index, it)) }
         }
         RemoveButton { onOp(FillOp.RemoveAt(index)) }
     }
@@ -793,9 +810,10 @@ private fun GradientStops(
     enabled: Boolean,
     onOp: (FillOp) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(Modifier.padding(start = 26.dp, top = 4.dp)) {
         // Direction angle (0° = left→right, 90° = top→bottom).
-        InspectorNumberField("Angle", gradientAngleDegrees(gradient).formatPx(), "°", "$keyPrefix-fill-$index-angle", enabled = enabled) {
+        InspectorNumberField(strings.inspector.angle, gradientAngleDegrees(gradient).formatPx(), "°", "$keyPrefix-fill-$index-angle", enabled = enabled) {
             onOp(FillOp.SetGradientAngle(index, it))
         }
         Spacer(Modifier.height(6.dp))
@@ -821,8 +839,8 @@ private fun GradientStops(
             Spacer(Modifier.height(4.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TinyButton("+ stop") { onOp(FillOp.AddGradientStop(index)) }
-            TinyButton("reverse") { onOp(FillOp.ReverseGradient(index)) }
+            TinyButton(strings.inspector.addStop) { onOp(FillOp.AddGradientStop(index)) }
+            TinyButton(strings.inspector.reverseGradient) { onOp(FillOp.ReverseGradient(index)) }
         }
     }
 }
@@ -835,14 +853,15 @@ private fun gradientAngleDegrees(gradient: DesignPaint.Gradient): Double =
 
 @Composable
 private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
+    val strings = LocalStrings.current
     val nodeId = node.id
     val enabled = !state.designState.isNodeLocked(nodeId)
     val strokes = node.strokes
-    SectionHeaderAdd("Stroke") {
+    SectionHeaderAdd(strings.inspector.stroke) {
         if (strokes == null && enabled) state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.Add))
     }
     if (strokes == null) {
-        MutedNote("No stroke. Add one with +.")
+        MutedNote(strings.inspector.noStroke)
         return
     }
     val paint = strokes.paints.firstOrNull()
@@ -869,24 +888,24 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
             state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetWeight(it)))
         }
         SmallSelect(
-            value = strokes.align.strokeLabel(),
-            options = StrokeAlign.entries.map { it.strokeLabel() },
+            value = strings.inspector.strokeAlign(strokes.align),
+            options = StrokeAlign.entries.map { strings.inspector.strokeAlign(it) },
             leadingContent = { StrokeAlignPreview(strokes.align) },
-            optionLeadingContent = { label -> StrokeAlign.entries.firstOrNull { it.strokeLabel() == label }?.let { StrokeAlignPreview(it) } },
+            optionLeadingContent = { label -> StrokeAlign.entries.firstOrNull { strings.inspector.strokeAlign(it) == label }?.let { StrokeAlignPreview(it) } },
         ) { label ->
-            StrokeAlign.entries.firstOrNull { it.strokeLabel() == label }?.let { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetAlign(it))) }
+            StrokeAlign.entries.firstOrNull { strings.inspector.strokeAlign(it) == label }?.let { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetAlign(it))) }
         }
     }
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val dashed = strokes.dashPattern.isNotEmpty()
-        CheckRow("Dashed", dashed) { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetDashed(it))) }
+        CheckRow(strings.inspector.dashed, dashed) { state.dispatch(DesignEditorIntent.StrokeCommand(nodeId, StrokeOp.SetDashed(it))) }
     }
     if (node.kind is DesignNodeKind.Shape) {
         val shape = (node.kind as DesignNodeKind.Shape).shape
         if (shape == ShapeType.Line || shape == ShapeType.Arrow) {
             Spacer(Modifier.height(6.dp))
-            LabeledField("Ends") {
+            LabeledField(strings.inspector.ends) {
                 SelectField(
                     value = strokes.cap,
                     options = listOf("butt", "round", "square", "arrow"),
@@ -898,7 +917,7 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
         } else {
             // Corner join applies to shapes with corners (rect/polygon/star/vector), not 2-point lines.
             Spacer(Modifier.height(6.dp))
-            LabeledField("Join") {
+            LabeledField(strings.inspector.join) {
                 SelectField(
                     value = strokes.join,
                     options = listOf("miter", "round", "bevel"),
@@ -913,8 +932,6 @@ private fun StrokeSection(state: MissionEditorStateHolder, node: DesignNode) {
 
 // --- Shape / vector ----------------------------------------------------------
 
-private val ShapeSectionLabel = CompactLabel("Shape", "Shape", "Shp")
-
 /**
  * Geometry controls for parametric shapes, editable vectors and boolean groups. Owns its own
  * collapsible chrome (see [StandaloneSection]) because [InspectorSection] — which persists
@@ -924,7 +941,8 @@ private val ShapeSectionLabel = CompactLabel("Shape", "Shape", "Shp")
 @Composable
 private fun ShapeSection(state: MissionEditorStateHolder, node: DesignNode, visible: Boolean) {
     if (!visible) return
-    StandaloneSection(icon = EditorIcon.Pen, label = ShapeSectionLabel) {
+    val strings = LocalStrings.current
+    StandaloneSection(icon = EditorIcon.Pen, label = strings.inspector.shapeSection) {
         val nodeId = node.id
         val locked = state.designState.isNodeLocked(nodeId)
         when (val kind = node.kind) {
@@ -939,15 +957,16 @@ private fun ShapeSection(state: MissionEditorStateHolder, node: DesignNode, visi
 /** Flatten / Outline-stroke actions available on shapes and boolean groups. */
 @Composable
 private fun ShapeActions(state: MissionEditorStateHolder, node: DesignNode, locked: Boolean) {
+    val strings = LocalStrings.current
     val nodeId = node.id
     val canOutline = node.kind is DesignNodeKind.Shape && node.strokes != null
     Spacer(Modifier.height(10.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TinyButton("Flatten", enabled = !locked) {
+        TinyButton(strings.inspector.flatten, enabled = !locked) {
             state.dispatch(DesignEditorIntent.FlattenNode(nodeId))
         }
         if (canOutline) {
-            TinyButton("Outline stroke", enabled = !locked) {
+            TinyButton(strings.inspector.outlineStroke, enabled = !locked) {
                 state.dispatch(DesignEditorIntent.OutlineStroke(nodeId))
             }
         }
@@ -956,24 +975,25 @@ private fun ShapeActions(state: MissionEditorStateHolder, node: DesignNode, lock
 
 @Composable
 private fun ShapeControls(state: MissionEditorStateHolder, nodeId: String, shape: DesignNodeKind.Shape, locked: Boolean) {
-    LabeledField("Type") {
+    val strings = LocalStrings.current
+    LabeledField(strings.inspector.type) {
         SelectField(
-            value = shape.shape.shapeTypeLabel(),
-            options = ShapeType.entries.map { it.shapeTypeLabel() },
+            value = strings.inspector.shapeType(shape.shape),
+            options = ShapeType.entries.map { strings.inspector.shapeType(it) },
             onSelect = { label ->
                 if (!locked) {
-                    ShapeType.entries.firstOrNull { it.shapeTypeLabel() == label }
+                    ShapeType.entries.firstOrNull { strings.inspector.shapeType(it) == label }
                         ?.let { state.dispatch(DesignEditorIntent.SetShapeType(nodeId, it)) }
                 }
             },
             leadingContent = { ShapeTypePreview(shape.shape) },
-            optionLeadingContent = { label -> ShapeType.entries.firstOrNull { it.shapeTypeLabel() == label }?.let { ShapeTypePreview(it) } },
+            optionLeadingContent = { label -> ShapeType.entries.firstOrNull { strings.inspector.shapeType(it) == label }?.let { ShapeTypePreview(it) } },
         )
     }
     if (shape.shape == ShapeType.Polygon || shape.shape == ShapeType.Star) {
         Spacer(Modifier.height(8.dp))
         val sides = (shape.pointCount ?: 3).coerceAtLeast(3)
-        CompactLabeledNumberField("Sides", sides.toDouble().formatPx(), "sides-$nodeId", enabled = !locked) {
+        CompactLabeledNumberField(strings.inspector.sides, sides.toDouble().formatPx(), "sides-$nodeId", enabled = !locked) {
             state.dispatch(DesignEditorIntent.SetPointCount(nodeId, it.roundToInt().coerceAtLeast(3)))
         }
     }
@@ -999,37 +1019,32 @@ private fun VertexControls(state: MissionEditorStateHolder, nodeId: String, shap
     if (ws.vectorEditNodeId != nodeId) return
     val ref = ws.vectorSelectedVertex ?: return
     val vertex = shape.network?.vertices?.getOrNull(ref.vertexIndex) ?: return
+    val strings = LocalStrings.current
     Spacer(Modifier.height(10.dp))
-    InspectorSubLabel("Point")
+    InspectorSubLabel(strings.inspector.point)
     Spacer(Modifier.height(6.dp))
-    LabeledField("Mirror") {
+    LabeledField(strings.inspector.mirror) {
         SelectField(
-            value = mirrorLabel(vertex.mirror),
-            options = HandleMirror.entries.map { mirrorLabel(it) },
+            value = strings.inspector.handleMirror(vertex.mirror),
+            options = HandleMirror.entries.map { strings.inspector.handleMirror(it) },
             onSelect = { label ->
                 if (!locked) {
-                    HandleMirror.entries.firstOrNull { mirrorLabel(it) == label }
+                    HandleMirror.entries.firstOrNull { strings.inspector.handleMirror(it) == label }
                         ?.let { state.dispatch(DesignEditorIntent.SetVertexMirror(nodeId, ref.vertexIndex, it)) }
                 }
             },
             leadingContent = { MirrorPreview(vertex.mirror) },
-            optionLeadingContent = { label -> HandleMirror.entries.firstOrNull { mirrorLabel(it) == label }?.let { MirrorPreview(it) } },
+            optionLeadingContent = { label -> HandleMirror.entries.firstOrNull { strings.inspector.handleMirror(it) == label }?.let { MirrorPreview(it) } },
         )
     }
     Spacer(Modifier.height(6.dp))
-    CheckRow("Sharp corner", vertex.corner) {
+    CheckRow(strings.inspector.sharpCorner, vertex.corner) {
         if (!locked) state.dispatch(DesignEditorIntent.ToggleVertexCorner(nodeId, ref.vertexIndex))
     }
     Spacer(Modifier.height(6.dp))
-    CompactLabeledNumberField("Radius", vertex.cornerRadius.formatPx(), "vradius-$nodeId-${ref.vertexIndex}", enabled = !locked) {
+    CompactLabeledNumberField(strings.inspector.radius, vertex.cornerRadius.formatPx(), "vradius-$nodeId-${ref.vertexIndex}", enabled = !locked) {
         state.dispatch(DesignEditorIntent.SetVertexCornerRadius(nodeId, ref.vertexIndex, it.coerceAtLeast(0.0)))
     }
-}
-
-private fun mirrorLabel(mirror: HandleMirror): String = when (mirror) {
-    HandleMirror.None -> "No mirror"
-    HandleMirror.Angle -> "Mirror angle"
-    HandleMirror.AngleAndLength -> "Mirror angle & length"
 }
 
 @Composable
@@ -1063,13 +1078,14 @@ private fun MirrorPreview(mirror: HandleMirror, modifier: Modifier = Modifier.si
 @Composable
 private fun ArcControls(state: MissionEditorStateHolder, nodeId: String, shape: DesignNodeKind.Shape, locked: Boolean) {
     val colors = LocalEditorColors.current
-    CompactLabeledNumberField("Start", (shape.arcStartDeg ?: 0.0).formatPx(), "arc-start-$nodeId", enabled = !locked) {
+    val strings = LocalStrings.current
+    CompactLabeledNumberField(strings.inspector.start, (shape.arcStartDeg ?: 0.0).formatPx(), "arc-start-$nodeId", enabled = !locked) {
         state.dispatch(DesignEditorIntent.SetArcStart(nodeId, it))
     }
     Spacer(Modifier.height(8.dp))
     val sweep = (shape.arcSweepDeg ?: 360.0).coerceIn(0.0, 360.0)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Sweep", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text(strings.inspector.sweep, style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
         Text("${(sweep / 360.0 * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
         UndoableSlider(
             value = (sweep / 360.0 * 100).toFloat(),
@@ -1084,7 +1100,7 @@ private fun ArcControls(state: MissionEditorStateHolder, nodeId: String, shape: 
     Spacer(Modifier.height(8.dp))
     val ratio = (shape.innerRadius ?: 0.0).coerceIn(0.0, 1.0)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Ratio", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text(strings.inspector.ratio, style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
         Text("${(ratio * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
         UndoableSlider(
             value = (ratio * 100).toFloat(),
@@ -1101,9 +1117,10 @@ private fun ArcControls(state: MissionEditorStateHolder, nodeId: String, shape: 
 @Composable
 private fun StarInnerRadiusControl(state: MissionEditorStateHolder, nodeId: String, innerRadius: Double?, locked: Boolean) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val ratio = (innerRadius ?: 0.5).coerceIn(0.0, 1.0)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Inner", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text(strings.inspector.inner, style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
         Text("${(ratio * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
         // Whole drag coalesces into one undo entry, matching the opacity slider idiom.
         UndoableSlider(
@@ -1120,15 +1137,16 @@ private fun StarInnerRadiusControl(state: MissionEditorStateHolder, nodeId: Stri
 
 @Composable
 private fun VectorControls(state: MissionEditorStateHolder, nodeId: String, shape: DesignNodeKind.Shape, locked: Boolean) {
-    CompactLabeledTextField("Icon", shape.iconRef, "icon-$nodeId", enabled = !locked, placeholder = "ds/Icon/…") {
+    val strings = LocalStrings.current
+    CompactLabeledTextField(strings.inspector.icon, shape.iconRef, "icon-$nodeId", enabled = !locked, placeholder = strings.inspector.iconPlaceholder) {
         state.dispatch(DesignEditorIntent.SetIconRef(nodeId, it))
     }
     Spacer(Modifier.height(8.dp))
-    CompactLabeledTextField("Path", shape.pathRef, "path-$nodeId", enabled = !locked, placeholder = "asset id") {
+    CompactLabeledTextField(strings.inspector.path, shape.pathRef, "path-$nodeId", enabled = !locked, placeholder = strings.inspector.pathPlaceholder) {
         state.dispatch(DesignEditorIntent.SetPathRef(nodeId, it))
     }
     Spacer(Modifier.height(8.dp))
-    InspectorSubLabel("View box")
+    InspectorSubLabel(strings.inspector.viewBox)
     val vb = shape.viewBox ?: DesignViewBox()
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val fieldWidth = inspectorPairFieldWidth(maxWidth)
@@ -1154,7 +1172,11 @@ private fun VectorControls(state: MissionEditorStateHolder, nodeId: String, shap
     if (shape.network?.isNotEmpty() == true) {
         Spacer(Modifier.height(8.dp))
         val rule = shape.network?.regions?.firstOrNull()?.windingRule ?: "nonzero"
-        LabeledField("Fill rule") {
+        fun fillRuleLabel(value: String): String =
+            if (value == "evenodd") strings.inspector.fillRuleEvenOdd else strings.inspector.fillRuleNonzero
+        fun fillRuleValue(label: String): String =
+            if (label == strings.inspector.fillRuleEvenOdd) "evenodd" else "nonzero"
+        LabeledField(strings.inspector.fillRuleLabel) {
             SelectField(
                 value = fillRuleLabel(rule),
                 options = listOf(fillRuleLabel("nonzero"), fillRuleLabel("evenodd")),
@@ -1168,7 +1190,7 @@ private fun VectorControls(state: MissionEditorStateHolder, nodeId: String, shap
         val regions = shape.network?.regions ?: emptyList()
         if (regions.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            InspectorSubLabel("Region fills")
+            InspectorSubLabel(strings.inspector.regionFills)
             PaintBucketToggle(state, nodeId, locked)
             regions.indices.forEach { index ->
                 RegionFillGroup(state, nodeId, index, regions.size, shape.regionFills[index].orEmpty(), locked)
@@ -1176,17 +1198,13 @@ private fun VectorControls(state: MissionEditorStateHolder, nodeId: String, shap
         }
     } else {
         Spacer(Modifier.height(8.dp))
-        MutedNote("No editable geometry yet — convert to edit points on the canvas.")
+        MutedNote(strings.inspector.noEditableGeometry)
         Spacer(Modifier.height(6.dp))
-        TinyButton("Convert to editable", enabled = !locked) {
+        TinyButton(strings.inspector.convertToEditable, enabled = !locked) {
             state.dispatch(DesignEditorIntent.ConvertToEditableVector(nodeId))
         }
     }
 }
-
-private fun fillRuleLabel(rule: String): String = if (rule == "evenodd") "Even-odd" else "Nonzero"
-
-private fun fillRuleValue(label: String): String = if (label == "Even-odd") "evenodd" else "nonzero"
 
 /**
  * Toggles the canvas paint-bucket sub-mode of vector edit: enabling it enters vector-edit for this
@@ -1195,10 +1213,11 @@ private fun fillRuleValue(label: String): String = if (label == "Even-odd") "eve
 @Composable
 private fun PaintBucketToggle(state: MissionEditorStateHolder, nodeId: String, locked: Boolean) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val active = state.workspace.vectorPaintBucket && state.workspace.vectorEditNodeId == nodeId
     val bucketColor = state.workspace.vectorPaintBucketColor
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TinyButton(if (active) "Paint bucket: on" else "Paint bucket: off", enabled = !locked) {
+        TinyButton(if (active) strings.inspector.paintBucketOn else strings.inspector.paintBucketOff, enabled = !locked) {
             state.updateWorkspace {
                 if (active) {
                     it.copy(vectorPaintBucket = false)
@@ -1221,7 +1240,7 @@ private fun PaintBucketToggle(state: MissionEditorStateHolder, nodeId: String, l
     }
     if (active) {
         Text(
-            "Click a region on the canvas to fill it.",
+            strings.inspector.clickRegionToFill,
             style = MaterialTheme.typography.bodySmall,
             color = colors.mutedInk,
         )
@@ -1244,11 +1263,12 @@ private fun RegionFillGroup(
     fills: List<DesignPaint>,
     locked: Boolean,
 ) {
-    val label = if (regionCount > 1) "Region ${index + 1}" else "Region fill"
+    val strings = LocalStrings.current
+    val label = if (regionCount > 1) strings.inspector.regionN(index + 1) else strings.inspector.regionFill
     val onOp: (FillOp) -> Unit = { if (!locked) state.dispatch(DesignEditorIntent.RegionFillCommand(nodeId, index, it)) }
     SectionHeaderAdd(label) { onOp(FillOp.Add) }
     if (fills.isEmpty()) {
-        MutedNote("No fill. Add one with +.")
+        MutedNote(strings.inspector.noFill)
     } else {
         fills.forEachIndexed { paintIndex, paint ->
             FillRow(state, "region-$nodeId-$index", paintIndex, paint, !locked, onOp)
@@ -1260,19 +1280,20 @@ private fun RegionFillGroup(
 
 @Composable
 private fun BooleanOpControls(state: MissionEditorStateHolder, nodeId: String, kind: DesignNodeKind.BooleanOperation, locked: Boolean) {
-    LabeledField("Operation") {
+    val strings = LocalStrings.current
+    LabeledField(strings.inspector.operation) {
         SelectField(
-            value = kind.operation.booleanOpLabel(),
-            options = BooleanOperationKind.entries.map { it.booleanOpLabel() },
+            value = strings.inspector.booleanOp(kind.operation),
+            options = BooleanOperationKind.entries.map { strings.inspector.booleanOp(it) },
             onSelect = { label ->
                 if (!locked) {
-                    BooleanOperationKind.entries.firstOrNull { it.booleanOpLabel() == label }
+                    BooleanOperationKind.entries.firstOrNull { strings.inspector.booleanOp(it) == label }
                         ?.let { state.dispatch(DesignEditorIntent.SetBooleanOperation(nodeId, it)) }
                 }
             },
             leadingContent = { BooleanOperationPreview(kind.operation) },
             optionLeadingContent = { label ->
-                BooleanOperationKind.entries.firstOrNull { it.booleanOpLabel() == label }?.let { BooleanOperationPreview(it) }
+                BooleanOperationKind.entries.firstOrNull { strings.inspector.booleanOp(it) == label }?.let { BooleanOperationPreview(it) }
             },
         )
     }
@@ -1282,6 +1303,7 @@ private fun BooleanOpControls(state: MissionEditorStateHolder, nodeId: String, k
 @Composable
 private fun StandaloneSection(icon: EditorIcon, label: CompactLabel, content: @Composable () -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     var expanded by remember { mutableStateOf(true) }
     val headerInteraction = remember { MutableInteractionSource() }
     Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
@@ -1309,7 +1331,7 @@ private fun StandaloneSection(icon: EditorIcon, label: CompactLabel, content: @C
             )
             EditorSvgIcon(
                 icon = if (expanded) EditorIcon.ChevronUp else EditorIcon.ChevronDown,
-                contentDescription = if (expanded) "Collapse section" else "Expand section",
+                contentDescription = if (expanded) strings.common.collapseSection else strings.common.expandSection,
                 modifier = Modifier.size(14.dp),
                 tint = colors.controlInk,
             )
@@ -1319,23 +1341,6 @@ private fun StandaloneSection(icon: EditorIcon, label: CompactLabel, content: @C
             content()
         }
     }
-}
-
-private fun ShapeType.shapeTypeLabel() = when (this) {
-    ShapeType.Rectangle -> "Rectangle"
-    ShapeType.Ellipse -> "Ellipse"
-    ShapeType.Polygon -> "Polygon"
-    ShapeType.Star -> "Star"
-    ShapeType.Line -> "Line"
-    ShapeType.Arrow -> "Arrow"
-    ShapeType.Vector -> "Vector"
-}
-
-private fun BooleanOperationKind.booleanOpLabel() = when (this) {
-    BooleanOperationKind.Union -> "Union"
-    BooleanOperationKind.Subtract -> "Subtract"
-    BooleanOperationKind.Intersect -> "Intersect"
-    BooleanOperationKind.Exclude -> "Exclude"
 }
 
 /** Theme bridge for the figures-compose figure previews (shape/boolean glyphs). */
@@ -1362,10 +1367,11 @@ private fun BooleanOperationPreview(operation: BooleanOperationKind, modifier: M
 
 @Composable
 private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
+    val strings = LocalStrings.current
     val nodeId = node.id
-    SectionHeaderAdd("Effects") { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.Add(EffectType.DropShadow))) }
+    SectionHeaderAdd(strings.inspector.effects) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.Add(EffectType.DropShadow))) }
     if (node.effects.isEmpty()) {
-        MutedNote("No effects. Add drop shadow with +.")
+        MutedNote(strings.inspector.noEffects)
         return
     }
     node.effects.forEachIndexed { index, effect ->
@@ -1374,13 +1380,13 @@ private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
             LayerToggle(visible) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.ToggleAt(index))) }
             val type = effect.effectType()
             SmallSelect(
-                value = effect.effectLabel(),
-                options = EffectType.entries.map { it.displayName },
+                value = type?.let { strings.inspector.effectType(it) } ?: strings.inspector.effectUnknown,
+                options = EffectType.entries.map { strings.inspector.effectType(it) },
                 modifier = Modifier.weight(1f),
                 leadingContent = { EffectTypeIcon(type) },
-                optionLeadingContent = { label -> EffectType.entries.firstOrNull { it.displayName == label }?.let { EffectTypeIcon(it) } },
+                optionLeadingContent = { label -> EffectType.entries.firstOrNull { strings.inspector.effectType(it) == label }?.let { EffectTypeIcon(it) } },
             ) { label ->
-                EffectType.entries.firstOrNull { it.displayName == label }?.let { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.SetType(index, it))) }
+                EffectType.entries.firstOrNull { strings.inspector.effectType(it) == label }?.let { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.SetType(index, it))) }
             }
             RemoveButton { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.RemoveAt(index))) }
         }
@@ -1391,7 +1397,7 @@ private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
             Row(Modifier.padding(start = 26.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 InspectorNumberField("X", dx.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dx = it))) }
                 InspectorNumberField("Y", dy.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dy = it))) }
-                InspectorNumberField("Blur", blur.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, blur = it))) }
+                InspectorNumberField(strings.inspector.blur, blur.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, blur = it))) }
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -1402,6 +1408,7 @@ private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
 
 @Composable
 private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode) {
+    val strings = LocalStrings.current
     val nodeId = node.id
     val kind = node.kind as? DesignNodeKind.Text ?: return
     val fontProvider = rememberBundledFontProvider()
@@ -1452,8 +1459,8 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
     if (textStyleIds.isNotEmpty()) {
         val styleColors = LocalEditorColors.current
         CompactLabeledSelectField(
-            label = "Text style",
-            value = "Apply style",
+            label = strings.inspector.textStyle,
+            value = strings.inspector.applyStyle,
             options = textStyleIds,
             modifier = Modifier.fillMaxWidth(),
             leadingContent = { DropdownMenuIcon(EditorIcon.Typography, modifier = Modifier.size(13.dp), tint = styleColors.ink) },
@@ -1484,7 +1491,7 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CompactSelectField(
-            value = if (mixedStyle) "Mixed" else FontStyles.nameFor(weight.roundToInt(), italic),
+            value = if (mixedStyle) strings.common.mixed else FontStyles.nameFor(weight.roundToInt(), italic),
             options = styleOptions,
             onSelect = { name ->
                 val parsed = FontStyles.parse(name)
@@ -1499,7 +1506,7 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
         )
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.FormatItalic, "Italic", active = !mixedStyle && italic) {
+                IconStripItem(EditorIcon.FormatItalic, strings.inspector.italic, active = !mixedStyle && italic) {
                     applyPatch(TypographyPatch(italic = !italic))
                 },
             ),
@@ -1507,7 +1514,7 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
         )
         FontSizeField(
             value = if (mixedSize) "" else size.formatPx(),
-            placeholder = if (mixedSize) "Mixed" else "",
+            placeholder = if (mixedSize) strings.common.mixed else "",
             resetKey = "size-$resetKey",
             modifier = Modifier.width(96.dp),
             onCommit = { applyPatch(TypographyPatch(fontSize = it)) },
@@ -1527,7 +1534,7 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
             LineHeightField(
                 isAuto = isAuto && !mixedLine,
                 value = if (mixedLine || isAuto) "" else lineHeightUnit.value.formatPx(),
-                placeholder = if (mixedLine) "Mixed" else if (isAuto) "Auto" else "",
+                placeholder = if (mixedLine) strings.common.mixed else if (isAuto) strings.common.auto else "",
                 resetKey = "line-$resetKey",
                 modifier = Modifier.width(fieldWidth),
                 onToggleAuto = { toAuto ->
@@ -1545,7 +1552,7 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
                 resetKey = "letter-$resetKey",
                 modifier = Modifier.width(fieldWidth),
                 suffix = "%",
-                placeholder = if (mixedLetter) "Mixed" else "",
+                placeholder = if (mixedLetter) strings.common.mixed else "",
                 onCommit = { applyPatch(TypographyPatch(letterSpacingPercent = it)) },
             )
         }
@@ -1559,24 +1566,24 @@ private fun TypographySection(state: MissionEditorStateHolder, node: DesignNode)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.AlignHorizontalLeft, "Align left", active = alignH == TextAlignHorizontal.Left) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Left)) },
-                IconStripItem(EditorIcon.AlignHorizontalCenter, "Align center", active = alignH == TextAlignHorizontal.Center) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Center)) },
-                IconStripItem(EditorIcon.AlignHorizontalRight, "Align right", active = alignH == TextAlignHorizontal.Right) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Right)) },
-                IconStripItem(EditorIcon.FormatAlignJustify, "Justify", active = alignH == TextAlignHorizontal.Justified) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Justified)) },
+                IconStripItem(EditorIcon.AlignHorizontalLeft, strings.inspector.alignLeft, active = alignH == TextAlignHorizontal.Left) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Left)) },
+                IconStripItem(EditorIcon.AlignHorizontalCenter, strings.inspector.alignCenter, active = alignH == TextAlignHorizontal.Center) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Center)) },
+                IconStripItem(EditorIcon.AlignHorizontalRight, strings.inspector.alignRight, active = alignH == TextAlignHorizontal.Right) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Right)) },
+                IconStripItem(EditorIcon.FormatAlignJustify, strings.inspector.justify, active = alignH == TextAlignHorizontal.Justified) { applyPatch(TypographyPatch(alignHorizontal = TextAlignHorizontal.Justified)) },
             ),
             modifier = Modifier.weight(4f),
         )
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.VerticalAlignTop, "Align top", active = alignV == TextAlignVertical.Top) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Top)) },
-                IconStripItem(EditorIcon.VerticalAlignCenter, "Align middle", active = alignV == TextAlignVertical.Center) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Center)) },
-                IconStripItem(EditorIcon.VerticalAlignBottom, "Align bottom", active = alignV == TextAlignVertical.Bottom) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Bottom)) },
+                IconStripItem(EditorIcon.VerticalAlignTop, strings.inspector.alignTop, active = alignV == TextAlignVertical.Top) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Top)) },
+                IconStripItem(EditorIcon.VerticalAlignCenter, strings.inspector.alignMiddle, active = alignV == TextAlignVertical.Center) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Center)) },
+                IconStripItem(EditorIcon.VerticalAlignBottom, strings.inspector.alignBottom, active = alignV == TextAlignVertical.Bottom) { applyPatch(TypographyPatch(alignVertical = TextAlignVertical.Bottom)) },
             ),
             modifier = Modifier.weight(3f),
         )
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.Tune, "Type settings", active = advanced) { advanced = !advanced },
+                IconStripItem(EditorIcon.Tune, strings.inspector.typeSettings, active = advanced) { advanced = !advanced },
             ),
             modifier = Modifier.weight(1f),
         )
@@ -1605,22 +1612,23 @@ private fun TypographyAdvanced(
     resetKey: String,
     onPatch: (TypographyPatch) -> Unit,
 ) {
+    val strings = LocalStrings.current
     fun mixed(selector: (DesignTextStyle) -> Any?): Boolean = styles.map(selector).distinct().size > 1
     val s = styles.first()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Resize (node-level).
-        LabeledField("Resize") {
+        LabeledField(strings.inspector.resize) {
             SegmentedControl(
                 options = listOf(TextAutoResize.WidthAndHeight, TextAutoResize.Height, TextAutoResize.None),
                 selected = kind.autoResize,
-                label = { it.autoResizeLabel() },
+                label = { strings.inspector.autoResize(it) },
                 onSelect = { state.dispatch(DesignEditorIntent.SetTextAutoResize(nodeId, it)) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
         // Truncate (node-level): toggle + max-lines.
         val truncate = kind.truncate
-        LabeledField("Truncate") {
+        LabeledField(strings.inspector.truncate) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 TypoToggleChip(label = "...", active = truncate != null, modifier = Modifier.width(38.dp)) {
                     state.dispatch(
@@ -1631,7 +1639,7 @@ private fun TypographyAdvanced(
                     )
                 }
                 CompactNumberField(
-                    label = "Lines",
+                    label = strings.inspector.lines,
                     value = (truncate?.maxLines ?: 1).toDouble().formatPx(),
                     resetKey = "trunc-$resetKey",
                     modifier = Modifier.weight(1f),
@@ -1643,30 +1651,30 @@ private fun TypographyAdvanced(
         // Decoration + style + skip-ink.
         val decoration = s.textDecoration ?: TextDecorationKind.None
         val mixedDecoration = mixed { it.textDecoration }
-        LabeledField("Decor") {
+        LabeledField(strings.inspector.decor) {
             IconButtonStrip(
                 items = listOf(
-                    IconStripItem(EditorIcon.Text, "No decoration", active = !mixedDecoration && decoration == TextDecorationKind.None) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.None)) },
-                    IconStripItem(EditorIcon.FormatUnderlined, "Underline", active = !mixedDecoration && decoration == TextDecorationKind.Underline) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.Underline)) },
-                    IconStripItem(EditorIcon.FormatStrikethrough, "Strikethrough", active = !mixedDecoration && decoration == TextDecorationKind.Strikethrough) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.Strikethrough)) },
+                    IconStripItem(EditorIcon.Text, strings.inspector.noDecoration, active = !mixedDecoration && decoration == TextDecorationKind.None) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.None)) },
+                    IconStripItem(EditorIcon.FormatUnderlined, strings.inspector.underline, active = !mixedDecoration && decoration == TextDecorationKind.Underline) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.Underline)) },
+                    IconStripItem(EditorIcon.FormatStrikethrough, strings.inspector.strikethrough, active = !mixedDecoration && decoration == TextDecorationKind.Strikethrough) { onPatch(TypographyPatch(textDecoration = TextDecorationKind.Strikethrough)) },
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
         if (decoration != TextDecorationKind.None) {
-            LabeledField("Line") {
+            LabeledField(strings.inspector.line) {
                 SegmentedControl(
                     options = listOf(TextDecorationStyle.Solid, TextDecorationStyle.Dashed, TextDecorationStyle.Dotted, TextDecorationStyle.Wavy),
                     selected = s.decorationStyle ?: TextDecorationStyle.Solid,
-                    label = { it.decorationStyleLabel() },
+                    label = { strings.inspector.decorationStyle(it) },
                     onSelect = { onPatch(TypographyPatch(decorationStyle = it)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            CheckRow("Skip ink", s.decorationSkipInk == true) { onPatch(TypographyPatch(decorationSkipInk = it)) }
+            CheckRow(strings.inspector.skipInk, s.decorationSkipInk == true) { onPatch(TypographyPatch(decorationSkipInk = it)) }
         }
         // Case.
-        LabeledField("Case") {
+        LabeledField(strings.inspector.case) {
             SegmentedControl(
                 options = listOf(TextCase.None, TextCase.Upper, TextCase.Lower, TextCase.Title, TextCase.SmallCaps),
                 selected = s.textCase ?: TextCase.None,
@@ -1677,30 +1685,30 @@ private fun TypographyAdvanced(
         }
         // Position (super / sub).
         val position = s.textPosition ?: TextScriptPosition.None
-        LabeledField("Position") {
+        LabeledField(strings.inspector.position) {
             IconButtonStrip(
                 items = listOf(
-                    IconStripItem(EditorIcon.Text, "Baseline", active = position == TextScriptPosition.None) { onPatch(TypographyPatch(textPosition = TextScriptPosition.None)) },
-                    IconStripItem(EditorIcon.Superscript, "Superscript", active = position == TextScriptPosition.Superscript) { onPatch(TypographyPatch(textPosition = TextScriptPosition.Superscript)) },
-                    IconStripItem(EditorIcon.Subscript, "Subscript", active = position == TextScriptPosition.Subscript) { onPatch(TypographyPatch(textPosition = TextScriptPosition.Subscript)) },
+                    IconStripItem(EditorIcon.Text, strings.inspector.baseline, active = position == TextScriptPosition.None) { onPatch(TypographyPatch(textPosition = TextScriptPosition.None)) },
+                    IconStripItem(EditorIcon.Superscript, strings.inspector.superscript, active = position == TextScriptPosition.Superscript) { onPatch(TypographyPatch(textPosition = TextScriptPosition.Superscript)) },
+                    IconStripItem(EditorIcon.Subscript, strings.inspector.subscript, active = position == TextScriptPosition.Subscript) { onPatch(TypographyPatch(textPosition = TextScriptPosition.Subscript)) },
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
         // List (node-level) + indent.
         val list = kind.list
-        LabeledField("List") {
+        LabeledField(strings.inspector.list) {
             IconButtonStrip(
                 items = listOf(
-                    IconStripItem(EditorIcon.Text, "No list", active = list.type == TextListType.None) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.None))) },
-                    IconStripItem(EditorIcon.FormatListBulleted, "Bulleted", active = list.type == TextListType.Bullet) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.Bullet))) },
-                    IconStripItem(EditorIcon.FormatListNumbered, "Numbered", active = list.type == TextListType.Ordered) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.Ordered))) },
+                    IconStripItem(EditorIcon.Text, strings.inspector.noList, active = list.type == TextListType.None) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.None))) },
+                    IconStripItem(EditorIcon.FormatListBulleted, strings.inspector.bulleted, active = list.type == TextListType.Bullet) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.Bullet))) },
+                    IconStripItem(EditorIcon.FormatListNumbered, strings.inspector.numbered, active = list.type == TextListType.Ordered) { state.dispatch(DesignEditorIntent.SetTextList(nodeId, list.copy(type = TextListType.Ordered))) },
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
         if (list.type != TextListType.None) {
-            LabeledField("Indent") {
+            LabeledField(strings.inspector.indent) {
                 CompactNumberField(
                     label = "",
                     value = list.indent.toDouble().formatPx(),
@@ -1711,41 +1719,41 @@ private fun TypographyAdvanced(
             }
         }
         // Paragraph spacing + first-line indent.
-        LabeledField("Para space") {
+        LabeledField(strings.inspector.paraSpace) {
             CompactNumberField(
                 label = "",
                 value = if (mixed { it.paragraphSpacing }) "" else (s.paragraphSpacing ?: 0.0).formatPx(),
                 resetKey = "para-space-$resetKey",
                 modifier = Modifier.width(120.dp),
                 suffix = "px",
-                placeholder = if (mixed { it.paragraphSpacing }) "Mixed" else "",
+                placeholder = if (mixed { it.paragraphSpacing }) strings.common.mixed else "",
                 onCommit = { onPatch(TypographyPatch(paragraphSpacing = it)) },
             )
         }
-        LabeledField("Para indent") {
+        LabeledField(strings.inspector.paraIndent) {
             CompactNumberField(
                 label = "",
                 value = if (mixed { it.paragraphIndent }) "" else (s.paragraphIndent ?: 0.0).formatPx(),
                 resetKey = "para-indent-$resetKey",
                 modifier = Modifier.width(120.dp),
                 suffix = "px",
-                placeholder = if (mixed { it.paragraphIndent }) "Mixed" else "",
+                placeholder = if (mixed { it.paragraphIndent }) strings.common.mixed else "",
                 onCommit = { onPatch(TypographyPatch(paragraphIndent = it)) },
             )
         }
         // Leading trim.
-        LabeledField("Trim") {
+        LabeledField(strings.inspector.trimLabel) {
             SegmentedControl(
                 options = listOf(LeadingTrim.None, LeadingTrim.CapHeight),
                 selected = s.leadingTrim ?: LeadingTrim.None,
-                label = { it.trimLabel() },
+                label = { strings.inspector.leadingTrim(it) },
                 onSelect = { onPatch(TypographyPatch(leadingTrim = it)) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        CheckRow("Hanging punctuation", s.hangingPunctuation == true) { onPatch(TypographyPatch(hangingPunctuation = it)) }
+        CheckRow(strings.inspector.hangingPunctuation, s.hangingPunctuation == true) { onPatch(TypographyPatch(hangingPunctuation = it)) }
         // Common OpenType feature toggles.
-        InspectorSubLabel("OpenType")
+        InspectorSubLabel(strings.inspector.openType)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("liga", "tnum", "frac", "smcp").forEach { feature ->
                 val on = s.fontFeatures[feature] == true
@@ -1755,7 +1763,7 @@ private fun TypographyAdvanced(
             }
         }
         // Variable-font axes: a number field per registered axis; empty leaves it unset.
-        InspectorSubLabel("Variable axes")
+        InspectorSubLabel(strings.inspector.variableAxes)
         VariableAxes(kind.textStyle?.variableAxes.orEmpty(), resetKey) { axis, value ->
             onPatch(TypographyPatch(variableAxes = mapOf(axis to value)))
         }
@@ -1771,12 +1779,20 @@ private val VariableAxisRanges = listOf(
 
 @Composable
 private fun VariableAxes(axes: Map<String, Double>, resetKey: String, onAxis: (String, Double) -> Unit) {
+    val strings = LocalStrings.current
+    fun axisLabel(tag: String): String = when (tag) {
+        "wght" -> strings.inspector.axisWeight
+        "opsz" -> strings.inspector.axisOptical
+        "wdth" -> strings.inspector.axisWidth
+        "slnt" -> strings.inspector.axisSlant
+        else -> tag
+    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         VariableAxisRanges.chunked(2).forEach { pair ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { (tag, label, range) ->
+                pair.forEach { (tag, _, range) ->
                     CompactNumberField(
-                        label = label,
+                        label = axisLabel(tag),
                         value = axes[tag]?.formatPx() ?: "",
                         resetKey = "axis-$tag-$resetKey",
                         modifier = Modifier.weight(1f),
@@ -1798,6 +1814,7 @@ private fun FontFamilyField(
     onSelect: (String) -> Unit,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     var expanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(5.dp)
     val currentPreview = families.firstOrNull { it.family == selected }?.preview
@@ -1814,7 +1831,7 @@ private fun FontFamilyField(
                 }
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    if (mixed) "Mixed" else selected.ifBlank { "Default" },
+                    if (mixed) strings.common.mixed else selected.ifBlank { strings.common.default },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelMedium,
                     color = if (mixed) colors.mutedInk else colors.ink,
@@ -1823,13 +1840,13 @@ private fun FontFamilyField(
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
-                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Choose font", modifier = Modifier.size(11.dp), tint = colors.controlInk)
+                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = strings.inspector.chooseFont, modifier = Modifier.size(11.dp), tint = colors.controlInk)
             }
         }
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             if (families.isEmpty()) {
                 EditorDropdownMenuItem(
-                    text = "No fonts available",
+                    text = strings.inspector.noFontsAvailable,
                     leadingContent = { DropdownMenuIcon(EditorIcon.Typography, modifier = Modifier.size(16.dp)) },
                     onClick = { expanded = false },
                 )
@@ -1899,6 +1916,7 @@ private fun FontSizeField(
     onCommit: (Double) -> Unit,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     var expanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(5.dp)
     Box(modifier) {
@@ -1918,7 +1936,7 @@ private fun FontSizeField(
                 border = BorderStroke(1.dp, colors.controlStroke),
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Size presets", modifier = Modifier.size(11.dp), tint = colors.controlInk)
+                    EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = strings.inspector.sizePresets, modifier = Modifier.size(11.dp), tint = colors.controlInk)
                 }
             }
         }
@@ -1945,10 +1963,11 @@ private fun LineHeightField(
     onToggleAuto: (Boolean) -> Unit,
     onValue: (Double) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.FormatLineSpacing, "Auto line height", active = isAuto) { onToggleAuto(!isAuto) },
+                IconStripItem(EditorIcon.FormatLineSpacing, strings.inspector.autoLineHeight, active = isAuto) { onToggleAuto(!isAuto) },
             ),
             modifier = Modifier.width(30.dp),
         )
@@ -1989,13 +2008,6 @@ private fun TypoToggleChip(label: String, active: Boolean, modifier: Modifier = 
     }
 }
 
-private fun TextDecorationStyle.decorationStyleLabel() = when (this) {
-    TextDecorationStyle.Solid -> "Solid"
-    TextDecorationStyle.Dashed -> "Dash"
-    TextDecorationStyle.Dotted -> "Dot"
-    TextDecorationStyle.Wavy -> "Wave"
-}
-
 private fun TextCase.caseLabel() = when (this) {
     TextCase.None -> "—"
     TextCase.Upper -> "AG"
@@ -2003,11 +2015,6 @@ private fun TextCase.caseLabel() = when (this) {
     TextCase.Title -> "Ag"
     TextCase.SmallCaps -> "SC"
     TextCase.SmallCapsForced -> "SC!"
-}
-
-private fun LeadingTrim.trimLabel() = when (this) {
-    LeadingTrim.None -> "None"
-    LeadingTrim.CapHeight -> "Cap"
 }
 
 // --- Figma-like inspector controls ------------------------------------------
@@ -2325,6 +2332,7 @@ private fun CompactSelectField(
     optionLeadingContent: (@Composable (String) -> Unit)? = null,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     var expanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(5.dp)
     Box(modifier) {
@@ -2344,7 +2352,7 @@ private fun CompactSelectField(
                 }
                 Spacer(Modifier.width(6.dp))
                 Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (enabled) colors.ink else colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(11.dp), tint = colors.controlInk)
+                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = strings.common.openOptions, modifier = Modifier.size(11.dp), tint = colors.controlInk)
             }
         }
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -2584,20 +2592,21 @@ private fun IconButtonStrip(items: List<IconStripItem>, modifier: Modifier = Mod
 
 @Composable
 private fun AlignmentControls(state: MissionEditorStateHolder, enabled: Boolean) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.AlignHorizontalLeft, "Align left", enabled) { alignSelection(state, InspectorAlignment.Left) },
-                IconStripItem(EditorIcon.AlignHorizontalCenter, "Align horizontal center", enabled) { alignSelection(state, InspectorAlignment.HCenter) },
-                IconStripItem(EditorIcon.AlignHorizontalRight, "Align right", enabled) { alignSelection(state, InspectorAlignment.Right) },
+                IconStripItem(EditorIcon.AlignHorizontalLeft, strings.inspector.alignLeft, enabled) { alignSelection(state, InspectorAlignment.Left) },
+                IconStripItem(EditorIcon.AlignHorizontalCenter, strings.inspector.alignHorizontalCenter, enabled) { alignSelection(state, InspectorAlignment.HCenter) },
+                IconStripItem(EditorIcon.AlignHorizontalRight, strings.inspector.alignRight, enabled) { alignSelection(state, InspectorAlignment.Right) },
             ),
             modifier = Modifier.weight(1f),
         )
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.AlignVerticalTop, "Align top", enabled) { alignSelection(state, InspectorAlignment.Top) },
-                IconStripItem(EditorIcon.AlignVerticalCenter, "Align vertical center", enabled) { alignSelection(state, InspectorAlignment.VCenter) },
-                IconStripItem(EditorIcon.AlignVerticalBottom, "Align bottom", enabled) { alignSelection(state, InspectorAlignment.Bottom) },
+                IconStripItem(EditorIcon.AlignVerticalTop, strings.inspector.alignTop, enabled) { alignSelection(state, InspectorAlignment.Top) },
+                IconStripItem(EditorIcon.AlignVerticalCenter, strings.inspector.alignVerticalCenter, enabled) { alignSelection(state, InspectorAlignment.VCenter) },
+                IconStripItem(EditorIcon.AlignVerticalBottom, strings.inspector.alignBottom, enabled) { alignSelection(state, InspectorAlignment.Bottom) },
             ),
             modifier = Modifier.weight(1f),
         )
@@ -2612,19 +2621,20 @@ private fun ConstraintsControls(
     onHorizontal: (HorizontalConstraint) -> Unit,
     onVertical: (VerticalConstraint) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             CompactSelectField(
-                value = horizontal?.hLabel() ?: "Mixed",
-                options = HorizontalConstraint.entries.map { it.hLabel() },
-                onSelect = { label -> HorizontalConstraint.entries.firstOrNull { it.hLabel() == label }?.let(onHorizontal) },
+                value = horizontal?.let { strings.inspector.horizontalConstraint(it) } ?: strings.common.mixed,
+                options = HorizontalConstraint.entries.map { strings.inspector.horizontalConstraint(it) },
+                onSelect = { label -> HorizontalConstraint.entries.firstOrNull { strings.inspector.horizontalConstraint(it) == label }?.let(onHorizontal) },
                 enabled = enabled,
                 leadingIcon = EditorIcon.ConstraintHorizontal,
             )
             CompactSelectField(
-                value = vertical?.vLabel() ?: "Mixed",
-                options = VerticalConstraint.entries.map { it.vLabel() },
-                onSelect = { label -> VerticalConstraint.entries.firstOrNull { it.vLabel() == label }?.let(onVertical) },
+                value = vertical?.let { strings.inspector.verticalConstraint(it) } ?: strings.common.mixed,
+                options = VerticalConstraint.entries.map { strings.inspector.verticalConstraint(it) },
+                onSelect = { label -> VerticalConstraint.entries.firstOrNull { strings.inspector.verticalConstraint(it) == label }?.let(onVertical) },
                 enabled = enabled,
                 leadingIcon = EditorIcon.ConstraintVertical,
             )
@@ -2709,6 +2719,7 @@ private fun RotationControls(
     enabled: Boolean,
     placeholder: String = "",
 ) {
+    val strings = LocalStrings.current
     val ids = selectedIds(state)
     val canFlip = ids.size >= 2
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2724,9 +2735,9 @@ private fun RotationControls(
         ) { setRotationForSelection(state, it) }
         IconButtonStrip(
             items = listOf(
-                IconStripItem(EditorIcon.Rotate, "Rotate 90 degrees", enabled) { rotateSelectionBy(state, 90.0) },
-                IconStripItem(EditorIcon.FlipHorizontal, "Flip horizontal", enabled && canFlip) { state.dispatch(DesignEditorIntent.FlipHorizontal(ids)) },
-                IconStripItem(EditorIcon.FlipVertical, "Flip vertical", enabled && canFlip) { state.dispatch(DesignEditorIntent.FlipVertical(ids)) },
+                IconStripItem(EditorIcon.Rotate, strings.inspector.rotate90, enabled) { rotateSelectionBy(state, 90.0) },
+                IconStripItem(EditorIcon.FlipHorizontal, strings.inspector.flipHorizontal, enabled && canFlip) { state.dispatch(DesignEditorIntent.FlipHorizontal(ids)) },
+                IconStripItem(EditorIcon.FlipVertical, strings.inspector.flipVertical, enabled && canFlip) { state.dispatch(DesignEditorIntent.FlipVertical(ids)) },
             ),
             modifier = Modifier.weight(1f),
         )
@@ -2738,9 +2749,10 @@ private fun RotationControls(
 @Composable
 internal fun SectionHeaderAdd(label: String, onAdd: () -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-        TinyIconButton(EditorIcon.Plus, contentDescription = "Add $label", onClick = onAdd)
+        TinyIconButton(EditorIcon.Plus, contentDescription = "${strings.common.add} $label", onClick = onAdd)
     }
 }
 
@@ -2761,10 +2773,11 @@ internal fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 @Composable
 private fun LayerToggle(visible: Boolean, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     Box(Modifier.size(20.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         EditorSvgIcon(
             icon = if (visible) EditorIcon.Visibility else EditorIcon.VisibilityOff,
-            contentDescription = if (visible) "Hide" else "Show",
+            contentDescription = if (visible) strings.common.hide else strings.common.show,
             modifier = Modifier.size(16.dp),
             tint = if (visible) colors.controlInk else colors.mutedInk,
         )
@@ -2793,8 +2806,9 @@ internal fun inspectorSectionIcon(section: InspectorSection): EditorIcon = when 
 @Composable
 internal fun RemoveButton(onClick: () -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     Box(Modifier.size(22.dp).clip(RoundedCornerShape(11.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        EditorSvgIcon(EditorIcon.Close, contentDescription = "Remove", modifier = Modifier.size(14.dp), tint = colors.statusDanger)
+        EditorSvgIcon(EditorIcon.Close, contentDescription = strings.common.remove, modifier = Modifier.size(14.dp), tint = colors.statusDanger)
     }
 }
 
@@ -3129,14 +3143,6 @@ private fun DesignPaint.fillKind(): FillKind = when (this) {
     else -> FillKind.Solid
 }
 
-private fun DesignEffect.effectLabel(): String = when (this) {
-    is DesignEffect.DropShadow -> EffectType.DropShadow.displayName
-    is DesignEffect.InnerShadow -> EffectType.InnerShadow.displayName
-    is DesignEffect.LayerBlur -> EffectType.LayerBlur.displayName
-    is DesignEffect.BackgroundBlur -> EffectType.BackgroundBlur.displayName
-    is DesignEffect.Unknown -> "Effect"
-}
-
 private fun DesignEffect.effectType(): EffectType? = when (this) {
     is DesignEffect.DropShadow -> EffectType.DropShadow
     is DesignEffect.InnerShadow -> EffectType.InnerShadow
@@ -3146,19 +3152,6 @@ private fun DesignEffect.effectType(): EffectType? = when (this) {
 }
 
 private val BlendModes = listOf("normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "difference")
-
-private fun AlignItems.alignItemsLabel() = when (this) {
-    AlignItems.Start -> "Start"; AlignItems.Center -> "Center"; AlignItems.End -> "End"; AlignItems.Baseline -> "Base"; AlignItems.Stretch -> "Fill"
-}
-private fun JustifyContent.justifyLabel() = when (this) {
-    JustifyContent.Start -> "Start"; JustifyContent.Center -> "Center"; JustifyContent.End -> "End"; JustifyContent.SpaceBetween -> "Between"
-}
-private fun SizingMode.sizingLabel() = when (this) { SizingMode.Fixed -> "Fixed"; SizingMode.Hug -> "Hug"; SizingMode.Fill -> "Fill" }
-private fun sizingFromLabel(label: String) = when (label) { "Hug" -> SizingMode.Hug; "Fill" -> SizingMode.Fill; else -> SizingMode.Fixed }
-private fun StrokeAlign.strokeLabel() = when (this) { StrokeAlign.Inside -> "Inside"; StrokeAlign.Center -> "Center"; StrokeAlign.Outside -> "Outside" }
-private fun TextAutoResize.autoResizeLabel() = when (this) { TextAutoResize.WidthAndHeight -> "Auto W"; TextAutoResize.Height -> "Auto H"; TextAutoResize.None -> "Fixed" }
-private fun HorizontalConstraint.hLabel() = when (this) { HorizontalConstraint.Left -> "Left"; HorizontalConstraint.Right -> "Right"; HorizontalConstraint.Center -> "Center"; HorizontalConstraint.LeftRight -> "Left & Right"; HorizontalConstraint.Scale -> "Scale" }
-private fun VerticalConstraint.vLabel() = when (this) { VerticalConstraint.Top -> "Top"; VerticalConstraint.Bottom -> "Bottom"; VerticalConstraint.Center -> "Center"; VerticalConstraint.TopBottom -> "Top & Bottom"; VerticalConstraint.Scale -> "Scale" }
 
 // --- Comments / annotations ---------------------------------------------------
 
@@ -3170,6 +3163,7 @@ private fun VerticalConstraint.vLabel() = when (this) { VerticalConstraint.Top -
  */
 @Composable
 private fun InspectorComments(state: MissionEditorStateHolder) {
+    val strings = LocalStrings.current
     val design = state.designState
     val screenFileName = remember(design.compiledResults, design.sources, design.selectedPageId) {
         design.screenFileNamesByPageId()[design.selectedPageId]
@@ -3182,7 +3176,7 @@ private fun InspectorComments(state: MissionEditorStateHolder) {
         }
     }
     if (layer == null && selection == null) {
-        EmptyInspector("No annotations yet — drop a note or issue with the comment tool.")
+        EmptyInspector(strings.inspector.noAnnotationsYet)
         return
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -3192,7 +3186,7 @@ private fun InspectorComments(state: MissionEditorStateHolder) {
             AnnotationSection(state, ownerScreen, annotation)
         } else {
             Box(Modifier.padding(18.dp)) {
-                MutedNote("Select an annotation badge on the canvas or in the list to edit it.")
+                MutedNote(strings.inspector.selectAnnotationHint)
             }
         }
     }
@@ -3201,9 +3195,10 @@ private fun InspectorComments(state: MissionEditorStateHolder) {
 @Composable
 private fun AnnotationListSection(state: MissionEditorStateHolder, layer: AnnotationLayer) {
     val colors = LocalEditorColors.current
-    StandaloneSection(EditorIcon.Comments, CompactLabel("Annotations", "Annots", "Ann")) {
+    val strings = LocalStrings.current
+    StandaloneSection(EditorIcon.Comments, strings.inspector.annotationsSection) {
         if (layer.annotations.isEmpty()) {
-            MutedNote("No annotations on this screen. Use the comment tool on the canvas.")
+            MutedNote(strings.inspector.noAnnotationsOnScreen)
             return@StandaloneSection
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3221,7 +3216,7 @@ private fun AnnotationListSection(state: MissionEditorStateHolder, layer: Annota
                 ) {
                     AnnotationKindPreview(annotation.kind, Modifier.size(16.dp))
                     Text(
-                        annotation.body.text.ifBlank { "(no text)" },
+                        annotation.body.text.ifBlank { strings.inspector.noText },
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (annotation.body.text.isBlank()) colors.mutedInk else colors.ink,
@@ -3230,7 +3225,7 @@ private fun AnnotationListSection(state: MissionEditorStateHolder, layer: Annota
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        annotationKindLabel(annotation.kind),
+                        strings.inspector.annotationKind(annotation.kind),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (annotation.kind == AnnotationKind.Issue) colors.statusWarning else colors.mutedInk,
                         fontWeight = FontWeight.SemiBold,
@@ -3243,17 +3238,18 @@ private fun AnnotationListSection(state: MissionEditorStateHolder, layer: Annota
 
 @Composable
 private fun AnnotationSection(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
+    val strings = LocalStrings.current
     val design = state.designState
-    StandaloneSection(EditorIcon.Design, CompactLabel("Annotation", "Annot", "Ann")) {
+    StandaloneSection(EditorIcon.Design, strings.inspector.annotationSection) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // Kind switch: note vs issue, rows with their tinted droplet previews.
             Column {
-                InspectorSubLabel("Kind")
+                InspectorSubLabel(strings.inspector.kind)
                 SelectField(
-                    value = annotationKindLabel(annotation.kind),
-                    options = AnnotationKind.entries.map { annotationKindLabel(it) },
+                    value = strings.inspector.annotationKind(annotation.kind),
+                    options = AnnotationKind.entries.map { strings.inspector.annotationKind(it) },
                     onSelect = { label ->
-                        annotationKindForLabel(label)?.let { kind ->
+                        AnnotationKind.entries.firstOrNull { strings.inspector.annotationKind(it) == label }?.let { kind ->
                             if (kind != annotation.kind) {
                                 state.dispatch(DesignEditorIntent.SetAnnotationKind(screenFileName, annotation.id, kind))
                             }
@@ -3262,13 +3258,13 @@ private fun AnnotationSection(state: MissionEditorStateHolder, screenFileName: S
                     modifier = Modifier.widthIn(max = InspectorCompactSelectMaxWidth).fillMaxWidth(),
                     leadingContent = { AnnotationKindPreview(annotation.kind, Modifier.size(16.dp)) },
                     optionLeadingContent = { label ->
-                        annotationKindForLabel(label)?.let { AnnotationKindPreview(it, Modifier.size(16.dp)) }
+                        AnnotationKind.entries.firstOrNull { strings.inspector.annotationKind(it) == label }?.let { AnnotationKindPreview(it, Modifier.size(16.dp)) }
                     },
                 )
             }
 
             Column {
-                InspectorSubLabel("Text")
+                InspectorSubLabel(strings.inspector.text)
                 AnnotationTextField(
                     value = annotation.body.text,
                     resetKey = "annotation-text-${annotation.id}",
@@ -3278,21 +3274,21 @@ private fun AnnotationSection(state: MissionEditorStateHolder, screenFileName: S
             }
 
             Column {
-                InspectorSubLabel("Image")
+                InspectorSubLabel(strings.inspector.image)
                 AnnotationImageControls(state, screenFileName, annotation)
             }
 
             Column {
-                InspectorSubLabel("Anchor")
+                InspectorSubLabel(strings.inspector.anchor)
                 AnnotationAnchorInfo(state, screenFileName, annotation)
             }
 
             Column {
-                InspectorSubLabel("References")
+                InspectorSubLabel(strings.inspector.references)
                 AnnotationReferences(state, screenFileName, annotation)
             }
 
-            AnnotationDangerButton("Delete annotation") {
+            AnnotationDangerButton(strings.inspector.deleteAnnotation) {
                 state.dispatch(DesignEditorIntent.DeleteAnnotation(screenFileName, annotation.id))
             }
         }
@@ -3306,6 +3302,7 @@ private fun AnnotationSection(state: MissionEditorStateHolder, screenFileName: S
 @Composable
 private fun AnnotationTextField(value: String, resetKey: String, onCommit: (String) -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     var draft by remember(resetKey, value) { mutableStateOf(value) }
     var hadFocus by remember(resetKey) { mutableStateOf(false) }
     var focused by remember(resetKey) { mutableStateOf(false) }
@@ -3317,7 +3314,7 @@ private fun AnnotationTextField(value: String, resetKey: String, onCommit: (Stri
     ) {
         Box(Modifier.padding(8.dp), contentAlignment = Alignment.TopStart) {
             if (draft.isEmpty()) {
-                Text("Annotation text…", style = MaterialTheme.typography.bodySmall, color = colors.mutedInk)
+                Text(strings.inspector.annotationTextPlaceholder, style = MaterialTheme.typography.bodySmall, color = colors.mutedInk)
             }
             BasicTextField(
                 value = draft,
@@ -3345,11 +3342,12 @@ private fun AnnotationTextField(value: String, resetKey: String, onCommit: (Stri
  */
 @Composable
 private fun AnnotationImageControls(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
+    val strings = LocalStrings.current
     val image = annotation.image
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (image != null) {
             AnnotationImagePreview(image)
-            TinyButton("Detach image") {
+            TinyButton(strings.inspector.detachImage) {
                 state.dispatch(DesignEditorIntent.DetachAnnotationImage(screenFileName, annotation.id))
             }
         } else {
@@ -3357,7 +3355,7 @@ private fun AnnotationImageControls(state: MissionEditorStateHolder, screenFileN
                 value = "",
                 resetKey = "annotation-image-${annotation.id}",
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = "Paste a data:image/… URI to attach",
+                placeholder = strings.inspector.attachImagePlaceholder,
             ) { source ->
                 if (source.isNotBlank()) {
                     state.dispatch(
@@ -3369,7 +3367,7 @@ private fun AnnotationImageControls(state: MissionEditorStateHolder, screenFileN
                     )
                 }
             }
-            MutedNote("Shown inside the expanded annotation card.")
+            MutedNote(strings.inspector.imageShownNote)
         }
     }
 }
@@ -3377,9 +3375,10 @@ private fun AnnotationImageControls(state: MissionEditorStateHolder, screenFileN
 @Composable
 private fun AnnotationImagePreview(image: AnnotationImage) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val bitmap = rememberAnnotationImage(image.source)
     if (bitmap == null) {
-        MutedNote("Attached image is not previewable (not a base64 data URI).")
+        MutedNote(strings.inspector.imageNotPreviewable)
         return
     }
     val sized = if (image.width > 0.0 && image.height > 0.0) {
@@ -3389,7 +3388,7 @@ private fun AnnotationImagePreview(image: AnnotationImage) {
     }
     Image(
         bitmap = bitmap,
-        contentDescription = "Annotation image",
+        contentDescription = strings.inspector.annotationImage,
         modifier = sized
             .clip(RoundedCornerShape(4.dp))
             .border(1.dp, colors.panelStroke, RoundedCornerShape(4.dp)),
@@ -3401,6 +3400,7 @@ private fun AnnotationImagePreview(image: AnnotationImage) {
 @Composable
 private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val design = state.designState
     when (val anchor = annotation.anchor) {
         is AnnotationAnchor.NodeAnchor -> {
@@ -3410,14 +3410,14 @@ private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName
                     // Dangling anchor: keep-not-lose — say exactly which node is gone while
                     // still offering detach (freeze in place) and delete below.
                     Text(
-                        "Pinned node is missing: ${anchor.nodeId}",
+                        strings.inspector.pinnedNodeMissing(anchor.nodeId),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.statusWarning,
                     )
                 } else {
-                    MutedNote("Pinned to ${node.name.ifBlank { anchor.nodeId }}")
+                    MutedNote(strings.inspector.pinnedTo(node.name.ifBlank { anchor.nodeId }))
                 }
-                TinyButton("Открепить") {
+                TinyButton(strings.inspector.detachAnchor) {
                     // Freeze the badge where it currently renders (visual, rotation-aware
                     // bounds — the same space the overlay positions badges in) so detaching
                     // is visually a no-op.
@@ -3430,7 +3430,7 @@ private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName
             }
         }
         is AnnotationAnchor.FreePoint ->
-            MutedNote("Free point at ${anchor.x.formatPx()}, ${anchor.y.formatPx()}")
+            MutedNote(strings.inspector.freePointAt(anchor.x.formatPx(), anchor.y.formatPx()))
     }
 }
 
@@ -3438,10 +3438,11 @@ private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName
 @Composable
 private fun AnnotationReferences(state: MissionEditorStateHolder, screenFileName: String, annotation: Annotation) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val design = state.designState
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (annotation.references.isEmpty()) {
-            MutedNote("No extra node references.")
+            MutedNote(strings.inspector.noExtraReferences)
         }
         annotation.references.forEach { nodeId ->
             Row(
@@ -3451,7 +3452,7 @@ private fun AnnotationReferences(state: MissionEditorStateHolder, screenFileName
             ) {
                 EditorSvgIcon(EditorIcon.Component, contentDescription = null, modifier = Modifier.size(14.dp), tint = colors.controlInk)
                 Text(
-                    design.document?.nodeById(nodeId)?.name?.ifBlank { nodeId } ?: "$nodeId (deleted)",
+                    design.document?.nodeById(nodeId)?.name?.ifBlank { nodeId } ?: strings.inspector.deletedNode(nodeId),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.ink,
@@ -3471,7 +3472,7 @@ private fun AnnotationReferences(state: MissionEditorStateHolder, screenFileName
         val canAdd = selectedNodeId.isNotBlank() &&
             selectedNodeId !in annotation.references &&
             selectedNodeId != anchorNodeId
-        TinyButton("Add selected node", enabled = canAdd) {
+        TinyButton(strings.inspector.addSelectedNode, enabled = canAdd) {
             state.dispatch(DesignEditorIntent.AddAnnotationReference(screenFileName, annotation.id, selectedNodeId))
         }
     }
@@ -3496,8 +3497,6 @@ private fun AnnotationDangerButton(label: String, onClick: () -> Unit) {
 
 // --- Diagram -------------------------------------------------------------------
 
-private val DiagramSectionLabel = CompactLabel("Diagram", "Diagram", "Dgm")
-
 /**
  * Diagram controls: node type/label/style (+ table and UML class structure) for a selected
  * diagram element, relation/routing/arrowheads/pattern/jumps/labels for a selected edge,
@@ -3508,8 +3507,9 @@ private val DiagramSectionLabel = CompactLabel("Diagram", "Diagram", "Dgm")
 @Composable
 private fun DiagramSection(state: MissionEditorStateHolder, node: DesignNode, visible: Boolean) {
     if (!visible) return
+    val strings = LocalStrings.current
     val kind = node.kind as? DesignNodeKind.Diagram ?: return
-    StandaloneSection(icon = EditorIcon.Diagram, label = DiagramSectionLabel) {
+    StandaloneSection(icon = EditorIcon.Diagram, label = strings.inspector.diagramSection) {
         val nodeId = node.id
         val locked = state.designState.isNodeLocked(nodeId)
         val graph = kind.graph
@@ -3518,7 +3518,7 @@ private fun DiagramSection(state: MissionEditorStateHolder, node: DesignNode, vi
         val selection = if (editing) ws.diagramSelection else DiagramSelection.Empty
 
         if (!editing) {
-            TinyButton("Edit diagram", enabled = !locked) {
+            TinyButton(strings.inspector.editDiagram, enabled = !locked) {
                 state.updateWorkspace {
                     it.copy(diagramEditNodeId = nodeId, diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
                 }
@@ -3538,7 +3538,7 @@ private fun DiagramSection(state: MissionEditorStateHolder, node: DesignNode, vi
                 Spacer(Modifier.height(12.dp))
             }
             editing -> {
-                MutedNote("Select a node or an edge on the canvas.")
+                MutedNote(strings.inspector.selectNodeOrEdge)
                 Spacer(Modifier.height(12.dp))
             }
         }
@@ -3559,6 +3559,7 @@ private fun DiagramSection(state: MissionEditorStateHolder, node: DesignNode, vi
 @Composable
 private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: DesignNode) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val kind = node.kind as? DesignNodeKind.Diagram ?: return
     val nodeId = node.id
     val graph = kind.graph
@@ -3573,12 +3574,12 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 EditorSvgIcon(EditorIcon.Diagram, contentDescription = null, modifier = Modifier.size(18.dp), tint = colors.ink)
                 Text(
-                    node.name.ifBlank { "Diagram" },
+                    node.name.ifBlank { strings.inspector.diagramNameFallback },
                     style = MaterialTheme.typography.titleSmall,
                     color = colors.ink,
                     modifier = Modifier.weight(1f),
                 )
-                TinyButton(if (editing) "Done" else "Edit", enabled = !locked) {
+                TinyButton(if (editing) strings.common.done else strings.common.edit, enabled = !locked) {
                     state.updateWorkspace {
                         if (editing) {
                             it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
@@ -3592,21 +3593,21 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
 
         // Shape palette, grouped by family; a click inserts at the canvas center.
         Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
-            InspectorSubLabel("Shapes")
+            InspectorSubLabel(strings.inspector.shapes)
             Spacer(Modifier.height(8.dp))
             DiagramPaletteGrid(state, nodeId, locked)
         }
 
         // Mini-map: graph overview + the live viewport rectangle; click/drag pans the canvas.
         Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
-            InspectorSubLabel("Map")
+            InspectorSubLabel(strings.inspector.map)
             Spacer(Modifier.height(6.dp))
             DiagramMiniMap(state, nodeId, graph)
         }
 
         // Outline: every element and edge, selectable and deletable.
         Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
-            InspectorSubLabel("Outline")
+            InspectorSubLabel(strings.inspector.outline)
             Spacer(Modifier.height(6.dp))
             DiagramOutline(state, nodeId, graph, selection, locked)
         }
@@ -3618,7 +3619,7 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
             when {
                 selectedElement != null -> DiagramNodeControls(state, nodeId, selectedElement, locked)
                 selectedEdge != null -> DiagramEdgeControls(state, nodeId, selectedEdge, locked)
-                else -> MutedNote("Select an element in the outline or on the canvas.")
+                else -> MutedNote(strings.inspector.selectElementHint)
             }
         }
 
@@ -3648,10 +3649,11 @@ private fun diagramPaletteFamily(label: String): String = when {
 @Composable
 private fun DiagramPaletteGrid(state: MissionEditorStateHolder, nodeId: String, locked: Boolean) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val previewStyle = editorDiagramPreviewStyle()
     val groups = DiagramNodePalette.groupBy { diagramPaletteFamily(it.label) }
     groups.forEach { (family, entries) ->
-        Text(family, style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
+        Text(strings.inspector.diagramFamily(family), style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
         Spacer(Modifier.height(4.dp))
         entries.chunked(5).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -3846,9 +3848,10 @@ private fun DiagramOutline(
     locked: Boolean,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val previewStyle = editorDiagramPreviewStyle()
     if (graph.nodes.isEmpty() && graph.edges.isEmpty()) {
-        MutedNote("The diagram is empty — add a shape from the palette above.")
+        MutedNote(strings.inspector.diagramEmpty)
         return
     }
 
@@ -3882,8 +3885,8 @@ private fun DiagramOutline(
         DiagramOutlineRow(
             selected = selected,
             title = edge.labels.firstOrNull()?.label?.text?.takeIf { it.isNotBlank() }
-                ?: diagramRelationLabel(edge.relation),
-            subtitle = "${diagramEndpointLabel(edge.source)} → ${diagramEndpointLabel(edge.target)}",
+                ?: strings.inspector.diagramRelation(edge.relation),
+            subtitle = "${diagramEndpointLabel(edge.source, strings)} → ${diagramEndpointLabel(edge.target, strings)}",
             locked = locked,
             leading = { DiagramRelationPreview(edge.relation, previewStyle) },
             onSelect = { select(edges = setOf(edgeId)) },
@@ -3904,6 +3907,7 @@ private fun DiagramOutlineRow(
     onDelete: () -> Unit,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -3936,7 +3940,7 @@ private fun DiagramOutlineRow(
                 modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)).clickable(onClick = onDelete),
                 contentAlignment = Alignment.Center,
             ) {
-                EditorSvgIcon(EditorIcon.Trash, contentDescription = "Delete", modifier = Modifier.size(14.dp), tint = colors.mutedInk)
+                EditorSvgIcon(EditorIcon.Trash, contentDescription = strings.common.delete, modifier = Modifier.size(14.dp), tint = colors.mutedInk)
             }
         }
     }
@@ -3954,9 +3958,10 @@ private fun DiagramMiniMap(
     graph: io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val diagramBox = state.artboardLayout?.findBySourceId(nodeId)
     if (diagramBox == null) {
-        MutedNote("The diagram is not on the current page.")
+        MutedNote(strings.inspector.diagramNotOnPage)
         return
     }
     // Content = the diagram canvas rect united with every element (elements may overflow).
@@ -4069,12 +4074,15 @@ private fun DiagramMiniMap(
 }
 
 /** Short human label of an edge endpoint for the outline subtitle. */
-private fun diagramEndpointLabel(endpoint: io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint): String =
+private fun diagramEndpointLabel(
+    endpoint: io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint,
+    strings: io.aequicor.visualization.editor.ui.strings.Strings,
+): String =
     when (endpoint) {
         is io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint.FloatingAnchor -> endpoint.nodeId.value
         is io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint.FixedPort ->
             "${endpoint.nodeId.value}.${endpoint.portId.value}"
-        is io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint.FreePoint -> "(free)"
+        is io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint.FreePoint -> strings.inspector.freeEndpoint
     }
 
 /** Type / label / style controls for a selected diagram node (+ table / UML structure). */
@@ -4085,9 +4093,10 @@ private fun DiagramNodeControls(
     element: io.aequicor.visualization.subsystems.diagrams.model.DiagramNode,
     locked: Boolean,
 ) {
+    val strings = LocalStrings.current
     val elementId = element.id.value
     val previewStyle = editorDiagramPreviewStyle()
-    LabeledField("Type") {
+    LabeledField(strings.inspector.type) {
         SelectField(
             value = diagramPayloadTypeLabel(element.payload),
             options = DiagramNodePalette.map { it.label },
@@ -4107,7 +4116,7 @@ private fun DiagramNodeControls(
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledTextField(
-        "Label",
+        strings.inspector.label,
         element.labels.firstOrNull()?.text.orEmpty(),
         "diagram-label-$elementId",
         enabled = !locked,
@@ -4139,15 +4148,16 @@ private fun DiagramStyleControls(
     onStyle: (DiagramStyle) -> Unit,
 ) {
     val colors = LocalEditorColors.current
-    InspectorSubLabel("Style")
+    val strings = LocalStrings.current
+    InspectorSubLabel(strings.inspector.style)
     Spacer(Modifier.height(6.dp))
     if (showFill) {
-        LabeledField("Fill") {
+        LabeledField(strings.inspector.fill) {
             InspectorColorField(
                 state = state,
                 color = (style.fill ?: DiagramColor.White).toDesignColor(),
                 opacity = 1.0,
-                label = style.fill?.toDesignColor()?.toHex() ?: "Default",
+                label = style.fill?.toDesignColor()?.toHex() ?: strings.common.default,
                 enabled = !locked,
                 onColor = { picked -> onStyle(style.copy(fill = picked.toDiagramColor())) },
                 onOpacity = { },
@@ -4155,57 +4165,57 @@ private fun DiagramStyleControls(
         }
         Spacer(Modifier.height(6.dp))
     }
-    LabeledField("Stroke") {
+    LabeledField(strings.inspector.stroke) {
         InspectorColorField(
             state = state,
             color = (style.stroke ?: DiagramColor.Black).toDesignColor(),
             opacity = 1.0,
-            label = style.stroke?.toDesignColor()?.toHex() ?: "Default",
+            label = style.stroke?.toDesignColor()?.toHex() ?: strings.common.default,
             enabled = !locked,
             onColor = { picked -> onStyle(style.copy(stroke = picked.toDiagramColor())) },
             onOpacity = { },
         )
     }
     Spacer(Modifier.height(6.dp))
-    CompactLabeledNumberField("Width", style.strokeWidth.formatPx(), "$resetKey-stroke-width", enabled = !locked) {
+    CompactLabeledNumberField(strings.inspector.width, style.strokeWidth.formatPx(), "$resetKey-stroke-width", enabled = !locked) {
         onStyle(style.copy(strokeWidth = it.coerceAtLeast(0.0)))
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        "Pattern",
-        diagramPatternLabel(style.pattern),
-        DiagramStrokePattern.entries.map { diagramPatternLabel(it) },
+        strings.inspector.pattern,
+        strings.inspector.diagramPattern(style.pattern),
+        DiagramStrokePattern.entries.map { strings.inspector.diagramPattern(it) },
         enabled = !locked,
         leadingContent = { DiagramPatternPreview(style.pattern) },
         optionLeadingContent = { label ->
-            DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+            DiagramStrokePattern.entries.firstOrNull { strings.inspector.diagramPattern(it) == label }
                 ?.let { DiagramPatternPreview(it) }
         },
     ) { label ->
-        DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+        DiagramStrokePattern.entries.firstOrNull { strings.inspector.diagramPattern(it) == label }
             ?.let { onStyle(style.copy(pattern = it)) }
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        "Corners",
-        diagramCornerLabel(style.cornerStyle),
-        DiagramCornerStyle.entries.map { diagramCornerLabel(it) },
+        strings.inspector.corners,
+        strings.inspector.diagramCorner(style.cornerStyle),
+        DiagramCornerStyle.entries.map { strings.inspector.diagramCorner(it) },
         enabled = !locked,
         leadingContent = { DiagramCornerPreview(style.cornerStyle) },
         optionLeadingContent = { label ->
-            DiagramCornerStyle.entries.firstOrNull { diagramCornerLabel(it) == label }
+            DiagramCornerStyle.entries.firstOrNull { strings.inspector.diagramCorner(it) == label }
                 ?.let { DiagramCornerPreview(it) }
         },
     ) { label ->
-        DiagramCornerStyle.entries.firstOrNull { diagramCornerLabel(it) == label }
+        DiagramCornerStyle.entries.firstOrNull { strings.inspector.diagramCorner(it) == label }
             ?.let { onStyle(style.copy(cornerStyle = it)) }
     }
     Spacer(Modifier.height(6.dp))
-    CheckRow("Sketch", style.sketch) { if (!locked) onStyle(style.copy(sketch = !style.sketch)) }
-    CheckRow("Shadow", style.shadow) { if (!locked) onStyle(style.copy(shadow = !style.shadow)) }
+    CheckRow(strings.inspector.sketch, style.sketch) { if (!locked) onStyle(style.copy(sketch = !style.sketch)) }
+    CheckRow(strings.inspector.shadow, style.shadow) { if (!locked) onStyle(style.copy(shadow = !style.shadow)) }
     Spacer(Modifier.height(6.dp))
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Opacity", style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
+        Text(strings.inspector.opacity, style = MaterialTheme.typography.bodySmall, color = colors.controlInk)
         Text("${(style.opacity * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
         UndoableSlider(
             value = (style.opacity * 100).toFloat(),
@@ -4228,27 +4238,28 @@ private fun DiagramTableControls(
     table: TableNode,
     locked: Boolean,
 ) {
-    InspectorSubLabel("Table (${table.rowCount} x ${table.columnCount})")
+    val strings = LocalStrings.current
+    InspectorSubLabel(strings.inspector.tableSize(table.rowCount, table.columnCount))
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TinyButton("+ Row", enabled = !locked) {
+        TinyButton(strings.inspector.addRow, enabled = !locked) {
             state.dispatch(DiagramEditorIntent.AddDiagramTableRow(nodeId, elementId))
         }
-        TinyButton("+ Column", enabled = !locked) {
+        TinyButton(strings.inspector.addColumn, enabled = !locked) {
             state.dispatch(DiagramEditorIntent.AddDiagramTableColumn(nodeId, elementId))
         }
     }
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TinyButton("- Row", enabled = !locked && table.rowCount > 1) {
+        TinyButton(strings.inspector.removeRow, enabled = !locked && table.rowCount > 1) {
             state.dispatch(DiagramEditorIntent.RemoveDiagramTableRow(nodeId, elementId, table.rowCount - 1))
         }
-        TinyButton("- Column", enabled = !locked && table.columnCount > 1) {
+        TinyButton(strings.inspector.removeColumn, enabled = !locked && table.columnCount > 1) {
             state.dispatch(DiagramEditorIntent.RemoveDiagramTableColumn(nodeId, elementId, table.columnCount - 1))
         }
     }
     Spacer(Modifier.height(8.dp))
-    InspectorSubLabel("Merge cells")
+    InspectorSubLabel(strings.inspector.mergeCells)
     var rowStart by remember(elementId) { mutableStateOf(0) }
     var rowEnd by remember(elementId) { mutableStateOf(0) }
     var columnStart by remember(elementId) { mutableStateOf(0) }
@@ -4273,7 +4284,7 @@ private fun DiagramTableControls(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TinyButton("Merge", enabled = !locked) {
+                TinyButton(strings.inspector.merge, enabled = !locked) {
                     state.dispatch(
                         DiagramEditorIntent.MergeDiagramTableCells(
                             nodeId, elementId,
@@ -4284,7 +4295,7 @@ private fun DiagramTableControls(
                         ),
                     )
                 }
-                TinyButton("Split", enabled = !locked) {
+                TinyButton(strings.inspector.split, enabled = !locked) {
                     state.dispatch(DiagramEditorIntent.SplitDiagramTableCell(nodeId, elementId, rowStart, columnStart))
                 }
             }
@@ -4301,9 +4312,10 @@ private fun DiagramClassControls(
     uml: UmlClassNode,
     locked: Boolean,
 ) {
-    DiagramMemberList(state, nodeId, elementId, "Attributes", UmlClassMemberKind.ATTRIBUTE, uml.attributes, locked)
+    val strings = LocalStrings.current
+    DiagramMemberList(state, nodeId, elementId, strings.inspector.attributes, UmlClassMemberKind.ATTRIBUTE, uml.attributes, locked)
     Spacer(Modifier.height(8.dp))
-    DiagramMemberList(state, nodeId, elementId, "Operations", UmlClassMemberKind.OPERATION, uml.operations, locked)
+    DiagramMemberList(state, nodeId, elementId, strings.inspector.operations, UmlClassMemberKind.OPERATION, uml.operations, locked)
 }
 
 @Composable
@@ -4317,9 +4329,10 @@ private fun DiagramMemberList(
     locked: Boolean,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     InspectorSubLabel(title)
     if (members.isEmpty()) {
-        MutedNote("None yet.")
+        MutedNote(strings.inspector.noneYet)
     }
     members.forEachIndexed { index, member ->
         Row(
@@ -4328,11 +4341,11 @@ private fun DiagramMemberList(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             CompactSelectField(
-                value = umlVisibilityLabel(member.visibility),
-                options = UmlVisibility.entries.map { umlVisibilityLabel(it) },
+                value = strings.inspector.umlVisibility(member.visibility),
+                options = UmlVisibility.entries.map { strings.inspector.umlVisibility(it) },
                 onSelect = { label ->
                     if (!locked) {
-                        UmlVisibility.entries.firstOrNull { umlVisibilityLabel(it) == label }?.let {
+                        UmlVisibility.entries.firstOrNull { strings.inspector.umlVisibility(it) == label }?.let {
                             state.dispatch(
                                 DiagramEditorIntent.SetDiagramClassMemberVisibility(nodeId, elementId, kind, index, it),
                             )
@@ -4343,7 +4356,7 @@ private fun DiagramMemberList(
                 enabled = !locked,
                 leadingContent = { UmlVisibilityPreview(member.visibility) },
                 optionLeadingContent = { label ->
-                    UmlVisibility.entries.firstOrNull { umlVisibilityLabel(it) == label }
+                    UmlVisibility.entries.firstOrNull { strings.inspector.umlVisibility(it) == label }
                         ?.let { UmlVisibilityPreview(it) }
                 },
             )
@@ -4372,7 +4385,7 @@ private fun DiagramMemberList(
                 placeholder = if (kind == UmlClassMemberKind.ATTRIBUTE) "name: Type" else "name(args): Type",
             ) { draft = it }
         }
-        TinyButton("+ Add", enabled = !locked) {
+        TinyButton(strings.inspector.addMember, enabled = !locked) {
             val text = draft.trim().ifBlank { if (kind == UmlClassMemberKind.ATTRIBUTE) "attribute" else "operation()" }
             state.dispatch(DiagramEditorIntent.AddDiagramClassMember(nodeId, elementId, kind, UmlMember(text)))
             draft = ""
@@ -4388,109 +4401,110 @@ private fun DiagramEdgeControls(
     edge: DiagramEdge,
     locked: Boolean,
 ) {
+    val strings = LocalStrings.current
     val edgeId = edge.id.value
     val previewStyle = editorDiagramPreviewStyle()
-    LabeledField("Relation") {
+    LabeledField(strings.inspector.relation) {
         SelectField(
-            value = diagramRelationLabel(edge.relation),
-            options = DiagramRelationOptions.map { it.first },
+            value = strings.inspector.diagramRelation(edge.relation),
+            options = DiagramRelationOptions.map { strings.inspector.diagramRelation(it.second) },
             onSelect = { label ->
                 if (!locked) {
-                    DiagramRelationOptions.firstOrNull { it.first == label }?.let { (_, relation) ->
+                    DiagramRelationOptions.firstOrNull { strings.inspector.diagramRelation(it.second) == label }?.let { (_, relation) ->
                         state.dispatch(DiagramEditorIntent.SetDiagramEdgeRelation(nodeId, edgeId, relation))
                     }
                 }
             },
             leadingContent = { DiagramRelationPreview(edge.relation, previewStyle) },
             optionLeadingContent = { label ->
-                DiagramRelationOptions.firstOrNull { it.first == label }
+                DiagramRelationOptions.firstOrNull { strings.inspector.diagramRelation(it.second) == label }
                     ?.let { DiagramRelationPreview(it.second, previewStyle) }
             },
         )
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        "Routing",
-        diagramRoutingLabel(edge.routing),
-        DiagramRoutingStyle.entries.map { diagramRoutingLabel(it) },
+        strings.inspector.routing,
+        strings.inspector.diagramRouting(edge.routing),
+        DiagramRoutingStyle.entries.map { strings.inspector.diagramRouting(it) },
         enabled = !locked,
         leadingContent = { DiagramRoutingPreview(edge.routing) },
         optionLeadingContent = { label ->
-            DiagramRoutingStyle.entries.firstOrNull { diagramRoutingLabel(it) == label }
+            DiagramRoutingStyle.entries.firstOrNull { strings.inspector.diagramRouting(it) == label }
                 ?.let { DiagramRoutingPreview(it) }
         },
     ) { label ->
-        DiagramRoutingStyle.entries.firstOrNull { diagramRoutingLabel(it) == label }
+        DiagramRoutingStyle.entries.firstOrNull { strings.inspector.diagramRouting(it) == label }
             ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgeRouting(nodeId, edgeId, it)) }
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        "Start head",
-        diagramArrowheadLabel(edge.sourceArrowhead.kind),
-        DiagramArrowheadKind.entries.map { diagramArrowheadLabel(it) },
+        strings.inspector.startHead,
+        strings.inspector.diagramArrowhead(edge.sourceArrowhead.kind),
+        DiagramArrowheadKind.entries.map { strings.inspector.diagramArrowhead(it) },
         enabled = !locked,
         leadingContent = { DiagramArrowheadPreview(edge.sourceArrowhead.kind) },
         optionLeadingContent = { label ->
-            DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }
+            DiagramArrowheadKind.entries.firstOrNull { strings.inspector.diagramArrowhead(it) == label }
                 ?.let { DiagramArrowheadPreview(it) }
         },
     ) { label ->
-        DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }?.let {
+        DiagramArrowheadKind.entries.firstOrNull { strings.inspector.diagramArrowhead(it) == label }?.let {
             state.dispatch(DiagramEditorIntent.SetDiagramEdgeArrowheads(nodeId, edgeId, source = DiagramArrowhead(it)))
         }
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        "End head",
-        diagramArrowheadLabel(edge.targetArrowhead.kind),
-        DiagramArrowheadKind.entries.map { diagramArrowheadLabel(it) },
+        strings.inspector.endHead,
+        strings.inspector.diagramArrowhead(edge.targetArrowhead.kind),
+        DiagramArrowheadKind.entries.map { strings.inspector.diagramArrowhead(it) },
         enabled = !locked,
         leadingContent = { DiagramArrowheadPreview(edge.targetArrowhead.kind) },
         optionLeadingContent = { label ->
-            DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }
+            DiagramArrowheadKind.entries.firstOrNull { strings.inspector.diagramArrowhead(it) == label }
                 ?.let { DiagramArrowheadPreview(it) }
         },
     ) { label ->
-        DiagramArrowheadKind.entries.firstOrNull { diagramArrowheadLabel(it) == label }?.let {
+        DiagramArrowheadKind.entries.firstOrNull { strings.inspector.diagramArrowhead(it) == label }?.let {
             state.dispatch(DiagramEditorIntent.SetDiagramEdgeArrowheads(nodeId, edgeId, target = DiagramArrowhead(it)))
         }
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        "Pattern",
-        diagramPatternLabel(edge.style.pattern),
-        DiagramStrokePattern.entries.map { diagramPatternLabel(it) },
+        strings.inspector.pattern,
+        strings.inspector.diagramPattern(edge.style.pattern),
+        DiagramStrokePattern.entries.map { strings.inspector.diagramPattern(it) },
         enabled = !locked,
         leadingContent = { DiagramPatternPreview(edge.style.pattern) },
         optionLeadingContent = { label ->
-            DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+            DiagramStrokePattern.entries.firstOrNull { strings.inspector.diagramPattern(it) == label }
                 ?.let { DiagramPatternPreview(it) }
         },
     ) { label ->
-        DiagramStrokePattern.entries.firstOrNull { diagramPatternLabel(it) == label }
+        DiagramStrokePattern.entries.firstOrNull { strings.inspector.diagramPattern(it) == label }
             ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgePattern(nodeId, edgeId, it)) }
     }
     Spacer(Modifier.height(8.dp))
     CompactLabeledSelectField(
-        "Line jumps",
-        diagramLineJumpLabel(edge.lineJumps),
-        LineJumpStyle.entries.map { diagramLineJumpLabel(it) },
+        strings.inspector.lineJumps,
+        strings.inspector.diagramLineJump(edge.lineJumps),
+        LineJumpStyle.entries.map { strings.inspector.diagramLineJump(it) },
         enabled = !locked,
         leadingContent = { DiagramLineJumpPreview(edge.lineJumps) },
         optionLeadingContent = { label ->
-            LineJumpStyle.entries.firstOrNull { diagramLineJumpLabel(it) == label }
+            LineJumpStyle.entries.firstOrNull { strings.inspector.diagramLineJump(it) == label }
                 ?.let { DiagramLineJumpPreview(it) }
         },
     ) { label ->
-        LineJumpStyle.entries.firstOrNull { diagramLineJumpLabel(it) == label }
+        LineJumpStyle.entries.firstOrNull { strings.inspector.diagramLineJump(it) == label }
             ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgeLineJumps(nodeId, edgeId, it)) }
     }
     Spacer(Modifier.height(10.dp))
-    InspectorSubLabel("Labels")
+    InspectorSubLabel(strings.inspector.labels)
     DiagramEdgeLabelPosition.entries.forEach { position ->
         val current = edge.labels.firstOrNull { it.position == position }?.label?.text.orEmpty()
         CompactLabeledTextField(
-            diagramEdgeLabelPositionTitle(position),
+            strings.inspector.diagramEdgeLabelPositionTitle(position),
             current,
             "edge-label-$edgeId-$position",
             enabled = !locked,
@@ -4502,7 +4516,7 @@ private fun DiagramEdgeControls(
         Spacer(Modifier.height(6.dp))
     }
     Spacer(Modifier.height(4.dp))
-    TinyButton("Reverse direction", enabled = !locked) {
+    TinyButton(strings.inspector.reverseDirection, enabled = !locked) {
         state.dispatch(DiagramEditorIntent.ReverseDiagramEdge(nodeId, edgeId))
     }
 }
@@ -4510,16 +4524,17 @@ private fun DiagramEdgeControls(
 /** Diagram-level actions: auto-layout, starter template insertion, text import. */
 @Composable
 private fun DiagramCanvasActions(state: MissionEditorStateHolder, nodeId: String, locked: Boolean) {
+    val strings = LocalStrings.current
     val previewStyle = editorDiagramPreviewStyle()
-    InspectorSubLabel("Diagram")
+    InspectorSubLabel(strings.inspector.diagramActions)
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TinyButton("Auto-layout", enabled = !locked) {
+        TinyButton(strings.inspector.autoLayoutAction, enabled = !locked) {
             state.dispatch(DiagramEditorIntent.ApplyDiagramAutoLayout(nodeId))
         }
         Box {
             var templatesExpanded by remember(nodeId) { mutableStateOf(false) }
-            TinyButton("Insert template", enabled = !locked) { templatesExpanded = true }
+            TinyButton(strings.inspector.insertTemplate, enabled = !locked) { templatesExpanded = true }
             EditorDropdownMenu(expanded = templatesExpanded, onDismissRequest = { templatesExpanded = false }) {
                 diagramTemplates().forEach { template ->
                     EditorDropdownMenuItem(
@@ -4537,7 +4552,7 @@ private fun DiagramCanvasActions(state: MissionEditorStateHolder, nodeId: String
         }
     }
     Spacer(Modifier.height(10.dp))
-    InspectorSubLabel("Import text")
+    InspectorSubLabel(strings.inspector.importText)
     Spacer(Modifier.height(6.dp))
     var format by remember(nodeId) { mutableStateOf(DiagramTextFormat.Mermaid) }
     SegmentedControl(
@@ -4555,7 +4570,7 @@ private fun DiagramCanvasActions(state: MissionEditorStateHolder, nodeId: String
         onChange = { importDraft = it },
     )
     Spacer(Modifier.height(6.dp))
-    TinyButton(if (format == DiagramTextFormat.Mermaid) "Import Mermaid" else "Import PlantUML", enabled = !locked) {
+    TinyButton(if (format == DiagramTextFormat.Mermaid) strings.inspector.importMermaid else strings.inspector.importPlantUml, enabled = !locked) {
         if (importDraft.isNotBlank()) {
             state.dispatch(DiagramEditorIntent.ImportDiagramText(nodeId, importDraft, format))
             importDraft = ""
@@ -4614,88 +4629,6 @@ private val DiagramRelationOptions: List<Pair<String, DiagramRelation>> = listOf
     "Message (destroy)" to DiagramRelation.Message(UmlMessageKind.DESTROY),
     "Entity relation" to DiagramRelation.EntityRelation(),
 )
-
-private fun diagramRelationLabel(relation: DiagramRelation): String = when (relation) {
-    DiagramRelation.Plain -> "Plain"
-    is DiagramRelation.Association -> if (relation.directed) "Directed association" else "Association"
-    DiagramRelation.Aggregation -> "Aggregation"
-    DiagramRelation.Composition -> "Composition"
-    DiagramRelation.Generalization -> "Generalization"
-    DiagramRelation.Dependency -> "Dependency"
-    DiagramRelation.Realization -> "Realization"
-    is DiagramRelation.Message -> when (relation.kind) {
-        UmlMessageKind.SYNC -> "Message (sync)"
-        UmlMessageKind.ASYNC -> "Message (async)"
-        UmlMessageKind.RETURN -> "Message (return)"
-        UmlMessageKind.CREATE -> "Message (create)"
-        UmlMessageKind.DESTROY -> "Message (destroy)"
-    }
-    DiagramRelation.Transition -> "Transition"
-    DiagramRelation.Include -> "Include"
-    DiagramRelation.Extend -> "Extend"
-    is DiagramRelation.EntityRelation -> "Entity relation"
-}
-
-private fun diagramRoutingLabel(style: DiagramRoutingStyle): String = when (style) {
-    DiagramRoutingStyle.STRAIGHT -> "Straight"
-    DiagramRoutingStyle.ORTHOGONAL -> "Orthogonal"
-    DiagramRoutingStyle.SIMPLE -> "Simple"
-    DiagramRoutingStyle.ISOMETRIC -> "Isometric"
-    DiagramRoutingStyle.CURVED -> "Curved"
-    DiagramRoutingStyle.ENTITY_RELATION -> "Entity relation"
-}
-
-private fun diagramPatternLabel(pattern: DiagramStrokePattern): String = when (pattern) {
-    DiagramStrokePattern.SOLID -> "Solid"
-    DiagramStrokePattern.DASHED -> "Dashed"
-    DiagramStrokePattern.DOTTED -> "Dotted"
-}
-
-private fun diagramCornerLabel(style: DiagramCornerStyle): String = when (style) {
-    DiagramCornerStyle.SHARP -> "Sharp"
-    DiagramCornerStyle.ROUNDED -> "Rounded"
-    DiagramCornerStyle.CURVED -> "Curved"
-}
-
-private fun diagramLineJumpLabel(style: LineJumpStyle): String = when (style) {
-    LineJumpStyle.NONE -> "None"
-    LineJumpStyle.ARC -> "Arc"
-    LineJumpStyle.GAP -> "Gap"
-    LineJumpStyle.SHARP -> "Sharp"
-}
-
-private fun diagramArrowheadLabel(kind: DiagramArrowheadKind): String = when (kind) {
-    DiagramArrowheadKind.NONE -> "None"
-    DiagramArrowheadKind.OPEN -> "Open"
-    DiagramArrowheadKind.BLOCK -> "Block"
-    DiagramArrowheadKind.BLOCK_FILLED -> "Block filled"
-    DiagramArrowheadKind.DIAMOND -> "Diamond"
-    DiagramArrowheadKind.DIAMOND_FILLED -> "Diamond filled"
-    DiagramArrowheadKind.TRIANGLE -> "Triangle"
-    DiagramArrowheadKind.TRIANGLE_FILLED -> "Triangle filled"
-    DiagramArrowheadKind.OVAL -> "Oval"
-    DiagramArrowheadKind.OVAL_FILLED -> "Oval filled"
-    DiagramArrowheadKind.CROSS -> "Cross"
-    DiagramArrowheadKind.DASH -> "Dash"
-    DiagramArrowheadKind.ER_ONE -> "ER one"
-    DiagramArrowheadKind.ER_MANY -> "ER many"
-    DiagramArrowheadKind.ER_ONE_OR_MANY -> "ER one or many"
-    DiagramArrowheadKind.ER_ZERO_OR_ONE -> "ER zero or one"
-    DiagramArrowheadKind.ER_ZERO_OR_MANY -> "ER zero or many"
-}
-
-private fun umlVisibilityLabel(visibility: UmlVisibility): String = when (visibility) {
-    UmlVisibility.PUBLIC -> "Public"
-    UmlVisibility.PRIVATE -> "Private"
-    UmlVisibility.PROTECTED -> "Protected"
-    UmlVisibility.PACKAGE -> "Package"
-}
-
-private fun diagramEdgeLabelPositionTitle(position: DiagramEdgeLabelPosition): String = when (position) {
-    DiagramEdgeLabelPosition.SOURCE -> "Start"
-    DiagramEdgeLabelPosition.MIDDLE -> "Middle"
-    DiagramEdgeLabelPosition.TARGET -> "End"
-}
 
 /** Representative payload glyph for a starter template's dropdown row. */
 private fun diagramTemplatePreviewPayload(templateId: String): DiagramNodePayload = when (templateId) {

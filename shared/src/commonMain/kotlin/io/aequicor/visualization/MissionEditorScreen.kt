@@ -41,9 +41,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.CompositionLocalProvider
 import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
 import io.aequicor.visualization.editor.data.DefaultDraftRepository
+import io.aequicor.visualization.editor.data.LanguagePreference
 import io.aequicor.visualization.editor.data.createKeyValueStore
+import io.aequicor.visualization.editor.domain.AppLanguage
 import io.aequicor.visualization.editor.domain.ClearDraftUseCase
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.domain.ExportIssuesPromptUseCase
@@ -74,6 +77,8 @@ import io.aequicor.visualization.editor.ui.EditorInspectorPane
 import io.aequicor.visualization.editor.ui.EditorSourcePane
 import io.aequicor.visualization.editor.ui.EditorSvgIcon
 import io.aequicor.visualization.editor.ui.horizontalResizeCursor
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
+import io.aequicor.visualization.editor.ui.strings.appStringsFor
 import io.aequicor.visualization.editor.ui.theme.EditorTheme
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
@@ -92,11 +97,22 @@ private const val AutosaveDebounceMs: Long = 600L
 class MissionEditorStateHolder(
     private val loadDesignDocument: LoadDesignDocumentUseCase,
     private val draft: DraftController? = null,
+    private val languagePreference: LanguagePreference? = null,
 ) {
     private val defaultDocuments = loadDesignDocument()
 
     var designState by mutableStateOf(createDesignEditorState(defaultDocuments))
         private set
+
+    /** Active UI language; restored from the local store and persisted on every change. */
+    var language by mutableStateOf(languagePreference?.load() ?: AppLanguage.Default)
+        private set
+
+    fun selectLanguage(next: AppLanguage) {
+        if (language == next) return
+        language = next
+        languagePreference?.save(next)
+    }
 
     var projectName by mutableStateOf("")
         private set
@@ -282,7 +298,8 @@ fun MissionEditorApp() {
         val state = remember {
             // Composition root: wire the persistence slice. The dispatcher is injected
             // here (the boundary), not taken from Dispatchers.* inside the repository.
-            val draftRepository = DefaultDraftRepository(createKeyValueStore(), Dispatchers.Default)
+            val keyValueStore = createKeyValueStore()
+            val draftRepository = DefaultDraftRepository(keyValueStore, Dispatchers.Default)
             MissionEditorStateHolder(
                 loadDesignDocument = LoadDesignDocumentUseCase(DefaultDesignDocumentRepository()),
                 draft = DraftController(
@@ -291,10 +308,13 @@ fun MissionEditorApp() {
                     restoreDraftSources = RestoreDraftSourcesUseCase(draftRepository),
                     scope = scope,
                 ),
+                languagePreference = LanguagePreference(keyValueStore),
             )
         }
         LaunchedEffect(state) { state.runPersistence() }
-        MissionEditorScreen(state)
+        CompositionLocalProvider(LocalStrings provides appStringsFor(state.language)) {
+            MissionEditorScreen(state)
+        }
     }
 }
 
@@ -328,7 +348,7 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
     Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         // Left: Source + Screens (or collapsed rail).
         if (ws.sourceCollapsed) {
-            CollapsedRail(label = "Source", icon = EditorIcon.Source, onExpand = { state.updateWorkspace { it.copy(sourceCollapsed = false) } })
+            CollapsedRail(label = LocalStrings.current.labels.sourceRail, icon = EditorIcon.Source, onExpand = { state.updateWorkspace { it.copy(sourceCollapsed = false) } })
         } else {
             EditorSourcePane(state, Modifier.width(sourceWidthDp.dp).fillMaxHeight())
             VerticalSplitter(
@@ -346,7 +366,7 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
 
         // Right: Inspector (or collapsed rail).
         if (ws.inspectorCollapsed) {
-            CollapsedRail(label = "Inspector", icon = EditorIcon.Inspector, onExpand = { state.updateWorkspace { it.copy(inspectorCollapsed = false) } })
+            CollapsedRail(label = LocalStrings.current.labels.inspectorRail, icon = EditorIcon.Inspector, onExpand = { state.updateWorkspace { it.copy(inspectorCollapsed = false) } })
         } else {
             VerticalSplitter(
                 onDeltaDp = { d ->
@@ -379,7 +399,7 @@ private fun MainOnlyLayout(state: MissionEditorStateHolder) {
             shadowElevation = 4.dp,
         ) {
             Text(
-                "Exit focus  (Esc)",
+                LocalStrings.current.labels.exitFocus,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.ink,

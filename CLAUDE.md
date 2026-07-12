@@ -162,6 +162,26 @@ dispatcher'ов, `StateFlow`, `runTest`), Compose (stateless + hoisting, `Modifi
 - Расширять общий `EditorDropdownMenuItem` / `SelectField` / `CompactSelectField`, если это покрывает меню; точечно править вызовы только для контекстных preview.
 - Иконка, текст, chevron и hover/active/selected-состояния должны оставаться выровненными без layout shift и переполнения на desktop/mobile.
 
+## Локализация (RU/EN)
+Весь **chrome** приложения локализован через каталог строк (пакет `editor.ui.strings`), устроенный
+как параллель `EditorColors`/`LocalEditorColors`:
+- `Strings` — корневой интерфейс из групп по областям UI (`common`, `menu`, `labels`, `source`,
+  `inspector`, `prototype`, `canvas`, `colorPicker`; `diagram` намеренно пуст — строки инспектора
+  диаграмм живут в `inspector`). Каждая группа — свой файл `strings/<Area>Strings.kt` с
+  `interface`/`…En`/`…Ru`. Язык переключается через `LocalStrings` (`staticCompositionLocalOf`),
+  провайдится в `MissionEditorApp` по `state.language`.
+- **Правило:** любую новую пользовательскую строку chrome класть в соответствующую группу каталога и
+  читать `LocalStrings.current.<area>.<key>` (не хардкодить литерал). Общие слова — в `common`;
+  подписи presentation-энумов (`SourceTab`/`InspectorSection`/`EditorTool`/…) — резолверами в `labels`.
+- **Только chrome.** Контент документа, имена узлов/экранов, SLM-исходники — **язык-нейтральны**
+  (`domain`/`data` не зависят от Compose и локали). Дефолт — English; выбор хранится в
+  `LanguagePreference` (KeyValueStore, ключ `app.language`), меню «бургер → Язык».
+- **Ловушка round-trip select'ов:** где значение матчится обратно по отображаемой строке
+  (`options=…map{ resolver(it) }` + `firstOrNull{ resolver(it)==label }`), локализовать **обе**
+  стороны одним резолвером, иначе выбор молча ломается в RU.
+- Новые иконки меню (`language`/`check`/`fullscreen` и т.п.) — SVG в `composeResources/files/editor-icons`
+  + запись в `EditorIcon` (как обычные иконки).
+
 ## Плагин ECC
 Проект подключает [ECC](https://github.com/affaan-m/everything-claude-code) (`ecc@ecc`) в
 `.claude/settings.json` (project scope). Разовая активация в интерактивном терминале:

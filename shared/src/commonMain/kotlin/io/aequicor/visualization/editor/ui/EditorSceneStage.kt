@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.SceneController
 import io.aequicor.visualization.editor.presentation.sceneEntryOf
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.SceneRenderer
@@ -68,7 +69,7 @@ fun SceneStage(state: MissionEditorStateHolder, viewport: CanvasViewport, modifi
 
     if (document == null) {
         Box(modifier, contentAlignment = Alignment.Center) {
-            Text("No preview", color = LocalEditorColors.current.mutedInk)
+            Text(LocalStrings.current.canvas.noPreview, color = LocalEditorColors.current.mutedInk)
         }
         return
     }
@@ -220,7 +221,7 @@ private fun SceneTracePanel(trace: List<TraceEntry>, modifier: Modifier = Modifi
         shadowElevation = 4.dp,
     ) {
         Column(Modifier.padding(10.dp)) {
-            Text("Trace", style = MaterialTheme.typography.labelMedium, color = colors.mutedInk, fontWeight = FontWeight.Bold)
+            Text(LocalStrings.current.canvas.trace, style = MaterialTheme.typography.labelMedium, color = colors.mutedInk, fontWeight = FontWeight.Bold)
             Column(
                 Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(2.dp),

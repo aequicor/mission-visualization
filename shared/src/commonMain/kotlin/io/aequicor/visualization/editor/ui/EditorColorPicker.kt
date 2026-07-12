@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.Hsva
@@ -83,6 +84,7 @@ internal fun ColorPickerField(
 ) {
     val colors = LocalEditorColors.current
     val density = LocalDensity.current
+    val strings = LocalStrings.current
 
     val latestOnChange by rememberUpdatedState(onChange)
     val latestOnEditStart by rememberUpdatedState(onEditStart)
@@ -162,7 +164,7 @@ internal fun ColorPickerField(
                 )
                 EditorSvgIcon(
                     icon = EditorIcon.ColorSelector,
-                    contentDescription = if (open) "Close color selector" else "Open color selector",
+                    contentDescription = if (open) strings.colorPicker.closeColorSelector else strings.colorPicker.openColorSelector,
                     modifier = Modifier
                         .padding(start = 6.dp)
                         .size(17.dp)
@@ -209,9 +211,9 @@ internal fun ColorPickerField(
                         HueSlider(hue = working.hue, onHue = { emit(working.copy(hue = it)) })
                         AlphaSlider(hsv = working, onAlpha = { emit(working.copy(alpha = it)) })
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ChannelField("R", opaque.red, { setChannel(r = it) }, Modifier.weight(1f))
-                            ChannelField("G", opaque.green, { setChannel(g = it) }, Modifier.weight(1f))
-                            ChannelField("B", opaque.blue, { setChannel(b = it) }, Modifier.weight(1f))
+                            ChannelField(strings.colorPicker.channelR, opaque.red, { setChannel(r = it) }, Modifier.weight(1f))
+                            ChannelField(strings.colorPicker.channelG, opaque.green, { setChannel(g = it) }, Modifier.weight(1f))
+                            ChannelField(strings.colorPicker.channelB, opaque.blue, { setChannel(b = it) }, Modifier.weight(1f))
                         }
                         Surface(
                             modifier = Modifier.fillMaxWidth().height(30.dp),
@@ -220,7 +222,7 @@ internal fun ColorPickerField(
                             border = BorderStroke(1.dp, colors.controlStroke),
                         ) {
                             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("HEX", style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
+                                Text(strings.colorPicker.hex, style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
                                 HexTextField(
                                     text = shownHex,
                                     enabled = true,
