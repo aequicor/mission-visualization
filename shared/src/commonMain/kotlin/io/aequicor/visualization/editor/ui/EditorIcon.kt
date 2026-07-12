@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.shared.generated.resources.Res
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 // SVG resources are Material Symbols Outlined files from Google Fonts.
 internal enum class EditorIcon(resourceName: String) {
@@ -140,8 +142,25 @@ internal fun EditorSvgIcon(
 @Composable
 private fun rememberSvgIcon(icon: EditorIcon): State<ImageVector?> =
     produceState<ImageVector?>(initialValue = svgIconCache[icon], key1 = icon) {
-        value = svgIconCache[icon] ?: loadSvgIcon(icon).also { svgIconCache[icon] = it }
+        // A cold first load fires every icon's fetch at once, racing the browser's HTTP
+        // cache and Compose's own resource cache into existence — a transient failure
+        // there must not blank the icon forever, so retry a few times before giving up.
+        var attempt = 0
+        while (value == null) {
+            try {
+                value = svgIconCache[icon] ?: loadSvgIcon(icon).also { svgIconCache[icon] = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                attempt += 1
+                if (attempt >= MAX_ICON_LOAD_ATTEMPTS) break
+                delay(ICON_LOAD_RETRY_DELAY_MS * attempt)
+            }
+        }
     }
+
+private const val MAX_ICON_LOAD_ATTEMPTS = 4
+private const val ICON_LOAD_RETRY_DELAY_MS = 300L
 
 private val svgIconCache = mutableMapOf<EditorIcon, ImageVector>()
 
