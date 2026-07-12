@@ -4,6 +4,10 @@ html, body {
     margin: 0;
     padding: 0;
     overflow: hidden;
+    /* The editor canvas owns pan/zoom; keep the browser from turning touch pinch/pan into
+       page zoom or scroll (the ctrl-wheel / Safari-gesture paths are handled in main.kt). */
+    touch-action: none;
+    overscroll-behavior: none;
 }
 
 /* Compose mounts its canvas here; the boot overlay (#mv-loader) is a separate
@@ -11,6 +15,7 @@ html, body {
 #compose-root {
     position: fixed;
     inset: 0;
+    touch-action: none;
 }
 
 /* ============================================================================

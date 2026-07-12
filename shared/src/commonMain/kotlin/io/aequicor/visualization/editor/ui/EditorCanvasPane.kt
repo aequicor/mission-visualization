@@ -686,6 +686,31 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
                             val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
                             val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
+                            // Arc/donut ellipse: grabbing a rim (start/end) or inner-ratio handle is
+                            // resolved here — not in a separate full-canvas overlay — so a selected
+                            // arc/donut ellipse never swallows presses meant to select or move other
+                            // components (the ArcHandlesOverlay is draw-only). Takes priority over the
+                            // box resize handles, matching the old overlay's on-top precedence.
+                            val arcShape = if (handlesActive && isSingleSelection && handleGeometryBox != null) {
+                                (pressDocument.nodeById(pressDesign.selectedNodeId)?.kind as? DesignNodeKind.Shape)
+                                    ?.takeIf { hasEllipseArc(it) }
+                            } else {
+                                null
+                            }
+                            val arcHandle = arcShape?.let { arcHandleAt(it, handleGeometryBox!!, handleRotation, viewport, start) }
+                            if (arcShape != null && arcHandle != null) {
+                                down.consume()
+                                runArcDrag(
+                                    state = state,
+                                    nodeId = pressDesign.selectedNodeId,
+                                    kind = arcHandle,
+                                    box = handleGeometryBox!!,
+                                    rotation = handleRotation,
+                                    viewport = viewport,
+                                    startDeg = arcShape.arcStartDeg ?: 0.0,
+                                )
+                                return@awaitEachGesture
+                            }
                             val handle = handleGeometryBox?.takeIf { handlesActive }
                                 ?.let { box -> rotatedHandleAt(box, handleRotation, viewport, start) }
                             val rotateHit = handle == null && isSingleSelection &&
@@ -1769,12 +1794,17 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                 val liveViewport = latestViewport
                 val press = down.position
                 val tool = state.workspace.tool
-                down.consume() // vector-edit mode owns the press; never let it also move the node
+                // The press is consumed inside each handling branch below — never unconditionally
+                // up front. A press that only leaves point-edit mode (empty, outside the box) must
+                // stay UNCONSUMED so the main canvas handler selects whatever was clicked in the SAME
+                // click (parity with the diagram edit overlay). Consuming it here would swallow that
+                // click, forcing a second click to select another component.
 
                 // Paint-bucket sub-mode: a press hit-tests the network's regions (in shape space, via
                 // the same viewBox-aware geometry the renderer fills) and paints the first region that
                 // contains the point with the current bucket color, bypassing anchor/handle editing.
                 if (state.workspace.vectorPaintBucket) {
+                    down.consume() // vector-edit mode owns the press
                     val (shapeX, shapeY) = liveFit.inverse().apply(liveViewport.toDocX(press.x), liveViewport.toDocY(press.y))
                     val hitRegion = liveNetwork.regions.indices.firstOrNull { regionIndex ->
                         val geometry = networkRegionGeometry(liveNetwork, regionIndex, liveKind.viewBox)
@@ -1800,6 +1830,7 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                     val radiusScreen = vertex.cornerRadius * liveScale * latestZoomPx
                     val handlePos = cornerRadiusHandleScreen(anchorScreen, radiusScreen.toFloat())
                     if ((handlePos - press).getDistance() <= HandleGrabRadiusPx) {
+                        down.consume() // vector-edit mode owns the press
                         dragCornerRadius(state, editId, selectedAnchor, down, anchorScreen, liveScale * latestZoomPx)
                         return@awaitEachGesture
                     }
@@ -1808,6 +1839,7 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                 // Priority 1: a bezier control handle.
                 val handleHit = pickHandle(liveNetwork, liveFit, liveViewport, press)
                 if (handleHit != null) {
+                    down.consume() // vector-edit mode owns the press
                     val (vertexIndex, side) = handleHit
                     state.updateWorkspace { it.copy(vectorSelectedVertex = VectorVertexRef(vertexIndex, side.toVertexPart())) }
                     dragNetwork(state, editId, down) { delta ->
@@ -1822,6 +1854,7 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                 // Priority 2: an on-path anchor.
                 val anchorHit = pickAnchor(liveNetwork, liveFit, liveViewport, press)
                 if (anchorHit != null) {
+                    down.consume() // vector-edit mode owns the press
                     // Pen: clicking the first vertex of an open loop closes the path.
                     if (tool == EditorTool.Pen && anchorHit == 0 && !liveNetwork.isClosedLoop() && liveNetwork.vertices.size >= 3) {
                         state.dispatch(DesignEditorIntent.CloseVectorNetwork(editId))
@@ -1842,6 +1875,7 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                 // edge, otherwise appending a fresh vertex at the end. A drag off the just-placed vertex
                 // pulls its (symmetric) out-handle, so click-drag draws a smooth curve.
                 if (tool == EditorTool.Pen) {
+                    down.consume() // vector-edit mode owns the press
                     val (shapeX, shapeY) = liveFit.inverse().apply(liveViewport.toDocX(press.x), liveViewport.toDocY(press.y))
                     val newIndex = liveNetwork.vertices.size
                     val segmentIndex = pickSegment(liveNetwork, liveFit, liveViewport, press)
@@ -1861,10 +1895,14 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
                     return@awaitEachGesture
                 }
 
-                // Empty press with any other tool leaves edit mode when it falls outside the box.
+                // Empty press with any other tool: outside the box it leaves point-edit mode and stays
+                // UNCONSUMED, so the main canvas handler selects whatever was clicked in the same click
+                // (a second click is no longer needed to pick another component). Inside the box it is
+                // consumed to keep edit mode stable (an empty click on the shape must not move it).
                 if (!press.insideScreenBox(liveBox, liveViewport)) {
                     state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
-                    return@awaitEachGesture
+                } else {
+                    down.consume()
                 }
             }
         },
@@ -1968,12 +2006,112 @@ private fun hasEllipseArc(shape: DesignNodeKind.Shape): Boolean =
 private enum class ArcHandleKind { Start, End, Inner }
 
 /**
- * On-canvas handles for an ellipse arc/donut: draggable dots on the rim for the start angle and the
- * end angle (start + sweep), plus an inner-ratio dot along the start radius. Angles follow the
- * renderer's convention (0° = 3 o'clock, +sweep clockwise on screen; see `ellipseArcGeometry`) and
- * ride the selection's [rotation]. Each drag brackets Begin…End so the per-frame
- * SetArcStart / SetArcSweep / SetArcRatio commits coalesce into one undo entry. The press is consumed
- * only when it lands on a handle, so the ellipse body still moves/selects normally otherwise.
+ * Screen position of an ellipse rim point at parameter [deg] (radius fraction [r], 1 = the rim),
+ * honoring the selection's [rotation]. Angles follow the renderer's convention (0° = 3 o'clock,
+ * +sweep clockwise on screen; see `ellipseArcGeometry`).
+ */
+private fun arcRimScreen(b: BoundsBox, rotation: Double, deg: Double, r: Double, viewport: CanvasViewport): Offset {
+    val rad = deg * PI / 180.0
+    val cx = b.centerX
+    val cy = b.centerY
+    val local = GeoPoint(cx + r * (b.width / 2.0) * cos(rad), cy + r * (b.height / 2.0) * sin(rad))
+    val p = if (rotation != 0.0) rotatePointAroundCenter(local, GeoPoint(cx, cy), rotation) else local
+    return viewport.toScreen(p.x, p.y)
+}
+
+/** Ellipse-parameter angle (deg) of a screen point, undoing the selection [rotation]. */
+private fun arcParamAngle(b: BoundsBox, rotation: Double, screen: Offset, viewport: CanvasViewport): Double {
+    val cx = b.centerX
+    val cy = b.centerY
+    val doc = GeoPoint(viewport.toDocX(screen.x), viewport.toDocY(screen.y))
+    val local = if (rotation != 0.0) rotatePointAroundCenter(doc, GeoPoint(cx, cy), -rotation) else doc
+    val ux = if (b.width != 0.0) (local.x - cx) / (b.width / 2.0) else 0.0
+    val uy = if (b.height != 0.0) (local.y - cy) / (b.height / 2.0) else 0.0
+    return atan2(uy, ux) * 180.0 / PI
+}
+
+/** Inner-radius fraction (0..0.95) for a screen point along the ellipse, undoing [rotation]. */
+private fun arcInnerRatio(b: BoundsBox, rotation: Double, screen: Offset, viewport: CanvasViewport): Double {
+    val cx = b.centerX
+    val cy = b.centerY
+    val doc = GeoPoint(viewport.toDocX(screen.x), viewport.toDocY(screen.y))
+    val local = if (rotation != 0.0) rotatePointAroundCenter(doc, GeoPoint(cx, cy), -rotation) else doc
+    val ux = if (b.width != 0.0) (local.x - cx) / (b.width / 2.0) else 0.0
+    val uy = if (b.height != 0.0) (local.y - cy) / (b.height / 2.0) else 0.0
+    return hypot(ux, uy).coerceIn(0.0, 0.95)
+}
+
+/**
+ * The arc handle (start/end rim or inner-ratio dot) under [press], or null when none is within
+ * grab distance. Called by the main canvas gesture handler so grabbing an arc handle is just
+ * another press outcome (like a resize handle) — never a separate full-canvas overlay that would
+ * swallow presses meant to select or move other components.
+ */
+private fun arcHandleAt(
+    shape: DesignNodeKind.Shape,
+    box: BoundsBox,
+    rotation: Double,
+    viewport: CanvasViewport,
+    press: Offset,
+): ArcHandleKind? {
+    val start = shape.arcStartDeg ?: 0.0
+    val sweep = shape.arcSweepDeg ?: 360.0
+    val inner = shape.innerRadius ?: 0.0
+    val candidates = listOf(
+        ArcHandleKind.Start to arcRimScreen(box, rotation, start, 1.0, viewport),
+        ArcHandleKind.End to arcRimScreen(box, rotation, start + sweep, 1.0, viewport),
+        ArcHandleKind.Inner to arcRimScreen(box, rotation, start, if (inner > 0.0) inner else 0.5, viewport),
+    )
+    return candidates
+        .minByOrNull { (_, p) -> (p - press).getDistanceSquared() }
+        ?.takeIf { (_, p) -> (p - press).getDistance() <= ArcHandleGrabRadiusPx }
+        ?.first
+}
+
+/**
+ * Runs an arc-handle drag from an in-flight press: each frame dispatches the matching
+ * SetArcStart / SetArcSweep / SetArcRatio, bracketed Begin…End so the per-frame commits coalesce
+ * into one undo entry. [startDeg] is the arc start captured at press (the sweep is measured from it).
+ */
+private suspend fun AwaitPointerEventScope.runArcDrag(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    kind: ArcHandleKind,
+    box: BoundsBox,
+    rotation: Double,
+    viewport: CanvasViewport,
+    startDeg: Double,
+) {
+    var began = false
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull() ?: break
+        if (change.changedToUp()) break
+        if (!began) {
+            state.dispatch(DesignEditorIntent.BeginInteraction)
+            began = true
+        }
+        when (kind) {
+            ArcHandleKind.Start ->
+                state.dispatch(DesignEditorIntent.SetArcStart(nodeId, normalizeAngleDegrees(arcParamAngle(box, rotation, change.position, viewport))))
+            ArcHandleKind.End -> {
+                var s = (arcParamAngle(box, rotation, change.position, viewport) - startDeg) % 360.0
+                if (s <= 0.0) s += 360.0
+                state.dispatch(DesignEditorIntent.SetArcSweep(nodeId, s))
+            }
+            ArcHandleKind.Inner ->
+                state.dispatch(DesignEditorIntent.SetArcRatio(nodeId, arcInnerRatio(box, rotation, change.position, viewport)))
+        }
+        change.consume()
+    }
+    if (began) state.dispatch(DesignEditorIntent.EndInteraction)
+}
+
+/**
+ * Draw-only handles for an ellipse arc/donut: diamonds on the rim for the start and end angles and
+ * a dot on the inner-ratio radius. Grabbing/dragging is done by the main canvas gesture handler
+ * ([arcHandleAt] / [runArcDrag]) — keeping this overlay free of any pointer input is what lets a
+ * selected arc/donut ellipse still pass presses through to select or move other components.
  */
 @Composable
 private fun ArcHandlesOverlay(
@@ -1984,104 +2122,12 @@ private fun ArcHandlesOverlay(
     viewport: CanvasViewport,
 ) {
     val colors = LocalEditorColors.current
-    val latestViewport by rememberUpdatedState(viewport)
-    val latestBox by rememberUpdatedState(box)
-    val latestRotation by rememberUpdatedState(rotation)
-
-    fun shapeOf(): DesignNodeKind.Shape? =
-        (state.designState.document?.nodeById(nodeId)?.kind as? DesignNodeKind.Shape)?.takeIf { hasEllipseArc(it) }
-
-    // Screen position of a rim point at ellipse-parameter [deg] (radius fraction [r], 1 = rim).
-    fun rimScreen(b: BoundsBox, rot: Double, deg: Double, r: Double): Offset {
-        val rad = deg * PI / 180.0
-        val cx = b.centerX
-        val cy = b.centerY
-        val local = GeoPoint(cx + r * (b.width / 2.0) * cos(rad), cy + r * (b.height / 2.0) * sin(rad))
-        val p = if (rot != 0.0) rotatePointAroundCenter(local, GeoPoint(cx, cy), rot) else local
-        return latestViewport.toScreen(p.x, p.y)
-    }
-
-    // Ellipse parameter angle (deg) of a screen point, undoing the selection rotation.
-    fun paramAngleOf(b: BoundsBox, rot: Double, screen: Offset): Double {
-        val cx = b.centerX
-        val cy = b.centerY
-        val doc = GeoPoint(latestViewport.toDocX(screen.x), latestViewport.toDocY(screen.y))
-        val local = if (rot != 0.0) rotatePointAroundCenter(doc, GeoPoint(cx, cy), -rot) else doc
-        val ux = if (b.width != 0.0) (local.x - cx) / (b.width / 2.0) else 0.0
-        val uy = if (b.height != 0.0) (local.y - cy) / (b.height / 2.0) else 0.0
-        return atan2(uy, ux) * 180.0 / PI
-    }
-
-    fun innerRatioOf(b: BoundsBox, rot: Double, screen: Offset): Double {
-        val cx = b.centerX
-        val cy = b.centerY
-        val doc = GeoPoint(latestViewport.toDocX(screen.x), latestViewport.toDocY(screen.y))
-        val local = if (rot != 0.0) rotatePointAroundCenter(doc, GeoPoint(cx, cy), -rot) else doc
-        val ux = if (b.width != 0.0) (local.x - cx) / (b.width / 2.0) else 0.0
-        val uy = if (b.height != 0.0) (local.y - cy) / (b.height / 2.0) else 0.0
-        return hypot(ux, uy).coerceIn(0.0, 0.95)
-    }
-
-    Canvas(
-        Modifier.fillMaxSize().pointerInput(nodeId) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                val shape = shapeOf() ?: return@awaitEachGesture
-                val b = latestBox
-                val rot = latestRotation
-                val start = shape.arcStartDeg ?: 0.0
-                val sweep = shape.arcSweepDeg ?: 360.0
-                val inner = (shape.innerRadius ?: 0.0)
-                val press = down.position
-
-                val startPos = rimScreen(b, rot, start, 1.0)
-                val endPos = rimScreen(b, rot, start + sweep, 1.0)
-                val innerPos = rimScreen(b, rot, start, if (inner > 0.0) inner else 0.5)
-
-                val candidates = buildList {
-                    add(ArcHandleKind.Start to startPos)
-                    add(ArcHandleKind.End to endPos)
-                    add(ArcHandleKind.Inner to innerPos)
-                }
-                val grabbed = candidates
-                    .minByOrNull { (_, p) -> (p - press).getDistanceSquared() }
-                    ?.takeIf { (_, p) -> (p - press).getDistance() <= ArcHandleGrabRadiusPx }
-                    ?.first
-                    ?: return@awaitEachGesture // not a handle: let the ellipse body move/select
-
-                down.consume()
-                var began = false
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull() ?: break
-                    if (change.changedToUp()) break
-                    if (!began) {
-                        state.dispatch(DesignEditorIntent.BeginInteraction)
-                        began = true
-                    }
-                    when (grabbed) {
-                        ArcHandleKind.Start ->
-                            state.dispatch(DesignEditorIntent.SetArcStart(nodeId, normalizeAngleDegrees(paramAngleOf(b, rot, change.position))))
-                        ArcHandleKind.End -> {
-                            var s = (paramAngleOf(b, rot, change.position) - start) % 360.0
-                            if (s <= 0.0) s += 360.0
-                            state.dispatch(DesignEditorIntent.SetArcSweep(nodeId, s))
-                        }
-                        ArcHandleKind.Inner ->
-                            state.dispatch(DesignEditorIntent.SetArcRatio(nodeId, innerRatioOf(b, rot, change.position)))
-                    }
-                    change.consume()
-                }
-                if (began) state.dispatch(DesignEditorIntent.EndInteraction)
-            }
-        },
-    ) {
-        val shape = shapeOf() ?: return@Canvas
-        val b = latestBox
-        val rot = latestRotation
+    val shape = (state.designState.document?.nodeById(nodeId)?.kind as? DesignNodeKind.Shape)
+        ?.takeIf { hasEllipseArc(it) } ?: return
+    Canvas(Modifier.fillMaxSize()) {
         val start = shape.arcStartDeg ?: 0.0
         val sweep = shape.arcSweepDeg ?: 360.0
-        val inner = (shape.innerRadius ?: 0.0)
+        val inner = shape.innerRadius ?: 0.0
 
         fun drawDiamond(center: Offset) {
             val r = 5f
@@ -2095,9 +2141,9 @@ private fun ArcHandlesOverlay(
             drawPath(path, Color.White)
             drawPath(path, colors.accent, style = Stroke(width = 1.5f))
         }
-        drawDiamond(rimScreen(b, rot, start, 1.0))
-        drawDiamond(rimScreen(b, rot, start + sweep, 1.0))
-        val innerPos = rimScreen(b, rot, start, if (inner > 0.0) inner else 0.5)
+        drawDiamond(arcRimScreen(box, rotation, start, 1.0, viewport))
+        drawDiamond(arcRimScreen(box, rotation, start + sweep, 1.0, viewport))
+        val innerPos = arcRimScreen(box, rotation, start, if (inner > 0.0) inner else 0.5, viewport)
         drawCircle(Color.White, radius = 4.5f, center = innerPos)
         drawCircle(colors.accent, radius = 4.5f, center = innerPos, style = Stroke(width = 1.5f))
     }
