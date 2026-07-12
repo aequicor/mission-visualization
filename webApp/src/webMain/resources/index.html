@@ -64,12 +64,13 @@
         var easeTimer = 0;
         var creepTimer = 0;
 
-        var els = { resolved: false, fill: null, pct: null, wrap: null };
+        var els = { resolved: false, fill: null, pct: null, wrap: null, bytes: null };
         function resolveDom() {
           if (els.resolved) return;
           els.fill = document.getElementById('mv-progress-fill');
           els.pct = document.getElementById('mv-progress-pct');
           els.wrap = document.getElementById('mv-progress');
+          els.bytes = document.getElementById('mv-progress-bytes');
           if (els.fill && els.pct) els.resolved = true;
         }
         function render() {
@@ -81,6 +82,17 @@
             els.wrap.setAttribute('aria-valuenow', String(r));
             if (r > 0) els.wrap.classList.add('mv-progress--active');
           }
+        }
+        // "x.x / y.y MB" read-out, driven straight from the byte-counting
+        // stream in recompute() — independent of the eased percentage above,
+        // so it always reflects the true bytes seen so far, not the display lag.
+        function formatMb(bytes) { return (bytes / (1024 * 1024)).toFixed(1); }
+        function renderBytes(recvBytes, totalBytes) {
+          resolveDom();
+          if (!els.bytes) return;
+          els.bytes.textContent = totalBytes > 0
+            ? (formatMb(recvBytes) + ' / ' + formatMb(totalBytes) + ' MB')
+            : (formatMb(recvBytes) + ' MB');
         }
         // Eased via setTimeout (not requestAnimationFrame): rAF is fully paused
         // in a hidden/background tab, which would freeze the meter if the user
@@ -118,6 +130,7 @@
             recv += f.cap > 0 ? Math.min(f.received, f.cap) : f.received;
             if (f.cap > 0) total += f.cap;
           }
+          renderBytes(recv, manifestTotal > 0 ? manifestTotal : total);
           var frac;
           if (manifestTotal > 0) {
             frac = recv / manifestTotal;                 // accurate under gzip/brotli
@@ -212,6 +225,9 @@
             if (creepTimer) { clearInterval(creepTimer); creepTimer = 0; }
             targetPct = 100;
             schedule();
+            // Snap the byte read-out to "complete" too, matching the 100% hand-off
+            // (guards against a manifest total that undershot the true byte count).
+            if (manifestTotal > 0) renderBytes(manifestTotal, manifestTotal);
           }
         };
       })();
@@ -258,6 +274,7 @@
       <div class="mv-progress__read" aria-hidden="true">
         <span id="mv-progress-pct" class="mv-progress__pct">0</span><span class="mv-progress__sign">%</span>
       </div>
+      <div id="mv-progress-bytes" class="mv-progress__bytes" aria-hidden="true"></div>
     </div>
 
   </div>

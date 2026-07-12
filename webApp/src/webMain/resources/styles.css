@@ -290,6 +290,14 @@ html, body {
   font-feature-settings: "tnum" 1;
 }
 .mv-progress__sign { opacity: .62; margin-left: 1px; }
+.mv-progress__bytes {
+  font: 500 clamp(10px, 2.6vw, 12px)/1 var(--font);
+  letter-spacing: .2px;
+  color: var(--on-accent);
+  opacity: .55;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
 
 /* ======================================================= keyframe timeline */
 
