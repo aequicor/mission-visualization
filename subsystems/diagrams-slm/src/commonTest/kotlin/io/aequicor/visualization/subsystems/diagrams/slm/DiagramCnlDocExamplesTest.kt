@@ -7,9 +7,9 @@ import kotlin.test.assertTrue
 
 /**
  * Doc-examples guard: every diagram CNL example published in the documentation
- * (`design-book/semantic-layout-markdown-i18n.md` «Diagrams», `SLM-SKILL.md` Diagrams
- * chapter, `SKILLS/SLM-diagrams.md`) must compile without errors and round-trip through
- * the canonical emitter. Keep this file in sync when editing those docs.
+ * (`design-book/semantic-layout-markdown-i18n.md` «Diagrams», canonical
+ * `SKILLS/SLM.md`, and `SKILLS/SLM-diagrams.md`) must compile without errors and
+ * round-trip through the canonical emitter. Keep this file in sync with those docs.
  */
 class DiagramCnlDocExamplesTest {
 

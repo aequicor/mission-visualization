@@ -465,6 +465,7 @@ internal fun EditorDropdownMenu(
 internal fun EditorDropdownMenuItem(
     text: String,
     leadingContent: (@Composable () -> Unit)? = null,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val colors = LocalEditorColors.current
@@ -473,13 +474,14 @@ internal fun EditorDropdownMenuItem(
             Text(
                 text,
                 style = MaterialTheme.typography.bodySmall,
-                color = colors.ink,
+                color = if (enabled) colors.ink else colors.mutedInk,
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis,
             )
         },
         onClick = onClick,
+        enabled = enabled,
         leadingIcon = {
             DropdownLeadingBox(size = 18.dp) {
                 if (leadingContent != null) leadingContent() else DefaultDropdownLeadingContent(text, modifier = Modifier.size(16.dp))

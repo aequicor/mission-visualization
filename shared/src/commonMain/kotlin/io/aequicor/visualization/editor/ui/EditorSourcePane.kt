@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,7 +29,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -63,6 +66,8 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -73,17 +78,22 @@ import androidx.compose.ui.unit.sp
 import io.aequicor.visualization.AppBuildInfo
 import io.aequicor.visualization.FolderSyncPresence
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.data.composeAgentFile
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
+import io.aequicor.visualization.editor.domain.AppLanguage
+import io.aequicor.visualization.editor.domain.AgentFileSelection
+import io.aequicor.visualization.editor.domain.AgentSkillId
 import io.aequicor.visualization.editor.platform.CanvasExportCrop
 import io.aequicor.visualization.editor.platform.platformAppendCanvasPdfPage
 import io.aequicor.visualization.editor.platform.platformBeginPdfExport
+import io.aequicor.visualization.editor.platform.platformDownloadAgentFile
 import io.aequicor.visualization.editor.platform.platformDownloadProjectZip
 import io.aequicor.visualization.editor.platform.platformExportCanvasPng
 import io.aequicor.visualization.editor.platform.platformFinishPdfExport
 import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
 import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
 import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
-import io.aequicor.visualization.editor.domain.AppLanguage
+import io.aequicor.visualization.editor.platform.platformSupportsAgentFileExport
 import io.aequicor.visualization.editor.platform.platformSupportsProjectDiskIo
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
@@ -96,9 +106,12 @@ import io.aequicor.visualization.editor.presentation.SourceTab
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.resolveLayerDropTarget
 import io.aequicor.visualization.editor.ui.strings.LocalStrings
+import io.aequicor.visualization.editor.ui.strings.MenuStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPage
+import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
+import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlinx.coroutines.launch
@@ -131,9 +144,11 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
 private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var menuExpanded by remember { mutableStateOf(false) }
     var menuPane by remember { mutableStateOf(ProjectMenuPane.Root) }
+    var selectedAgentSkills by remember { mutableStateOf(emptySet<AgentSkillId>()) }
 
     fun openRootMenu() {
         menuPane = ProjectMenuPane.Root
@@ -172,6 +187,12 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                         EditorDropdownMenuItem(strings.menu.open, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) { menuPane = ProjectMenuPane.Open }
                         EditorDropdownMenuItem(strings.menu.save, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) { menuPane = ProjectMenuPane.Save }
                         EditorDropdownMenuItem(strings.menu.export, leadingContent = { DropdownMenuIcon(EditorIcon.Export) }) { menuPane = ProjectMenuPane.Export }
+                        if (platformSupportsAgentFileExport) {
+                            EditorDropdownMenuItem(strings.menu.agentFile, leadingContent = { DropdownMenuIcon(EditorIcon.Markdown) }) {
+                                selectedAgentSkills = emptySet()
+                                menuPane = ProjectMenuPane.AgentSkills
+                            }
+                        }
                         EditorDropdownMenuItem(
                             "${strings.menu.language}: ${state.language.nativeName}",
                             leadingContent = { DropdownMenuIcon(EditorIcon.Language) },
@@ -259,6 +280,63 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             scope.launch { exportAllScreensPdf(state) }
                         }
                     }
+                    ProjectMenuPane.AgentSkills -> {
+                        ProjectMenuSectionTitle(strings.menu.agentSkillsTitle)
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) {
+                            menuPane = ProjectMenuPane.Root
+                        }
+                        EditorDropdownMenuItem(
+                            text = strings.menu.agentBaseSkill,
+                            leadingContent = {
+                                Checkbox(
+                                    checked = true,
+                                    onCheckedChange = null,
+                                    modifier = Modifier.size(18.dp),
+                                    enabled = false,
+                                )
+                            },
+                            enabled = false,
+                        ) {}
+                        agentSkillRows(strings.menu).forEach { (skillId, label) ->
+                            val selected = skillId in selectedAgentSkills
+                            EditorDropdownMenuItem(
+                                text = label,
+                                leadingContent = {
+                                    Checkbox(
+                                        checked = selected,
+                                        onCheckedChange = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                            ) {
+                                selectedAgentSkills = selectedAgentSkills.withSkill(skillId, !selected)
+                            }
+                        }
+                        EditorDropdownMenuItem(strings.menu.agentNext, leadingContent = { DropdownMenuIcon(EditorIcon.Check) }) {
+                            menuPane = ProjectMenuPane.AgentOutput
+                        }
+                    }
+                    ProjectMenuPane.AgentOutput -> {
+                        ProjectMenuSectionTitle(strings.menu.agentOutputTitle)
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) {
+                            menuPane = ProjectMenuPane.AgentSkills
+                        }
+                        EditorDropdownMenuItem(strings.menu.downloadAgentsFile, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
+                            val markdown = composeAgentFile(AgentFileSelection(includedSkillIds = selectedAgentSkills))
+                            platformDownloadAgentFile("AGENTS.md", markdown)
+                            closeMenu()
+                        }
+                        EditorDropdownMenuItem(strings.menu.downloadClaudeFile, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
+                            val markdown = composeAgentFile(AgentFileSelection(includedSkillIds = selectedAgentSkills))
+                            platformDownloadAgentFile("CLAUDE.md", markdown)
+                            closeMenu()
+                        }
+                        EditorDropdownMenuItem(strings.menu.copyAgentFile, leadingContent = { DropdownMenuIcon(EditorIcon.Duplicate) }) {
+                            val markdown = composeAgentFile(AgentFileSelection(includedSkillIds = selectedAgentSkills))
+                            clipboard.setText(AnnotatedString(markdown))
+                            closeMenu()
+                        }
+                    }
                     ProjectMenuPane.Language -> {
                         EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
                         AppLanguage.entries.forEach { language ->
@@ -289,6 +367,35 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
             )
         }
     }
+}
+
+private enum class ProjectMenuPane { Root, Open, Save, Export, AgentSkills, AgentOutput, Language }
+
+private fun Set<AgentSkillId>.withSkill(skillId: AgentSkillId, included: Boolean): Set<AgentSkillId> =
+    if (included) this + skillId else this - skillId
+
+private fun agentSkillRows(strings: MenuStrings): List<Pair<AgentSkillId, String>> =
+    listOf(
+        AgentSkillId.DIAGRAMS to strings.agentDiagramsSkill,
+        AgentSkillId.VECTOR_GRAPHICS to strings.agentVectorGraphicsSkill,
+        AgentSkillId.TYPOGRAPHY to strings.agentTypographySkill,
+        AgentSkillId.ANNOTATIONS to strings.agentAnnotationsSkill,
+        AgentSkillId.EDITOR to strings.agentEditorSkill,
+    )
+
+@Composable
+private fun ProjectMenuSectionTitle(title: String) {
+    val colors = LocalEditorColors.current
+    Text(
+        text = title,
+        modifier = Modifier.width(260.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = colors.mutedInk,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 /**
@@ -381,8 +488,6 @@ private fun FolderSyncBanner(state: MissionEditorStateHolder) {
         }
     }
 }
-
-private enum class ProjectMenuPane { Root, Open, Save, Export, Language }
 
 @Composable
 private fun ProjectMenuTitleBar(projectName: String, version: String) {
@@ -517,61 +622,130 @@ private fun SourceMarkdown(state: MissionEditorStateHolder) {
     val editorHeight = ((lineCount * SourceCodeLineHeightDp) + 24).dp
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
+    val diagnostics = remember(source.fileName, design.diagnostics) {
+        design.diagnostics.filter { diagnostic ->
+            diagnostic.location?.file.isNullOrBlank() || diagnostic.location?.file == source.fileName
+        }
+    }
     val stableCursorScrollSpec = remember {
         object : BringIntoViewSpec {
             override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(colors.paneSurface)) {
-        val contentHeight = maxOf(editorHeight, maxHeight)
-        CompositionLocalProvider(LocalBringIntoViewSpec provides stableCursorScrollSpec) {
-            Row(
-                modifier = Modifier.fillMaxSize()
-                    .verticalScroll(verticalScroll)
-                    .horizontalScroll(horizontalScroll),
-            ) {
-                Column(
-                    modifier = Modifier.width(46.dp).height(contentHeight).background(colors.gutterSurface).padding(top = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+    Column(Modifier.fillMaxSize().background(colors.paneSurface)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            val contentHeight = maxOf(editorHeight, maxHeight)
+            CompositionLocalProvider(LocalBringIntoViewSpec provides stableCursorScrollSpec) {
+                Row(
+                    modifier = Modifier.fillMaxSize()
+                        .verticalScroll(verticalScroll)
+                        .horizontalScroll(horizontalScroll),
                 ) {
-                    repeat(lineCount) { index ->
-                        Text(
-                            (index + 1).toString(),
-                            modifier = Modifier.height(SourceCodeLineHeightDp.dp),
-                            color = colors.gutterInk,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
+                    Column(
+                        modifier = Modifier.width(46.dp).height(contentHeight).background(colors.gutterSurface).padding(top = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        repeat(lineCount) { index ->
+                            Text(
+                                (index + 1).toString(),
+                                modifier = Modifier.height(SourceCodeLineHeightDp.dp),
+                                color = colors.gutterInk,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
+                    Box(Modifier.width(editorWidth).height(contentHeight).padding(top = 12.dp, start = 12.dp, end = 12.dp)) {
+                        BasicTextField(
+                            value = fieldValue,
+                            onValueChange = { next ->
+                                fieldValue = next
+                                if (next.text != source.content) {
+                                    state.dispatch(DesignEditorIntent.EditSource(source.index, next.text))
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                            textStyle = codeStyle,
+                            cursorBrush = SolidColor(colors.accent),
+                            singleLine = false,
                         )
                     }
                 }
-                Box(Modifier.width(editorWidth).height(contentHeight).padding(top = 12.dp, start = 12.dp, end = 12.dp)) {
-                    BasicTextField(
-                        value = fieldValue,
-                        onValueChange = { next ->
-                            fieldValue = next
-                            if (next.text != source.content) {
-                                state.dispatch(DesignEditorIntent.EditSource(source.index, next.text))
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                        textStyle = codeStyle,
-                        cursorBrush = SolidColor(colors.accent),
-                        singleLine = false,
-                    )
-                }
             }
+            SourceScrollbars(verticalScroll, horizontalScroll)
         }
-        SourceScrollbars(verticalScroll, horizontalScroll)
+        if (diagnostics.isNotEmpty()) {
+            SourceDiagnosticsBlock(diagnostics)
+        }
     }
 }
+
+@Composable
+private fun SourceDiagnosticsBlock(diagnostics: List<DesignDiagnostic>) {
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current.source
+    val clipboard = LocalClipboardManager.current
+    val errorCount = diagnostics.count { it.severity == DesignSeverity.Error }
+    val warningCount = diagnostics.size - errorCount
+    val text = remember(diagnostics) { formatSourceDiagnostics(diagnostics) }
+    val accent = if (errorCount > 0) colors.statusDanger else colors.statusWarning
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = 180.dp)
+            .background(accent.copy(alpha = 0.08f))
+            .border(BorderStroke(1.dp, accent.copy(alpha = 0.55f)))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
+            Text(
+                "${strings.diagnostics} · ${strings.errors}: $errorCount · ${strings.warnings}: $warningCount",
+                modifier = Modifier.weight(1f).padding(start = 8.dp),
+                color = colors.ink,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            SmallIconButton(
+                icon = EditorIcon.Duplicate,
+                contentDescription = strings.copyDiagnostics,
+                onClick = { clipboard.setText(AnnotatedString(text)) },
+                modifier = Modifier.size(26.dp),
+            )
+        }
+        SelectionContainer(Modifier.fillMaxWidth().weight(1f)) {
+            Text(
+                text = text,
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                color = colors.codeInk,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
+internal fun formatSourceDiagnostics(diagnostics: List<DesignDiagnostic>): String =
+    diagnostics.joinToString("\n") { diagnostic ->
+        val severity = diagnostic.severity.name.uppercase()
+        val code = diagnostic.code.takeIf { it.isNotBlank() }?.let { " [$it]" }.orEmpty()
+        val location = diagnostic.location?.let { source ->
+            val file = source.file.ifBlank { "SLM" }
+            val line = source.line.takeIf { it > 0 }?.let { ":$it" }.orEmpty()
+            " $file$line"
+        }.orEmpty()
+        "$severity$code$location — ${diagnostic.message}"
+    }
 
 private const val SourceCodeLineHeightDp = 20
 private const val SourceCodeLineHeightSp = 20
 private const val SourceCodeCharWidthDp = 8
 
 /** SLM source of the page currently selected, or null for an in-memory screen. */
-private data class SourceReference(val index: Int, val content: String)
+private data class SourceReference(val index: Int, val fileName: String, val content: String)
 
 private fun sourceForSelectedPage(state: MissionEditorStateHolder): SourceReference? {
     val design = state.designState
@@ -581,7 +755,7 @@ private fun sourceForSelectedPage(state: MissionEditorStateHolder): SourceRefere
         val screenId = doc.screen?.id.orEmpty()
         val matches = doc.pages.any { page -> screenId.ifBlank { page.id } == pageId }
         if (matches) {
-            return design.sources.getOrNull(index)?.let { SourceReference(index, it.content) }
+            return design.sources.getOrNull(index)?.let { SourceReference(index, it.fileName, it.content) }
         }
     }
     return null

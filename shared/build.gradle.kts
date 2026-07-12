@@ -20,6 +20,19 @@ val appVersionProvider = providers.gradleProperty("mvAppVersion")
 
 val generatedAppBuildInfoDir = layout.buildDirectory.dir("generated/appBuildInfo/commonMain/kotlin")
 
+val agentSkillSources = listOf(
+    Triple("SLM", "SLM", "SKILLS/SLM.md"),
+    Triple("DIAGRAMS", "SLM diagrams", "SKILLS/SLM-diagrams.md"),
+    Triple("VECTOR_GRAPHICS", "SLM vector graphics", "SKILLS/SLM-vector-graphics.md"),
+    Triple("TYPOGRAPHY", "SLM typography", "SKILLS/SLM-typography.md"),
+    Triple("ANNOTATIONS", "SLM annotations", "SKILLS/SLM-annotations.md"),
+    Triple("EDITOR", "SLM editor", "SKILLS/SLM-editor.md"),
+)
+val agentSkillMarkdownFiles = agentSkillSources.map { (_, _, sourcePath) ->
+    rootProject.layout.projectDirectory.file(sourcePath)
+}
+val generatedAgentSkillCatalogDir = layout.buildDirectory.dir("generated/agentSkills/commonMain/kotlin")
+
 val generateAppBuildInfo by tasks.registering {
     val appVersion = appVersionProvider
     inputs.property("version", appVersion)
@@ -52,6 +65,99 @@ val generateAppBuildInfo by tasks.registering {
             }
             """.trimIndent() + "\n",
         )
+    }
+}
+
+val generateAgentSkillCatalog by tasks.registering {
+    inputs.files(agentSkillMarkdownFiles)
+        .withPropertyName("agentSkillMarkdownFiles")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property(
+        "agentSkillSources",
+        agentSkillSources.joinToString("\n") { (id, title, sourcePath) ->
+            "$id\t$title\t$sourcePath"
+        },
+    )
+    outputs.dir(generatedAgentSkillCatalogDir)
+
+    doLast {
+        // Keep the action configuration-cache safe: use task inputs/outputs only and do not
+        // capture Project, Provider, or Kotlin build-script objects from the configuration phase.
+        val sources = inputs.properties.getValue("agentSkillSources").toString()
+            .lineSequence()
+            .filter(String::isNotBlank)
+            .map { metadataLine ->
+                val parts = metadataLine.split('\t', limit = 3)
+                if (parts.size != 3) {
+                    throw GradleException("Invalid agent skill metadata: $metadataLine")
+                }
+                Triple(parts[0], parts[1], parts[2])
+            }
+            .toList()
+        val inputFilesByName = inputs.files.files.associateBy { it.name }
+
+        fun String.asKotlinStringLiteral(): String = buildString {
+            this@asKotlinStringLiteral.forEach { ch ->
+                when (ch) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '$' -> append("\\${'$'}")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> if (ch.code < 0x20) {
+                        append("\\u")
+                        append(ch.code.toString(16).padStart(4, '0'))
+                    } else {
+                        append(ch)
+                    }
+                }
+            }
+        }
+
+        fun appendChunkedMarkdown(target: StringBuilder, markdown: String) {
+            target.appendLine("                markdown = buildString {")
+            markdown.chunked(8_000).forEach { chunk ->
+                target.appendLine("                    append(\"${chunk.asKotlinStringLiteral()}\")")
+            }
+            target.appendLine("                },")
+        }
+
+        val outputFile = outputs.files.singleFile.resolve(
+            "io/aequicor/visualization/editor/data/AgentSkillCatalog.generated.kt",
+        )
+        outputFile.parentFile.mkdirs()
+
+        val generatedSource = buildString {
+            appendLine("package io.aequicor.visualization.editor.data")
+            appendLine()
+            appendLine("import io.aequicor.visualization.editor.domain.AgentSkill")
+            appendLine("import io.aequicor.visualization.editor.domain.AgentSkillId")
+            appendLine()
+            appendLine("/** Generated from the canonical Markdown files in SKILLS. Do not edit. */")
+            appendLine("internal object AgentSkillCatalog {")
+            appendLine("    val all: List<AgentSkill> = listOf(")
+            sources.forEachIndexed { index, (id, title, sourcePath) ->
+                val fileName = sourcePath.substringAfterLast('/')
+                val sourceFile = inputFilesByName[fileName]
+                    ?.takeIf { it.isFile }
+                    ?: throw GradleException("Required agent skill source is missing: $sourcePath")
+                val markdown = sourceFile.readText(Charsets.UTF_8)
+                appendLine("        AgentSkill(")
+                appendLine("            id = AgentSkillId.$id,")
+                appendLine("            title = \"${title.asKotlinStringLiteral()}\",")
+                appendLine("            sourcePath = \"${sourcePath.asKotlinStringLiteral()}\",")
+                appendChunkedMarkdown(this, markdown)
+                appendLine("            isRequired = ${index == 0},")
+                appendLine("        ),")
+            }
+            appendLine("    )")
+            appendLine()
+            appendLine("    val base: AgentSkill = all.first { it.id == AgentSkillId.SLM }")
+            appendLine("    val specialists: List<AgentSkill> = all.filterNot(AgentSkill::isRequired)")
+            appendLine("}")
+        }
+        outputFile.writeText(generatedSource, Charsets.UTF_8)
     }
 }
 
@@ -99,6 +205,7 @@ kotlin {
         }
         commonMain {
             kotlin.srcDir(generatedAppBuildInfoDir)
+            kotlin.srcDir(generatedAgentSkillCatalogDir)
             dependencies {
                 api(projects.engine.ir)
                 implementation(projects.engine.backendCompose)
@@ -158,4 +265,5 @@ dependencies {
 
 tasks.withType<KotlinCompilationTask<*>>().configureEach {
     dependsOn(generateAppBuildInfo)
+    dependsOn(generateAgentSkillCatalog)
 }
