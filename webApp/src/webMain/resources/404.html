@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mission Visualization</title>
+    <script>
+      // GitHub Pages (and any static host) serves this file for unknown paths. Our project
+      // deep-links look like ".../<projectId>" — a path segment the static host has no file for.
+      // Convert that trailing segment into a hash on the app root and redirect, so
+      // ".../<projectId>" behaves like ".../#<projectId>" (which index.html's landing reads).
+      // Base-agnostic: it strips only the LAST path segment, so it works under any repo base.
+      (function () {
+        var loc = window.location;
+        try {
+          var path = loc.pathname || "/";
+          var match = path.match(/\/([^\/]+)\/?$/);
+          var seg = match ? decodeURIComponent(match[1]) : "";
+          // Path up to and including the last "/", with leading slashes collapsed to a single "/"
+          // so a "//evil.com/…" path can't become a protocol-relative (cross-origin) redirect.
+          var base = (match ? path.slice(0, match.index + 1) : path).replace(/^\/+/, "/");
+          // Only treat id-shaped segments as deep-links (UUIDs, the "f-…" fallback ids, or "welcome");
+          // anything else just falls back to the app root.
+          var isProjectId = /^welcome$/.test(seg) || /^f-/.test(seg) || /^[0-9a-fA-F-]{6,}$/.test(seg);
+          var frag = isProjectId ? ("#" + encodeURIComponent(seg)) : "";
+          // Origin-prefixed so the redirect is always same-origin; query before the fragment.
+          loc.replace(loc.origin + base + (loc.search || "") + frag);
+        } catch (e) {
+          loc.replace(loc.origin + "/");
+        }
+      })();
+    </script>
+</head>
+<body></body>
+</html>

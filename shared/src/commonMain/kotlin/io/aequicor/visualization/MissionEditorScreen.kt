@@ -44,11 +44,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.CompositionLocalProvider
 import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
 import io.aequicor.visualization.editor.data.DefaultDraftRepository
+import io.aequicor.visualization.editor.data.DefaultRecentProjectsRepository
 import io.aequicor.visualization.editor.data.LanguagePreference
 import io.aequicor.visualization.editor.data.ProjectSnapshot
 import io.aequicor.visualization.editor.data.createKeyValueStore
 import io.aequicor.visualization.editor.data.decodeProjectSnapshot
 import io.aequicor.visualization.editor.domain.AppLanguage
+import io.aequicor.visualization.editor.domain.RecentProject
+import io.aequicor.visualization.editor.domain.RecentProjectKind
+import io.aequicor.visualization.editor.domain.RecentProjectsRepository
 import io.aequicor.visualization.editor.domain.ClearDraftUseCase
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.domain.ExportIssuesPromptUseCase
@@ -73,20 +77,28 @@ import io.aequicor.visualization.editor.platform.CanvasExportBounds
 import io.aequicor.visualization.editor.platform.folderSyncRevision
 import io.aequicor.visualization.editor.platform.folderSyncSnapshotJson
 import io.aequicor.visualization.editor.platform.folderSyncStatus
+import io.aequicor.visualization.editor.platform.platformActiveFolderId
 import io.aequicor.visualization.editor.platform.platformConnectFolderLive
 import io.aequicor.visualization.editor.platform.platformDisconnectFolder
+import io.aequicor.visualization.editor.platform.platformEpochMillis
 import io.aequicor.visualization.editor.platform.platformInitFolderSync
+import io.aequicor.visualization.editor.platform.platformInstallLanding
+import io.aequicor.visualization.editor.platform.platformLandingPendingActionJson
 import io.aequicor.visualization.editor.platform.platformReconnectSavedFolder
 import io.aequicor.visualization.editor.platform.platformSavedFolderName
 import io.aequicor.visualization.editor.platform.platformSupportsFolderSync
+import io.aequicor.visualization.editor.platform.platformSupportsLanding
 import io.aequicor.visualization.editor.platform.platformWriteFolderFile
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
+import io.aequicor.visualization.editor.ui.buildLandingConfigJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import io.aequicor.visualization.editor.ui.EditorIcon
 import io.aequicor.visualization.editor.ui.EditorInspectorPane
 import io.aequicor.visualization.editor.ui.EditorSourcePane
@@ -111,6 +123,15 @@ private const val AutosaveDebounceMs: Long = 600L
 /** Poll cadence for the live local-folder revision counter (cheap synchronous read on wasmJs). */
 private const val FolderSyncPollMs: Long = 400L
 
+/** Poll cadence for the startup landing's user-action queue (cheap synchronous read on wasmJs). */
+private const val LandingPollMs: Long = 150L
+
+/** A user action dequeued from the startup landing overlay (`window.__mvLanding`). */
+@Serializable
+private data class LandingAction(val type: String, val id: String? = null)
+
+private val LandingActionJson: Json = Json { ignoreUnknownKeys = true }
+
 /**
  * UI-facing state of the live local-folder connection ("browser IDE" mode), mapped from the JS
  * layer's coarse status string by [MissionEditorStateHolder.runFolderSync].
@@ -122,6 +143,7 @@ class MissionEditorStateHolder(
     private val loadDesignDocument: LoadDesignDocumentUseCase,
     private val draft: DraftController? = null,
     private val languagePreference: LanguagePreference? = null,
+    private val recentProjects: RecentProjectsRepository? = null,
 ) {
     private val defaultDocuments = loadDesignDocument()
 
@@ -180,6 +202,9 @@ class MissionEditorStateHolder(
 
     /** Sources as of the last inbound-adopt or outbound-write: the base for concurrency detection. */
     private var lastSyncedSources: List<MissionDocumentSource> = emptyList()
+
+    /** Folder id last written to the recent-projects list this session, to record each connection once. */
+    private var lastRecordedFolderId: String? = null
 
     private val liveFolderConnected: Boolean get() = folderSync == FolderSyncPresence.Watching
 
@@ -296,7 +321,15 @@ class MissionEditorStateHolder(
             platformSavedFolderName().let { if (it != folderName) folderName = it }
             if (presence != FolderSyncPresence.Watching) {
                 hasAdoptedLiveFolder = false
+            } else if (platformActiveFolderId() == null) {
+                // A gesture-free probe() resumed a previously-connected folder. With the startup
+                // landing as the single entry point, a folder goes live only when the user
+                // explicitly opens it (connect / connectById / reconnect all set an id). So drop an
+                // auto-resumed folder rather than silently re-syncing it — otherwise the in-memory
+                // Welcome, or a recovered browser draft, would be written over its on-disk files.
+                disconnectFolder()
             } else {
+                recordConnectedFolderAsRecent()
                 val revision = folderSyncRevision()
                 if (revision != lastRevision) {
                     lastRevision = revision
@@ -422,6 +455,80 @@ class MissionEditorStateHolder(
     fun dismissFolderConflictBackup() { folderConflictBackup = null }
 
     /**
+     * Records the currently-watched folder in the recent-projects list (once per connection), so it
+     * appears on the next startup landing. Runs on every `watching` tick but no-ops until the active
+     * folder id changes. A probe-resumed folder without an id (legacy "root" pointer) is skipped —
+     * it was already recorded when first connected.
+     */
+    private fun recordConnectedFolderAsRecent() {
+        val repo = recentProjects ?: return
+        val id = platformActiveFolderId() ?: return
+        if (id == lastRecordedFolderId) return
+        repo.upsert(
+            RecentProject(
+                id = id,
+                displayName = folderName ?: id,
+                kind = RecentProjectKind.LocalFolder,
+                lastOpenedAtEpochMs = platformEpochMillis(),
+                folderKey = id,
+            ),
+        )
+        lastRecordedFolderId = id
+    }
+
+    // --- Startup landing ("recent projects + Welcome") ----------------------------------------
+
+    /** The recent projects shown on the startup landing, newest-first (folders only). */
+    fun recentProjectsList(): List<RecentProject> = recentProjects?.list() ?: emptyList()
+
+    /** True when a browser-stored draft exists to offer as crash recovery on the landing. */
+    suspend fun hasRecoveryDraft(): Boolean = draft?.restore() != null
+
+    /**
+     * Polls the landing overlay's action queue and drives the editor from the user's choice: open
+     * Welcome, recover the browser draft, dismiss (→ Welcome), or forget a recent. Folder opens are
+     * handled by the folder-sync layer directly (the overlay reconnects inside the click gesture),
+     * so they never surface here. Runs until cancelled; a no-op where the landing is unsupported.
+     */
+    suspend fun runLanding() {
+        if (!platformSupportsLanding) return
+        while (true) {
+            platformLandingPendingActionJson()?.let { json ->
+                runCatching { LandingActionJson.decodeFromString(LandingAction.serializer(), json) }
+                    .getOrNull()?.let { applyLandingAction(it) }
+            }
+            delay(LandingPollMs)
+        }
+    }
+
+    private suspend fun applyLandingAction(action: LandingAction) {
+        when (action.type) {
+            "openWelcome", "dismiss" -> openWelcomeProject()
+            "openRecovery" -> restoreRecoveryDraft()
+            "clearRecovery" -> draft?.reset { }
+            // The landing's own language switcher: also update the editor + persist the choice.
+            "setLanguage" -> action.id?.let { selectLanguage(AppLanguage.fromCode(it)) }
+            "remove" -> action.id?.let { id ->
+                recentProjects?.remove(id)
+                if (lastRecordedFolderId == id) lastRecordedFolderId = null
+            }
+        }
+    }
+
+    /** Restores the browser-stored draft into the editor (the landing's "unsaved work" card). */
+    private suspend fun restoreRecoveryDraft() {
+        val draft = draft ?: return
+        // Never let the recovered draft flow onto a live folder's files: drop any folder connection
+        // first (as openWelcomeProject does), so autosave routes the draft to the browser store.
+        if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
+        draft.restore()?.let { restored ->
+            persistenceEnabled = true
+            projectName = restored.projectName
+            designState = createDesignEditorState(compileMissionDocuments(restored.files))
+        }
+    }
+
+    /**
      * Explicit Save: force-flush the current SLM sources to the draft now. This is the
      * opt-in that turns the in-memory Welcome project into a persistent one.
      */
@@ -513,10 +620,28 @@ fun MissionEditorApp() {
                     scope = scope,
                 ),
                 languagePreference = LanguagePreference(keyValueStore),
+                recentProjects = DefaultRecentProjectsRepository(keyValueStore),
             )
         }
         LaunchedEffect(state) { state.runPersistence() }
         LaunchedEffect(state) { state.runFolderSync() }
+        LaunchedEffect(state) { state.runLanding() }
+        // Show the startup landing (recent projects + Welcome) once, seeded with the localized
+        // catalog copy and theme tokens so the DOM overlay carries no strings/palette of its own.
+        val landingColors = LocalEditorColors.current
+        LaunchedEffect(state) {
+            if (platformSupportsLanding) {
+                platformInstallLanding(
+                    buildLandingConfigJson(
+                        colors = landingColors,
+                        recents = state.recentProjectsList(),
+                        supportsFolders = state.supportsFolderSync,
+                        hasRecovery = state.hasRecoveryDraft(),
+                        language = state.language,
+                    ),
+                )
+            }
+        }
         CompositionLocalProvider(LocalStrings provides appStringsFor(state.language)) {
             MissionEditorScreen(state)
         }

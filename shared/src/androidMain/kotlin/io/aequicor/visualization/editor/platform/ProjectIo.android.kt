@@ -41,3 +41,17 @@ internal actual fun folderSyncSnapshotJson(): String? = null
 internal actual fun folderSyncStatus(): String? = null
 
 internal actual fun platformWriteFolderFile(fileName: String, content: String) = Unit
+
+internal actual fun platformEpochMillis(): Long = System.currentTimeMillis()
+
+internal actual fun platformActiveFolderId(): String? = null
+
+internal actual fun platformForgetFolder(id: String) = Unit
+
+internal actual val platformSupportsLanding: Boolean = false
+
+internal actual fun platformInstallLanding(configJson: String) = Unit
+
+internal actual fun platformHideLanding() = Unit
+
+internal actual fun platformLandingPendingActionJson(): String? = null
