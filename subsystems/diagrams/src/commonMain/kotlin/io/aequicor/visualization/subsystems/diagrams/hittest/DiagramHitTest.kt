@@ -14,6 +14,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.TableNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.math.sqrt
 
@@ -53,8 +54,9 @@ sealed interface DiagramNodeHitPart {
 }
 
 /**
- * What the pointer hit. Ordered by pick priority: handles (resize / waypoint / label) win
- * over ports, ports over edges, edges over nodes; nodes resolve top-of-z-order first.
+ * What the pointer hit. Ordered by pick priority: handles (resize / waypoint / endpoint /
+ * label) win over ports, ports over edges, edges over nodes; nodes resolve top-of-z-order
+ * first.
  */
 sealed interface DiagramHit {
 
@@ -68,6 +70,12 @@ sealed interface DiagramHit {
     data class WaypointHandle(
         val edgeId: DiagramEdgeId,
         val waypointIndex: Int,
+    ) : DiagramHit
+
+    /** An endpoint re-attach grab (source/target ring) of a selected edge. */
+    data class EndpointHandle(
+        val edgeId: DiagramEdgeId,
+        val end: DiagramEdgeEnd,
     ) : DiagramHit
 
     /** A label grab of a selected edge. */
@@ -99,7 +107,8 @@ sealed interface DiagramHit {
  * Picks the topmost interactive element at [point].
  *
  * Priority: resize handles (selected nodes) > waypoint handles (selected edges) >
- * label handles (selected edges) > ports > edges > nodes. Within each class, elements are
+ * endpoint handles (selected edges) > label handles (selected edges) > ports > edges >
+ * nodes. Within each class, elements are
  * scanned top-of-z-order first (explicit layers top→bottom, then the implicit default
  * layer; within a layer, later list entries are on top). Locked or invisible nodes and
  * nodes/edges on locked or invisible layers are transparent to hits. Rotation is ignored
@@ -138,6 +147,20 @@ fun hitTest(
             if (distance(point, waypoint) <= tolerance) {
                 return DiagramHit.WaypointHandle(edge.id, index)
             }
+        }
+    }
+
+    for (edge in edgesTopDown) {
+        if (edge.id !in selectedEdgeIds) continue
+        // Endpoint ring grabs at the routed polyline's ends (fallback = source/target points),
+        // so the hit matches what the overlay draws. Corner grabs the user aims at precisely,
+        // hence tested before labels; the nearer end wins for a degenerate near-zero-length edge.
+        val route = edgeRoute(graph, edge, routes) ?: continue
+        val toSource = distance(point, route.first())
+        val toTarget = distance(point, route.last())
+        if (toSource <= tolerance || toTarget <= tolerance) {
+            val end = if (toSource <= toTarget) DiagramEdgeEnd.SOURCE else DiagramEdgeEnd.TARGET
+            return DiagramHit.EndpointHandle(edge.id, end)
         }
     }
 

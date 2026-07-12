@@ -85,6 +85,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
+import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
@@ -110,6 +111,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlNoteNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlPackageNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.ops.addCustomPort
 import io.aequicor.visualization.subsystems.diagrams.ops.directionalCloneOffset
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
@@ -603,6 +605,33 @@ internal fun DiagramEditOverlay(
                             }
                         }
 
+                        is DiagramHit.EndpointHandle -> {
+                            // Drag an endpoint ring to re-attach that end: reuse the live snap
+                            // preview, anchored at the OTHER (fixed) end so the dashed guide routes
+                            // from it, and dispatch ReconnectDiagramEdge on release. Dropping on a
+                            // node/port re-pins there (any node, incl. a different port of the same
+                            // node); dropping on empty space makes it a free point.
+                            val edge = live.edgeById(hit.edgeId) ?: return@awaitEachGesture
+                            val fixedEnd = when (hit.end) {
+                                DiagramEdgeEnd.SOURCE -> edge.target
+                                DiagramEdgeEnd.TARGET -> edge.source
+                            }
+                            dragNewDiagramEdge(
+                                state = state,
+                                editId = editId,
+                                source = fixedEnd,
+                                sourceNodeId = fixedEnd.attachedNodeId,
+                                down = down,
+                                start = point,
+                                relation = edge.relation,
+                                graphPointOf = ::graphPointOf,
+                                liveGraph = ::liveGraph,
+                                setPreview = { edgePreview = it },
+                                setConnectTarget = { connectTarget = it },
+                                reconnect = hit.edgeId.value to hit.end,
+                            )
+                        }
+
                         is DiagramHit.LabelHandle -> {
                             val edge = live.edgeById(hit.edgeId) ?: return@awaitEachGesture
                             val label = edge.labels.firstOrNull { it.position == hit.position } ?: return@awaitEachGesture
@@ -1053,20 +1082,27 @@ private fun previewRouteFor(
 }
 
 /**
- * Drags a new connector out of [source]: a live preview that snaps to whatever the pointer
- * is over — a specific connection point (green cross, pinned) or a node's perimeter (blue,
- * floating) — mirrored to [setConnectTarget] so the target lights up. On release the edge
- * lands on the resolved target: a fixed port (materialized if it was one of the standard
+ * Drags a connector end anchored at [source]: a live preview that snaps to whatever the
+ * pointer is over — a specific connection point (green cross, pinned) or a node's perimeter
+ * (blue, floating) — mirrored to [setConnectTarget] so the target lights up. On release the
+ * end lands on the resolved target: a fixed port (materialized if it was one of the standard
  * side points, so the pin resolves and round-trips), a floating anchor, or a free point in
- * empty space. Releasing back on the source cancels. If the pointer never moved past the
- * touch slop (a click, not a drag), [onClickWithoutMove] fires instead — the directional
- * arrow uses that to clone the node in the arrow's direction.
+ * empty space. Releasing back on the anchor node cancels.
+ *
+ * By default this mints a NEW edge from [source] to the landing. Pass [reconnect] (the
+ * `edgeId` + which [DiagramEdgeEnd] is being dragged) to instead re-pin that end of an
+ * existing edge via [DiagramEditorIntent.ReconnectDiagramEdge]; then [source] is the OTHER,
+ * fixed end so the dashed preview routes from it to the pointer.
+ *
+ * [sourceNodeId] is the anchor node excluded from snapping (null when the anchor is a free
+ * point). If the pointer never moved past the touch slop (a click, not a drag),
+ * [onClickWithoutMove] fires instead — the directional arrow uses that to clone the node.
  */
 private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
     state: MissionEditorStateHolder,
     editId: String,
     source: DiagramEndpoint,
-    sourceNodeId: DiagramNodeId,
+    sourceNodeId: DiagramNodeId?,
     down: PointerInputChange,
     start: DiagramPoint,
     relation: DiagramRelation,
@@ -1075,6 +1111,7 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
     setPreview: (DiagramEdgePreview?) -> Unit,
     setConnectTarget: (ConnectTarget?) -> Unit = {},
     onClickWithoutMove: (() -> Unit)? = null,
+    reconnect: Pair<String, DiagramEdgeEnd>? = null,
 ) {
     // The source anchor is fixed for the whole drag; it picks the floating perimeter crossing.
     val fromPoint = liveGraph()?.let { resolveEndpointPoint(it, source) } ?: start
@@ -1106,40 +1143,59 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
         return
     }
     val graph = liveGraph() ?: return
-    when (val landing = target) {
+    // Resolve where the dragged end lands, plus any standard side-point that must be
+    // materialized as a real port first so a fixed pin resolves and round-trips.
+    val (endpoint, portToAdd) = when (val landing = target) {
         is ConnectTarget.Free -> {
-            // Released back inside the source: cancel rather than mint a stub.
-            val source0 = graph.nodeById(sourceNodeId)
-            if (source0 != null && source0.bounds.contains(landing.snapPoint)) return
-            connectDiagramEdge(state, editId, graph, source, DiagramEndpoint.FreePoint(landing.snapPoint.x, landing.snapPoint.y), relation)
+            // Released back inside the anchored end's node: cancel rather than mint a stub.
+            val anchorNode = sourceNodeId?.let { graph.nodeById(it) }
+            if (anchorNode != null && anchorNode.bounds.contains(landing.snapPoint)) return
+            DiagramEndpoint.FreePoint(landing.snapPoint.x, landing.snapPoint.y) to null
         }
 
-        is ConnectTarget.Floating ->
-            connectDiagramEdge(state, editId, graph, source, DiagramEndpoint.FloatingAnchor(landing.nodeId), relation)
+        is ConnectTarget.Floating -> DiagramEndpoint.FloatingAnchor(landing.nodeId) to null
 
         is ConnectTarget.Port -> {
             val node = graph.nodeById(landing.nodeId) ?: return
-            if (node.portById(landing.port.id) != null) {
-                connectDiagramEdge(state, editId, graph, source, DiagramEndpoint.FixedPort(landing.nodeId, landing.port.id), relation)
-            } else {
-                // Standard point: materialize it as a real port, then connect — both coalesce
-                // into a single undo entry (interacting gate suppresses the intermediate push).
-                val edgeId = mintDiagramId(graph, "edge")
-                state.dispatch(DesignEditorIntent.BeginInteraction)
-                state.dispatch(DiagramEditorIntent.AddDiagramPort(editId, landing.nodeId.value, landing.port))
-                state.dispatch(
-                    DiagramEditorIntent.ConnectDiagramNodes(
-                        nodeId = editId,
-                        edgeId = edgeId,
-                        source = source,
-                        target = DiagramEndpoint.FixedPort(landing.nodeId, landing.port.id),
-                        relation = relation,
-                    ),
-                )
-                state.dispatch(DesignEditorIntent.EndInteraction)
-                state.updateWorkspace { it.copy(diagramSelection = DiagramSelection(edgeIds = setOf(edgeId))) }
-            }
+            val fixed = DiagramEndpoint.FixedPort(landing.nodeId, landing.port.id)
+            val toAdd = if (node.portById(landing.port.id) != null) null else landing.nodeId.value to landing.port
+            fixed to toAdd
         }
+    }
+
+    if (reconnect != null) {
+        // Re-pin the dragged end of an existing edge. The optional port materialization and the
+        // reconnect coalesce into one undo entry (the interacting gate suppresses the middle push).
+        val (reconnectEdgeId, end) = reconnect
+        state.dispatch(DesignEditorIntent.BeginInteraction)
+        if (portToAdd != null) {
+            state.dispatch(DiagramEditorIntent.AddDiagramPort(editId, portToAdd.first, portToAdd.second))
+        }
+        state.dispatch(DiagramEditorIntent.ReconnectDiagramEdge(editId, reconnectEdgeId, end, endpoint))
+        state.dispatch(DesignEditorIntent.EndInteraction)
+        state.updateWorkspace { it.copy(diagramSelection = DiagramSelection(edgeIds = setOf(reconnectEdgeId))) }
+        return
+    }
+
+    if (portToAdd != null) {
+        // Standard point: materialize it as a real port, then connect — both coalesce into a
+        // single undo entry (interacting gate suppresses the intermediate push).
+        val edgeId = mintDiagramId(graph, "edge")
+        state.dispatch(DesignEditorIntent.BeginInteraction)
+        state.dispatch(DiagramEditorIntent.AddDiagramPort(editId, portToAdd.first, portToAdd.second))
+        state.dispatch(
+            DiagramEditorIntent.ConnectDiagramNodes(
+                nodeId = editId,
+                edgeId = edgeId,
+                source = source,
+                target = endpoint,
+                relation = relation,
+            ),
+        )
+        state.dispatch(DesignEditorIntent.EndInteraction)
+        state.updateWorkspace { it.copy(diagramSelection = DiagramSelection(edgeIds = setOf(edgeId))) }
+    } else {
+        connectDiagramEdge(state, editId, graph, source, endpoint, relation)
     }
 }
 

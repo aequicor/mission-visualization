@@ -19,6 +19,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.TableRow
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlMember
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -129,6 +130,95 @@ class DiagramHitTestTest {
 
         val unselected = hitTest(graph, emptyMap(), point)
         assertIs<DiagramHit.Edge>(unselected)
+    }
+
+    @Test
+    fun endpointHandlesOnSelectedEdgeResolveSourceAndTarget() {
+        val graph = diagramGraph {
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 50.0),
+                target = DiagramEndpoint.FreePoint(100.0, 50.0),
+            )
+        }
+        val nearSource = hitTest(
+            graph, emptyMap(), DiagramPoint(2.0, 50.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertEquals(DiagramHit.EndpointHandle(DiagramEdgeId("e"), DiagramEdgeEnd.SOURCE), nearSource)
+
+        val nearTarget = hitTest(
+            graph, emptyMap(), DiagramPoint(98.0, 50.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertEquals(DiagramHit.EndpointHandle(DiagramEdgeId("e"), DiagramEdgeEnd.TARGET), nearTarget)
+    }
+
+    @Test
+    fun endpointHandleBeatsEdgeBodyWithinTolerance() {
+        val graph = diagramGraph {
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 50.0),
+                target = DiagramEndpoint.FreePoint(100.0, 50.0),
+            )
+        }
+        // A point on the line but within tolerance of the source end: the endpoint grab wins.
+        val atEnd = hitTest(
+            graph, emptyMap(), DiagramPoint(2.0, 50.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertEquals(DiagramHit.EndpointHandle(DiagramEdgeId("e"), DiagramEdgeEnd.SOURCE), atEnd)
+
+        // Mid-line, clear of both ends: still the edge body, not an endpoint.
+        val midLine = hitTest(
+            graph, emptyMap(), DiagramPoint(50.0, 50.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertIs<DiagramHit.Edge>(midLine)
+    }
+
+    @Test
+    fun unselectedEdgeExposesNoEndpointHandle() {
+        val graph = diagramGraph {
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 50.0),
+                target = DiagramEndpoint.FreePoint(100.0, 50.0),
+            )
+        }
+        // Same point that yields an endpoint handle when selected falls through to the edge body.
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(2.0, 50.0))
+        assertIs<DiagramHit.Edge>(hit)
+    }
+
+    @Test
+    fun endpointHandlesFollowTheProvidedRoute() {
+        val graph = diagramGraph {
+            val a = node("a", x = 0.0, y = 0.0, width = 40.0, height = 40.0)
+            val b = node("b", x = 200.0, y = 200.0, width = 40.0, height = 40.0)
+            edge("e", a, b)
+        }
+        // An L-shaped route: endpoints are picked from the polyline ends, not the node centers.
+        val routes = mapOf(
+            DiagramEdgeId("e") to listOf(
+                DiagramPoint(40.0, 20.0),
+                DiagramPoint(120.0, 20.0),
+                DiagramPoint(120.0, 220.0),
+                DiagramPoint(200.0, 220.0),
+            ),
+        )
+        val atSource = hitTest(
+            graph, routes, DiagramPoint(41.0, 20.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertEquals(DiagramHit.EndpointHandle(DiagramEdgeId("e"), DiagramEdgeEnd.SOURCE), atSource)
+
+        val atTarget = hitTest(
+            graph, routes, DiagramPoint(199.0, 220.0),
+            selectedEdgeIds = setOf(DiagramEdgeId("e")),
+        )
+        assertEquals(DiagramHit.EndpointHandle(DiagramEdgeId("e"), DiagramEdgeEnd.TARGET), atTarget)
     }
 
     @Test

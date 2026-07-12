@@ -20,6 +20,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
+import kotlin.math.hypot
 
 /**
  * Chrome colors of the editor overlays (selection frame, handles, port indicators).
@@ -155,9 +156,11 @@ private fun DrawScope.drawFixedPortMarker(center: Offset, color: Color, arm: Flo
 }
 
 /**
- * Waypoint grabs of selected edges (blue circles at the manual route points) plus
- * diamond grabs at the label anchors — mirrors the core hit-test's
- * `WaypointHandle` / `LabelHandle` geometry so what is drawn is what is hit.
+ * Grabs of selected edges: endpoint rings at the routed polyline's ends (drag to re-attach),
+ * lighter "virtual bend" dots at each straight-segment midpoint (grab to add a bend — backed
+ * by the edge-body drag), the manual-waypoint circles, and diamond grabs at the label
+ * anchors — mirrors the core hit-test's `EndpointHandle` / `WaypointHandle` / `LabelHandle`
+ * geometry so what is drawn is what is hit.
  */
 @Composable
 fun DiagramWaypointOverlay(
@@ -170,21 +173,77 @@ fun DiagramWaypointOverlay(
     Canvas(modifier) {
         selectedEdgeIds.forEach { id ->
             val edge = graph.edgeById(id) ?: return@forEach
+            val route = routes[id]?.points
+
+            // Virtual "grab to bend" dots at each straight-segment midpoint with no manual
+            // waypoint on it. Drawn first (and lighter) so the real handles read on top; the
+            // dot is a hint only — dragging it hits the edge body under it, which mints a bend.
+            if (route != null && route.size >= 2) {
+                for (index in 0 until route.size - 1) {
+                    val a = route[index]
+                    val b = route[index + 1]
+                    val midX = (a.x + b.x) / 2.0
+                    val midY = (a.y + b.y) / 2.0
+                    val segLength = hypot(b.x - a.x, b.y - a.y)
+                    val nearManualWaypoint = edge.waypoints.any { wp ->
+                        val dx = wp.x - midX
+                        val dy = wp.y - midY
+                        dx * dx + dy * dy <= VirtualBendDotSuppressRadius * VirtualBendDotSuppressRadius
+                    }
+                    if (!nearManualWaypoint && segLength >= MinVirtualBendDotSegment) {
+                        drawVirtualBendDot(Offset(midX.toFloat(), midY.toFloat()), style)
+                    }
+                }
+            }
+
+            // Real manual waypoint grabs.
             edge.waypoints.forEach { waypoint ->
                 drawWaypointHandle(Offset(waypoint.x.toFloat(), waypoint.y.toFloat()), style)
             }
-            val route = routes[id]?.points ?: return@forEach
-            edge.labels.forEach { label ->
-                val anchor = edgeLabelAnchorPoint(route, label)
-                drawLabelHandle(Offset(anchor.x.toFloat(), anchor.y.toFloat()), style)
+
+            if (route != null && route.size >= 2) {
+                // Endpoint rings: source at the first routed point, target at the last (over the
+                // arrowhead) — the draw.io re-attach grabs, visually distinct from the bend dots.
+                drawEndpointHandle(Offset(route.first().x.toFloat(), route.first().y.toFloat()), style)
+                drawEndpointHandle(Offset(route.last().x.toFloat(), route.last().y.toFloat()), style)
+
+                edge.labels.forEach { label ->
+                    val anchor = edgeLabelAnchorPoint(route, label)
+                    drawLabelHandle(Offset(anchor.x.toFloat(), anchor.y.toFloat()), style)
+                }
             }
         }
     }
 }
 
+/** A manual waypoint within this many doc units of a segment midpoint suppresses its bend dot. */
+private const val VirtualBendDotSuppressRadius = 6.0
+
+/** Segments shorter than this (doc units) skip their bend dot, so it never collides with a ring. */
+private const val MinVirtualBendDotSegment = 18.0
+
 internal fun DrawScope.drawWaypointHandle(center: Offset, style: DiagramOverlayStyle, radius: Float = 4f) {
     drawCircle(style.accent, radius = radius, center = center)
     drawCircle(style.handleFill, radius = radius, center = center, style = Stroke(1.4f))
+}
+
+/**
+ * An edge endpoint re-attach grab: a slightly larger [DiagramOverlayStyle.handleFill]-filled
+ * circle with an [DiagramOverlayStyle.accent] ring — the draw.io source/target endpoint look,
+ * heavier than the manual-waypoint dot so the two read differently.
+ */
+internal fun DrawScope.drawEndpointHandle(center: Offset, style: DiagramOverlayStyle, radius: Float = 5.5f) {
+    drawCircle(style.handleFill, radius = radius, center = center)
+    drawCircle(style.accent, radius = radius, center = center, style = Stroke(1.6f))
+}
+
+/**
+ * A "grab here to bend" hint at a segment midpoint: a small, low-alpha accent dot with a thin
+ * accent ring — deliberately lighter than a real waypoint so the affordance reads as virtual.
+ */
+private fun DrawScope.drawVirtualBendDot(center: Offset, style: DiagramOverlayStyle, radius: Float = 3f) {
+    drawCircle(style.accent.copy(alpha = 0.35f), radius = radius, center = center)
+    drawCircle(style.accent.copy(alpha = 0.7f), radius = radius, center = center, style = Stroke(1f))
 }
 
 private fun DrawScope.drawLabelHandle(center: Offset, style: DiagramOverlayStyle, half: Float = 4f) {
