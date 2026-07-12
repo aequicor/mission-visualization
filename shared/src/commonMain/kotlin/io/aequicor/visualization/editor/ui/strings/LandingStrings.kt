@@ -1,9 +1,9 @@
 package io.aequicor.visualization.editor.ui.strings
 
 /**
- * Startup landing ("recent projects + Welcome"). Rendered by the web overlay
+ * Startup landing ("recent projects + Welcome"). Rendered as the web startup screen
  * (`window.__mvLanding`), but the copy lives here in the catalog — the state holder passes the
- * active-language strings into the overlay, so there is a single localized source of truth.
+ * active-language strings into the screen, so there is a single localized source of truth.
  */
 interface LandingStrings {
     val heading: String
@@ -13,6 +13,9 @@ interface LandingStrings {
     val recentHeading: String
     val noRecent: String
     val connectFolder: String
+    val projectChoiceTitle: String
+    val createBrowserProject: String
+    val openDiskProject: String
     val open: String
     val remove: String
     val localFolder: String
@@ -23,7 +26,6 @@ interface LandingStrings {
     val flagAddressCopied: String
     val recoverTitle: String
     val recoverSubtitle: String
-    val dismiss: String
     val language: String
 }
 
@@ -34,7 +36,10 @@ object LandingStringsEn : LandingStrings {
     override val welcomeSubtitle = "Explore the editor, vectors and diagrams"
     override val recentHeading = "Recent projects"
     override val noRecent = "No recent folders yet"
-    override val connectFolder = "Open a folder…"
+    override val connectFolder = "Open project"
+    override val projectChoiceTitle = "Open a project"
+    override val createBrowserProject = "Create new in browser"
+    override val openDiskProject = "Open project on disk"
     override val open = "Open"
     override val remove = "Remove from list"
     override val localFolder = "Local folder"
@@ -45,9 +50,8 @@ object LandingStringsEn : LandingStrings {
         "flag. You can still work here and save to disk, or copy the flag address below."
     override val copyFlagAddress = "Copy flag address"
     override val flagAddressCopied = "Copied"
-    override val recoverTitle = "Unsaved work"
-    override val recoverSubtitle = "Recovered from your browser"
-    override val dismiss = "Skip"
+    override val recoverTitle = "Browser project"
+    override val recoverSubtitle = "Saved only in this browser"
     override val language = "Language"
 }
 
@@ -58,7 +62,10 @@ object LandingStringsRu : LandingStrings {
     override val welcomeSubtitle = "Редактор, векторы и диаграммы"
     override val recentHeading = "Недавние проекты"
     override val noRecent = "Пока нет недавних папок"
-    override val connectFolder = "Открыть папку…"
+    override val connectFolder = "Открыть проект"
+    override val projectChoiceTitle = "Открыть проект"
+    override val createBrowserProject = "Создать новый в браузере"
+    override val openDiskProject = "Открыть проект на диске"
     override val open = "Открыть"
     override val remove = "Убрать из списка"
     override val localFolder = "Локальная папка"
@@ -71,8 +78,7 @@ object LandingStringsRu : LandingStrings {
         "скопировать адрес флага ниже."
     override val copyFlagAddress = "Скопировать адрес флага"
     override val flagAddressCopied = "Скопировано"
-    override val recoverTitle = "Несохранённая работа"
-    override val recoverSubtitle = "Восстановлено из браузера"
-    override val dismiss = "Пропустить"
+    override val recoverTitle = "Проект в браузере"
+    override val recoverSubtitle = "Хранится только в этом браузере"
     override val language = "Язык"
 }

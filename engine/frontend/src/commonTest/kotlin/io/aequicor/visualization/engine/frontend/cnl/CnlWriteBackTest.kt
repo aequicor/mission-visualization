@@ -77,6 +77,27 @@ class CnlWriteBackTest {
     }
 
     @Test
+    fun editPerCornerRadiusWritesTupleAndCanReturnToScalar() {
+        val source = screen("Rectangle 120 by 80 color #00B843 radius 15 gap 16")
+        val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
+        val perCorner = DesignCornerRadius(
+            topLeft = 4.0.bindable(),
+            topRight = 8.0.bindable(),
+            bottomRight = 12.0.bindable(),
+            bottomLeft = 16.0.bindable(),
+        )
+        val tupleSource = assertNotNull(applySlmEdit(source, SetCornerRadii(id, perCorner), compiled).newSource)
+        assertTrue("radius (4 8 12 16)" in tupleSource, tupleSource)
+
+        val tupleCompiled = compileSlm(tupleSource)
+        val scalarSource = assertNotNull(
+            applySlmEdit(tupleSource, SetCornerRadii(id, DesignCornerRadius.all(6.0.bindable())), tupleCompiled).newSource,
+        )
+        assertTrue("radius 6" in scalarSource, scalarSource)
+        assertFalse("radius (" in scalarSource, scalarSource)
+    }
+
+    @Test
     fun editResizeReplacesBothDimensions() {
         val source = screen("Rectangle 120 by 15 color #00B843")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }

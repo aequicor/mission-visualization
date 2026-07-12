@@ -240,6 +240,7 @@ sealed interface CanvasOperation {
     data object Marquee : CanvasOperation
     data object Move : CanvasOperation
     data class Resize(val handle: ResizeHandle) : CanvasOperation
+    data class AdjustCornerRadius(val handle: CornerRadiusHandle) : CanvasOperation
     data class Create(val kind: NewObjectKind) : CanvasOperation
     data object Rotate : CanvasOperation
 }

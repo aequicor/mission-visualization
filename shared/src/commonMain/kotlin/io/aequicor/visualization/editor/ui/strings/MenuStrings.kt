@@ -4,6 +4,7 @@ package io.aequicor.visualization.editor.ui.strings
 interface MenuStrings {
     val projectMenu: String
     // Root pane.
+    val projects: String
     val open: String
     val save: String
     val export: String
@@ -16,9 +17,12 @@ interface MenuStrings {
     val openZipArchive: String
     val openFolder: String
     // Live local-folder sync ("browser IDE" mode).
-    val connectFolder: String
     val folderDisconnect: String
+    val folderConnecting: String
     val folderWatching: String
+    fun folderWatchingDescription(name: String): String
+    val folderAccessRequired: String
+    fun folderAccessRequiredDescription(name: String): String
     val folderExternalError: String
     val folderConflict: String
     val folderRestoreEdit: String
@@ -31,6 +35,11 @@ interface MenuStrings {
     // Browser-only project banner.
     val browserOnlyNotice: String
     val saveToDisk: String
+    val createProjectTitle: String
+    val createProjectMessage: String
+    val createProjectInBrowser: String
+    val createProjectOnDisk: String
+    val cancel: String
     // Export pane.
     val exportPngScreen: String
     val exportPngComponent: String
@@ -54,6 +63,7 @@ interface MenuStrings {
 
 object MenuStringsEn : MenuStrings {
     override val projectMenu = "Project menu"
+    override val projects = "Projects"
     override val open = "Open"
     override val save = "Save"
     override val export = "Export"
@@ -63,9 +73,12 @@ object MenuStringsEn : MenuStrings {
     override val welcomeProject = "Welcome project"
     override val openZipArchive = "Open ZIP archive"
     override val openFolder = "Pick a folder on this PC"
-    override val connectFolder = "Connect folder (live sync)"
     override val folderDisconnect = "Disconnect folder"
-    override val folderWatching = "Live"
+    override val folderConnecting = "Connecting folder…"
+    override val folderWatching = "Folder connected"
+    override fun folderWatchingDescription(name: String) = "Changes are saved automatically to “" + name + "”."
+    override val folderAccessRequired = "Folder access required"
+    override fun folderAccessRequiredDescription(name: String) = "Reconnect “" + name + "” to continue automatic saving."
     override val folderExternalError = "External file has errors — showing the last good version"
     override val folderConflict = "External change loaded — your unsaved edit was kept"
     override val folderRestoreEdit = "Restore my edit"
@@ -76,6 +89,11 @@ object MenuStringsEn : MenuStrings {
     override val saveAsZip = "Save as a ZIP archive"
     override val browserOnlyNotice = "Changes are saved in your browser only."
     override val saveToDisk = "Save to disk"
+    override val createProjectTitle = "Create a project to keep your changes"
+    override val createProjectMessage = "Choose where this edited Welcome copy should be stored."
+    override val createProjectInBrowser = "Create in browser"
+    override val createProjectOnDisk = "Create on disk"
+    override val cancel = "Cancel"
     override val exportPngScreen = "PNG — whole screen"
     override val exportPngComponent = "PNG — selected component"
     override val exportPdfAllScreens = "PDF — all screens"
@@ -96,6 +114,7 @@ object MenuStringsEn : MenuStrings {
 
 object MenuStringsRu : MenuStrings {
     override val projectMenu = "Меню проекта"
+    override val projects = "К проектам"
     override val open = "Открыть"
     override val save = "Сохранить"
     override val export = "Экспортировать"
@@ -105,9 +124,12 @@ object MenuStringsRu : MenuStrings {
     override val welcomeProject = "Welcome-проект"
     override val openZipArchive = "Открыть ZIP архив"
     override val openFolder = "Выбрать папку на ПК"
-    override val connectFolder = "Подключить папку (живая синхронизация)"
     override val folderDisconnect = "Отключить папку"
-    override val folderWatching = "Live"
+    override val folderConnecting = "Подключение папки…"
+    override val folderWatching = "Папка подключена"
+    override fun folderWatchingDescription(name: String) = "Изменения автоматически сохраняются в «" + name + "»."
+    override val folderAccessRequired = "Нужен доступ к папке"
+    override fun folderAccessRequiredDescription(name: String) = "Переподключите «" + name + "», чтобы продолжить автосохранение."
     override val folderExternalError = "Во внешнем файле ошибки — показана последняя рабочая версия"
     override val folderConflict = "Загружено внешнее изменение — ваша несохранённая правка сохранена"
     override val folderRestoreEdit = "Вернуть мою правку"
@@ -118,6 +140,11 @@ object MenuStringsRu : MenuStrings {
     override val saveAsZip = "Сохранить ZIP архивом"
     override val browserOnlyNotice = "Изменения сохраняются только в браузере."
     override val saveToDisk = "Сохранить на диск"
+    override val createProjectTitle = "Создайте проект, чтобы не потерять изменения"
+    override val createProjectMessage = "Выберите, где хранить изменённую копию обзорного тура."
+    override val createProjectInBrowser = "Создать проект в браузере"
+    override val createProjectOnDisk = "Создать проект на диске"
+    override val cancel = "Отмена"
     override val exportPngScreen = "PNG — весь экран"
     override val exportPngComponent = "PNG — выбранный компонент"
     override val exportPdfAllScreens = "PDF — все экраны"

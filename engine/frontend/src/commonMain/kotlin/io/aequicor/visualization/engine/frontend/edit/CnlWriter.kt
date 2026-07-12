@@ -129,10 +129,27 @@ internal object CnlWriter {
     }
 
     private fun radiusPlan(element: CnlElement, radius: DesignCornerRadius, lineIndex: LineIndex, line: Int): WritePlan {
-        val uniform = radius.topLeft.literalOrNull()
-            ?.takeIf { radius.topRight.literalOrNull() == it && radius.bottomRight.literalOrNull() == it && radius.bottomLeft.literalOrNull() == it }
-            ?: return failed(line)
-        return scalarReplace(element, CnlPropertyKind.Radius, "radius", formatNumber(uniform), lineIndex, line)
+        val values = listOf(
+            radius.topLeft.literalOrNull(),
+            radius.topRight.literalOrNull(),
+            radius.bottomRight.literalOrNull(),
+            radius.bottomLeft.literalOrNull(),
+        )
+        if (values.any { it == null }) return failed(line)
+        val literals = values.filterNotNull()
+        val encoded = if (literals.all { it == literals.first() }) {
+            formatNumber(literals.first())
+        } else {
+            literals.joinToString(prefix = "(", postfix = ")", separator = " ") { formatNumber(it) }
+        }
+        val property = element.property(CnlPropertyKind.Radius)
+        return if (property == null) {
+            append(line, "radius $encoded", lineIndex)
+        } else {
+            val first = property.values.firstOrNull()?.span ?: return failed(line)
+            val last = property.values.lastOrNull()?.span ?: return failed(line)
+            replace(CnlSpan(first.line, first.startColumn, last.endColumn), encoded, lineIndex)
+        }
     }
 
     private fun scalarPropPlan(

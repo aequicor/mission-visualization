@@ -27,11 +27,15 @@ internal actual fun platformOpenUrl(url: String) {
     }
 }
 
+internal actual fun platformSetActiveProjectId(id: String) = Unit
+
 internal actual val platformSupportsFolderSync: Boolean = false
 
 internal actual fun platformInitFolderSync() = Unit
 
 internal actual fun platformConnectFolderLive() = Unit
+
+internal actual fun platformCreateFolderProject(sourcesJson: String) = Unit
 
 internal actual fun platformReconnectSavedFolder() = Unit
 

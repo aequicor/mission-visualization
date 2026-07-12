@@ -17,6 +17,53 @@ class CanvasGeometryTest {
         assertTrue(abs(expected - actual) <= epsilon, "expected <$expected>, actual <$actual>")
     }
 
+    // --- Rectangle corner radius -------------------------------------------------
+
+    @Test
+    fun zeroRadiusHandlesKeepAVisibleInsetFromEveryCorner() {
+        val box = BoundsBox(10.0, 20.0, 100.0, 80.0)
+        val points = cornerRadiusHandlePoints(box, 0.0, CornerRadii(), minimumInset = 12.0)
+        assertEquals(GeoPoint(22.0, 32.0), points[CornerRadiusHandle.TopLeft])
+        assertEquals(GeoPoint(98.0, 32.0), points[CornerRadiusHandle.TopRight])
+        assertEquals(GeoPoint(98.0, 88.0), points[CornerRadiusHandle.BottomRight])
+        assertEquals(GeoPoint(22.0, 88.0), points[CornerRadiusHandle.BottomLeft])
+    }
+
+    @Test
+    fun eachRadiusHandleUsesItsOwnCornerValue() {
+        val box = BoundsBox(0.0, 0.0, 200.0, 120.0)
+        val radii = CornerRadii(4.0, 8.0, 12.0, 16.0)
+        val points = cornerRadiusHandlePoints(box, 0.0, radii, minimumInset = 10.0)
+        assertEquals(GeoPoint(14.0, 14.0), points[CornerRadiusHandle.TopLeft])
+        assertEquals(GeoPoint(182.0, 18.0), points[CornerRadiusHandle.TopRight])
+        assertEquals(GeoPoint(178.0, 98.0), points[CornerRadiusHandle.BottomRight])
+        assertEquals(GeoPoint(26.0, 94.0), points[CornerRadiusHandle.BottomLeft])
+    }
+
+    @Test
+    fun pointerProjectionReadsAllFourCornersAndRoundsToPixels() {
+        val box = BoundsBox(0.0, 0.0, 200.0, 120.0)
+        assertClose(25.0, cornerRadiusFromPointer(box, 0.0, CornerRadiusHandle.TopLeft, GeoPoint(37.4, 36.6), 12.0))
+        assertClose(25.0, cornerRadiusFromPointer(box, 0.0, CornerRadiusHandle.TopRight, GeoPoint(162.6, 36.6), 12.0))
+        assertClose(25.0, cornerRadiusFromPointer(box, 0.0, CornerRadiusHandle.BottomRight, GeoPoint(162.6, 83.4), 12.0))
+        assertClose(25.0, cornerRadiusFromPointer(box, 0.0, CornerRadiusHandle.BottomLeft, GeoPoint(37.4, 83.4), 12.0))
+    }
+
+    @Test
+    fun radiusPointerMathUndoesEffectiveRotation() {
+        val box = BoundsBox(20.0, 30.0, 160.0, 100.0)
+        val local = GeoPoint(box.x + 42.0, box.y + 42.0) // inset 12 + radius 30
+        val rotated = rotatePointAroundCenter(local, GeoPoint(box.centerX, box.centerY), 37.0)
+        assertClose(30.0, cornerRadiusFromPointer(box, 37.0, CornerRadiusHandle.TopLeft, rotated, 12.0))
+    }
+
+    @Test
+    fun radiusClampsAtZeroAndHalfTheShortSide() {
+        val box = BoundsBox(0.0, 0.0, 200.0, 80.0)
+        assertClose(0.0, cornerRadiusFromPointer(box, 0.0, CornerRadiusHandle.TopLeft, GeoPoint(-20.0, -20.0), 12.0))
+        assertClose(40.0, cornerRadiusFromPointer(box, 0.0, CornerRadiusHandle.TopLeft, GeoPoint(150.0, 150.0), 12.0))
+    }
+
     // --- Rotation ---------------------------------------------------------------
 
     @Test

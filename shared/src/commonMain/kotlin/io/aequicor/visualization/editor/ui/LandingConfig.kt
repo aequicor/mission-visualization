@@ -10,9 +10,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Serializes the config the startup landing overlay (`window.__mvLanding`) renders from: the
+ * Serializes the config the startup project screen (`window.__mvLanding`) renders from: the
  * localized [LandingStrings], the active [EditorColors] theme tokens (as CSS hex) and the recent
- * projects. Keeping copy + colors on the Kotlin side means the DOM overlay stays a thin renderer
+ * projects. Keeping copy + colors on the Kotlin side means the DOM screen stays a thin renderer
  * with no hardcoded strings or palette of its own.
  */
 private val LandingConfigJson = Json { encodeDefaults = true }
@@ -24,6 +24,7 @@ private data class LandingConfigDto(
     val languages: List<LandingLanguageDto>,
     val supportsFolders: Boolean,
     val hasRecovery: Boolean,
+    val browserProjectId: String? = null,
     val stringsByLang: Map<String, LandingStringsDto>,
     val colors: LandingColorsDto,
     val recents: List<LandingRecentDto>,
@@ -44,6 +45,9 @@ private data class LandingStringsDto(
     val recentHeading: String,
     val noRecent: String,
     val connectFolder: String,
+    val projectChoiceTitle: String,
+    val createBrowserProject: String,
+    val openDiskProject: String,
     val open: String,
     val remove: String,
     val localFolder: String,
@@ -54,7 +58,6 @@ private data class LandingStringsDto(
     val flagAddressCopied: String,
     val recoverTitle: String,
     val recoverSubtitle: String,
-    val dismiss: String,
     val language: String,
 )
 
@@ -91,6 +94,9 @@ private fun landingStringsDto(strings: LandingStrings): LandingStringsDto = Land
     recentHeading = strings.recentHeading,
     noRecent = strings.noRecent,
     connectFolder = strings.connectFolder,
+    projectChoiceTitle = strings.projectChoiceTitle,
+    createBrowserProject = strings.createBrowserProject,
+    openDiskProject = strings.openDiskProject,
     open = strings.open,
     remove = strings.remove,
     localFolder = strings.localFolder,
@@ -101,7 +107,6 @@ private fun landingStringsDto(strings: LandingStrings): LandingStringsDto = Land
     flagAddressCopied = strings.flagAddressCopied,
     recoverTitle = strings.recoverTitle,
     recoverSubtitle = strings.recoverSubtitle,
-    dismiss = strings.dismiss,
     language = strings.language,
 )
 
@@ -111,15 +116,17 @@ internal fun buildLandingConfigJson(
     recents: List<RecentProject>,
     supportsFolders: Boolean,
     hasRecovery: Boolean,
+    browserProjectId: String?,
     language: AppLanguage,
 ): String {
     val dto = LandingConfigDto(
         appName = LandingAppName,
         currentLanguage = language.code,
-        // Ship every language's strings so the overlay's own language switcher re-localizes instantly.
+        // Ship every language's strings so the screen's own language switcher re-localizes instantly.
         languages = AppLanguage.entries.map { LandingLanguageDto(it.code, it.nativeName) },
         supportsFolders = supportsFolders,
         hasRecovery = hasRecovery,
+        browserProjectId = browserProjectId,
         stringsByLang = AppLanguage.entries.associate { it.code to landingStringsDto(appStringsFor(it).landing) },
         colors = LandingColorsDto(
             backdrop = colors.paneSurface.toCssHex(),

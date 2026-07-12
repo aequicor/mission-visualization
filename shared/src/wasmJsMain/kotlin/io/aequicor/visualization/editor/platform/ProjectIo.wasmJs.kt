@@ -175,7 +175,7 @@ private fun ensureProjectIoInstalled() {
 
           function sourceLike(name) {
             var lower = String(name || "").toLowerCase();
-            return lower.endsWith(".layout.md") || lower.endsWith(".slm.md") || lower.endsWith(".slm") || lower.endsWith(".md");
+            return lower.endsWith(".layout.md") || lower.endsWith(".slm.md") || lower.endsWith(".slm") || lower.endsWith(".annotations.md");
           }
 
           function chooseFile(accept) {
@@ -276,6 +276,11 @@ private fun ensureProjectIoInstalled() {
             await persistSources(project.files, project.resources, projectNameFromArchive(file.name));
           }
 
+          // Recursion is intentionally narrow: source files (.layout.md etc.) are only picked up
+          // directly under the chosen root (prefix === "", matching isDirectPickedFile's depth-1
+          // rule for the <input webkitdirectory> fallback below) so an unrelated nested project
+          // folder never gets swept in. The one exception is a top-level "res/" folder, which is
+          // walked for resource bytes.
           async function walkDirectory(handle, prefix, out, resOut) {
             for await (var pair of handle.entries()) {
               var name = pair[0];
@@ -285,14 +290,20 @@ private fun ensureProjectIoInstalled() {
                 if (full.indexOf("res/") === 0) {
                   var resFile = await child.getFile();
                   resOut.push({ path: safeResPath(full), base64: rawBase64FromBytes(new Uint8Array(await resFile.arrayBuffer())) });
-                } else if (sourceLike(name)) {
+                } else if (prefix === "" && sourceLike(name)) {
                   var file = await child.getFile();
                   out.push({ fileName: safeName(full, name), content: await file.text() });
                 }
-              } else if (child.kind === "directory") {
+              } else if (child.kind === "directory" && prefix === "" && name === "res") {
                 await walkDirectory(child, prefix + name + "/", out, resOut);
               }
             }
+          }
+
+          function isDirectPickedFile(name) {
+            var parts = String(name || "").replace(/\\/g, "/").split("/").filter(function (part) { return part.length > 0; });
+            // webkitRelativePath includes the selected root folder as the first segment.
+            return parts.length <= 2;
           }
 
           function relativeUnderRoot(path) {
@@ -306,7 +317,7 @@ private fun ensureProjectIoInstalled() {
               var file = files[i];
               var name = file.webkitRelativePath || file.name;
               if (relativeUnderRoot(name).indexOf("res/") === 0) continue;
-              if (sourceLike(name)) {
+              if (isDirectPickedFile(name) && sourceLike(name)) {
                 out.push({ fileName: safeName(name, file.name), content: await file.text() });
               }
             }
@@ -696,6 +707,22 @@ private fun openUrlInBrowser(url: String): Unit = js("{ window.open(url, '_blank
 
 internal actual fun platformOpenUrl(url: String) = openUrlInBrowser(url)
 
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformSetActiveProjectId(id: String): Unit = js(
+    """
+    (function () {
+      if (!window.__mvHistoryNavigationInstalled) {
+        window.__mvHistoryNavigationInstalled = true;
+        window.addEventListener("popstate", function () { window.location.reload(); });
+      }
+      var hash = id ? ("#" + encodeURIComponent(String(id))) : "";
+      if (window.location.hash !== hash) {
+        window.history.pushState(window.history.state, "", window.location.pathname + window.location.search + hash);
+      }
+    })()
+    """,
+)
+
 // --- Live local-folder sync (window.__mvFolderSync) -------------------------------------------
 // A sibling of window.__mvProjectIo. Owns the File System Access API, IndexedDB (the picked
 // directory handle survives reloads there — it cannot go in localStorage), a polling watcher that
@@ -720,9 +747,20 @@ private fun ensureFolderSyncInstalled() {
           var scanning = false;
           var timer = null;
 
+          function setProjectHash(id) {
+            if (!id) return;
+            if (!window.__mvHistoryNavigationInstalled) {
+              window.__mvHistoryNavigationInstalled = true;
+              window.addEventListener("popstate", function () { window.location.reload(); });
+            }
+            var hash = "#" + encodeURIComponent(String(id));
+            if (window.location.hash === hash) return;
+            window.history.pushState(window.history.state, "", window.location.pathname + window.location.search + hash);
+          }
+
           function sourceLike(name) {
             var lower = String(name || "").toLowerCase();
-            return lower.endsWith(".layout.md") || lower.endsWith(".slm.md") || lower.endsWith(".slm") || lower.endsWith(".md");
+            return lower.endsWith(".layout.md") || lower.endsWith(".slm.md") || lower.endsWith(".slm") || lower.endsWith(".annotations.md");
           }
 
           function safeSeg(seg) {
@@ -769,8 +807,6 @@ private fun ensureFolderSyncInstalled() {
               var child = pair[1];
               if (child.kind === "file" && sourceLike(name)) {
                 out.push({ path: prefix + name, file: await child.getFile() });
-              } else if (child.kind === "directory") {
-                await walk(child, prefix + name + "/", out);
               }
             }
           }
@@ -896,6 +932,7 @@ private fun ensureFolderSyncInstalled() {
             try { await idbPut("root", handle); } catch (e) { console.error(e); }  // legacy "last active" pointer
             await initialScan();
             state.status = "watching";
+            setProjectHash(id);
             startWatcher();
           }
 
@@ -907,6 +944,39 @@ private fun ensureFolderSyncInstalled() {
             } catch (err) {
               console.error(err);
               state.status = "idle"; // user dismissed the picker or permission failed
+            }
+          }
+
+          async function createProject(sourcesJson) {
+            state.status = "connecting";
+            try {
+              var handle = await window.showDirectoryPicker({ id: "mv-folder-create", mode: "readwrite" });
+              var id = await resolveIdFor(handle);
+              state.handle = handle;
+              state.folderName = handle.name;
+              state.activeId = id;
+              state.lastError = null;
+              try { await idbPut("handles/" + id, handle); } catch (e) { console.error(e); }
+              try { await idbPut("root", handle); } catch (e) { console.error(e); }
+              var parsed = JSON.parse(sourcesJson || "{}");
+              var files = Array.isArray(parsed.files) ? parsed.files : [];
+              for (var i = 0; i < files.length; i++) {
+                var entry = files[i];
+                if (!entry || typeof entry.fileName !== "string" || typeof entry.content !== "string") continue;
+                var parts = entry.fileName.replace(/\\/g, "/").split("/");
+                var name = safeSeg(parts[parts.length - 1]);
+                var fileHandle = await handle.getFileHandle(name, { create: true });
+                var writable = await fileHandle.createWritable();
+                await writable.write(entry.content);
+                await writable.close();
+              }
+              await initialScan();
+              state.status = "watching";
+              setProjectHash(id);
+              startWatcher();
+            } catch (err) {
+              console.error(err);
+              state.status = "idle";
             }
           }
 
@@ -924,6 +994,7 @@ private fun ensureFolderSyncInstalled() {
               try { await idbPut("root", h); } catch (e) {}
               await initialScan();
               state.status = "watching";
+              setProjectHash(id);
               startWatcher();
             } catch (err) { console.error(err); state.status = "reconnect-needed"; state.lastError = "error"; }
           }
@@ -938,6 +1009,7 @@ private fun ensureFolderSyncInstalled() {
             if (perm !== "granted") { state.status = "reconnect-needed"; return; }
             await initialScan();
             state.status = "watching";
+            setProjectHash(state.activeId);
             startWatcher();
           }
 
@@ -961,8 +1033,20 @@ private fun ensureFolderSyncInstalled() {
               var h = await idbGet("root");
               if (!h) { state.status = "idle"; return; }
               state.handle = h; state.folderName = h.name;
+              // Restore the stable project id as well as the handle. This lets a retained browser
+              // permission resume pending disk writes without requiring the user to reopen the card.
+              state.activeId = await resolveIdFor(h);
               var perm = await h.queryPermission({ mode: "readwrite" });
-              if (perm === "granted") { await initialScan(); state.status = "watching"; startWatcher(); }
+              if (perm === "granted") {
+                await initialScan();
+                state.status = "watching";
+                // A background resume may flush pending writes, but it must not defeat browser
+                // Back navigation by pushing the folder id again after returning to the landing.
+                var token = (window.location.hash || "").replace(/^#\/?/, "").split(/[?\/]/)[0];
+                try { token = decodeURIComponent(token); } catch (e) {}
+                if (token === state.activeId) setProjectHash(state.activeId);
+                startWatcher();
+              }
               else { state.status = "reconnect-needed"; }
             } catch (err) { console.error(err); state.status = "reconnect-needed"; }
           }
@@ -1009,6 +1093,7 @@ private fun ensureFolderSyncInstalled() {
             get activeId() { return state.activeId; },
             get lastError() { return state.lastError; },
             connect: function () { connect(); },
+            createProject: function (sourcesJson) { createProject(sourcesJson); },
             connectById: function (id) { connectById(id); },
             reconnect: function () { reconnect(); },
             disconnect: function () { disconnect(); },
@@ -1040,6 +1125,16 @@ internal actual fun platformConnectFolderLive() {
 
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun folderSyncConnect(): Unit = js("window.__mvFolderSync.connect()")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformCreateFolderProject(sourcesJson: String) {
+    ensureFolderSyncInstalled()
+    folderSyncCreateProject(sourcesJson)
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun folderSyncCreateProject(sourcesJson: String): Unit =
+    js("window.__mvFolderSync.createProject(sourcesJson)")
 
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformReconnectSavedFolder() {
@@ -1091,8 +1186,9 @@ internal actual fun platformForgetFolder(id: String) {
 }
 
 // --- Startup landing (window.__mvLanding) -----------------------------------------------------
-// A DOM overlay shown over #compose-root on boot (below the #mv-loader intro, which fades to reveal
-// it). Renders the recent-project list + the always-present Welcome card from a JSON config Kotlin
+// A standalone DOM startup screen shown before the editor on boot (below the #mv-loader intro,
+// which fades to reveal it). While it is visible, #compose-root is hidden and inert. The screen
+// renders the recent-project list + the always-present Welcome card from a JSON config Kotlin
 // builds (localized strings + theme colors + recents). Folder cards reconnect via
 // window.__mvFolderSync.connectById inside the click gesture (so a permission re-grant is allowed).
 // The user's choice is read back through a small polled action queue (pendingAction).
@@ -1115,6 +1211,10 @@ private fun ensureLandingInstalled() {
           var keyHandler = null;
           var folderTimer = 0;
           var langMenuEl = null;
+          var editorVisibility = null;
+          var editorAriaHidden = null;
+          var editorWasInert = false;
+          var editorStateCaptured = false;
 
           function queue(a) { actions.push(a); }
 
@@ -1171,6 +1271,11 @@ private fun ensureLandingInstalled() {
               ".mvl-lang-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;color:var(--mvl-ink);border-radius:8px;padding:9px 10px;font:inherit;font-size:14px;cursor:pointer;}" +
               ".mvl-lang-item:hover{background:var(--mvl-card-hover);}" +
               ".mvl-lang-check{width:16px;flex:0 0 auto;display:inline-flex;justify-content:center;color:var(--mvl-accent);}" +
+              ".mvl-choice-backdrop{position:fixed;inset:0;z-index:" + (Z + 1) + ";display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(15,23,42,.28);}" +
+              ".mvl-choice{width:min(440px,100%);background:var(--mvl-card);border:1px solid var(--mvl-stroke);border-radius:16px;box-shadow:0 18px 54px rgba(15,23,42,.22);padding:22px;}" +
+              ".mvl-choice-title{font-size:18px;font-weight:700;color:var(--mvl-ink);margin:0 0 14px;}" +
+              ".mvl-choice-option{width:100%;display:flex;align-items:center;gap:12px;text-align:left;border:1px solid var(--mvl-stroke);background:var(--mvl-card);color:var(--mvl-ink);border-radius:11px;padding:13px 14px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;margin-top:10px;}" +
+              ".mvl-choice-option:hover{background:var(--mvl-card-hover);border-color:var(--mvl-accent);}" +
               "@media (max-width:520px){.mvl-title{font-size:20px;}.mvl-grid{grid-template-columns:1fr;}}";
           }
 
@@ -1188,7 +1293,7 @@ private fun ensureLandingInstalled() {
             // A div (not a button) so the optional remove <button> can nest without invalid markup.
             var card = el("div", "mvl-card");
             card.setAttribute("role", "button");
-            card.tabIndex = -1;   // keyboard is driven by the overlay's own arrow/Enter handling
+            card.tabIndex = -1;   // keyboard is driven by the screen's own arrow/Enter handling
             card.setAttribute("aria-label", meta ? (name + " — " + meta) : name);
             var ic = el("div", "mvl-ic"); ic.textContent = glyph; ic.setAttribute("aria-hidden", "true"); card.appendChild(ic);
             var body = el("div", "mvl-body");
@@ -1236,8 +1341,39 @@ private fun ensureLandingInstalled() {
 
           function stopFolderTimer() { if (folderTimer) { clearInterval(folderTimer); folderTimer = 0; } }
 
+          function enterLandingScreen() {
+            var editor = document.getElementById("compose-root");
+            if (!editor) return;
+            if (!editorStateCaptured) {
+              editorVisibility = editor.style.visibility || "";
+              editorAriaHidden = editor.getAttribute("aria-hidden");
+              editorWasInert = editor.hasAttribute("inert");
+              editorStateCaptured = true;
+            }
+            editor.style.visibility = "hidden";
+            editor.setAttribute("aria-hidden", "true");
+            editor.setAttribute("inert", "");
+            document.body.setAttribute("data-mv-screen", "landing");
+          }
+
+          function leaveLandingScreen() {
+            var editor = document.getElementById("compose-root");
+            if (editor) {
+              editor.style.visibility = editorVisibility === null ? "" : editorVisibility;
+              if (editorAriaHidden === null) editor.removeAttribute("aria-hidden");
+              else editor.setAttribute("aria-hidden", editorAriaHidden);
+              if (!editorWasInert) editor.removeAttribute("inert");
+            }
+            document.body.removeAttribute("data-mv-screen");
+            editorVisibility = null;
+            editorAriaHidden = null;
+            editorWasInert = false;
+            editorStateCaptured = false;
+          }
+
           function hide() {
             stopFolderTimer();
+            leaveLandingScreen();
             var root = document.getElementById(ROOT_ID);
             if (root) {
               root.classList.remove("mvl-in");
@@ -1249,10 +1385,9 @@ private fun ensureLandingInstalled() {
 
           function openWelcome() { queue({ type: "openWelcome" }); hide(); }
           function openRecovery() { queue({ type: "openRecovery" }); hide(); }
-          function dismiss() { queue({ type: "dismiss" }); hide(); }
 
           // Folder open (existing by id, or a fresh pick). The connect call runs inside this click
-          // gesture so a permission re-grant is permitted. Hides the overlay once the folder starts
+          // gesture so a permission re-grant is permitted. Leaves the screen once the folder starts
           // watching; Kotlin's folder-sync loop then adopts the snapshot and records the recent.
           function startConnect(initiator) {
             if (!window.__mvFolderSync) return;
@@ -1265,7 +1400,7 @@ private fun ensureLandingInstalled() {
               var st = fs.status;
               if (st === "connecting") sawConnecting = true;
               if (st === "watching") { stopFolderTimer(); hide(); }
-              // Denied / missing handle after a connecting phase: stop polling and leave the overlay
+              // Denied / missing handle after a connecting phase: stop polling and leave the screen
               // open so the user can retry or pick another project (rather than spin for 120s).
               else if (sawConnecting && (st === "idle" || st === "reconnect-needed")) { stopFolderTimer(); }
               else if (waited > 120000) { stopFolderTimer(); }
@@ -1273,6 +1408,30 @@ private fun ensureLandingInstalled() {
           }
           function openFolder(id) { startConnect(function () { window.__mvFolderSync.connectById(id); }); }
           function openNewFolder() { startConnect(function () { window.__mvFolderSync.connect(); }); }
+          function showProjectChoice() {
+            var old = document.getElementById("mvl-project-choice");
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            var backdrop = el("div", "mvl-choice-backdrop"); backdrop.id = "mvl-project-choice";
+            backdrop.addEventListener("click", function (e) { if (e.target === backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop); });
+            var dialog = el("div", "mvl-choice"); dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true");
+            var title = el("div", "mvl-choice-title"); title.textContent = STR.projectChoiceTitle; dialog.appendChild(title);
+            function option(glyph, label, run) {
+              var button = el("button", "mvl-choice-option"); button.type = "button";
+              var icon = el("span", "mvl-ic"); icon.textContent = glyph; icon.setAttribute("aria-hidden", "true"); button.appendChild(icon);
+              var text = el("span"); text.textContent = label; button.appendChild(text);
+              button.addEventListener("click", function (e) { e.preventDefault(); run(); });
+              dialog.appendChild(button);
+            }
+            option("＋", STR.createBrowserProject, function () { queue({ type: "createBrowserProject" }); hide(); });
+            option("📁", STR.openDiskProject, function () {
+              if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+              if (cfg.supportsFolders) openNewFolder();
+              else if (window.__mvProjectIo) window.__mvProjectIo.openFolder();
+            });
+            backdrop.appendChild(dialog);
+            var landingRoot = document.getElementById(ROOT_ID);
+            if (landingRoot) landingRoot.appendChild(backdrop);
+          }
           function dropCard(cardEl) {
             var idx = cards.indexOf(cardEl);
             if (idx >= 0) {
@@ -1301,7 +1460,7 @@ private fun ensureLandingInstalled() {
             return t;
           }
 
-          // Switch the overlay's language: re-render locally (all languages ship in the config) and
+          // Switch the screen's language: re-render locally (all languages ship in the config) and
           // queue the choice so Kotlin re-localizes the editor underneath and persists it.
           function selectLanguage(code) {
             closeLangMenu();
@@ -1339,8 +1498,8 @@ private fun ensureLandingInstalled() {
           }
 
           function render(token) {
-            // Idempotent: drop any prior overlay + its listener/timer so a re-render (language switch)
-            // or a repeated install never stacks a second overlay or leaks a keydown handler.
+            // Idempotent: replace any prior screen + its listener/timer so a re-render (language switch)
+            // or a repeated install never stacks a second screen or leaks a keydown handler.
             var existing = document.getElementById(ROOT_ID);
             var wasShowing = !!existing;   // a re-render (e.g. language switch) should swap instantly
             if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
@@ -1352,9 +1511,13 @@ private fun ensureLandingInstalled() {
             cards = [];
             selected = 0;
             var root = el("div"); root.id = ROOT_ID;
+            root.setAttribute("role", "main");
+            root.setAttribute("aria-label", STR.heading || "Open a project");
+            root.tabIndex = -1;
             applyColors(root);
-            // A click anywhere outside the language menu closes it; a click on the backdrop dismisses.
-            root.addEventListener("click", function (e) { closeLangMenu(); if (e.target === root) dismiss(); });
+            // This is a screen, not a dismissible dialog. Background clicks only close the
+            // language popover; choosing a project is the only route into the editor.
+            root.addEventListener("click", function () { closeLangMenu(); });
 
             var panel = el("div", "mvl-panel");
             var head = el("div", "mvl-head");
@@ -1363,13 +1526,9 @@ private fun ensureLandingInstalled() {
             var title = el("div", "mvl-title"); title.textContent = STR.heading; headText.appendChild(title);
             var sub = el("div", "mvl-sub"); sub.textContent = STR.subtitle; headText.appendChild(sub);
             head.appendChild(headText);
-            // Top-right actions: language switcher + close.
+            // Top-right action: language switcher.
             var actionsBar = el("div", "mvl-actions");
             actionsBar.appendChild(makeLangDropdown());
-            var close = el("button", "mvl-close"); close.type = "button"; close.textContent = "✕";
-            close.title = STR.dismiss; close.setAttribute("aria-label", STR.dismiss);
-            close.addEventListener("click", function (e) { e.preventDefault(); dismiss(); });
-            actionsBar.appendChild(close);
             head.appendChild(actionsBar);
             panel.appendChild(head);
 
@@ -1396,11 +1555,9 @@ private fun ensureLandingInstalled() {
               })(recents[i]);
             }
 
-            if (cfg.supportsFolders) {
-              var add = makeCard("+", STR.connectFolder, "", openNewFolder, null);
-              add.classList.add("mvl-add");
-              grid.appendChild(add); cards.push(add);
-            }
+            var add = makeCard("+", STR.connectFolder, "", showProjectChoice, null);
+            add.classList.add("mvl-add");
+            grid.appendChild(add); cards.push(add);
 
             panel.appendChild(grid);
 
@@ -1439,6 +1596,8 @@ private fun ensureLandingInstalled() {
 
             root.appendChild(panel);
             document.body.appendChild(root);
+            enterLandingScreen();
+            try { root.focus({ preventScroll: true }); } catch (_) { root.focus(); }
 
             // Preselect the deep-linked folder card if present, else Welcome.
             if (token) {
@@ -1451,7 +1610,10 @@ private fun ensureLandingInstalled() {
             keyHandler = function (e) {
               if (e.key === "Escape") {
                 e.preventDefault();
-                if (langMenuEl && langMenuEl.classList.contains("mvl-open")) closeLangMenu(); else dismiss();
+                var choice = document.getElementById("mvl-project-choice");
+                if (choice && choice.parentNode) choice.parentNode.removeChild(choice);
+                else if (langMenuEl && langMenuEl.classList.contains("mvl-open")) closeLangMenu();
+                // No action on the startup screen itself: Escape must not silently open Welcome.
               }
               else if (e.key === "Enter") { e.preventDefault(); if (cards[selected] && cards[selected].__open) cards[selected].__open(); }
               else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); move(1); }
@@ -1471,7 +1633,24 @@ private fun ensureLandingInstalled() {
               if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
               var token = deepLinkToken();
               if (token === "welcome") { queue({ type: "openWelcome" }); return; }  // deep-link straight to Welcome
+              if (token && cfg.browserProjectId === token) { queue({ type: "openRecovery" }); return; }
               render(token);
+              if (token) {
+                var recents = cfg.recents || [];
+                var isFolder = false;
+                for (var i = 0; i < recents.length; i++) {
+                  if (recents[i].kind === "localFolder" && recents[i].id === token) { isFolder = true; break; }
+                }
+                if (isFolder) {
+                  var attempts = 0;
+                  var openWhenReady = function () {
+                    attempts += 1;
+                    if (window.__mvFolderSync) openFolder(token);
+                    else if (attempts < 20) setTimeout(openWhenReady, 50);
+                  };
+                  setTimeout(openWhenReady, 0);
+                }
+              }
             },
             hide: function () { hide(); },
             pendingAction: function () { return actions.length ? JSON.stringify(actions.shift()) : null; }
