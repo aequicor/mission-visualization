@@ -89,4 +89,41 @@ class CreateScreenSourceTest {
         assertEquals(1440.0, root.size.width)
         assertEquals(1024.0, root.size.height)
     }
+
+    /**
+     * Regression: a brand-new (empty) project — an empty source set, whose merged working document
+     * is null — must still be able to create its first screen. The reducer synthesizes a blank base
+     * document, so the create is no longer silently dropped; the new page becomes the working
+     * document and its standalone source is appended and round-trips.
+     */
+    @Test
+    fun createScreenOnEmptyProjectMintsFirstScreen() {
+        val before = createDesignEditorState(compileMissionDocuments(emptyList()))
+        // Precondition: a blank project has no working document and no sources.
+        assertEquals(null, before.document, "blank project has a null working document")
+        assertTrue(before.sources.isEmpty(), "blank project has no sources")
+
+        val next = reduceDesignEditor(before, DesignEditorIntent.CreateScreen(ScreenPreset.Mobile, "First Screen"))
+
+        // The first screen is now the working document and the sole appended source.
+        assertEquals(1, next.document?.pages?.size, "first page added to a previously-empty document")
+        assertEquals(1, next.sources.size, "first source appended")
+        val pageId = next.selectedPageId
+        val rootFrameId = next.selectedNodeId
+        assertTrue(pageId.isNotBlank(), "a page was selected")
+        assertTrue(rootFrameId.isNotBlank(), "the root frame was selected")
+        assertEquals("$pageId.layout.md", next.sources.single().fileName, "source named after the screen id")
+        assertEquals(listOf(emptyList()), next.previousSources, "source undo captured the empty pre-edit list")
+
+        // The appended source compiles cleanly and a full recompile reproduces the mobile screen.
+        val compiled = assertNotNull(next.compiledResults.singleOrNull(), "one compile result")
+        assertTrue(compiled.diagnostics.none { it.severity == DesignSeverity.Error }, "new source compiles cleanly")
+        val remerged = compileMissionDocuments(next.sources)
+        assertTrue(remerged.diagnostics.none { it.severity == DesignSeverity.Error }, "merged recompile clean")
+        val recompiledPage = assertNotNull(remerged.document?.pages?.firstOrNull { it.id == pageId }, "page after remerge")
+        val recompiledRoot = assertNotNull(recompiledPage.children.firstOrNull(), "root frame after remerge")
+        assertEquals(rootFrameId, recompiledRoot.id, "root frame id round-trips")
+        assertEquals(375.0, recompiledRoot.size.width, "mobile preset width round-trips")
+        assertEquals(812.0, recompiledRoot.size.height, "mobile preset height round-trips")
+    }
 }

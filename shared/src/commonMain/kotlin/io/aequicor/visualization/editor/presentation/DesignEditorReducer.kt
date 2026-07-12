@@ -1010,7 +1010,12 @@ private fun DesignEditorState.detachInstanceReduce(nodeId: String): DesignEditor
  * page only, leaving every existing source byte-identical — non-corrupting by construction.
  */
 private fun DesignEditorState.createScreenWriteBack(intent: DesignEditorIntent.CreateScreen): DesignEditorState {
-    val document = document ?: return this
+    // A brand-new (empty) project has no working document yet: the empty source set compiles to a
+    // null document. Synthesize a blank one so the very first screen is minted exactly like a
+    // screen added to a populated document — the write-back below then grows the empty source list
+    // (sources/compiledResults both start empty, so the consistency guard passes) and the screen
+    // persists instead of the create being silently dropped.
+    val document = document ?: DesignDocument()
     val page = EditorNodeFactory.newScreen(document, intent.preset, intent.title)
     val rootId = page.children.firstOrNull()?.id.orEmpty()
     val inMemory = pushHistory(document).copy(
