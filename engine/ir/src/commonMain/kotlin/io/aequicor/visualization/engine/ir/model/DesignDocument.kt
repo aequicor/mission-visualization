@@ -213,3 +213,16 @@ data class DesignAsset(
     val width: Double? = null,
     val height: Double? = null,
 )
+
+/**
+ * True when [assetId] is a self-describing external reference — a bundled project resource
+ * (`res/…`), an absolute URL, or a data URI — rather than an id that must resolve through the
+ * document's [DesignDocument.assets] registry. Such refs are their own url: the resolver surfaces
+ * the id as the url and the unknown-asset validation exempts them, since the app dereferences the
+ * bytes at render time (see the image-asset render provider).
+ */
+fun isSelfDescribingAssetRef(assetId: String): Boolean =
+    assetId.startsWith("res/") ||
+        assetId.startsWith("http://", ignoreCase = true) ||
+        assetId.startsWith("https://", ignoreCase = true) ||
+        assetId.startsWith("data:", ignoreCase = true)

@@ -40,6 +40,11 @@ interface CanvasStrings {
 
     // Scene stage.
     val trace: String
+
+    // External-image ingestion (drag-drop / paste) affordances.
+    val dropImageHere: String
+    val ingestUnsupportedType: String
+    val ingestReadFailed: String
 }
 
 object CanvasStringsEn : CanvasStrings {
@@ -72,6 +77,10 @@ object CanvasStringsEn : CanvasStrings {
     override val close = "Close"
 
     override val trace = "Trace"
+
+    override val dropImageHere = "Drop image to add it to the project"
+    override val ingestUnsupportedType = "That file isn't a supported image (PNG, JPG, SVG, GIF, WebP)."
+    override val ingestReadFailed = "Couldn't read that image file."
 }
 
 object CanvasStringsRu : CanvasStrings {
@@ -104,4 +113,8 @@ object CanvasStringsRu : CanvasStrings {
     override val close = "Закрыть"
 
     override val trace = "Трасса"
+
+    override val dropImageHere = "Отпустите изображение, чтобы добавить его в проект"
+    override val ingestUnsupportedType = "Это не поддерживаемое изображение (PNG, JPG, SVG, GIF, WebP)."
+    override val ingestReadFailed = "Не удалось прочитать файл изображения."
 }

@@ -13,6 +13,7 @@ import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 import io.aequicor.visualization.subsystems.diagrams.model.UmlComponentNode
 import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.DesignSize
@@ -188,6 +189,40 @@ class StructuralWriteBackTest {
 
         next.assertWroteBack(before)
         assertEquals(listOf(before.sources), next.previousSources, "source undo captured the pre-edit sources")
+    }
+
+    @Test
+    fun addResourceMediaWritesBackAndPersists() {
+        val before = freshState()
+        val rootFrame = "frame_overview"
+        assertNotNull(before.document?.nodeById(rootFrame), "root frame present")
+
+        val next = reduceDesignEditor(
+            before,
+            DesignEditorIntent.AddResourceMedia(
+                parentId = rootFrame, resPath = "res/photo.png", name = "photo.png",
+                x = 40.0, y = 40.0, width = 240.0, height = 180.0,
+            ),
+        )
+
+        // Working document mirrors the create: an on-top media node referencing the resource.
+        val mediaId = next.selectedNodeId
+        val created = assertNotNull(next.document?.nodeById(mediaId), "media node in document")
+        val media = assertNotNull((created.kind as? DesignNodeKind.Media)?.media, "is a media node")
+        assertEquals("res/photo.png", media.assetId.literalOrNull(), "assetId is the resource ref")
+        assertTrue(created.order != null && created.order!! > 0, "given an on-top z-order")
+
+        // Persistence: the owning SLM source gained the media section, and it recompiles faithfully.
+        val source = next.sourceOf(owningFile)
+        assertTrue(mediaId in source, "media id written to source")
+        assertTrue("res/photo.png" in source, "resource ref written to source")
+        val recompiled = assertNotNull(next.compiledDocumentOf(owningFile), "owning source recompiled")
+        val recompiledMedia = assertNotNull(
+            (recompiled.nodeById(mediaId)?.kind as? DesignNodeKind.Media)?.media,
+            "media node present after recompile",
+        )
+        assertEquals("res/photo.png", recompiledMedia.assetId.literalOrNull(), "assetId survives recompile")
+        next.assertWroteBack(before)
     }
 
     @Test

@@ -5,6 +5,7 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
+import io.aequicor.visualization.engine.ir.model.isSelfDescribingAssetRef
 import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.literalOrNull
@@ -48,6 +49,9 @@ internal object MediaAssetChecks {
         expectedType: String? = null,
     ) {
         if (assetId.isEmpty()) return
+        // A self-describing resource ref (res/…, absolute URL, data URI) needs no registry entry:
+        // the app dereferences it at render time, so it is neither unknown nor type-checkable here.
+        if (isSelfDescribingAssetRef(assetId)) return
         val asset = ctx.document.assets[assetId]
         if (asset == null) {
             sink += validationError(

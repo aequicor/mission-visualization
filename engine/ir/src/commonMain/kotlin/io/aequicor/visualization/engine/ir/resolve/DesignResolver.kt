@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.ir.resolve
 
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.isSelfDescribingAssetRef
 import io.aequicor.visualization.engine.ir.model.DataValue
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignAnchors
@@ -574,12 +575,21 @@ class DesignResolver(
     }
 
     /** Media lowers to an image/video placeholder fill plus a carried [ResolvedMedia]. */
+    /**
+     * The url an asset id dereferences to: the registered asset's url, else the id itself when it
+     * is a self-describing resource ref (`res/…`, absolute URL, data URI) the app loads at render
+     * time, else empty (an unresolved registry id — a missing-asset placeholder).
+     */
+    private fun assetUrl(assetId: String): String =
+        document.assets[assetId]?.url?.takeIf { it.isNotEmpty() }
+            ?: assetId.takeIf { isSelfDescribingAssetRef(it) }.orEmpty()
+
     private fun resolveMedia(media: DesignMedia, scope: Scope): ResolvedMedia {
         val assetId = resolveString(media.assetId, scope, "")
         val asset = document.assets[assetId]
         return ResolvedMedia(
             assetId = assetId,
-            url = asset?.url.orEmpty(),
+            url = assetUrl(assetId),
             kind = media.kind,
             fillMode = media.fillMode,
             focalPoint = media.focalPoint?.let { resolvePoint(it, scope) },
@@ -853,14 +863,14 @@ class DesignResolver(
             )
             is DesignPaint.Image -> ResolvedPaint.Image(
                 assetId = paint.assetId,
-                url = document.assets[paint.assetId]?.url.orEmpty(),
+                url = assetUrl(paint.assetId),
                 scaleMode = paint.scaleMode,
                 opacity = opacity,
             )
             // Until video rendering lands, a video paint draws like the image placeholder.
             is DesignPaint.Video -> ResolvedPaint.Image(
                 assetId = paint.assetId,
-                url = document.assets[paint.assetId]?.url.orEmpty(),
+                url = assetUrl(paint.assetId),
                 scaleMode = paint.scaleMode,
                 opacity = opacity,
             )
