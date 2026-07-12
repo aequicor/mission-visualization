@@ -566,3 +566,319 @@ private fun callToggleFullscreen(): Unit =
 private fun openUrlInBrowser(url: String): Unit = js("{ window.open(url, '_blank'); }")
 
 internal actual fun platformOpenUrl(url: String) = openUrlInBrowser(url)
+
+// --- Live local-folder sync (window.__mvFolderSync) -------------------------------------------
+// A sibling of window.__mvProjectIo. Owns the File System Access API, IndexedDB (the picked
+// directory handle survives reloads there — it cannot go in localStorage), a polling watcher that
+// re-reads externally-changed *.layout.md, and echo-suppressed write-back. Kotlin drives it purely
+// through the synchronous getters below plus a coroutine that polls `revision`.
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun ensureFolderSyncInstalled() {
+    js(
+        """
+        (function () {
+          if (window.__mvFolderSync) return;
+
+          var ECHO_WINDOW_MS = 4000;
+          var POLL_MS = 500;
+
+          var state = { handle: null, status: "idle", folderName: null, revision: 0, snapshotJson: null };
+          var meta = {};             // path -> { mtime, size }
+          var publishedByName = {};  // path -> content: our notion of what is on disk (the base)
+          var writtenEcho = {};      // path -> { hash, expiry }: suppress our own writes
+          var pendingSig = null;     // settle: last-seen signature awaiting one stable tick
+          var scanning = false;
+          var timer = null;
+
+          function sourceLike(name) {
+            var lower = String(name || "").toLowerCase();
+            return lower.endsWith(".layout.md") || lower.endsWith(".slm.md") || lower.endsWith(".slm") || lower.endsWith(".md");
+          }
+
+          function safeSeg(seg) {
+            // Names come from files we READ, so keep them verbatim to round-trip on write;
+            // only guard empty segments and path traversal.
+            var cleaned = String(seg || "").trim();
+            if (cleaned === "" || cleaned === "." || cleaned === "..") return "screen.layout.md";
+            return cleaned;
+          }
+
+          function hashStr(s) {
+            var h = 0x811c9dc5;
+            for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 0x01000193) >>> 0; }
+            return h >>> 0;
+          }
+
+          function idbOpen() {
+            return new Promise(function (resolve, reject) {
+              var req = window.indexedDB.open("mv-folder-sync", 1);
+              req.onupgradeneeded = function () { req.result.createObjectStore("kv"); };
+              req.onsuccess = function () { resolve(req.result); };
+              req.onerror = function () { reject(req.error); };
+            });
+          }
+          function idbReq(mode, run) {
+            return idbOpen().then(function (db) {
+              return new Promise(function (resolve, reject) {
+                var tx = db.transaction("kv", mode);
+                var store = tx.objectStore("kv");
+                var out = run(store);
+                tx.oncomplete = function () { resolve(out && out.result !== undefined ? out.result : null); };
+                tx.onerror = function () { reject(tx.error); };
+              });
+            });
+          }
+          function idbGet(key) { return idbReq("readonly", function (s) { return s.get(key); }); }
+          function idbPut(key, val) { return idbReq("readwrite", function (s) { s.put(val, key); return null; }); }
+          function idbDelete(key) { return idbReq("readwrite", function (s) { s.delete(key); return null; }); }
+
+          async function walk(dir, prefix, out) {
+            for await (var pair of dir.entries()) {
+              var name = pair[0];
+              var child = pair[1];
+              if (child.kind === "file" && sourceLike(name)) {
+                out.push({ path: prefix + name, file: await child.getFile() });
+              } else if (child.kind === "directory") {
+                await walk(child, prefix + name + "/", out);
+              }
+            }
+          }
+
+          async function listSources() {
+            var out = [];
+            await walk(state.handle, "", out);
+            out.sort(function (a, b) { return a.path.localeCompare(b.path); });
+            return out;
+          }
+
+          function signatureOf(list) {
+            return list.map(function (it) { return it.path + ":" + it.file.lastModified + ":" + it.file.size; }).join("|");
+          }
+
+          function buildSnapshot() {
+            var files = Object.keys(publishedByName).sort().map(function (name) {
+              return { fileName: name, content: publishedByName[name] };
+            });
+            state.snapshotJson = JSON.stringify({ projectName: state.folderName || "", files: files });
+          }
+
+          async function initialScan() {
+            var list = await listSources();
+            meta = {}; publishedByName = {};
+            for (var i = 0; i < list.length; i++) {
+              var it = list[i];
+              meta[it.path] = { mtime: it.file.lastModified, size: it.file.size };
+              publishedByName[it.path] = await it.file.text();
+            }
+            pendingSig = signatureOf(list);
+            buildSnapshot();
+            state.revision += 1;
+          }
+
+          async function scan() {
+            if (scanning || state.status !== "watching" || !state.handle) return;
+            scanning = true;
+            try {
+              var list = await listSources();
+              var sig = signatureOf(list);
+              var current = {};
+              var changed = false;
+              for (var i = 0; i < list.length; i++) {
+                var it = list[i];
+                current[it.path] = true;
+                var m = meta[it.path];
+                if (!m || m.mtime !== it.file.lastModified || m.size !== it.file.size) changed = true;
+              }
+              for (var gone in meta) { if (!current[gone]) changed = true; }
+              if (!changed) { pendingSig = sig; return; }
+              // Settle: only read content once the on-disk signature is stable for one extra tick,
+              // so a half-written overwrite is never parsed.
+              if (sig !== pendingSig) { pendingSig = sig; return; }
+
+              var now = Date.now();
+              var nextMeta = {};
+              var nextPublished = {};
+              var external = false;
+              for (var j = 0; j < list.length; j++) {
+                var e = list[j];
+                nextMeta[e.path] = { mtime: e.file.lastModified, size: e.file.size };
+                var content = await e.file.text();
+                nextPublished[e.path] = content;
+                var prev = publishedByName[e.path];
+                if (prev === content) continue;
+                var echo = writtenEcho[e.path];
+                if (echo && echo.expiry > now && echo.hash === hashStr(content)) continue; // our own write
+                external = true;
+              }
+              for (var removed in publishedByName) { if (!current[removed]) external = true; }
+              meta = nextMeta;
+              publishedByName = nextPublished;
+              if (external) { buildSnapshot(); state.revision += 1; }
+            } catch (err) {
+              console.error(err);
+            } finally {
+              scanning = false;
+            }
+          }
+
+          function startWatcher() { if (!timer) timer = window.setInterval(function () { scan(); }, POLL_MS); }
+          function stopWatcher() { if (timer) { window.clearInterval(timer); timer = null; } }
+
+          async function resolveFileHandle(path, create) {
+            var segs = path.split("/").filter(function (s) { return s.length > 0; });
+            var dir = state.handle;
+            for (var i = 0; i < segs.length - 1; i++) {
+              dir = await dir.getDirectoryHandle(safeSeg(segs[i]), { create: create });
+            }
+            return await dir.getFileHandle(safeSeg(segs[segs.length - 1]), { create: create });
+          }
+
+          async function connect() {
+            state.status = "connecting";
+            try {
+              var handle = await window.showDirectoryPicker({ id: "mv-folder-sync", mode: "readwrite" });
+              state.handle = handle;
+              state.folderName = handle.name;
+              try { await idbPut("root", handle); } catch (e) { console.error(e); }
+              await initialScan();
+              state.status = "watching";
+              startWatcher();
+            } catch (err) {
+              console.error(err);
+              state.status = "idle"; // user dismissed the picker or permission failed
+            }
+          }
+
+          async function grantAndWatch() {
+            var perm = await state.handle.queryPermission({ mode: "readwrite" });
+            if (perm !== "granted") perm = await state.handle.requestPermission({ mode: "readwrite" });
+            if (perm !== "granted") { state.status = "reconnect-needed"; return; }
+            await initialScan();
+            state.status = "watching";
+            startWatcher();
+          }
+
+          async function reconnect() {
+            try {
+              if (!state.handle) {
+                var h = await idbGet("root");
+                if (!h) { state.status = "idle"; return; }
+                state.handle = h; state.folderName = h.name;
+              }
+              state.status = "connecting";
+              await grantAndWatch();
+            } catch (err) { console.error(err); state.status = "reconnect-needed"; }
+          }
+
+          async function probe() {
+            try {
+              var h = await idbGet("root");
+              if (!h) { state.status = "idle"; return; }
+              state.handle = h; state.folderName = h.name;
+              var perm = await h.queryPermission({ mode: "readwrite" });
+              if (perm === "granted") { await initialScan(); state.status = "watching"; startWatcher(); }
+              else { state.status = "reconnect-needed"; }
+            } catch (err) { console.error(err); state.status = "reconnect-needed"; }
+          }
+
+          function disconnect() {
+            stopWatcher();
+            state.handle = null;
+            state.status = "idle";
+            state.snapshotJson = null;
+            meta = {}; publishedByName = {}; writtenEcho = {};
+            idbDelete("root").catch(function () {});
+          }
+
+          async function writeFile(name, content) {
+            if (!state.handle || state.status !== "watching") return;
+            try {
+              var existing = null;
+              try { existing = await (await (await resolveFileHandle(name, false)).getFile()).text(); } catch (e) { existing = null; }
+              var base = publishedByName[name];
+              // Pre-write concurrency guard: if the file drifted from our base, an external edit
+              // landed since we last synced — do not clobber it. The watcher surfaces it inbound.
+              if (existing !== null && base !== undefined && existing !== base) return;
+              if (existing === content) { publishedByName[name] = content; return; }
+              var target = await resolveFileHandle(name, true);
+              var writable = await target.createWritable();
+              await writable.write(content);
+              await writable.close();
+              var f = await target.getFile();
+              meta[name] = { mtime: f.lastModified, size: f.size };
+              publishedByName[name] = content;
+              writtenEcho[name] = { hash: hashStr(content), expiry: Date.now() + ECHO_WINDOW_MS };
+            } catch (err) { console.error(err); }
+          }
+
+          window.__mvFolderSync = {
+            get revision() { return state.revision; },
+            get status() { return state.status; },
+            get folderName() { return state.folderName; },
+            get snapshotJson() { return state.snapshotJson; },
+            connect: function () { connect(); },
+            reconnect: function () { reconnect(); },
+            disconnect: function () { disconnect(); },
+            writeFile: function (name, content) { writeFile(name, content); }
+          };
+          probe();
+        })();
+        """
+    )
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun detectFolderSyncSupport(): Boolean =
+    js("(typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function' && typeof window.indexedDB !== 'undefined')")
+
+internal actual val platformSupportsFolderSync: Boolean = detectFolderSyncSupport()
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformInitFolderSync() {
+    if (platformSupportsFolderSync) ensureFolderSyncInstalled()
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformConnectFolderLive() {
+    ensureFolderSyncInstalled()
+    folderSyncConnect()
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun folderSyncConnect(): Unit = js("window.__mvFolderSync.connect()")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformReconnectSavedFolder() {
+    ensureFolderSyncInstalled()
+    folderSyncReconnect()
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun folderSyncReconnect(): Unit = js("window.__mvFolderSync.reconnect()")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformDisconnectFolder() {
+    js("if (window.__mvFolderSync) window.__mvFolderSync.disconnect()")
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformSavedFolderName(): String? =
+    js("(window.__mvFolderSync ? window.__mvFolderSync.folderName : null)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun folderSyncRevision(): Int =
+    js("(window.__mvFolderSync ? window.__mvFolderSync.revision : 0)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun folderSyncSnapshotJson(): String? =
+    js("(window.__mvFolderSync ? window.__mvFolderSync.snapshotJson : null)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun folderSyncStatus(): String? =
+    js("(window.__mvFolderSync ? window.__mvFolderSync.status : null)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformWriteFolderFile(fileName: String, content: String) {
+    js("if (window.__mvFolderSync) window.__mvFolderSync.writeFile(fileName, content)")
+}

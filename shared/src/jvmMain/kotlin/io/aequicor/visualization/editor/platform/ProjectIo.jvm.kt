@@ -28,3 +28,23 @@ internal actual fun platformOpenUrl(url: String) {
         }
     }
 }
+
+internal actual val platformSupportsFolderSync: Boolean = false
+
+internal actual fun platformInitFolderSync() = Unit
+
+internal actual fun platformConnectFolderLive() = Unit
+
+internal actual fun platformReconnectSavedFolder() = Unit
+
+internal actual fun platformDisconnectFolder() = Unit
+
+internal actual fun platformSavedFolderName(): String? = null
+
+internal actual fun folderSyncRevision(): Int = 0
+
+internal actual fun folderSyncSnapshotJson(): String? = null
+
+internal actual fun folderSyncStatus(): String? = null
+
+internal actual fun platformWriteFolderFile(fileName: String, content: String) = Unit
