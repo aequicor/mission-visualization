@@ -67,13 +67,6 @@ Compose-превью с оверлеями (выделение, инспекто
     upsert/delete секции; спека — `design-book/annotations-sidecar-format.md`). Потребитель —
     `:shared` (интенты + `writeBackAnnotations`, оверлей в канве, секция инспектора, экспорт).
 - `:androidApp`, `:desktopApp`, `:webApp`, `iosApp` — тонкие обёртки над shared UI.
-- `:tools:agent-console` — headless-автоматизация для ИИ-агента (JVM CLI): агент правит CNL
-  `*.layout.md` своими инструментами, консоль компилирует/валидирует/рендерит —
-  `render` (экран→PNG через off-screen `ImageComposeScene`, реальные шрифты/текст),
-  `screens`/`inspect` (JSON: список экранов / дерево с вычисленной геометрией), `validate`
-  (IR-* диагностика, exit 2 при error), `export-samples`, `create-screen`. Ядро
-  (`AgentSession`/`HeadlessRenderer`/`AgentProject`) UI-агностично — под будущий MCP-сервер.
-  См. `tools/agent-console/README.md`.
 
 Документация конвейера — `engine/README.md`; спецификация SLM —
 `design-book/semantic-layout-markdown-i18n.md`; редактор — `EDITOR.md`.
