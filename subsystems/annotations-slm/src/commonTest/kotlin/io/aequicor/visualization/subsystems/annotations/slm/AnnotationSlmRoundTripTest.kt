@@ -11,6 +11,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/** Round-trip contract for the examples and rules published in `SKILLS/SLM-annotations.md`. */
 class AnnotationSlmRoundTripTest {
 
     private fun roundTrip(layer: AnnotationLayer): AnnotationSlmParseResult =

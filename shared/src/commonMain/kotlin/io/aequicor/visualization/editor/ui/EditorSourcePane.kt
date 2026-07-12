@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -62,6 +63,8 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -71,17 +74,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.aequicor.visualization.AppBuildInfo
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.data.composeAgentFile
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
+import io.aequicor.visualization.editor.domain.AppLanguage
+import io.aequicor.visualization.editor.domain.AgentFileSelection
+import io.aequicor.visualization.editor.domain.AgentSkillId
 import io.aequicor.visualization.editor.platform.CanvasExportCrop
 import io.aequicor.visualization.editor.platform.platformAppendCanvasPdfPage
 import io.aequicor.visualization.editor.platform.platformBeginPdfExport
+import io.aequicor.visualization.editor.platform.platformDownloadAgentFile
 import io.aequicor.visualization.editor.platform.platformDownloadProjectZip
 import io.aequicor.visualization.editor.platform.platformExportCanvasPng
 import io.aequicor.visualization.editor.platform.platformFinishPdfExport
 import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
 import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
 import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
-import io.aequicor.visualization.editor.domain.AppLanguage
+import io.aequicor.visualization.editor.platform.platformSupportsAgentFileExport
 import io.aequicor.visualization.editor.platform.platformSupportsProjectDiskIo
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
@@ -94,6 +102,7 @@ import io.aequicor.visualization.editor.presentation.SourceTab
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.resolveLayerDropTarget
 import io.aequicor.visualization.editor.ui.strings.LocalStrings
+import io.aequicor.visualization.editor.ui.strings.MenuStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPage
@@ -128,9 +137,11 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
 private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var menuExpanded by remember { mutableStateOf(false) }
     var menuPane by remember { mutableStateOf(ProjectMenuPane.Root) }
+    var selectedAgentSkills by remember { mutableStateOf(emptySet<AgentSkillId>()) }
 
     fun openRootMenu() {
         menuPane = ProjectMenuPane.Root
@@ -169,6 +180,12 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                         EditorDropdownMenuItem(strings.menu.open, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) { menuPane = ProjectMenuPane.Open }
                         EditorDropdownMenuItem(strings.menu.save, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) { menuPane = ProjectMenuPane.Save }
                         EditorDropdownMenuItem(strings.menu.export, leadingContent = { DropdownMenuIcon(EditorIcon.Export) }) { menuPane = ProjectMenuPane.Export }
+                        if (platformSupportsAgentFileExport) {
+                            EditorDropdownMenuItem(strings.menu.agentFile, leadingContent = { DropdownMenuIcon(EditorIcon.Markdown) }) {
+                                selectedAgentSkills = emptySet()
+                                menuPane = ProjectMenuPane.AgentSkills
+                            }
+                        }
                         EditorDropdownMenuItem(
                             "${strings.menu.language}: ${state.language.nativeName}",
                             leadingContent = { DropdownMenuIcon(EditorIcon.Language) },
@@ -233,6 +250,63 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             scope.launch { exportAllScreensPdf(state) }
                         }
                     }
+                    ProjectMenuPane.AgentSkills -> {
+                        ProjectMenuSectionTitle(strings.menu.agentSkillsTitle)
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) {
+                            menuPane = ProjectMenuPane.Root
+                        }
+                        EditorDropdownMenuItem(
+                            text = strings.menu.agentBaseSkill,
+                            leadingContent = {
+                                Checkbox(
+                                    checked = true,
+                                    onCheckedChange = null,
+                                    modifier = Modifier.size(18.dp),
+                                    enabled = false,
+                                )
+                            },
+                            enabled = false,
+                        ) {}
+                        agentSkillRows(strings.menu).forEach { (skillId, label) ->
+                            val selected = skillId in selectedAgentSkills
+                            EditorDropdownMenuItem(
+                                text = label,
+                                leadingContent = {
+                                    Checkbox(
+                                        checked = selected,
+                                        onCheckedChange = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                            ) {
+                                selectedAgentSkills = selectedAgentSkills.withSkill(skillId, !selected)
+                            }
+                        }
+                        EditorDropdownMenuItem(strings.menu.agentNext, leadingContent = { DropdownMenuIcon(EditorIcon.Check) }) {
+                            menuPane = ProjectMenuPane.AgentOutput
+                        }
+                    }
+                    ProjectMenuPane.AgentOutput -> {
+                        ProjectMenuSectionTitle(strings.menu.agentOutputTitle)
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) {
+                            menuPane = ProjectMenuPane.AgentSkills
+                        }
+                        EditorDropdownMenuItem(strings.menu.downloadAgentsFile, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
+                            val markdown = composeAgentFile(AgentFileSelection(includedSkillIds = selectedAgentSkills))
+                            platformDownloadAgentFile("AGENTS.md", markdown)
+                            closeMenu()
+                        }
+                        EditorDropdownMenuItem(strings.menu.downloadClaudeFile, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
+                            val markdown = composeAgentFile(AgentFileSelection(includedSkillIds = selectedAgentSkills))
+                            platformDownloadAgentFile("CLAUDE.md", markdown)
+                            closeMenu()
+                        }
+                        EditorDropdownMenuItem(strings.menu.copyAgentFile, leadingContent = { DropdownMenuIcon(EditorIcon.Duplicate) }) {
+                            val markdown = composeAgentFile(AgentFileSelection(includedSkillIds = selectedAgentSkills))
+                            clipboard.setText(AnnotatedString(markdown))
+                            closeMenu()
+                        }
+                    }
                     ProjectMenuPane.Language -> {
                         EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
                         AppLanguage.entries.forEach { language ->
@@ -264,7 +338,34 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     }
 }
 
-private enum class ProjectMenuPane { Root, Open, Save, Export, Language }
+private enum class ProjectMenuPane { Root, Open, Save, Export, AgentSkills, AgentOutput, Language }
+
+private fun Set<AgentSkillId>.withSkill(skillId: AgentSkillId, included: Boolean): Set<AgentSkillId> =
+    if (included) this + skillId else this - skillId
+
+private fun agentSkillRows(strings: MenuStrings): List<Pair<AgentSkillId, String>> =
+    listOf(
+        AgentSkillId.DIAGRAMS to strings.agentDiagramsSkill,
+        AgentSkillId.VECTOR_GRAPHICS to strings.agentVectorGraphicsSkill,
+        AgentSkillId.TYPOGRAPHY to strings.agentTypographySkill,
+        AgentSkillId.ANNOTATIONS to strings.agentAnnotationsSkill,
+        AgentSkillId.EDITOR to strings.agentEditorSkill,
+    )
+
+@Composable
+private fun ProjectMenuSectionTitle(title: String) {
+    val colors = LocalEditorColors.current
+    Text(
+        text = title,
+        modifier = Modifier.width(260.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = colors.mutedInk,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
 
 @Composable
 private fun ProjectMenuTitleBar(projectName: String, version: String) {

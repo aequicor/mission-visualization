@@ -8,8 +8,9 @@ import kotlin.test.assertTrue
 
 /**
  * Doc-examples guard: the CNL examples published in
- * `design-book/semantic-layout-markdown-i18n.md` must compile without error
- * diagnostics. Keep this file in sync when editing the spec's examples.
+ * `design-book/semantic-layout-markdown-i18n.md` and the canonical `SKILLS/SLM*.md`
+ * authoring guides must compile without error diagnostics. Keep this file and
+ * [CnlSkillExamplesTest] in sync when editing published examples.
  */
 class CnlDocExamplesTest {
 
@@ -27,6 +28,10 @@ class CnlDocExamplesTest {
         assertTrue(
             result.diagnostics.none { it.severity == DesignSeverity.Error },
             "doc example must compile without errors:\n$body\n-> ${result.diagnostics}",
+        )
+        assertTrue(
+            result.diagnostics.none { "[CNL:" in it.message },
+            "doc example must not rely on dropped/unknown CNL:\n$body\n-> ${result.diagnostics}",
         )
     }
 
@@ -138,6 +143,10 @@ class CnlDocExamplesTest {
             Button «Create» onClick openOverlay (createMissionDialog) overlay (position center closeOnOutside true background #00000052) animate (type smartAnimate easing easeOut duration 220)
             Button «Select» onClick setVariable (selectedMissionId) to ({{mission.id}})
             Button «Highlight» onClick changeToVariant (missionCard) variant (state selected)
+            Button «Scroll» onClick scrollTo (details) animated (false)
+            Button «Back» onClick back
+            Button «Docs» onClick openLink («https://example.com/docs»)
+            Frame id details visible {{isCreateDialogOpen}}
             Rectangle 24 by 24 color #2563EB motion (duration 900 loop frames (at 0 opacity 0.4) (at 0.5 opacity 1) (at 1 opacity 0.4))
             """.trimIndent(),
         )
