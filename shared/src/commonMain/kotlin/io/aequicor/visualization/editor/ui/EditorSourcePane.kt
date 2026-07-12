@@ -489,6 +489,48 @@ private fun FolderSyncBanner(state: MissionEditorStateHolder) {
     }
 }
 
+/**
+ * Always-visible top strip nudging the user to save a browser-only project — a freshly-edited
+ * in-memory Welcome, or a recovered draft — to disk. Renders nothing once dismissed, saved, or
+ * reseeded (see [MissionEditorStateHolder.browserSaveNoticeVisible]).
+ */
+@Composable
+fun EditorBrowserSaveBanner(state: MissionEditorStateHolder) {
+    if (!state.browserSaveNoticeVisible) return
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.statusWarning.copy(alpha = 0.14f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(strings.menu.browserOnlyNotice, color = colors.ink, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        if (platformSupportsProjectDiskIo) {
+            Text(
+                strings.menu.saveToDisk,
+                color = colors.accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable {
+                    platformSaveProjectFolder(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources)) {
+                        state.saveDraftNow()
+                        state.dismissBrowserSaveNotice()
+                    }
+                },
+            )
+        }
+        Text(
+            strings.menu.folderDismiss,
+            color = colors.mutedInk,
+            fontSize = 12.sp,
+            modifier = Modifier.clickable { state.dismissBrowserSaveNotice() },
+        )
+    }
+}
+
 @Composable
 private fun ProjectMenuTitleBar(projectName: String, version: String) {
     val colors = LocalEditorColors.current

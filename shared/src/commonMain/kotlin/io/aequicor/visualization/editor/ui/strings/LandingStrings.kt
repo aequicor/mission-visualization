@@ -36,7 +36,8 @@ object LandingStringsEn : LandingStrings {
     override val remove = "Remove from list"
     override val localFolder = "Local folder"
     override val reconnectHint = "Click to grant access"
-    override val foldersUnavailable = "Local folders need a Chromium browser (Chrome / Edge)"
+    override val foldersUnavailable = "Live local folders need Chrome or Edge — some Chromium " +
+        "browsers (e.g. Brave) disable this feature. You can still work here and save to disk."
     override val recoverTitle = "Unsaved work"
     override val recoverSubtitle = "Recovered from your browser"
     override val dismiss = "Skip"
@@ -55,7 +56,9 @@ object LandingStringsRu : LandingStrings {
     override val remove = "Убрать из списка"
     override val localFolder = "Локальная папка"
     override val reconnectHint = "Нажмите, чтобы разрешить доступ"
-    override val foldersUnavailable = "Локальные папки доступны в браузерах Chromium (Chrome / Edge)"
+    override val foldersUnavailable = "Живая синхронизация папок работает в Chrome или Edge — " +
+        "некоторые Chromium-браузеры (например, Brave) отключают эту функцию. Здесь можно " +
+        "работать и сохранить проект на диск."
     override val recoverTitle = "Несохранённая работа"
     override val recoverSubtitle = "Восстановлено из браузера"
     override val dismiss = "Пропустить"

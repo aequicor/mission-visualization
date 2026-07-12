@@ -89,6 +89,7 @@ import io.aequicor.visualization.editor.platform.platformSavedFolderName
 import io.aequicor.visualization.editor.platform.platformSupportsFolderSync
 import io.aequicor.visualization.editor.platform.platformSupportsLanding
 import io.aequicor.visualization.editor.platform.platformWriteFolderFile
+import io.aequicor.visualization.editor.ui.EditorBrowserSaveBanner
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
 import io.aequicor.visualization.editor.ui.buildLandingConfigJson
 import kotlinx.coroutines.Dispatchers
@@ -164,13 +165,32 @@ class MissionEditorStateHolder(
         private set
 
     /**
-     * True once the working set is a persistent project: a restored draft / opened
-     * project, or after the user explicitly saves. The bundled Welcome project is
-     * in-memory — autosave stays off until this flips, so a reload (or «Открыть →
-     * Welcome») restores the pristine screens.
+     * True once the working set is a persistent (browser-saved) project: a restored draft,
+     * an explicit save, or the first write-back edit of the bundled in-memory Welcome (which
+     * also raises [browserSaveNoticeVisible]). Until this flips, autosave stays off, so a
+     * reload (or «Открыть → Welcome») restores the pristine screens.
      */
     var persistenceEnabled by mutableStateOf(false)
         private set
+
+    /**
+     * True once the in-memory Welcome project has been turned into a browser-saved project by
+     * a user edit (or a recovered draft was restored) and the user has not yet dismissed or
+     * acted on the "save to disk" nudge. Drives the top banner; cleared on reseed
+     * ([openWelcomeProject], [resetToDefaults], live-folder adopt) and by [dismissBrowserSaveNotice].
+     */
+    var browserSaveNoticeVisible by mutableStateOf(false)
+        private set
+
+    fun dismissBrowserSaveNotice() {
+        browserSaveNoticeVisible = false
+    }
+
+    /**
+     * Sources of the freshly (re)loaded in-memory Welcome project — the reference [runPersistence]
+     * compares against to tell a genuine user edit apart from a reseed assigning the same baseline.
+     */
+    private var inMemoryBaselineSources: List<MissionDocumentSource> = designState.sources
 
     // --- Live local-folder sync ("browser IDE" mode) ------------------------------------------
 
@@ -302,6 +322,14 @@ class MissionEditorStateHolder(
                     // Live folder is the source of truth: write changed files to disk, not the draft.
                     liveFolderConnected -> writeSourcesToFolder(sources)
                     persistenceEnabled -> draft.save(sources, displayProjectName)
+                    sources != inMemoryBaselineSources -> {
+                        // First write-back edit of the in-memory Welcome: it becomes the user's
+                        // project from here on, autosaved to the browser draft; nudge them to
+                        // also save it to disk since browser storage alone can be cleared.
+                        persistenceEnabled = true
+                        browserSaveNoticeVisible = true
+                        draft.save(sources, displayProjectName)
+                    }
                 }
             }
     }
@@ -365,6 +393,7 @@ class MissionEditorStateHolder(
         folderExternalError = docs.hasErrors
         if (!hasAdoptedLiveFolder) {
             persistenceEnabled = false
+            browserSaveNoticeVisible = false
             projectName = snapshot.projectName
             designState = createDesignEditorState(docs)
             lastSyncedSources = docs.sources
@@ -523,6 +552,9 @@ class MissionEditorStateHolder(
         if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
         draft.restore()?.let { restored ->
             persistenceEnabled = true
+            // A recovered draft lives only in the browser store until the user saves it — nudge
+            // them to also save it to disk, same as a fresh edit of the in-memory Welcome.
+            browserSaveNoticeVisible = true
             projectName = restored.projectName
             designState = createDesignEditorState(compileMissionDocuments(restored.files))
         }
@@ -547,8 +579,10 @@ class MissionEditorStateHolder(
     fun openWelcomeProject() {
         if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
         persistenceEnabled = false
+        browserSaveNoticeVisible = false
         projectName = ""
         designState = createDesignEditorState(loadDesignDocument())
+        inMemoryBaselineSources = designState.sources
     }
 
     /**
@@ -557,13 +591,18 @@ class MissionEditorStateHolder(
      */
     fun resetToDefaults() {
         persistenceEnabled = false
+        browserSaveNoticeVisible = false
         val draft = draft
         if (draft == null) {
             projectName = ""
             designState = createDesignEditorState(loadDesignDocument())
+            inMemoryBaselineSources = designState.sources
             return
         }
-        draft.reset { designState = createDesignEditorState(loadDesignDocument()) }
+        draft.reset {
+            designState = createDesignEditorState(loadDesignDocument())
+            inMemoryBaselineSources = designState.sources
+        }
         projectName = ""
     }
 
@@ -653,16 +692,22 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
     // The editor fills the window edge-to-edge: no chrome frame, no shell margin, no
     // rounded shell corners — the working area gets the whole viewport.
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        val isNarrow = maxWidth < 1100.dp
         Surface(
             modifier = Modifier.fillMaxSize(),
             shape = RoundedCornerShape(0.dp),
             color = Color.White,
             shadowElevation = 0.dp,
         ) {
-            when {
-                state.workspace.isMainOnly -> MainOnlyLayout(state)
-                maxWidth < 1100.dp -> StackedLayout(state)
-                else -> WorkbenchLayout(state)
+            Column(Modifier.fillMaxSize()) {
+                if (!state.workspace.isMainOnly) EditorBrowserSaveBanner(state)
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    when {
+                        state.workspace.isMainOnly -> MainOnlyLayout(state)
+                        isNarrow -> StackedLayout(state)
+                        else -> WorkbenchLayout(state)
+                    }
+                }
             }
         }
     }

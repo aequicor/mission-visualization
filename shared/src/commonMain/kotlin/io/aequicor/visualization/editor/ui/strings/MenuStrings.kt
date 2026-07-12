@@ -28,6 +28,9 @@ interface MenuStrings {
     val saveInBrowser: String
     val saveToFolder: String
     val saveAsZip: String
+    // Browser-only project banner.
+    val browserOnlyNotice: String
+    val saveToDisk: String
     // Export pane.
     val exportPngScreen: String
     val exportPngComponent: String
@@ -71,6 +74,8 @@ object MenuStringsEn : MenuStrings {
     override val saveInBrowser = "Save work in the browser"
     override val saveToFolder = "Save to a folder on this PC"
     override val saveAsZip = "Save as a ZIP archive"
+    override val browserOnlyNotice = "Changes are saved in your browser only."
+    override val saveToDisk = "Save to disk"
     override val exportPngScreen = "PNG — whole screen"
     override val exportPngComponent = "PNG — selected component"
     override val exportPdfAllScreens = "PDF — all screens"
@@ -111,6 +116,8 @@ object MenuStringsRu : MenuStrings {
     override val saveInBrowser = "Сохранить работу в браузере"
     override val saveToFolder = "Сохранить в папку на ПК"
     override val saveAsZip = "Сохранить ZIP архивом"
+    override val browserOnlyNotice = "Изменения сохраняются только в браузере."
+    override val saveToDisk = "Сохранить на диск"
     override val exportPngScreen = "PNG — весь экран"
     override val exportPngComponent = "PNG — выбранный компонент"
     override val exportPdfAllScreens = "PDF — все экраны"
