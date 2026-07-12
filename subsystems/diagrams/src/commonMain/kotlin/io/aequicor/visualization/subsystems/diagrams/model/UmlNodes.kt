@@ -42,6 +42,21 @@ data class UmlLifelineNode(
 ) : DiagramNodePayload
 
 /**
+ * Head-box height of a lifeline whose bounds are [height] tall. Shared by the sequence
+ * layout ([io.aequicor.visualization.subsystems.diagrams.routing]) and the compose
+ * renderer so message rows start exactly below the head.
+ */
+fun umlLifelineHeadHeight(height: Double): Double = minOf(36.0, height * 0.25)
+
+/**
+ * Top y of a lifeline's dashed life line (where messages may start), given the head box
+ * top [top] and the lifeline [height]. Actor heads reserve an extra label row below the
+ * stick figure, matching the renderer.
+ */
+fun UmlLifelineNode.lifelineTop(top: Double, height: Double): Double =
+    top + umlLifelineHeadHeight(height) + if (actor) 16.0 else 0.0
+
+/**
  * An activation bar on a lifeline; [start] and [end] are normalized `0..1`
  * positions along the lifeline (0 = head, 1 = bottom).
  */

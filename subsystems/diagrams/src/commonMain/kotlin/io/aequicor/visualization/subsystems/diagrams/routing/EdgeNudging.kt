@@ -21,10 +21,11 @@ fun routeAllEdgesLenient(
     graph: DiagramGraph,
     options: RoutingOptions = RoutingOptions.Default,
 ): Map<DiagramEdgeId, RoutedEdge> {
+    val sequence = sequenceMessageRoutes(graph)
     val routed = graph.edges.mapNotNull { edge ->
-        runCatching { routeEdge(graph, edge, options) }.getOrNull()
+        sequence[edge.id] ?: runCatching { routeEdge(graph, edge, options) }.getOrNull()
     }
-    return nudgeRoutedEdges(routed, options, waypointedEdgeIds(graph), nodeObstacles(graph))
+    return nudgeRoutedEdges(routed, options, waypointedEdgeIds(graph) + sequence.keys, nodeObstacles(graph))
         .associateBy { it.edgeId }
 }
 

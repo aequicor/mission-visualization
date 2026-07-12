@@ -15,6 +15,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramConnectionMode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramStrokePattern
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPathSegment
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
@@ -26,6 +27,9 @@ import kotlin.math.sqrt
 /** Dash intervals period used by the flow animation on solid edges. */
 internal const val FLOW_DASH_ON = 8f
 internal const val FLOW_DASH_OFF = 6f
+
+/** How far above its horizontal row a sequence-message caption is drawn. */
+private const val SEQUENCE_MESSAGE_LABEL_LIFT = 9.0
 
 /**
  * Draws one routed edge: the (possibly jumped/rounded) line, arrowheads at both ends,
@@ -107,13 +111,15 @@ internal fun DrawScope.drawDiagramEdge(
     drawArrowheadGeometry(targetGeometry, ink, colors.surface, strokeWidth)
 
     // Labels: anchored along the original route (arc-length fractions), draggable offsets applied.
+    // A sequence message's caption reads above its horizontal row rather than sitting on the line.
+    val messageLabelLift = if (edge.relation is DiagramRelation.Message) SEQUENCE_MESSAGE_LABEL_LIFT else 0.0
     edge.labels.forEach { edgeLabel ->
         val anchor = edgeLabelAnchorPoint(points, edgeLabel)
         drawCenteredLabel(
             measurer,
             edgeLabel.label,
             anchor.x,
-            anchor.y,
+            anchor.y - messageLabelLift,
             colors.labelInk.applyOpacity(style.opacity),
             plateColor = colors.surface.copy(alpha = 0.85f),
         )

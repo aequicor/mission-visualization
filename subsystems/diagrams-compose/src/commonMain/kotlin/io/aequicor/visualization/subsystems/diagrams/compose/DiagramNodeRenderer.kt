@@ -25,6 +25,8 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlComponentNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlDeploymentNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlLifelineNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlMember
+import io.aequicor.visualization.subsystems.diagrams.model.lifelineTop
+import io.aequicor.visualization.subsystems.diagrams.model.umlLifelineHeadHeight
 import io.aequicor.visualization.subsystems.diagrams.model.UmlNoteNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlPackageNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateKind
@@ -570,7 +572,7 @@ private fun DrawScope.drawUmlLifeline(
     val style = node.style
     val ink = style.stroke?.toComposeColor() ?: colors.nodeStroke
     val labelInk = colors.labelInk.applyOpacity(style.opacity)
-    val headHeight = min(36.0, bounds.height * 0.25)
+    val headHeight = umlLifelineHeadHeight(bounds.height)
     val centerX = bounds.centerX
 
     if (payload.actor) {
@@ -593,7 +595,7 @@ private fun DrawScope.drawUmlLifeline(
     }
 
     // Dashed vertical lifeline.
-    val lineTop = bounds.top + headHeight + (if (payload.actor) 16.0 else 0.0)
+    val lineTop = payload.lifelineTop(bounds.top, bounds.height)
     drawLine(
         ink,
         Offset(centerX.toFloat(), lineTop.toFloat()),

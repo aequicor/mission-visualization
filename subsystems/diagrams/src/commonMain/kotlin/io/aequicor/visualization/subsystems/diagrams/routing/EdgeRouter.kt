@@ -54,16 +54,22 @@ fun routeEdge(
 /**
  * Routes every edge of the graph (input for line-jump computation and rendering) and
  * separates co-running collinear segments of different edges ([nudgeRoutedEdges]).
+ *
+ * Sequence-diagram messages ([sequenceMessageRoutes]) are laid out top-to-bottom as
+ * horizontal rows instead of going through the generic per-edge router.
  */
 fun routeAllEdges(
     graph: DiagramGraph,
     options: RoutingOptions = RoutingOptions.Default,
-): List<RoutedEdge> = nudgeRoutedEdges(
-    routes = graph.edges.map { routeEdge(graph, it, options) },
-    options = options,
-    pinnedEdgeIds = waypointedEdgeIds(graph),
-    obstacles = nodeObstacles(graph),
-)
+): List<RoutedEdge> {
+    val sequence = sequenceMessageRoutes(graph)
+    return nudgeRoutedEdges(
+        routes = graph.edges.map { sequence[it.id] ?: routeEdge(graph, it, options) },
+        options = options,
+        pinnedEdgeIds = waypointedEdgeIds(graph) + sequence.keys,
+        obstacles = nodeObstacles(graph),
+    )
+}
 
 // --- Endpoint resolution -------------------------------------------------------------
 
