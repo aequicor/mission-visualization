@@ -14,6 +14,15 @@ interface MenuStrings {
     val welcomeProject: String
     val openZipArchive: String
     val openFolder: String
+    // Live local-folder sync ("browser IDE" mode).
+    val connectFolder: String
+    val folderDisconnect: String
+    val folderWatching: String
+    val folderExternalError: String
+    val folderConflict: String
+    val folderRestoreEdit: String
+    val folderDismiss: String
+    fun folderReconnect(name: String): String
     // Save pane.
     val saveInBrowser: String
     val saveToFolder: String
@@ -36,6 +45,14 @@ object MenuStringsEn : MenuStrings {
     override val welcomeProject = "Welcome project"
     override val openZipArchive = "Open ZIP archive"
     override val openFolder = "Pick a folder on this PC"
+    override val connectFolder = "Connect folder (live sync)"
+    override val folderDisconnect = "Disconnect folder"
+    override val folderWatching = "Live"
+    override val folderExternalError = "External file has errors — showing the last good version"
+    override val folderConflict = "External change loaded — your unsaved edit was kept"
+    override val folderRestoreEdit = "Restore my edit"
+    override val folderDismiss = "Dismiss"
+    override fun folderReconnect(name: String) = "Reconnect “" + name + "”"
     override val saveInBrowser = "Save work in the browser"
     override val saveToFolder = "Save to a folder on this PC"
     override val saveAsZip = "Save as a ZIP archive"
@@ -55,6 +72,14 @@ object MenuStringsRu : MenuStrings {
     override val welcomeProject = "Welcome-проект"
     override val openZipArchive = "Открыть ZIP архив"
     override val openFolder = "Выбрать папку на ПК"
+    override val connectFolder = "Подключить папку (живая синхронизация)"
+    override val folderDisconnect = "Отключить папку"
+    override val folderWatching = "Live"
+    override val folderExternalError = "Во внешнем файле ошибки — показана последняя рабочая версия"
+    override val folderConflict = "Загружено внешнее изменение — ваша несохранённая правка сохранена"
+    override val folderRestoreEdit = "Вернуть мою правку"
+    override val folderDismiss = "Скрыть"
+    override fun folderReconnect(name: String) = "Переподключить «" + name + "»"
     override val saveInBrowser = "Сохранить работу в браузере"
     override val saveToFolder = "Сохранить в папку на ПК"
     override val saveAsZip = "Сохранить ZIP архивом"

@@ -45,11 +45,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
 import io.aequicor.visualization.editor.data.DefaultDraftRepository
 import io.aequicor.visualization.editor.data.LanguagePreference
+import io.aequicor.visualization.editor.data.ProjectSnapshot
 import io.aequicor.visualization.editor.data.createKeyValueStore
+import io.aequicor.visualization.editor.data.decodeProjectSnapshot
 import io.aequicor.visualization.editor.domain.AppLanguage
 import io.aequicor.visualization.editor.domain.ClearDraftUseCase
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.domain.ExportIssuesPromptUseCase
+import io.aequicor.visualization.editor.domain.MissionDocumentSource
+import io.aequicor.visualization.editor.domain.MissionDocuments
 import io.aequicor.visualization.editor.domain.RestoreDraftSourcesUseCase
 import io.aequicor.visualization.editor.domain.SaveDraftUseCase
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
@@ -66,8 +70,19 @@ import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
 import io.aequicor.visualization.subsystems.annotations.ExportScope
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
+import io.aequicor.visualization.editor.platform.folderSyncRevision
+import io.aequicor.visualization.editor.platform.folderSyncSnapshotJson
+import io.aequicor.visualization.editor.platform.folderSyncStatus
+import io.aequicor.visualization.editor.platform.platformConnectFolderLive
+import io.aequicor.visualization.editor.platform.platformDisconnectFolder
+import io.aequicor.visualization.editor.platform.platformInitFolderSync
+import io.aequicor.visualization.editor.platform.platformReconnectSavedFolder
+import io.aequicor.visualization.editor.platform.platformSavedFolderName
+import io.aequicor.visualization.editor.platform.platformSupportsFolderSync
+import io.aequicor.visualization.editor.platform.platformWriteFolderFile
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -92,6 +107,15 @@ import io.aequicor.visualization.engine.ir.model.DesignColor
  */
 /** Debounce before autosaving a source change, so a burst of edits coalesces into one write. */
 private const val AutosaveDebounceMs: Long = 600L
+
+/** Poll cadence for the live local-folder revision counter (cheap synchronous read on wasmJs). */
+private const val FolderSyncPollMs: Long = 400L
+
+/**
+ * UI-facing state of the live local-folder connection ("browser IDE" mode), mapped from the JS
+ * layer's coarse status string by [MissionEditorStateHolder.runFolderSync].
+ */
+enum class FolderSyncPresence { Idle, Connecting, ReconnectNeeded, Watching }
 
 @Stable
 class MissionEditorStateHolder(
@@ -125,6 +149,39 @@ class MissionEditorStateHolder(
      */
     var persistenceEnabled by mutableStateOf(false)
         private set
+
+    // --- Live local-folder sync ("browser IDE" mode) ------------------------------------------
+
+    /** Whether this platform can live-sync a local folder (Chromium web only). */
+    val supportsFolderSync: Boolean get() = platformSupportsFolderSync
+
+    /** UI-facing live-folder connection state, refreshed each tick by [runFolderSync]. */
+    var folderSync by mutableStateOf(FolderSyncPresence.Idle)
+        private set
+
+    /** Name of the connected/remembered folder (status chip + reconnect prompt), or null. */
+    var folderName by mutableStateOf<String?>(null)
+        private set
+
+    /** True when the latest external snapshot failed to compile — the canvas holds its last good state. */
+    var folderExternalError by mutableStateOf(false)
+        private set
+
+    /**
+     * The in-editor sources an external change replaced while they were unsaved, or null when
+     * there is nothing to recover. Surfaced as a one-click "restore my edit" affordance so a
+     * concurrent edit is never silently lost.
+     */
+    var folderConflictBackup by mutableStateOf<List<MissionDocumentSource>?>(null)
+        private set
+
+    /** True once the live folder's first snapshot has been adopted in the current session. */
+    private var hasAdoptedLiveFolder = false
+
+    /** Sources as of the last inbound-adopt or outbound-write: the base for concurrency detection. */
+    private var lastSyncedSources: List<MissionDocumentSource> = emptyList()
+
+    private val liveFolderConnected: Boolean get() = folderSync == FolderSyncPresence.Watching
 
     val displayProjectName: String
         get() = projectDisplayName(projectName, designState.document?.name, designState.sources)
@@ -215,8 +272,154 @@ class MissionEditorStateHolder(
             .drop(1)
             .distinctUntilChanged()
             .debounce(AutosaveDebounceMs)
-            .collect { sources -> if (persistenceEnabled) draft.save(sources, displayProjectName) }
+            .collect { sources ->
+                when {
+                    // Live folder is the source of truth: write changed files to disk, not the draft.
+                    liveFolderConnected -> writeSourcesToFolder(sources)
+                    persistenceEnabled -> draft.save(sources, displayProjectName)
+                }
+            }
     }
+
+    /**
+     * Drives live local-folder sync: installs the JS layer, probes for a previously connected
+     * folder, then polls its revision counter and applies external changes (compile-gated) to the
+     * canvas. Runs until cancelled; call once from a `LaunchedEffect`. A no-op where unsupported.
+     */
+    suspend fun runFolderSync() {
+        if (!platformSupportsFolderSync) return
+        platformInitFolderSync()
+        var lastRevision = -1
+        while (true) {
+            val presence = folderPresenceOf(folderSyncStatus() ?: "idle")
+            if (presence != folderSync) folderSync = presence
+            platformSavedFolderName().let { if (it != folderName) folderName = it }
+            if (presence != FolderSyncPresence.Watching) {
+                hasAdoptedLiveFolder = false
+            } else {
+                val revision = folderSyncRevision()
+                if (revision != lastRevision) {
+                    lastRevision = revision
+                    // Keep the two reads adjacent (no suspension between) so revision/snapshot pair up.
+                    folderSyncSnapshotJson()?.let { json ->
+                        decodeProjectSnapshot(json)?.let { onFolderSnapshot(it) }
+                    }
+                }
+            }
+            delay(FolderSyncPollMs)
+        }
+    }
+
+    private fun folderPresenceOf(status: String): FolderSyncPresence = when (status) {
+        "watching" -> FolderSyncPresence.Watching
+        "connecting" -> FolderSyncPresence.Connecting
+        "reconnect-needed" -> FolderSyncPresence.ReconnectNeeded
+        else -> FolderSyncPresence.Idle
+    }
+
+    /**
+     * Applies a snapshot pulled from the connected folder. The first snapshot of a live session
+     * is adopted wholesale; later ones are compile-gated external changes that preserve the
+     * viewport/selection and back up any unsaved local edit they replace.
+     */
+    private fun onFolderSnapshot(snapshot: ProjectSnapshot) {
+        val docs = compileMissionDocuments(snapshot.sources)
+        // Compile-gate: a torn or broken external file yields no document — hold the last good canvas.
+        if (docs.document == null) {
+            folderExternalError = true
+            return
+        }
+        folderExternalError = docs.hasErrors
+        if (!hasAdoptedLiveFolder) {
+            persistenceEnabled = false
+            projectName = snapshot.projectName
+            designState = createDesignEditorState(docs)
+            lastSyncedSources = docs.sources
+            folderConflictBackup = null
+            hasAdoptedLiveFolder = true
+            return
+        }
+        applyExternalSources(docs)
+    }
+
+    /** Reseeds the editor from an external change, preserving selection/viewport and backing up a clobbered local edit. */
+    private fun applyExternalSources(docs: MissionDocuments) {
+        val incoming = docs.sources
+        val current = designState.sources
+        if (incoming == current) { lastSyncedSources = incoming; return }
+        val userEditedLocally = current != lastSyncedSources
+        val next = createDesignEditorState(docs)
+        val doc = next.document
+        val keepPage = if (doc?.pages?.any { it.id == designState.selectedPageId } == true) {
+            designState.selectedPageId
+        } else {
+            next.selectedPageId
+        }
+        val keepNode = if (designState.selectedNodeId.isNotBlank() && doc?.nodeById(designState.selectedNodeId) != null) {
+            designState.selectedNodeId
+        } else {
+            next.selectedNodeId
+        }
+        val keepSet = designState.selectedNodeIds.filter { doc?.nodeById(it) != null }.toSet()
+            .ifEmpty { if (keepNode.isBlank()) emptySet() else setOf(keepNode) }
+        designState = next.copy(
+            selectedPageId = keepPage,
+            selectedNodeId = keepNode,
+            selectedNodeIds = keepSet,
+        )
+        // workspace (viewport/zoom) is a separate mutableStateOf — left untouched by design.
+        if (userEditedLocally) folderConflictBackup = current
+        lastSyncedSources = incoming
+    }
+
+    /**
+     * Live outbound: write only the changed files to the connected folder. The JS layer echo-
+     * suppresses these writes and skips any file that drifted on disk since our base (protecting a
+     * concurrent agent edit). [lastSyncedSources] advances optimistically — the rare same-file
+     * edit within one debounce window is a Phase-0 gap that diff3 (Phase 1) closes.
+     */
+    private fun writeSourcesToFolder(sources: List<MissionDocumentSource>) {
+        val base = lastSyncedSources.associate { it.fileName to it.content }
+        sources.forEach { source ->
+            if (base[source.fileName] != source.content) platformWriteFolderFile(source.fileName, source.content)
+        }
+        lastSyncedSources = sources
+    }
+
+    /** Menu action: pick a local folder and start live two-way sync. */
+    fun connectFolder() {
+        if (!platformSupportsFolderSync) return
+        hasAdoptedLiveFolder = false
+        platformConnectFolderLive()
+    }
+
+    /** Re-grant access to a previously connected folder (must run inside the menu-click gesture). */
+    fun reconnectFolder() {
+        if (!platformSupportsFolderSync) return
+        hasAdoptedLiveFolder = false
+        platformReconnectSavedFolder()
+    }
+
+    /** Stop live sync and forget the folder; the current document stays in place (in-memory). */
+    fun disconnectFolder() {
+        platformDisconnectFolder()
+        folderSync = FolderSyncPresence.Idle
+        folderName = null
+        folderExternalError = false
+        folderConflictBackup = null
+        hasAdoptedLiveFolder = false
+    }
+
+    /** Restores the in-editor edit that an external change replaced (the conflict backup). */
+    fun restoreFolderConflictBackup() {
+        val backup = folderConflictBackup ?: return
+        val docs = compileMissionDocuments(backup)
+        if (docs.document != null) designState = createDesignEditorState(docs)
+        lastSyncedSources = backup
+        folderConflictBackup = null
+    }
+
+    fun dismissFolderConflictBackup() { folderConflictBackup = null }
 
     /**
      * Explicit Save: force-flush the current SLM sources to the draft now. This is the
@@ -235,6 +438,7 @@ class MissionEditorStateHolder(
      * explicitly saves it.
      */
     fun openWelcomeProject() {
+        if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
         persistenceEnabled = false
         projectName = ""
         designState = createDesignEditorState(loadDesignDocument())
@@ -312,6 +516,7 @@ fun MissionEditorApp() {
             )
         }
         LaunchedEffect(state) { state.runPersistence() }
+        LaunchedEffect(state) { state.runFolderSync() }
         CompositionLocalProvider(LocalStrings provides appStringsFor(state.language)) {
             MissionEditorScreen(state)
         }
