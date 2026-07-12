@@ -37,6 +37,89 @@ private fun ensureProjectIoInstalled() {
             return cleaned || fallback || "Mission Visualization";
           }
 
+          // Directory-preserving sanitizer for resource paths ("res/photo.png" keeps its two
+          // segments; safeName() would collapse it to the basename). Strips path separators (handled
+          // by split), leading dots and reserved chars, but never touches letters, digits, '.', '-',
+          // '_' or spaces (including consecutive runs) that sanitizeResourceFileName() may emit, so the
+          // key stays byte-identical and a saved resource re-links on reopen. Guards path traversal.
+          function safeResSegment(segment) {
+            var forbidden = "<>:|?*" + String.fromCharCode(34) + String.fromCharCode(92);
+            var out = "";
+            for (var i = 0; i < segment.length; i++) {
+              var ch = segment.charAt(i);
+              if (segment.charCodeAt(i) < 32 || forbidden.indexOf(ch) >= 0) continue;
+              out += ch;
+            }
+            while (out.charAt(0) === ".") out = out.slice(1);
+            return out.trim();
+          }
+          function safeResPath(path) {
+            return String(path || "").split("/").map(safeResSegment).filter(function (segment) {
+              return segment && segment !== "." && segment !== "..";
+            }).join("/");
+          }
+
+          function rawBytesFromBase64(base64) {
+            var binary = atob(base64 || "");
+            var bytes = new Uint8Array(binary.length);
+            for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+          }
+
+          function rawBase64FromBytes(bytes) {
+            var CHUNK = 0x8000;
+            var binary = "";
+            for (var i = 0; i < bytes.length; i += CHUNK) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+            }
+            return btoa(binary);
+          }
+
+          // res/ refs mentioned anywhere in the SLM sources — a project's resources are exactly the
+          // ones its documents reference, so orphaned bytes in IndexedDB are not written to disk.
+          function referencedResPaths(sourcesJson) {
+            var set = new Set();
+            parseSourcesJson(sourcesJson).forEach(function (file) {
+              var matches = String(file.content || "").match(/res\/[^\s"'«»)\]}]+/g);
+              if (matches) matches.forEach(function (ref) { set.add(ref); });
+            });
+            return set;
+          }
+
+          async function collectResources(sourcesJson) {
+            if (!window.__mvResStore) return [];
+            var joined = await new Promise(function (resolve) { window.__mvResStore.list(resolve); });
+            var paths = (joined ? joined.split("\n") : []).filter(function (p) { return p && p.indexOf("res/") === 0; });
+            var referenced = referencedResPaths(sourcesJson);
+            paths = paths.filter(function (p) { return referenced.has(p); });
+            var out = [];
+            for (var i = 0; i < paths.length; i++) {
+              var base64 = await new Promise(function (resolve) { window.__mvResStore.read(paths[i], resolve); });
+              if (base64) out.push({ path: paths[i], base64: base64 });
+            }
+            return out;
+          }
+
+          async function storeResources(resources) {
+            if (!window.__mvResStore) return;
+            var paths = resources.map(function (r) { return r.path; }).join("\n");
+            var payloads = resources.map(function (r) { return r.base64; }).join("\n");
+            await new Promise(function (resolve) { window.__mvResStore.replaceAll(paths, payloads, resolve); });
+          }
+
+          async function writeResourceToDir(rootHandle, path, bytes) {
+            var parts = safeResPath(path).split("/");
+            if (!parts.length) return;
+            var dir = rootHandle;
+            for (var i = 0; i < parts.length - 1; i++) {
+              dir = await dir.getDirectoryHandle(parts[i], { create: true });
+            }
+            var fileHandle = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+            var writable = await fileHandle.createWritable();
+            await writable.write(bytes);
+            await writable.close();
+          }
+
           function projectNameFromArchive(name) {
             var raw = String(name || "").split("/").pop().split("\\").pop().replace(/\.zip$/i, "");
             return safeProjectName(raw, "Mission Visualization");
@@ -71,12 +154,17 @@ private fun ensureProjectIoInstalled() {
             return parseProjectJson(sourcesJson).files;
           }
 
-          function persistSources(files, projectName) {
+          // Commits an opened project. The resource store is replaced ONLY after the source-files
+          // check passes, so opening a folder/zip with no .layout.md (an aborted open) never wipes the
+          // currently-loaded project's resources. storeResources is awaited before reload so the
+          // IndexedDB write is durable across the navigation.
+          async function persistSources(files, resources, projectName) {
             if (!files || files.length === 0) {
               window.alert("В выбранном проекте не найдены .layout.md файлы.");
               return;
             }
             files.sort(function (a, b) { return a.fileName.localeCompare(b.fileName); });
+            await storeResources(resources || []);
             window.localStorage.setItem(draftKey, JSON.stringify({
               schemaVersion: 1,
               projectName: safeProjectName(projectName, "Mission Visualization"),
@@ -111,7 +199,7 @@ private fun ensureProjectIoInstalled() {
               var input = document.createElement("input");
               input.type = "file";
               input.multiple = true;
-              input.accept = ".layout.md,.slm.md,.slm,.md,text/markdown,text/plain";
+              input.accept = ".layout.md,.slm.md,.slm,.md,.png,.jpg,.jpeg,.gif,.webp,.svg,text/markdown,text/plain,image/*";
               if ("webkitdirectory" in input) {
                 input.webkitdirectory = true;
                 input.directory = true;
@@ -144,7 +232,7 @@ private fun ensureProjectIoInstalled() {
             return new Uint8Array(await new Response(stream).arrayBuffer());
           }
 
-          async function unzipSources(arrayBuffer) {
+          async function unzipProject(arrayBuffer) {
             var bytes = new Uint8Array(arrayBuffer);
             var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
             var eocd = findEndOfCentralDirectory(bytes);
@@ -152,6 +240,7 @@ private fun ensureProjectIoInstalled() {
             var centralOffset = view.getUint32(eocd + 16, true);
             var ptr = centralOffset;
             var files = [];
+            var resources = [];
             for (var entry = 0; entry < count; entry++) {
               if (view.getUint32(ptr, true) !== 0x02014b50) throw new Error("ZIP central directory is corrupt.");
               var method = view.getUint16(ptr + 10, true);
@@ -162,7 +251,9 @@ private fun ensureProjectIoInstalled() {
               var localOffset = view.getUint32(ptr + 42, true);
               var name = decoder.decode(bytes.slice(ptr + 46, ptr + 46 + nameLength));
               ptr += 46 + nameLength + extraLength + commentLength;
-              if (!sourceLike(name) || name.endsWith("/")) continue;
+              if (name.endsWith("/")) continue;
+              var isResource = name.indexOf("res/") === 0;
+              if (!isResource && !sourceLike(name)) continue;
               if (view.getUint32(localOffset, true) !== 0x04034b50) throw new Error("ZIP local header is corrupt.");
               var localNameLength = view.getUint16(localOffset + 26, true);
               var localExtraLength = view.getUint16(localOffset + 28, true);
@@ -172,24 +263,39 @@ private fun ensureProjectIoInstalled() {
               if (method === 0) raw = compressed;
               else if (method === 8) raw = await inflateRaw(compressed);
               else throw new Error("Unsupported ZIP compression method: " + method + ".");
-              files.push({ fileName: safeName(name, "screen-" + (files.length + 1) + ".layout.md"), content: decoder.decode(raw) });
+              if (isResource) resources.push({ path: safeResPath(name), base64: rawBase64FromBytes(raw) });
+              else files.push({ fileName: safeName(name, "screen-" + (files.length + 1) + ".layout.md"), content: decoder.decode(raw) });
             }
-            return files;
+            return { files: files, resources: resources };
           }
 
           async function openZip() {
             var file = await chooseFile(".zip,application/zip,application/x-zip-compressed");
             if (!file) return;
-            persistSources(await unzipSources(await file.arrayBuffer()), projectNameFromArchive(file.name));
+            var project = await unzipProject(await file.arrayBuffer());
+            await persistSources(project.files, project.resources, projectNameFromArchive(file.name));
           }
 
-          async function walkDirectory(handle, prefix, out) {
+          // Recursion is intentionally narrow: source files (.layout.md etc.) are only picked up
+          // directly under the chosen root (prefix === "", matching isDirectPickedFile's depth-1
+          // rule for the <input webkitdirectory> fallback below) so an unrelated nested project
+          // folder never gets swept in. The one exception is a top-level "res/" folder, which is
+          // walked for resource bytes.
+          async function walkDirectory(handle, prefix, out, resOut) {
             for await (var pair of handle.entries()) {
               var name = pair[0];
               var child = pair[1];
-              if (child.kind === "file" && sourceLike(name)) {
-                var file = await child.getFile();
-                out.push({ fileName: safeName(prefix + name, name), content: await file.text() });
+              if (child.kind === "file") {
+                var full = prefix + name;
+                if (full.indexOf("res/") === 0) {
+                  var resFile = await child.getFile();
+                  resOut.push({ path: safeResPath(full), base64: rawBase64FromBytes(new Uint8Array(await resFile.arrayBuffer())) });
+                } else if (prefix === "" && sourceLike(name)) {
+                  var file = await child.getFile();
+                  out.push({ fileName: safeName(full, name), content: await file.text() });
+                }
+              } else if (child.kind === "directory" && prefix === "" && name === "res") {
+                await walkDirectory(child, prefix + name + "/", out, resOut);
               }
             }
           }
@@ -200,13 +306,31 @@ private fun ensureProjectIoInstalled() {
             return parts.length <= 2;
           }
 
+          function relativeUnderRoot(path) {
+            var parts = String(path || "").split("/");
+            return parts.length > 1 ? parts.slice(1).join("/") : path;
+          }
+
           async function readPickedSources(files) {
             var out = [];
             for (var i = 0; i < files.length; i++) {
               var file = files[i];
               var name = file.webkitRelativePath || file.name;
+              if (relativeUnderRoot(name).indexOf("res/") === 0) continue;
               if (isDirectPickedFile(name) && sourceLike(name)) {
                 out.push({ fileName: safeName(name, file.name), content: await file.text() });
+              }
+            }
+            return out;
+          }
+
+          async function readPickedResources(files) {
+            var out = [];
+            for (var i = 0; i < files.length; i++) {
+              var file = files[i];
+              var sub = relativeUnderRoot(file.webkitRelativePath || file.name);
+              if (sub.indexOf("res/") === 0) {
+                out.push({ path: safeResPath(sub), base64: rawBase64FromBytes(new Uint8Array(await file.arrayBuffer())) });
               }
             }
             return out;
@@ -215,7 +339,7 @@ private fun ensureProjectIoInstalled() {
           async function openFolderViaInput() {
             var files = await chooseDirectoryFiles();
             if (!files.length) return;
-            persistSources(await readPickedSources(files), projectNameFromPickedFiles(files));
+            await persistSources(await readPickedSources(files), await readPickedResources(files), projectNameFromPickedFiles(files));
           }
 
           async function openFolder() {
@@ -225,8 +349,9 @@ private fun ensureProjectIoInstalled() {
             }
             var handle = await window.showDirectoryPicker({ mode: "read" });
             var files = [];
-            await walkDirectory(handle, "", files);
-            persistSources(files, handle.name);
+            var resources = [];
+            await walkDirectory(handle, "", files, resources);
+            await persistSources(files, resources, handle.name);
           }
 
           function crc32(bytes) {
@@ -250,15 +375,15 @@ private fun ensureProjectIoInstalled() {
             return { time: time, date: day };
           }
 
-          function makeZip(files) {
+          function makeZipEntries(entries) {
             var chunks = [];
             var central = [];
             var offset = 0;
             var stamp = dosTimeDate(new Date());
             function push(chunk) { chunks.push(chunk); offset += chunk.length; }
-            files.forEach(function (file) {
-              var nameBytes = encoder.encode(safeName(file.fileName, "document.layout.md"));
-              var data = encoder.encode(file.content);
+            entries.forEach(function (entry) {
+              var nameBytes = encoder.encode(entry.name);
+              var data = entry.bytes;
               var crc = crc32(data);
               var localOffset = offset;
               var local = new Uint8Array(30 + nameBytes.length);
@@ -300,8 +425,8 @@ private fun ensureProjectIoInstalled() {
             var eocd = new Uint8Array(22);
             var ev = new DataView(eocd.buffer);
             ev.setUint32(0, 0x06054b50, true);
-            ev.setUint16(8, files.length, true);
-            ev.setUint16(10, files.length, true);
+            ev.setUint16(8, entries.length, true);
+            ev.setUint16(10, entries.length, true);
             ev.setUint32(12, centralSize, true);
             ev.setUint32(16, centralOffset, true);
             chunks.push(eocd);
@@ -321,7 +446,7 @@ private fun ensureProjectIoInstalled() {
 
           async function saveFolder(sourcesJson, onSaved) {
             if (!window.showDirectoryPicker) {
-              saveZip(sourcesJson);
+              await saveZip(sourcesJson);
               if (onSaved) onSaved();
               return;
             }
@@ -333,12 +458,23 @@ private fun ensureProjectIoInstalled() {
               await writable.write(files[i].content);
               await writable.close();
             }
+            var resources = await collectResources(sourcesJson);
+            for (var j = 0; j < resources.length; j++) {
+              await writeResourceToDir(handle, resources[j].path, rawBytesFromBase64(resources[j].base64));
+            }
             if (onSaved) onSaved();
           }
 
-          function saveZip(sourcesJson) {
+          async function saveZip(sourcesJson) {
             var project = parseProjectJson(sourcesJson);
-            downloadBlob(makeZip(project.files), safeName(project.projectName + ".zip", "mission-visualization-project.zip"));
+            var entries = project.files.map(function (file) {
+              return { name: safeName(file.fileName, "document.layout.md"), bytes: encoder.encode(file.content) };
+            });
+            var resources = await collectResources(sourcesJson);
+            resources.forEach(function (resource) {
+              entries.push({ name: safeResPath(resource.path), bytes: rawBytesFromBase64(resource.base64) });
+            });
+            downloadBlob(makeZipEntries(entries), safeName(project.projectName + ".zip", "mission-visualization-project.zip"));
           }
 
           function collectCanvases(root, out) {
@@ -392,11 +528,7 @@ private fun ensureProjectIoInstalled() {
           }
 
           function bytesFromBase64(dataUrl) {
-            var base64 = dataUrl.split(",")[1] || "";
-            var binary = atob(base64);
-            var bytes = new Uint8Array(binary.length);
-            for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            return bytes;
+            return rawBytesFromBase64(dataUrl.split(",")[1] || "");
           }
 
           function pdfAscii(text) {
@@ -454,7 +586,7 @@ private fun ensureProjectIoInstalled() {
             openZip: function () { run(openZip()); },
             openFolder: function () { run(openFolder()); },
             saveFolder: function (sourcesJson, onSaved) { run(saveFolder(sourcesJson, onSaved)); },
-            saveZip: function (sourcesJson, onSaved) { run(Promise.resolve().then(function () { saveZip(sourcesJson); if (onSaved) onSaved(); })); },
+            saveZip: function (sourcesJson, onSaved) { run(saveZip(sourcesJson).then(function () { if (onSaved) onSaved(); })); },
             exportPng: function (fileName, crop) { run(Promise.resolve().then(function () { exportPng(fileName, crop); })); },
             beginPdf: function () { pdfPages = []; },
             appendPdfPage: function (title, crop) {
@@ -477,24 +609,28 @@ internal actual val platformSupportsProjectDiskIo: Boolean = true
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformOpenProjectZipArchive() {
     ensureProjectIoInstalled()
+    ensureResStoreInstalled()
     callOpenZip()
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformOpenProjectFolder() {
     ensureProjectIoInstalled()
+    ensureResStoreInstalled()
     callOpenFolder()
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformSaveProjectFolder(sourcesJson: String, onSaved: () -> Unit) {
     ensureProjectIoInstalled()
+    ensureResStoreInstalled()
     callSaveFolder(sourcesJson, onSaved)
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformDownloadProjectZip(sourcesJson: String, onSaved: () -> Unit) {
     ensureProjectIoInstalled()
+    ensureResStoreInstalled()
     callSaveZip(sourcesJson, onSaved)
 }
 

@@ -104,6 +104,7 @@ import io.aequicor.visualization.subsystems.figures.translateSvgPoint
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.engine.ir.model.isSelfDescribingAssetRef
 import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
 import io.aequicor.visualization.subsystems.annotations.addAnnotationReference
 import io.aequicor.visualization.subsystems.annotations.attachAnnotationImage
@@ -232,6 +233,7 @@ fun reduceDesignEditor(state: DesignEditorState, intent: DesignEditorIntent): De
         is DesignEditorIntent.ReparentNode -> state.reparentNodeWriteBack(intent)
         is DesignEditorIntent.CreateObject -> state.createObject(intent)
         is DesignEditorIntent.CreateDiagramObject -> state.createDiagramObject(intent)
+        is DesignEditorIntent.AddResourceMedia -> state.addResourceMedia(intent)
         is DesignEditorIntent.CreateScreen -> state.createScreenWriteBack(intent)
         is DesignEditorIntent.DetachInstance -> state.detachInstanceReduce(intent.nodeId)
 
@@ -921,6 +923,55 @@ private fun DesignEditorState.createDiagramObject(
         LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
             node.copy(layoutChild = node.layoutChild.copy(absolute = false))
         else -> node
+    }
+    val next = document.insertNode(parentId, placed)
+    if (next == document) return this
+    val inMemory = pushHistory(document).copy(
+        document = next,
+        selectedNodeId = placed.id,
+        selectedNodeIds = setOf(placed.id),
+    )
+    if (!placed.isStructurallyExpressible()) return inMemory
+    val owner = owningSourceIndex(parentId) ?: return inMemory
+    val ownerIds = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
+    val expected = ownerIds + placed.id + placed.allDescendants().map { it.id }
+    return withStructuralSource(parentId, listOf(InsertChildSubtree(parentId, placed)), inMemory, expected)
+}
+
+/**
+ * Creates an image (media) node referencing a dropped/pasted resource ([EditorNodeFactory.newMedia])
+ * and persists it exactly like [createObject]: a structural insert whose section carries the media
+ * phrase. The resource path is a self-describing asset ref (no `assets` registry entry needed); the
+ * bytes live in the platform resource store, loaded by the render provider. Any write-back veto
+ * keeps the in-memory create with every source byte-identical.
+ */
+private fun DesignEditorState.addResourceMedia(
+    intent: DesignEditorIntent.AddResourceMedia,
+): DesignEditorState {
+    val document = document ?: return this
+    val node = EditorNodeFactory.newMedia(
+        document = document,
+        resPath = intent.resPath,
+        name = intent.name,
+        x = intent.x,
+        y = intent.y,
+        width = intent.width,
+        height = intent.height,
+    )
+    val parentValid = intent.parentId in document.pages.map { it.id } || document.nodeById(intent.parentId) != null
+    val parentId = if (parentValid) intent.parentId else document.pageById(selectedPageId)?.children?.firstOrNull()?.id
+        ?: document.pageById(selectedPageId)?.id ?: return this
+    // Draw the dropped image on top: the layout sorts siblings by explicit z-order, and a
+    // null-order node sorts behind any ordered siblings (e.g. a screen's background/panels), which
+    // would hide the image. Give it an order above every sibling.
+    val siblings = document.nodeById(parentId)?.children
+        ?: document.pages.firstOrNull { it.id == parentId }?.children
+        ?: emptyList()
+    val orderedNode = node.copy(order = (siblings.mapNotNull { it.order }.maxOrNull() ?: 0) + 1)
+    val placed = when (document.nodeById(parentId)?.layout?.mode) {
+        LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
+            orderedNode.copy(layoutChild = orderedNode.layoutChild.copy(absolute = false))
+        else -> orderedNode
     }
     val next = document.insertNode(parentId, placed)
     if (next == document) return this
@@ -1657,6 +1708,12 @@ private fun DesignNode.isStructurallyExpressible(): Boolean {
         // however writes a bare `diagram:` the parser drops (the node would recompile as a
         // plain section and trip the fingerprint veto) — keep that case in-memory.
         is DesignNodeKind.Diagram -> nodeKind.graph.nodes.isNotEmpty()
+        // A media node whose asset is a self-describing resource ref (`res/…`) round-trips through
+        // CNL (`Image media ( asset res/… )`) with no `assets` registry entry needed — the resolver
+        // surfaces the ref as its own url. Registry-ref media (`media/hero`) still stays in-memory,
+        // since SLM has no assets registry to recompile the url from.
+        is DesignNodeKind.Media ->
+            nodeKind.media.assetId.literalOrNull()?.let { isSelfDescribingAssetRef(it) } == true
         else -> false
     }
     // A node carrying an interaction the SLM writer can't round-trip (CubicBezier easing, unknown

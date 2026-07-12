@@ -7,9 +7,13 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -22,6 +26,9 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 import io.aequicor.visualization.subsystems.figures.PathGeometry
 import io.aequicor.visualization.subsystems.figures.RectD
 import io.aequicor.visualization.subsystems.figures.arrowGeometry
@@ -68,6 +75,8 @@ internal class DesignDrawContext(
         ComposeTypographyMeasurer(textMeasurer, density),
     /** Theme defaults for embedded diagram nodes; the app bridges its tokens in. */
     val diagramColors: DiagramCanvasColors = DiagramCanvasColors(),
+    /** Dereferences media/image-paint urls to decoded bitmaps; app-supplied. */
+    val imageAssets: ImageAssetProvider = NoImages,
 ) {
     /** Per-graph edge-route cache for embedded diagram nodes (see [DiagramRouteCache]). */
     val diagramRoutes: DiagramRouteCache = DiagramRouteCache()
@@ -99,9 +108,16 @@ internal fun DrawScope.drawDesignBox(
     if (node.opacity <= 0.0) return
 
     if (node.opacity < 1.0) {
-        // Group opacity must not clip overflowing or rotated descendants: use huge
-        // layer bounds; Skia intersects them with the current clip.
-        val bounds = Rect(-1_000_000f, -1_000_000f, 1_000_000f, 1_000_000f)
+        // Group opacity must not clip overflowing/rotated descendants, but the layer bounds must
+        // stay within the GPU's max texture size (a 2M×2M layer silently fails on WebGL/skiko-wasm
+        // and drops all content). Bound to the node box plus a generous overflow margin.
+        val margin = 2000f
+        val bounds = Rect(
+            (box.x).toFloat() - margin,
+            (box.y).toFloat() - margin,
+            (box.right).toFloat() + margin,
+            (box.bottom).toFloat() + margin,
+        )
         val layerPaint = Paint().apply { alpha = node.opacity.toFloat() }
         drawContext.canvas.saveLayer(bounds, layerPaint)
         drawWithRotation(box, context, drawChild)
@@ -136,7 +152,7 @@ private fun DrawScope.drawDesignBoxContent(
 ) {
     val node = box.node
     node.booleanOp?.let { op ->
-        drawBooleanOperation(box, op, context.vectorAssets)
+        drawBooleanOperation(box, op, context.vectorAssets, context.imageAssets)
         return
     }
     val outline = outlinePath(box, provider = context.vectorAssets)
@@ -150,18 +166,24 @@ private fun DrawScope.drawDesignBoxContent(
 
     // A text node's fills paint the glyphs, not the node box.
     if (node.text == null) {
-        node.fills.forEach { fill -> drawResolvedPaint(fill, outline, box) }
+        node.fills.forEach { fill -> drawResolvedPaint(fill, outline, box, context.imageAssets) }
         // Region paint: each explicitly-filled region overpaints its own area (Figma region fills).
         node.regionPaints.forEach { region ->
             val regionPath = region.geometry.toComposePath(box.rectD())
-            region.paints.forEach { paint -> drawResolvedPaint(paint, regionPath, box) }
+            region.paints.forEach { paint -> drawResolvedPaint(paint, regionPath, box, context.imageAssets) }
         }
         node.effects.filterIsInstance<ResolvedEffect.InnerShadow>().forEach { shadow ->
             drawInnerShadow(shadow, outline)
         }
     }
 
-    node.media?.let { media -> drawMediaPlaceholder(box, media, outline, context) }
+    // The media node's synthetic image fill (above) already paints the real bitmap when the
+    // asset resolves; only the flat placeholder + adornments are drawn when it does not.
+    node.media?.let { media ->
+        if (context.imageAssets.resolve(media.url.ifBlank { media.assetId }) == null) {
+            drawMediaPlaceholder(box, media, outline, context)
+        }
+    }
 
     // Embedded diagram canvas: the graph paints above the wrapper fills and below any
     // children/strokes, clipped to the node outline (see DiagramNodeDrawing.kt).
@@ -194,7 +216,7 @@ private fun DrawScope.drawDesignBoxContent(
 
     if (node.type == "table") drawTableDecorations(box)
 
-    node.strokes?.let { strokes -> drawStrokes(strokes, box, context.vectorAssets) }
+    node.strokes?.let { strokes -> drawStrokes(strokes, box, context.vectorAssets, context.imageAssets) }
 }
 
 /**
@@ -255,6 +277,7 @@ private fun DrawScope.drawResolvedPaint(
     paint: ResolvedPaint,
     outline: Path,
     box: LayoutBox,
+    images: ImageAssetProvider = NoImages,
     style: androidx.compose.ui.graphics.drawscope.DrawStyle = androidx.compose.ui.graphics.drawscope.Fill,
 ) {
     when (paint) {
@@ -277,21 +300,76 @@ private fun DrawScope.drawResolvedPaint(
                 drawPath(outline, paint.toBrush(box), alpha = paint.opacity.toFloat(), style = style)
         }
         is ResolvedPaint.Image -> {
-            val missing = paint.assetId.isBlank() && paint.url.isBlank()
-            if (missing) {
-                // Explicit missing-asset state: a warning tint + a hatch so it never reads
-                // as a valid, deliberately-flat placeholder.
-                drawPath(outline, MissingAssetColor, alpha = paint.opacity.toFloat(), style = style)
-                if (style == androidx.compose.ui.graphics.drawscope.Fill) {
-                    clipPath(outline) { drawMissingAssetHatch(box) }
+            val bitmap = images.resolve(paint.url.ifBlank { paint.assetId })
+            when {
+                // A resolved bitmap paints the real image (fill only; a stroked image paint
+                // is exotic and keeps the flat placeholder below).
+                bitmap != null && style == androidx.compose.ui.graphics.drawscope.Fill ->
+                    drawImagePaint(bitmap, outline, box, paint.scaleMode, paint.opacity.toFloat())
+                paint.assetId.isBlank() && paint.url.isBlank() -> {
+                    // Explicit missing-asset state: a warning tint + a hatch so it never reads
+                    // as a valid, deliberately-flat placeholder.
+                    drawPath(outline, MissingAssetColor, alpha = paint.opacity.toFloat(), style = style)
+                    if (style == androidx.compose.ui.graphics.drawscope.Fill) {
+                        clipPath(outline) { drawMissingAssetHatch(box) }
+                    }
                 }
-            } else {
-                drawPath(outline, PlaceholderImageColor, alpha = paint.opacity.toFloat(), style = style)
+                else ->
+                    drawPath(outline, PlaceholderImageColor, alpha = paint.opacity.toFloat(), style = style)
             }
         }
         is ResolvedPaint.Unknown -> {
             drawPath(outline, UnknownPaintColor, alpha = paint.opacity.toFloat(), style = style)
         }
+    }
+}
+
+/**
+ * Paints a decoded [bitmap] into the node [outline] honouring [scaleMode], clipped to the shape.
+ * The bitmap's own pixel size is the intrinsic size fed to [mediaContentRect] (Fill/Crop cover
+ * and overflow the box, Fit letterboxes, Stretch maps onto the box); `Tile` repeats the bitmap
+ * at its intrinsic size via an image shader. Non-tile modes draw through the src→dst `drawImage`
+ * overload so the bitmap maps exactly onto the computed content rect.
+ */
+private fun DrawScope.drawImagePaint(
+    bitmap: ImageBitmap,
+    outline: Path,
+    box: LayoutBox,
+    scaleMode: ImageScaleMode,
+    opacity: Float,
+    focalX: Double = 0.5,
+    focalY: Double = 0.5,
+) {
+    if (bitmap.width <= 0 || bitmap.height <= 0 || box.width <= 0.0 || box.height <= 0.0) return
+    clipPath(outline) {
+        if (scaleMode == ImageScaleMode.Tile) {
+            drawRect(
+                brush = ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)),
+                topLeft = Offset(box.x.toFloat(), box.y.toFloat()),
+                size = Size(box.width.toFloat(), box.height.toFloat()),
+                alpha = opacity,
+            )
+            return@clipPath
+        }
+        val content = mediaContentRect(
+            box = RenderRect(box.x, box.y, box.width, box.height),
+            intrinsicWidth = bitmap.width.toDouble(),
+            intrinsicHeight = bitmap.height.toDouble(),
+            fillMode = scaleMode,
+            focalX = focalX,
+            focalY = focalY,
+        )
+        val dstW = content.width.roundToInt()
+        val dstH = content.height.roundToInt()
+        if (dstW <= 0 || dstH <= 0) return@clipPath
+        drawImage(
+            image = bitmap,
+            srcOffset = IntOffset.Zero,
+            srcSize = IntSize(bitmap.width, bitmap.height),
+            dstOffset = IntOffset(content.x.roundToInt(), content.y.roundToInt()),
+            dstSize = IntSize(dstW, dstH),
+            alpha = opacity,
+        )
     }
 }
 
@@ -561,6 +639,7 @@ private fun DrawScope.drawStrokes(
     strokes: ResolvedStrokes,
     box: LayoutBox,
     provider: VectorAssetProvider = NoVectorAssets,
+    images: ImageAssetProvider = NoImages,
 ) {
     if (strokes.paints.isEmpty()) return
     val dash = strokes.dashPattern.takeIf { it.size >= 2 }?.let { pattern ->
@@ -588,7 +667,7 @@ private fun DrawScope.drawStrokes(
         cap = strokeCapOf(strokes.cap),
         join = strokeJoinOf(strokes.join),
     )
-    strokes.paints.forEach { paint -> drawResolvedPaint(paint, path, box, style) }
+    strokes.paints.forEach { paint -> drawResolvedPaint(paint, path, box, images, style) }
 }
 
 /** Per-side strokes draw straight lines, so multiple paint layers collapse to one color. */
@@ -737,6 +816,7 @@ private fun DrawScope.drawBooleanOperation(
     box: LayoutBox,
     op: BooleanOperationKind,
     provider: VectorAssetProvider = NoVectorAssets,
+    images: ImageAssetProvider = NoImages,
 ) {
     val node = box.node
     val merged = booleanOutline(box, provider) ?: return
@@ -747,7 +827,7 @@ private fun DrawScope.drawBooleanOperation(
             drawPath(merged, shadow.color.toComposeColor().copy(alpha = alpha))
         }
     }
-    node.fills.forEach { fill -> drawResolvedPaint(fill, merged, box) }
+    node.fills.forEach { fill -> drawResolvedPaint(fill, merged, box, images) }
     node.strokes?.let { strokes ->
         if (strokes.paints.isNotEmpty() && strokes.weight > 0.0) {
             val style = Stroke(
@@ -755,7 +835,7 @@ private fun DrawScope.drawBooleanOperation(
                 cap = strokeCapOf(strokes.cap),
                 join = strokeJoinOf(strokes.join),
             )
-            strokes.paints.forEach { paint -> drawResolvedPaint(paint, merged, box, style) }
+            strokes.paints.forEach { paint -> drawResolvedPaint(paint, merged, box, images, style) }
         }
     }
 }

@@ -135,7 +135,7 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
                 FolderSyncBanner(state)
                 when (state.workspace.sourceTab) {
                     SourceTab.Markdown -> SourceMarkdown(state)
-                    SourceTab.Resources -> EmptyTab(LocalStrings.current.labels.sourceTab(SourceTab.Resources))
+                    SourceTab.Resources -> ResourcesTab(state)
                     SourceTab.Layers -> LayersTree(state)
                 }
             }
@@ -689,13 +689,6 @@ private fun safeExportName(value: String): String =
         .trim('-', '.', '_')
         .ifBlank { "export" }
 
-@Composable
-private fun EmptyTab(title: CompactLabel) {
-    val colors = LocalEditorColors.current
-    Box(Modifier.fillMaxSize().background(colors.paneSurface), contentAlignment = Alignment.Center) {
-        CompactText(title, color = colors.mutedInk, style = MaterialTheme.typography.bodyMedium)
-    }
-}
 
 // --- Markdown source viewer --------------------------------------------------
 

@@ -93,6 +93,8 @@ fun DesignArtboard(
     overlayOptions: DesignOverlayOptions = DesignOverlayOptions(),
     /** Dereferences `pathRef`/`iconRef` shapes to drawable geometry; app-supplied. */
     vectorAssets: VectorAssetProvider = NoVectorAssets,
+    /** Dereferences media/image-paint urls to decoded bitmaps; app-supplied (defaults to none). */
+    imageAssets: ImageAssetProvider = NoImages,
     /** Resolves document font families; app-supplied (defaults to no bundled fonts). */
     fontProvider: FontProvider = NoFonts,
     /** Theme defaults for embedded diagram nodes; the app bridges its color tokens in. */
@@ -131,8 +133,12 @@ fun DesignArtboard(
     }
     if (layoutBox == null) return
 
-    val drawDesignContext = remember(textMeasurer, density, vectorAssets, typographyMeasurer, diagramColors) {
-        DesignDrawContext(textMeasurer, density, vectorAssets, typographyMeasurer, diagramColors)
+    // imageAssets.generation is a remember key so a newly-decoded bitmap yields a fresh context
+    // instance and the Canvas redraws with the real image in place of the placeholder.
+    val drawDesignContext = remember(
+        textMeasurer, density, vectorAssets, typographyMeasurer, diagramColors, imageAssets, imageAssets.generation,
+    ) {
+        DesignDrawContext(textMeasurer, density, vectorAssets, typographyMeasurer, diagramColors, imageAssets)
     }
 
     val allSelected = if (selectedNodeId.isNotBlank()) selectedNodeIds + selectedNodeId else selectedNodeIds

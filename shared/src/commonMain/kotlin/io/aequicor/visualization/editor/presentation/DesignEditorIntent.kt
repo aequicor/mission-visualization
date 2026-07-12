@@ -176,6 +176,23 @@ sealed interface DesignEditorIntent {
         val elementLabel: String? = null,
     ) : DesignEditorIntent
 
+    /**
+     * Creates an image (media) node under [parentId] at parent-relative ([x], [y]) with size
+     * ([width], [height]), referencing a resource already stored at [resPath] (e.g. `res/logo.png`)
+     * by drag-drop or paste. [name] is the human label (the original file name). The resource
+     * bytes live in the platform [io.aequicor.visualization.editor.platform.ProjectResourceStore];
+     * the node references them by path.
+     */
+    data class AddResourceMedia(
+        val parentId: String,
+        val resPath: String,
+        val name: String,
+        val x: Double,
+        val y: Double,
+        val width: Double,
+        val height: Double,
+    ) : DesignEditorIntent
+
     // --- Source ------------------------------------------------------------
 
     /** Replaces one authored SLM source file and recompiles it for the live preview. */

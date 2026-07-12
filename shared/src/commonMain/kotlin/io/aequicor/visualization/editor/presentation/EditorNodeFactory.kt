@@ -3,10 +3,14 @@ package io.aequicor.visualization.editor.presentation
 import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignLayoutChild
+import io.aequicor.visualization.engine.ir.model.DesignMedia
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.ImageScaleMode
+import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
@@ -127,6 +131,39 @@ object EditorNodeFactory {
             layoutChild = io.aequicor.visualization.engine.ir.model.DesignLayoutChild(absolute = true),
         )
     }
+
+    /**
+     * New image (media) node referencing a project resource already stored at [resPath]
+     * (e.g. `res/logo.png`). Placed absolutely at parent-relative ([x], [y]) with size
+     * ([width], [height]) — the caller passes the decoded image's natural size (fit to the drop
+     * container). The asset id is the resource path itself: a self-describing ref the resolver
+     * surfaces as the url and the app's image provider dereferences to bytes, so no `assets`
+     * registry entry is needed. `Fill` matches Figma's default placement.
+     */
+    fun newMedia(
+        document: DesignDocument?,
+        resPath: String,
+        name: String,
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+    ): DesignNode = DesignNode(
+        id = uniqueId(document, "image"),
+        type = "media",
+        kind = DesignNodeKind.Media(
+            DesignMedia(
+                assetId = resPath.bindable(),
+                kind = MediaKind.Image,
+                fillMode = ImageScaleMode.Fill,
+            ),
+        ),
+        name = name.ifBlank { "Image" },
+        position = DesignPoint(x, y),
+        size = DesignSize(width, height),
+        sizing = DesignSizing(SizingMode.Fixed, SizingMode.Fixed),
+        layoutChild = DesignLayoutChild(absolute = true),
+    )
 
     /** New screen = a page holding a single root frame sized to the preset. */
     fun newScreen(document: DesignDocument?, preset: ScreenPreset, title: String): DesignPage {
