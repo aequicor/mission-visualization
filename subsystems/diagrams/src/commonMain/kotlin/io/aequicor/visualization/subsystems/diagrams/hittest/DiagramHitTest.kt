@@ -196,8 +196,16 @@ fun resolveEndpointPoint(graph: DiagramGraph, endpoint: DiagramEndpoint): Diagra
     }
 
 /**
+ * Default perpendicular gap (document units) that lifts an edge label clear of the line it
+ * annotates, so the connector no longer runs through the text. Roughly half the label height
+ * plus a small breathing gap. The user's manual offset stacks on top and can cancel it.
+ */
+const val EDGE_LABEL_LINE_GAP: Double = 13.0
+
+/**
  * Anchor point of an edge label on a routed polyline: arc-length fraction 0.1 / 0.5 / 0.9
- * for SOURCE / MIDDLE / TARGET, plus the label's manual offset.
+ * for SOURCE / MIDDLE / TARGET, lifted [EDGE_LABEL_LINE_GAP] perpendicular to the line so the
+ * connector does not cross the text, plus the label's manual offset (drag override) on top.
  */
 fun edgeLabelAnchorPoint(route: List<DiagramPoint>, label: DiagramEdgeLabel): DiagramPoint {
     val fraction = when (label.position) {
@@ -206,7 +214,47 @@ fun edgeLabelAnchorPoint(route: List<DiagramPoint>, label: DiagramEdgeLabel): Di
         DiagramEdgeLabelPosition.TARGET -> 0.9
     }
     val base = pointAlongPolyline(route, fraction)
-    return DiagramPoint(base.x + label.offsetX, base.y + label.offsetY)
+    val lift = edgeLabelLift(route, fraction)
+    return DiagramPoint(
+        base.x + lift.x + label.offsetX,
+        base.y + lift.y + label.offsetY,
+    )
+}
+
+/**
+ * Perpendicular offset that pushes the label off the line at [fraction], of magnitude
+ * [EDGE_LABEL_LINE_GAP]. The chosen normal points "up" (negative y); for vertical edges,
+ * where both normals are horizontal, it consistently points right (+x). Direction-independent:
+ * a left→right and a right→left segment lift the label to the same side.
+ */
+private fun edgeLabelLift(route: List<DiagramPoint>, fraction: Double): DiagramPoint {
+    val tangent = polylineTangent(route, fraction) ?: return DiagramPoint(0.0, 0.0)
+    var nx = -tangent.y
+    var ny = tangent.x
+    if (ny > 0.0 || (ny == 0.0 && nx < 0.0)) {
+        nx = -nx
+        ny = -ny
+    }
+    return DiagramPoint(nx * EDGE_LABEL_LINE_GAP, ny * EDGE_LABEL_LINE_GAP)
+}
+
+/** Unit travel direction at arc-length [fraction] along the polyline, or null if degenerate. */
+private fun polylineTangent(route: List<DiagramPoint>, fraction: Double): DiagramPoint? {
+    if (route.size < 2) return null
+    val lengths = (0 until route.size - 1).map { distance(route[it], route[it + 1]) }
+    val total = lengths.sum()
+    if (total <= 0.0) return null
+    var remaining = fraction.coerceIn(0.0, 1.0) * total
+    for (index in lengths.indices) {
+        val segment = lengths[index]
+        if ((remaining <= segment || index == lengths.lastIndex) && segment > 0.0) {
+            val a = route[index]
+            val b = route[index + 1]
+            return DiagramPoint((b.x - a.x) / segment, (b.y - a.y) / segment)
+        }
+        remaining -= segment
+    }
+    return null
 }
 
 /** Point at arc-length [fraction] `0..1` along the polyline. */
