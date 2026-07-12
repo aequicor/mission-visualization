@@ -86,13 +86,13 @@ internal fun DesignDocument.insertNode(parentId: String, node: DesignNode, index
     pages.firstOrNull { it.id == parentId }?.let {
         return copy(
             pages = pages.map { page ->
-                if (page.id == parentId) page.copy(children = page.children.insertAt(node, index)) else page
+                if (page.id == parentId) page.copy(children = page.children.insertAt(node, index).reindexOrder()) else page
             },
         )
     }
     // Parent is a node.
     if (nodeById(parentId) == null) return this
-    return updateNode(parentId) { parent -> parent.copy(children = parent.children.insertAt(node, index)) }
+    return updateNode(parentId) { parent -> parent.copy(children = parent.children.insertAt(node, index).reindexOrder()) }
 }
 
 /** Removes the nodes with [ids] anywhere in the tree (top level or nested). */
@@ -107,11 +107,11 @@ internal fun DesignDocument.removeNodes(ids: Set<String>): DesignDocument {
 internal fun DesignDocument.reorderSibling(nodeId: String, newIndex: Int): DesignDocument {
     val parent = parentNodeOf(nodeId)
     if (parent != null) {
-        return updateNode(parent.id) { p -> p.copy(children = p.children.moveWithin(nodeId, newIndex)) }
+        return updateNode(parent.id) { p -> p.copy(children = p.children.moveWithin(nodeId, newIndex).reindexOrder()) }
     }
     val page = topLevelOwnerPage(nodeId) ?: return this
     return copy(
-        pages = pages.map { pg -> if (pg.id == page.id) pg.copy(children = pg.children.moveWithin(nodeId, newIndex)) else pg },
+        pages = pages.map { pg -> if (pg.id == page.id) pg.copy(children = pg.children.moveWithin(nodeId, newIndex).reindexOrder()) else pg },
     )
 }
 
@@ -196,6 +196,24 @@ internal fun DesignNode.deepCopyWithFreshIds(document: DesignDocument): DesignNo
     )
     return clone(this, isRoot = true)
 }
+
+/**
+ * Re-materializes explicit sibling [DesignNode.order] from list position, mirroring the compiler's
+ * `resolveOrder` (`order = (index + 1) * 10`). The layers tree and every structural mutator treat
+ * children-list order as the z-authority, but the canvas resolver paints by the `order` field
+ * (`order ?: 0`, stable sort) — so after any list-order change (insert / reorder / reparent) the two
+ * drift apart unless `order` is re-synced (e.g. a null-order node stays visually behind an ordered
+ * sibling however the layers tree is dragged). `order` is never serialized to the SLM source — z is
+ * document order there — so this only refreshes the live in-memory z; it never touches source bytes.
+ * For structurally-expressible edits a recompile re-derives the identical `(index + 1) * 10`; for
+ * in-memory-only edits (instance / media / vector-path, whose z can't be written back) it is the sole
+ * carrier of the new order until the next reload — which is exactly the case this fix exists for.
+ */
+private fun List<DesignNode>.reindexOrder(): List<DesignNode> =
+    mapIndexed { index, child ->
+        val order = (index + 1) * 10
+        if (child.order == order) child else child.copy(order = order)
+    }
 
 private fun List<DesignNode>.insertAt(node: DesignNode, index: Int): List<DesignNode> {
     val clamped = if (index < 0) size else index.coerceIn(0, size)

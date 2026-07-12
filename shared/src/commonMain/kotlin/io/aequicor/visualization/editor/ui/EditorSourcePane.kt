@@ -119,6 +119,7 @@ import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /** Left column: Source / Resources / Layers tabs plus the Screens list. */
@@ -886,6 +887,9 @@ private fun LayersTree(state: MissionEditorStateHolder) {
         page?.let { flattenLayers(it, ws.collapsedLayers) } ?: emptyList()
     }
     val rowHeightPx = with(LocalDensity.current) { LayerRowHeight.toPx() }
+    // One indent level in px (matches LayerRowView's `depth * 16.dp` start padding). Horizontal drag
+    // distance / this = how many levels the pointer wants to nest in or pop out of at a trailing gap.
+    val indentStepPx = with(LocalDensity.current) { 16.dp.toPx() }
     // Drag-to-reorder / reparent state, local to the tree. The pointer's absolute Y
     // (from the top of the tree) resolves through the pure banding/index mapping in
     // [resolveLayerDropTarget]: an insertion LINE between rows (before/after — including
@@ -901,6 +905,10 @@ private fun LayersTree(state: MissionEditorStateHolder) {
         }
     }
     var dragId by remember { mutableStateOf("") }
+    // The dragged row's own depth is the baseline; horizontal drag distance shifts the target depth
+    // (drag right to nest deeper, left to pop out), independent of where in the row it was grabbed.
+    var dragBaseDepth by remember { mutableStateOf(0) }
+    var dragDx by remember { mutableStateOf(0f) }
     var dragPointerY by remember { mutableStateOf(0f) }
     var dropTarget by remember { mutableStateOf<LayerDropTarget?>(null) }
     fun clearDrag() {
@@ -935,14 +943,18 @@ private fun LayersTree(state: MissionEditorStateHolder) {
                 onRequestFocus = { runCatching { focusRequester.requestFocus() } },
                 onDragStart = { localY ->
                     dragId = row.node.id
+                    dragBaseDepth = row.depth
+                    dragDx = 0f
                     dragPointerY = index * rowHeightPx + localY
                     dropTarget = null
                 },
-                onDrag = { dy ->
+                onDrag = { dx, dy ->
                     if (dragId.isNotEmpty()) {
+                        dragDx += dx
                         dragPointerY += dy
+                        val pointerDepth = (dragBaseDepth + (dragDx / indentStepPx).roundToInt()).coerceAtLeast(0)
                         dropTarget = state.designState.document?.let { doc ->
-                            resolveLayerDropTarget(doc, rowModels, dragId, (dragPointerY / rowHeightPx).toDouble())
+                            resolveLayerDropTarget(doc, rowModels, dragId, (dragPointerY / rowHeightPx).toDouble(), pointerDepth)
                         }
                     }
                 },
@@ -996,7 +1008,7 @@ private fun LayerRowView(
     dropLineIndent: Dp,
     onRequestFocus: () -> Unit,
     onDragStart: (Float) -> Unit,
-    onDrag: (Float) -> Unit,
+    onDrag: (Float, Float) -> Unit,
     onDrop: () -> Unit,
     onDragCancel: () -> Unit,
 ) {
@@ -1055,7 +1067,7 @@ private fun LayerRowView(
                     onDragStart = { offset -> onRequestFocus(); onDragStart(offset.y) },
                     onDragEnd = { onDrop() },
                     onDragCancel = { onDragCancel() },
-                ) { change, dragAmount -> change.consume(); onDrag(dragAmount.y) }
+                ) { change, dragAmount -> change.consume(); onDrag(dragAmount.x, dragAmount.y) }
             }
             .clickable {
                 onRequestFocus()
