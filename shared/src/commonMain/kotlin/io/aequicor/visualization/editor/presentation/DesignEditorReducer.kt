@@ -961,17 +961,13 @@ private fun DesignEditorState.addResourceMedia(
     val parentValid = intent.parentId in document.pages.map { it.id } || document.nodeById(intent.parentId) != null
     val parentId = if (parentValid) intent.parentId else document.pageById(selectedPageId)?.children?.firstOrNull()?.id
         ?: document.pageById(selectedPageId)?.id ?: return this
-    // Draw the dropped image on top: the layout sorts siblings by explicit z-order, and a
-    // null-order node sorts behind any ordered siblings (e.g. a screen's background/panels), which
-    // would hide the image. Give it an order above every sibling.
-    val siblings = document.nodeById(parentId)?.children
-        ?: document.pages.firstOrNull { it.id == parentId }?.children
-        ?: emptyList()
-    val orderedNode = node.copy(order = (siblings.mapNotNull { it.order }.maxOrNull() ?: 0) + 1)
+    // Draw the dropped image on top: it appends last in its sibling list, and insertNode
+    // re-materializes z-order from list position (see DocumentEditing.reindexOrder), so the image
+    // lands above every existing sibling — a screen's background/panels can no longer hide it.
     val placed = when (document.nodeById(parentId)?.layout?.mode) {
         LayoutMode.Horizontal, LayoutMode.Vertical, LayoutMode.Grid ->
-            orderedNode.copy(layoutChild = orderedNode.layoutChild.copy(absolute = false))
-        else -> orderedNode
+            node.copy(layoutChild = node.layoutChild.copy(absolute = false))
+        else -> node
     }
     val next = document.insertNode(parentId, placed)
     if (next == document) return this

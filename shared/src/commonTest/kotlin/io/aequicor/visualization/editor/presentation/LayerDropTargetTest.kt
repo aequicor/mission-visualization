@@ -111,14 +111,56 @@ class LayerDropTargetTest {
 
     @Test
     fun gapBelowLastChildOfNestedGroupTargetsTheShallowerParent() {
-        // Gap between "b1" (row 3, depth 2) and "a" (row 4, depth 1): the row below wins,
-        // so the slot is in root, visually above "a" (doc index 0) -> in front of it = index 1.
+        // Gap between "b1" (row 3, depth 2) and "a" (row 4, depth 1): with no pointer indent the
+        // row below wins, so the slot is in root, visually above "a" (doc index 0) = index 1.
         val target = resolveLayerDropTarget(document, rows, dragId = "c", pointerRowPosition = 3.9)
         val gap = assertIs<LayerDropTarget.InsertGap>(target)
         assertEquals("root", gap.parentId)
         assertEquals(4, gap.gapIndex)
         assertEquals(1, gap.index)
         assertEquals(1, gap.depth)
+    }
+
+    @Test
+    fun deepPointerAtTheTrailingGapStaysInsideTheGroup() {
+        // Same b1/a boundary, but the pointer is indented to depth 2 (over the group's content):
+        // the node joins "b" at the back of its list (doc index 0) instead of escaping to root.
+        // This is the reported "can't drop under the last child of a group" case.
+        val target = resolveLayerDropTarget(document, rows, dragId = "c", pointerRowPosition = 3.9, pointerDepth = 2)
+        val gap = assertIs<LayerDropTarget.InsertGap>(target)
+        assertEquals("b", gap.parentId)
+        assertEquals(0, gap.index)
+        assertEquals(2, gap.depth)
+    }
+
+    @Test
+    fun shallowPointerAtTheTrailingGapPopsOutToTheOuterContainer() {
+        // Indent depth 1 selects the outer container explicitly — same as the legacy default.
+        val target = resolveLayerDropTarget(document, rows, dragId = "c", pointerRowPosition = 3.9, pointerDepth = 1)
+        val gap = assertIs<LayerDropTarget.InsertGap>(target)
+        assertEquals("root", gap.parentId)
+        assertEquals(1, gap.index)
+        assertEquals(1, gap.depth)
+    }
+
+    @Test
+    fun pointerDepthIsClampedToTheAvailableBand() {
+        // Past the deepest rung clamps to the inner group; below the shallowest clamps to root.
+        val deep = assertIs<LayerDropTarget.InsertGap>(
+            resolveLayerDropTarget(document, rows, dragId = "c", pointerRowPosition = 3.9, pointerDepth = 9),
+        )
+        assertEquals("b", deep.parentId)
+        val shallow = assertIs<LayerDropTarget.InsertGap>(
+            resolveLayerDropTarget(document, rows, dragId = "c", pointerRowPosition = 3.9, pointerDepth = 0),
+        )
+        assertEquals("root", shallow.parentId)
+    }
+
+    @Test
+    fun deepPointerStillRejectsDroppingIntoOwnSubtree() {
+        // Dragging "b" into its own back (deep pointer at the b1/a boundary) resolves to parent b
+        // and is rejected, exactly like the shallow path.
+        assertNull(resolveLayerDropTarget(document, rows, dragId = "b", pointerRowPosition = 3.9, pointerDepth = 2))
     }
 
     @Test
@@ -164,5 +206,49 @@ class LayerDropTargetTest {
         val self = resolveLayerDropTarget(document, rows, dragId = "a", pointerRowPosition = 3.95)
         val selfGap = assertIs<LayerDropTarget.InsertGap>(self)
         assertEquals(0, selfGap.index)
+    }
+
+    // --- Depth-0 terminal gap (empty / collapsed root): must not crash on the empty [1,0] band ---
+
+    @Test
+    fun terminalGapUnderEmptyRootDoesNotThrowAndRejectsSelfDrag() {
+        // An empty (or collapsed) root frame is the only row, at depth 0. Dropping below it used to
+        // throw IllegalArgumentException (coerceIn(shallowest=1, deepest=0)); now it resolves to the
+        // back of the root, and a self-drag of the root is cleanly rejected by the subtree guard.
+        val doc = DesignDocument(
+            pages = listOf(DesignPage(id = "page", name = "Page", children = listOf(frame("root")))),
+        )
+        val single = listOf(LayerTreeRow("root", 0, isContainer = true))
+        assertNull(resolveLayerDropTarget(doc, single, dragId = "root", pointerRowPosition = 0.9, pointerDepth = 5))
+    }
+
+    @Test
+    fun terminalGapUnderCollapsedRootDropsChildAtItsBack() {
+        // Root collapsed → only its row shows; dragging the hidden child to the very bottom lands it
+        // at the back (document index 0) of the root, not off the tree or into the page.
+        val doc = DesignDocument(
+            pages = listOf(DesignPage(id = "page", name = "Page", children = listOf(frame("root", shape("x"))))),
+        )
+        val collapsed = listOf(LayerTreeRow("root", 0, isContainer = true))
+        val gap = assertIs<LayerDropTarget.InsertGap>(
+            resolveLayerDropTarget(doc, collapsed, dragId = "x", pointerRowPosition = 0.9, pointerDepth = 0),
+        )
+        assertEquals("root", gap.parentId)
+        assertEquals(0, gap.index)
+    }
+
+    @Test
+    fun terminalGapUnderDepth0BackmostRowDoesNotThrow() {
+        // Two top-level rows at depth 0 (the backmost is the tree's bottom row). Dropping below it
+        // used to throw; now it resolves without crashing.
+        val doc = DesignDocument(
+            pages = listOf(DesignPage(id = "page", name = "Page", children = listOf(shape("x"), shape("y")))),
+        )
+        // Front-first: [y, x]; terminal gap under x (depth 0).
+        val two = listOf(LayerTreeRow("y", 0, isContainer = false), LayerTreeRow("x", 0, isContainer = false))
+        val gap = assertIs<LayerDropTarget.InsertGap>(
+            resolveLayerDropTarget(doc, two, dragId = "y", pointerRowPosition = 1.9, pointerDepth = 3),
+        )
+        assertEquals("x", gap.parentId)
     }
 }

@@ -41,12 +41,18 @@ sealed interface LayerDropTarget {
  * (otherwise the nearest gap). Positions past the last row resolve to the terminal gap —
  * the visual end of the root's list, i.e. the back of the paint order. Returns null for
  * drops that would land the node in itself/its own subtree or directly above the root row.
+ *
+ * [pointerDepth] is the pointer's horizontal indent level (tree depth, from its x). At the
+ * trailing edge of nested groups a gap is ambiguous — the node could join the inner group it
+ * sits under or pop out to any ancestor — so the indent picks the level (deep = stay in, shallow
+ * = pop out), like Figma/VS Code. Null keeps the legacy shallowest choice (the row below wins).
  */
 fun resolveLayerDropTarget(
     document: DesignDocument,
     rows: List<LayerTreeRow>,
     dragId: String,
     pointerRowPosition: Double,
+    pointerDepth: Int? = null,
 ): LayerDropTarget? {
     if (rows.isEmpty()) return null
     val position = pointerRowPosition.coerceIn(0.0, rows.size.toDouble())
@@ -57,7 +63,7 @@ fun resolveLayerDropTarget(
         frac in 0.25..0.75 && row.isContainer && row.nodeId != dragId ->
             LayerDropTarget.IntoContainer(row.nodeId, hoverRow)
         else ->
-            insertGapTarget(document, rows, dragId, gapIndex = if (frac < 0.5) hoverRow else hoverRow + 1)
+            insertGapTarget(document, rows, dragId, gapIndex = if (frac < 0.5) hoverRow else hoverRow + 1, pointerDepth = pointerDepth)
     } ?: return null
     val parentId = when (target) {
         is LayerDropTarget.IntoContainer -> target.nodeId
@@ -101,40 +107,86 @@ fun layerReparentKeepPutPosition(
     return DesignPoint(nodeBox.x - parentBox.x, nodeBox.y - parentBox.y)
 }
 
+/** A resolved insertion slot: [rawIndex] children of [parentId] (before same-parent adjustment). */
+private data class GapSlot(val parentId: String, val siblingIds: List<String>, val rawIndex: Int, val depth: Int)
+
 private fun insertGapTarget(
     document: DesignDocument,
     rows: List<LayerTreeRow>,
     dragId: String,
     gapIndex: Int,
+    pointerDepth: Int?,
 ): LayerDropTarget.InsertGap? {
     // The gap above the root row is not a drop slot: the artboard renders the root
     // frame's tree, so a second page-level child would not be visible.
     if (gapIndex <= 0) return null
+    val above = rows[gapIndex - 1]
     val below = rows.getOrNull(gapIndex)
-    val parentId: String
-    val siblingIds: List<String>
-    val rawIndex: Int
-    val depth: Int
-    if (below == null) {
-        // Terminal gap under the last row: the end of the root's visible list — the
-        // back of the paint order, document index 0.
-        parentId = rows.first().nodeId
-        siblingIds = document.nodeById(parentId)?.children?.map { it.id }.orEmpty()
-        rawIndex = 0
-        depth = rows.first().depth + 1
+
+    val slot: GapSlot = if (below != null && above.depth <= below.depth) {
+        // The row below is a sibling (same depth) or the container above's first child (deeper):
+        // it owns the gap, so land directly in front of it in paint order.
+        document.gapSlotBeforeRow(below.nodeId, below.depth) ?: return null
     } else {
-        // Inserting "visually above `below`" = directly in front of it in paint order.
-        val parent = document.parentNodeOf(below.nodeId)
-        parentId = parent?.id ?: document.topLevelOwnerPage(below.nodeId)?.id ?: return null
-        siblingIds = (parent?.children ?: document.topLevelOwnerPage(below.nodeId)?.children.orEmpty()).map { it.id }
-        val belowIndex = siblingIds.indexOf(below.nodeId)
-        if (belowIndex < 0) return null
-        rawIndex = belowIndex + 1
-        depth = below.depth
+        // Trailing edge of one or more nested groups (row above is deeper than the row below, or
+        // this is the terminal gap). The gap is ambiguous across every ancestor level from the
+        // inner group up to the outer container; the pointer's indent picks one — deep stays in
+        // the group it visually sits under, shallow pops out. Absent an indent, keep the legacy
+        // shallowest choice (the row below, or a direct child of the root).
+        val deepest = above.depth
+        val shallowest = (below?.depth ?: 1).coerceAtLeast(1)
+        if (deepest < shallowest) {
+            // Terminal gap under a depth-0 root row (an empty or collapsed root frame): there is no
+            // ancestor to pop out to, so land at the back of the root itself. This also avoids an
+            // empty `coerceIn(shallowest, deepest)` range. A self-drag of the root is rejected by
+            // the self/ancestor guard in [resolveLayerDropTarget].
+            document.gapSlotAtBackOf(above.nodeId, above.depth + 1)
+        } else {
+            val chosen = (pointerDepth ?: shallowest).coerceIn(shallowest, deepest)
+            if (below != null && chosen == below.depth) {
+                // Shallowest rung that still has a row below it: land in front of that row.
+                document.gapSlotBeforeRow(below.nodeId, chosen) ?: return null
+            } else {
+                // Land at the BACK (document index 0) of the ancestor whose child level is `chosen` —
+                // i.e. behind the subtree that ends at `above`.
+                val anchorId = ancestorAtDepth(document, above.nodeId, above.depth, chosen) ?: return null
+                val parentId = document.parentNodeOf(anchorId)?.id
+                    ?: document.topLevelOwnerPage(anchorId)?.id ?: return null
+                document.gapSlotAtBackOf(parentId, chosen)
+            }
+        }
     }
     // Same-parent move: reparent removes the node before inserting, so a target index
     // past the node's current slot shifts down by one.
-    val dragIndex = siblingIds.indexOf(dragId)
-    val index = if (dragIndex in 0 until rawIndex) rawIndex - 1 else rawIndex
-    return LayerDropTarget.InsertGap(parentId = parentId, index = index, gapIndex = gapIndex, depth = depth)
+    val dragIndex = slot.siblingIds.indexOf(dragId)
+    val index = if (dragIndex in 0 until slot.rawIndex) slot.rawIndex - 1 else slot.rawIndex
+    return LayerDropTarget.InsertGap(parentId = slot.parentId, index = index, gapIndex = gapIndex, depth = slot.depth)
+}
+
+/** Slot directly in front of [rowId] in paint order (document index of [rowId] + 1). */
+private fun DesignDocument.gapSlotBeforeRow(rowId: String, depth: Int): GapSlot? {
+    val parent = parentNodeOf(rowId)
+    val parentId = parent?.id ?: topLevelOwnerPage(rowId)?.id ?: return null
+    val siblingIds = (parent?.children ?: topLevelOwnerPage(rowId)?.children.orEmpty()).map { it.id }
+    val rowIndex = siblingIds.indexOf(rowId)
+    if (rowIndex < 0) return null
+    return GapSlot(parentId, siblingIds, rowIndex + 1, depth)
+}
+
+/** Slot at the back of [containerId] (document index 0 — the bottom of its layers block). */
+private fun DesignDocument.gapSlotAtBackOf(containerId: String, depth: Int): GapSlot {
+    val childIds = (nodeById(containerId)?.children ?: pages.firstOrNull { it.id == containerId }?.children.orEmpty())
+        .map { it.id }
+    return GapSlot(containerId, childIds, 0, depth)
+}
+
+/** Walks up from [startId] (at [startDepth]) to the ancestor at [targetDepth] (≤ startDepth). */
+private fun ancestorAtDepth(document: DesignDocument, startId: String, startDepth: Int, targetDepth: Int): String? {
+    var id = startId
+    var depth = startDepth
+    while (depth > targetDepth) {
+        id = document.parentNodeOf(id)?.id ?: return null
+        depth--
+    }
+    return id
 }
