@@ -81,6 +81,7 @@ import io.aequicor.visualization.editor.platform.platformFinishPdfExport
 import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
 import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
 import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
+import io.aequicor.visualization.editor.domain.AppLanguage
 import io.aequicor.visualization.editor.platform.platformSupportsProjectDiskIo
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
@@ -92,6 +93,7 @@ import io.aequicor.visualization.editor.presentation.ScreenPreset
 import io.aequicor.visualization.editor.presentation.SourceTab
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.resolveLayerDropTarget
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPage
@@ -113,7 +115,7 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
                 SourcePaneHeader(state)
                 when (state.workspace.sourceTab) {
                     SourceTab.Markdown -> SourceMarkdown(state)
-                    SourceTab.Resources -> EmptyTab(SourceTab.Resources.label)
+                    SourceTab.Resources -> EmptyTab(LocalStrings.current.labels.sourceTab(SourceTab.Resources))
                     SourceTab.Layers -> LayersTree(state)
                 }
             }
@@ -125,6 +127,7 @@ fun EditorSourcePane(state: MissionEditorStateHolder, modifier: Modifier = Modif
 @Composable
 private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val scope = rememberCoroutineScope()
     var menuExpanded by remember { mutableStateOf(false) }
     var menuPane by remember { mutableStateOf(ProjectMenuPane.Root) }
@@ -155,7 +158,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
         ) {
             SmallIconButton(
                 icon = EditorIcon.AppMenu,
-                contentDescription = "Project menu",
+                contentDescription = strings.menu.projectMenu,
                 onClick = ::openRootMenu,
                 modifier = Modifier.size(30.dp),
             )
@@ -163,39 +166,43 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 ProjectMenuTitleBar(projectName = state.displayProjectName, version = AppBuildInfo.VERSION)
                 when (menuPane) {
                     ProjectMenuPane.Root -> {
-                        EditorDropdownMenuItem("Открыть") { menuPane = ProjectMenuPane.Open }
-                        EditorDropdownMenuItem("Сохранить") { menuPane = ProjectMenuPane.Save }
-                        EditorDropdownMenuItem("Экспортировать") { menuPane = ProjectMenuPane.Export }
-                        EditorDropdownMenuItem("Развернуть на весь экран (F10)") {
+                        EditorDropdownMenuItem(strings.menu.open, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) { menuPane = ProjectMenuPane.Open }
+                        EditorDropdownMenuItem(strings.menu.save, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) { menuPane = ProjectMenuPane.Save }
+                        EditorDropdownMenuItem(strings.menu.export, leadingContent = { DropdownMenuIcon(EditorIcon.Export) }) { menuPane = ProjectMenuPane.Export }
+                        EditorDropdownMenuItem(
+                            "${strings.menu.language}: ${state.language.nativeName}",
+                            leadingContent = { DropdownMenuIcon(EditorIcon.Language) },
+                        ) { menuPane = ProjectMenuPane.Language }
+                        EditorDropdownMenuItem(strings.menu.fullscreen, leadingContent = { DropdownMenuIcon(EditorIcon.Fullscreen) }) {
                             closeMenu()
                             platformToggleFullscreen()
                         }
                     }
                     ProjectMenuPane.Open -> {
-                        EditorDropdownMenuItem("Назад") { menuPane = ProjectMenuPane.Root }
-                        EditorDropdownMenuItem("Welcome-проект", leadingContent = { DropdownMenuIcon(EditorIcon.Home) }) {
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
+                        EditorDropdownMenuItem(strings.menu.welcomeProject, leadingContent = { DropdownMenuIcon(EditorIcon.Home) }) {
                             closeMenu()
                             state.openWelcomeProject()
                         }
                         if (platformSupportsProjectDiskIo) {
-                            EditorDropdownMenuItem("Открыть ZIP архив") {
+                            EditorDropdownMenuItem(strings.menu.openZipArchive, leadingContent = { DropdownMenuIcon(EditorIcon.Folder) }) {
                                 closeMenu()
                                 platformOpenProjectZipArchive()
                             }
-                            EditorDropdownMenuItem("Выбрать папку на ПК") {
+                            EditorDropdownMenuItem(strings.menu.openFolder, leadingContent = { DropdownMenuIcon(EditorIcon.FolderOpen) }) {
                                 closeMenu()
                                 platformOpenProjectFolder()
                             }
                         }
                     }
                     ProjectMenuPane.Save -> {
-                        EditorDropdownMenuItem("Назад") { menuPane = ProjectMenuPane.Root }
-                        EditorDropdownMenuItem("Сохранить работу в браузере") {
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
+                        EditorDropdownMenuItem(strings.menu.saveInBrowser, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
                             closeMenu()
                             state.saveDraftNow()
                         }
                         if (platformSupportsProjectDiskIo) {
-                            EditorDropdownMenuItem("Сохранить в папку на ПК") {
+                            EditorDropdownMenuItem(strings.menu.saveToFolder, leadingContent = { DropdownMenuIcon(EditorIcon.Folder) }) {
                                 closeMenu()
                                 // A completed disk save makes the working set persistent: keep the
                                 // local draft in sync from now on (cancelling the picker changes nothing).
@@ -203,7 +210,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                                     state.saveDraftNow()
                                 }
                             }
-                            EditorDropdownMenuItem("Сохранить ZIP архивом") {
+                            EditorDropdownMenuItem(strings.menu.saveAsZip, leadingContent = { DropdownMenuIcon(EditorIcon.Folder) }) {
                                 closeMenu()
                                 platformDownloadProjectZip(encodeProjectSourcesJson(state.displayProjectName, state.designState.sources)) {
                                     state.saveDraftNow()
@@ -212,18 +219,34 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                         }
                     }
                     ProjectMenuPane.Export -> {
-                        EditorDropdownMenuItem("Назад") { menuPane = ProjectMenuPane.Root }
-                        EditorDropdownMenuItem("PNG - весь экран") {
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
+                        EditorDropdownMenuItem(strings.menu.exportPngScreen, leadingContent = { DropdownMenuIcon(EditorIcon.Image) }) {
                             closeMenu()
                             exportCurrentScreenPng(state)
                         }
-                        EditorDropdownMenuItem("PNG - выбранный компонент") {
+                        EditorDropdownMenuItem(strings.menu.exportPngComponent, leadingContent = { DropdownMenuIcon(EditorIcon.Image) }) {
                             closeMenu()
                             exportSelectedComponentPng(state)
                         }
-                        EditorDropdownMenuItem("PDF - все экраны") {
+                        EditorDropdownMenuItem(strings.menu.exportPdfAllScreens, leadingContent = { DropdownMenuIcon(EditorIcon.PictureAsPdf) }) {
                             closeMenu()
                             scope.launch { exportAllScreensPdf(state) }
+                        }
+                    }
+                    ProjectMenuPane.Language -> {
+                        EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
+                        AppLanguage.entries.forEach { language ->
+                            EditorDropdownMenuItem(
+                                language.nativeName,
+                                leadingContent = {
+                                    DropdownMenuIcon(
+                                        if (language == state.language) EditorIcon.Check else EditorIcon.Language,
+                                    )
+                                },
+                            ) {
+                                closeMenu()
+                                state.selectLanguage(language)
+                            }
                         }
                     }
                 }
@@ -233,7 +256,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
             TabStrip(
                 tabs = SourceTab.entries,
                 selected = state.workspace.sourceTab,
-                title = { it.label },
+                title = { strings.labels.sourceTab(it) },
                 icon = ::sourceTabIcon,
                 onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
             )
@@ -241,7 +264,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     }
 }
 
-private enum class ProjectMenuPane { Root, Open, Save, Export }
+private enum class ProjectMenuPane { Root, Open, Save, Export, Language }
 
 @Composable
 private fun ProjectMenuTitleBar(projectName: String, version: String) {
@@ -352,7 +375,7 @@ private fun SourceMarkdown(state: MissionEditorStateHolder) {
     if (source == null) {
         Box(Modifier.fillMaxSize().background(colors.paneSurface), contentAlignment = Alignment.Center) {
             Text(
-                "This screen was created in the editor and has no SLM source yet.",
+                LocalStrings.current.source.noSlmSource,
                 color = colors.mutedInk,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(24.dp),
@@ -534,7 +557,7 @@ private fun LayersTree(state: MissionEditorStateHolder) {
             )
         }
         if (rows.isEmpty()) {
-            Text("Empty screen", color = colors.mutedInk, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+            Text(LocalStrings.current.source.emptyScreen, color = colors.mutedInk, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
         }
     }
 }
@@ -673,18 +696,19 @@ private fun LayerRowView(
             overflow = TextOverflow.Ellipsis,
         )
         // Row actions appear on hover/selection to avoid clutter.
+        val strings = LocalStrings.current
         if (selected || hovered) {
-            LayerAction(EditorIcon.ArrowUp, contentDescription = "Bring forward", enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Forward)) }
-            LayerAction(EditorIcon.ArrowDown, contentDescription = "Send backward", enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Backward)) }
+            LayerAction(EditorIcon.ArrowUp, contentDescription = strings.source.bringForward, enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Forward)) }
+            LayerAction(EditorIcon.ArrowDown, contentDescription = strings.source.sendBackward, enabled = true) { state.dispatch(DesignEditorIntent.ReorderNode(node.id, ZOrderMove.Backward)) }
             LayerIconAction(
                 icon = EditorIcon.Lock,
-                contentDescription = if (node.locked) "Unlock layer" else "Lock layer",
+                contentDescription = if (node.locked) strings.source.unlockLayer else strings.source.lockLayer,
                 active = node.locked,
             ) { state.dispatch(DesignEditorIntent.SetLocked(node.id, !node.locked)) }
         }
         LayerIconAction(
             icon = if (visible) EditorIcon.Visibility else EditorIcon.VisibilityOff,
-            contentDescription = if (visible) "Hide layer" else "Show layer",
+            contentDescription = if (visible) strings.source.hideLayer else strings.source.showLayer,
             muted = !visible,
         ) { state.dispatch(DesignEditorIntent.SetVisible(node.id, !visible)) }
     }
@@ -766,6 +790,7 @@ private fun layerIcon(type: String): EditorIcon = when (type) {
 @Composable
 private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = Modifier) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val design = state.designState
     val document = design.document
     val statusColors = listOf(colors.statusPositive, colors.statusWarning, colors.statusDanger)
@@ -782,17 +807,17 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CompactText(
-                    label = CompactLabel("Screens", "Scr", "Scr"),
+                    label = strings.source.screens,
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
                 Box {
-                    SmallIconButton(EditorIcon.Plus, contentDescription = "Create screen", onClick = { presetMenu = true })
+                    SmallIconButton(EditorIcon.Plus, contentDescription = strings.source.createScreen, onClick = { presetMenu = true })
                     EditorDropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
                         ScreenPreset.entries.forEach { preset ->
                             EditorDropdownMenuItem(
-                                text = "${preset.displayName}  ${preset.width.toInt()}x${preset.height.toInt()}",
+                                text = "${strings.source.screenPreset(preset)}  ${preset.width.toInt()}x${preset.height.toInt()}",
                                 onClick = {
                                     presetMenu = false
                                     val count = (document?.pages?.size ?: 0) + 1

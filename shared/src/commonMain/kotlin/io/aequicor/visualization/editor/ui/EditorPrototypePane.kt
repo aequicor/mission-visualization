@@ -33,6 +33,8 @@ import io.aequicor.visualization.editor.presentation.isNodeLocked
 import io.aequicor.visualization.editor.presentation.MotionPreset
 import io.aequicor.visualization.editor.presentation.ProtoActionKind
 import io.aequicor.visualization.editor.presentation.presetKeyframes
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
+import io.aequicor.visualization.editor.ui.strings.PrototypeStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignEasing
@@ -41,7 +43,6 @@ import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignTransition
 import io.aequicor.visualization.engine.ir.model.EasingKind
 import io.aequicor.visualization.engine.ir.model.InteractionTrigger
-import io.aequicor.visualization.engine.ir.model.MotionKeyframes
 import io.aequicor.visualization.engine.ir.model.TransitionDirection
 import io.aequicor.visualization.engine.ir.model.TransitionType
 
@@ -53,8 +54,9 @@ import io.aequicor.visualization.engine.ir.model.TransitionType
  */
 @Composable
 internal fun InspectorPrototype(state: MissionEditorStateHolder) {
+    val strings = LocalStrings.current
     val node = state.designState.selectedNode
-        ?: return EmptyInspector("Select an object to add behavior.")
+        ?: return EmptyInspector(strings.prototype.emptySelect)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Section(state, InspectorSection.Interactions) { InteractionsSection(state, node) }
         Section(state, InspectorSection.Motion) { MotionSection(state, node) }
@@ -64,18 +66,19 @@ internal fun InspectorPrototype(state: MissionEditorStateHolder) {
 
 @Composable
 private fun InteractionsSection(state: MissionEditorStateHolder, node: DesignNode) {
+    val strings = LocalStrings.current
     val nodeId = node.id
     val locked = state.designState.isNodeLocked(nodeId)
     val screens = state.designState.document?.pages?.map { it.id to it.name.ifBlank { it.id } }.orEmpty()
     val canNavigate = screens.size > 1
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeaderAdd("Interactions") {
+        SectionHeaderAdd(strings.labels.inspectorSection(InspectorSection.Interactions).full) {
             if (!locked && canNavigate) state.dispatch(DesignEditorIntent.InteractionCommand(nodeId, InteractionOp.Add))
         }
         when {
-            !canNavigate -> MutedNote("Add another screen first, then wire a tap to it.")
-            node.interactions.isEmpty() -> MutedNote("No interactions yet. Add On click → Navigate with +, then press Play.")
+            !canNavigate -> MutedNote(strings.prototype.addScreenFirst)
+            node.interactions.isEmpty() -> MutedNote(strings.prototype.noInteractions)
             else -> node.interactions.forEachIndexed { index, interaction ->
                 InteractionCard(state, nodeId, index, interaction, screens, locked)
             }
@@ -93,6 +96,7 @@ private fun InteractionCard(
     locked: Boolean,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     fun dispatch(op: InteractionOp) = state.dispatch(DesignEditorIntent.InteractionCommand(nodeId, op))
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -103,18 +107,21 @@ private fun InteractionCard(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SelectField(
-                    value = triggerLabel(interaction.trigger),
-                    options = TriggerLabels,
-                    onSelect = { label -> triggerFromLabel(label)?.let { if (!locked) dispatch(InteractionOp.SetTrigger(index, it)) } },
+                    value = strings.prototype.trigger(interaction.trigger),
+                    options = AuthorableTriggers.map { strings.prototype.trigger(it) },
+                    onSelect = { label ->
+                        AuthorableTriggers.firstOrNull { strings.prototype.trigger(it) == label }
+                            ?.let { if (!locked) dispatch(InteractionOp.SetTrigger(index, it)) }
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 RemoveButton { if (!locked) dispatch(InteractionOp.RemoveAt(index)) }
             }
             if (interaction.trigger == InteractionTrigger.AfterDelay) {
                 InspectorCommitNumberField(
-                    label = "Delay",
+                    label = strings.prototype.delay,
                     value = (interaction.delayMs ?: 800.0).toInt().toString(),
-                    suffix = "ms",
+                    suffix = strings.prototype.ms,
                     resetKey = "delay-$index-${interaction.delayMs}",
                     enabled = !locked,
                 ) { value -> dispatch(InteractionOp.SetTrigger(index, InteractionTrigger.AfterDelay, delayMs = value)) }
@@ -122,7 +129,7 @@ private fun InteractionCard(
             interaction.actions.forEachIndexed { actionIndex, action ->
                 ActionEditor(state, nodeId, index, actionIndex, action, interaction.actions.size, screens, locked)
             }
-            TinyButton("+ Add action", enabled = !locked) { dispatch(InteractionOp.AddAction(index)) }
+            TinyButton(strings.prototype.addAction, enabled = !locked) { dispatch(InteractionOp.AddAction(index)) }
         }
     }
 }
@@ -139,6 +146,7 @@ private fun ActionEditor(
     locked: Boolean,
 ) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     fun dispatch(op: InteractionOp) = state.dispatch(DesignEditorIntent.InteractionCommand(nodeId, op))
     Column(
         Modifier.fillMaxWidth().padding(start = 4.dp),
@@ -146,48 +154,57 @@ private fun ActionEditor(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SelectField(
-                value = actionKindLabel(action),
-                options = ActionLabels,
-                onSelect = { label -> actionKindFromLabel(label)?.let { if (!locked) dispatch(InteractionOp.SetActionType(i, j, it)) } },
+                value = strings.prototype.protoAction(actionKindOf(action)),
+                options = AuthorableActions.map { strings.prototype.protoAction(it) },
+                onSelect = { label ->
+                    AuthorableActions.firstOrNull { strings.prototype.protoAction(it) == label }
+                        ?.let { if (!locked) dispatch(InteractionOp.SetActionType(i, j, it)) }
+                },
                 modifier = Modifier.weight(1f),
             )
             if (actionCount > 1) RemoveButton { if (!locked) dispatch(InteractionOp.RemoveAction(i, j)) }
         }
         if (action is DesignAction.Navigate) {
             val transition = action.transition ?: DefaultProtoTransition
-            LabeledField("Target") {
+            LabeledField(strings.prototype.target) {
                 SelectField(
-                    value = screens.firstOrNull { it.first == action.to }?.second ?: action.to.ifBlank { "Pick a screen" },
+                    value = screens.firstOrNull { it.first == action.to }?.second ?: action.to.ifBlank { strings.prototype.pickScreen },
                     options = screens.map { it.second },
                     onSelect = { label -> screens.firstOrNull { it.second == label }?.first?.let { if (!locked) dispatch(InteractionOp.SetActionTarget(i, j, it)) } },
                     leadingContent = { DropdownMenuIcon(EditorIcon.Screens) },
                     optionLeadingContent = { DropdownMenuIcon(EditorIcon.Screens) },
                 )
             }
-            LabeledField("Motion") {
+            LabeledField(strings.prototype.motion) {
                 SelectField(
-                    value = transitionTypeLabel(transition.type),
-                    options = TransitionLabels,
-                    onSelect = { label -> transitionTypeFromLabel(label)?.let { if (!locked) dispatch(InteractionOp.SetActionTransition(i, j, transition.copy(type = it))) } },
+                    value = strings.prototype.transitionType(transition.type),
+                    options = AuthorableTransitions.map { strings.prototype.transitionType(it) },
+                    onSelect = { label ->
+                        AuthorableTransitions.firstOrNull { strings.prototype.transitionType(it) == label }
+                            ?.let { if (!locked) dispatch(InteractionOp.SetActionTransition(i, j, transition.copy(type = it))) }
+                    },
                 )
             }
             SegmentedControl(
                 options = TransitionDirection.entries.toList(),
                 selected = transition.direction,
-                label = ::directionLabel,
+                label = { strings.prototype.direction(it) },
                 onSelect = { direction -> if (!locked) dispatch(InteractionOp.SetActionTransition(i, j, transition.copy(direction = direction))) },
             )
-            LabeledField("Easing") {
+            LabeledField(strings.prototype.easing) {
                 SelectField(
-                    value = easingLabel(transition.easing),
-                    options = EasingLabels,
-                    onSelect = { label -> easingFromLabel(label)?.let { if (!locked) dispatch(InteractionOp.SetActionTransition(i, j, transition.copy(easing = DesignEasing.Named(it)))) } },
+                    value = easingLabel(transition.easing, strings.prototype),
+                    options = EasingKind.entries.map { strings.prototype.easingKind(it) },
+                    onSelect = { label ->
+                        EasingKind.entries.firstOrNull { strings.prototype.easingKind(it) == label }
+                            ?.let { if (!locked) dispatch(InteractionOp.SetActionTransition(i, j, transition.copy(easing = DesignEasing.Named(it)))) }
+                    },
                 )
             }
             InspectorCommitNumberField(
-                label = "Duration",
+                label = strings.prototype.duration,
                 value = transition.durationMs.toInt().toString(),
-                suffix = "ms",
+                suffix = strings.prototype.ms,
                 resetKey = "dur-$i-$j-${transition.type}-${transition.durationMs}",
                 enabled = !locked,
             ) { value -> dispatch(InteractionOp.SetActionTransition(i, j, transition.copy(durationMs = value))) }
@@ -197,6 +214,7 @@ private fun ActionEditor(
 
 @Composable
 private fun MotionSection(state: MissionEditorStateHolder, node: DesignNode) {
+    val strings = LocalStrings.current
     val nodeId = node.id
     val locked = state.designState.isNodeLocked(nodeId)
     val motion = node.motion
@@ -204,23 +222,27 @@ private fun MotionSection(state: MissionEditorStateHolder, node: DesignNode) {
     fun dispatch(op: MotionOp) = state.dispatch(DesignEditorIntent.MotionCommand(nodeId, op))
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        CheckRow("Animate this layer", motion != null) { on -> if (!locked) dispatch(MotionOp.SetEnabled(on)) }
+        CheckRow(strings.prototype.animateLayer, motion != null) { on -> if (!locked) dispatch(MotionOp.SetEnabled(on)) }
         if (motion != null) {
-            LabeledField("Preset") {
+            LabeledField(strings.prototype.preset) {
                 SelectField(
-                    value = presetLabelOf(fallback),
-                    options = PresetLabels,
-                    onSelect = { label -> presetFromLabel(label)?.let { if (!locked) dispatch(MotionOp.SetPreset(it)) } },
+                    value = MotionPreset.entries.firstOrNull { presetKeyframes(it) == fallback }
+                        ?.let { strings.prototype.motionPreset(it) } ?: strings.prototype.motionCustom,
+                    options = MotionPreset.entries.map { strings.prototype.motionPreset(it) },
+                    onSelect = { label ->
+                        MotionPreset.entries.firstOrNull { strings.prototype.motionPreset(it) == label }
+                            ?.let { if (!locked) dispatch(MotionOp.SetPreset(it)) }
+                    },
                 )
             }
             InspectorCommitNumberField(
-                label = "Duration",
+                label = strings.prototype.duration,
                 value = (fallback?.durationMs ?: 0.0).toInt().toString(),
-                suffix = "ms",
+                suffix = strings.prototype.ms,
                 resetKey = "mdur-${fallback?.durationMs}",
                 enabled = !locked,
             ) { value -> dispatch(MotionOp.SetDuration(value)) }
-            CheckRow("Loop", fallback?.loop == true) { on -> if (!locked) dispatch(MotionOp.SetLoop(on)) }
+            CheckRow(strings.prototype.loop, fallback?.loop == true) { on -> if (!locked) dispatch(MotionOp.SetLoop(on)) }
         }
     }
 }
@@ -228,6 +250,7 @@ private fun MotionSection(state: MissionEditorStateHolder, node: DesignNode) {
 @Composable
 private fun PlayInSceneButton(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     Box(Modifier.fillMaxWidth().padding(18.dp)) {
         Surface(
             modifier = Modifier.fillMaxWidth()
@@ -237,7 +260,7 @@ private fun PlayInSceneButton(state: MissionEditorStateHolder) {
             color = colors.accent,
         ) {
             Text(
-                "▶  Play in Scene",
+                strings.prototype.playInScene,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 color = Color.White,
@@ -248,114 +271,39 @@ private fun PlayInSceneButton(state: MissionEditorStateHolder) {
     }
 }
 
-// --- enum <-> label maps (v1 authorable subset) ------------------------------
+// --- enum option sets + label resolution (v1 authorable subset) --------------
+// Display strings live in PrototypeStrings; here we only fix the option ORDER and
+// map a value back to its enum. Round-trip selects resolve both the option list and
+// the matcher through the same `strings.prototype.*` call within one composition.
 
-private val TriggerLabels = listOf("On click", "On press", "After delay")
+private val AuthorableTriggers = listOf(
+    InteractionTrigger.OnClick,
+    InteractionTrigger.OnPress,
+    InteractionTrigger.AfterDelay,
+)
 
-private fun triggerLabel(trigger: InteractionTrigger): String = when (trigger) {
-    InteractionTrigger.OnClick -> "On click"
-    InteractionTrigger.OnPress -> "On press"
-    InteractionTrigger.AfterDelay -> "After delay"
-    else -> trigger.name
+private val AuthorableActions = listOf(ProtoActionKind.Navigate, ProtoActionKind.Back)
+
+private val AuthorableTransitions = listOf(
+    TransitionType.Instant,
+    TransitionType.Dissolve,
+    TransitionType.Push,
+    TransitionType.SlideIn,
+    TransitionType.SlideOut,
+    TransitionType.MoveIn,
+    TransitionType.MoveOut,
+    TransitionType.SmartAnimate,
+)
+
+private fun actionKindOf(action: DesignAction): ProtoActionKind = when (action) {
+    is DesignAction.Navigate -> ProtoActionKind.Navigate
+    DesignAction.Back -> ProtoActionKind.Back
+    else -> ProtoActionKind.Navigate
 }
 
-private fun triggerFromLabel(label: String): InteractionTrigger? = when (label) {
-    "On click" -> InteractionTrigger.OnClick
-    "On press" -> InteractionTrigger.OnPress
-    "After delay" -> InteractionTrigger.AfterDelay
-    else -> null
+/** Localized label for the currently applied easing, including non-selectable spring/custom values. */
+private fun easingLabel(easing: DesignEasing, strings: PrototypeStrings): String = when (easing) {
+    is DesignEasing.Named -> strings.easingKind(easing.kind)
+    is DesignEasing.Spring -> strings.easingSpring
+    is DesignEasing.CubicBezier -> strings.easingCustom
 }
-
-private val ActionLabels = listOf("Navigate", "Back")
-
-private fun actionKindLabel(action: DesignAction): String = when (action) {
-    is DesignAction.Navigate -> "Navigate"
-    DesignAction.Back -> "Back"
-    else -> "Navigate"
-}
-
-private fun actionKindFromLabel(label: String): ProtoActionKind? = when (label) {
-    "Navigate" -> ProtoActionKind.Navigate
-    "Back" -> ProtoActionKind.Back
-    else -> null
-}
-
-private val TransitionLabels = listOf("Instant", "Dissolve", "Push", "Slide in", "Slide out", "Move in", "Move out", "Smart animate")
-
-private fun transitionTypeLabel(type: TransitionType): String = when (type) {
-    TransitionType.Instant -> "Instant"
-    TransitionType.Dissolve -> "Dissolve"
-    TransitionType.Push -> "Push"
-    TransitionType.SlideIn -> "Slide in"
-    TransitionType.SlideOut -> "Slide out"
-    TransitionType.MoveIn -> "Move in"
-    TransitionType.MoveOut -> "Move out"
-    TransitionType.SmartAnimate -> "Smart animate"
-}
-
-private fun transitionTypeFromLabel(label: String): TransitionType? = when (label) {
-    "Instant" -> TransitionType.Instant
-    "Dissolve" -> TransitionType.Dissolve
-    "Push" -> TransitionType.Push
-    "Slide in" -> TransitionType.SlideIn
-    "Slide out" -> TransitionType.SlideOut
-    "Move in" -> TransitionType.MoveIn
-    "Move out" -> TransitionType.MoveOut
-    "Smart animate" -> TransitionType.SmartAnimate
-    else -> null
-}
-
-private fun directionLabel(direction: TransitionDirection): String = when (direction) {
-    TransitionDirection.Left -> "Left"
-    TransitionDirection.Right -> "Right"
-    TransitionDirection.Top -> "Top"
-    TransitionDirection.Bottom -> "Bottom"
-}
-
-private val EasingLabels = listOf("Linear", "Ease in", "Ease out", "Ease in out", "Ease in back", "Ease out back")
-
-private fun easingLabel(easing: DesignEasing): String = when (easing) {
-    is DesignEasing.Named -> when (easing.kind) {
-        EasingKind.Linear -> "Linear"
-        EasingKind.EaseIn -> "Ease in"
-        EasingKind.EaseOut -> "Ease out"
-        EasingKind.EaseInOut -> "Ease in out"
-        EasingKind.EaseInBack -> "Ease in back"
-        EasingKind.EaseOutBack -> "Ease out back"
-    }
-    is DesignEasing.Spring -> "Spring"
-    is DesignEasing.CubicBezier -> "Custom curve"
-}
-
-private fun easingFromLabel(label: String): EasingKind? = when (label) {
-    "Linear" -> EasingKind.Linear
-    "Ease in" -> EasingKind.EaseIn
-    "Ease out" -> EasingKind.EaseOut
-    "Ease in out" -> EasingKind.EaseInOut
-    "Ease in back" -> EasingKind.EaseInBack
-    "Ease out back" -> EasingKind.EaseOutBack
-    else -> null
-}
-
-private val PresetLabels = listOf("Fade in", "Pop", "Float", "Pulse", "Spin")
-
-private fun presetLabel(preset: MotionPreset): String = when (preset) {
-    MotionPreset.FadeIn -> "Fade in"
-    MotionPreset.Pop -> "Pop"
-    MotionPreset.Float -> "Float"
-    MotionPreset.Pulse -> "Pulse"
-    MotionPreset.Spin -> "Spin"
-}
-
-private fun presetFromLabel(label: String): MotionPreset? = when (label) {
-    "Fade in" -> MotionPreset.FadeIn
-    "Pop" -> MotionPreset.Pop
-    "Float" -> MotionPreset.Float
-    "Pulse" -> MotionPreset.Pulse
-    "Spin" -> MotionPreset.Spin
-    else -> null
-}
-
-/** Shows which preset the clip currently matches, else "Custom" once duration/loop are tweaked. */
-private fun presetLabelOf(fallback: MotionKeyframes?): String =
-    MotionPreset.entries.firstOrNull { presetKeyframes(it) == fallback }?.let(::presetLabel) ?: "Custom"

@@ -205,6 +205,7 @@ import io.aequicor.visualization.editor.presentation.rotatedHandlePoints
 import io.aequicor.visualization.editor.presentation.snapAngleToIncrement
 import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
@@ -301,6 +302,7 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
 @Composable
 private fun CanvasSurface(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val density = LocalDensity.current.density
     val design = state.designState
     val ws = state.workspace
@@ -1237,7 +1239,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
         } else {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No preview", color = colors.mutedInk)
+                Text(strings.canvas.noPreview, color = colors.mutedInk)
             }
         }
 
@@ -3796,6 +3798,7 @@ private fun cursorFor(tool: EditorTool) = when (tool) {
 @Composable
 private fun SceneModeToggle(selected: EditorMode, onSelect: (EditorMode) -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val shape = RoundedCornerShape(8.dp)
     Surface(
         modifier = Modifier.height(48.dp).clip(shape),
@@ -3814,7 +3817,7 @@ private fun SceneModeToggle(selected: EditorMode, onSelect: (EditorMode) -> Unit
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        mode.title,
+                        strings.labels.editorMode(mode),
                         color = if (active) Color.White else colors.ink,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                         style = MaterialTheme.typography.labelMedium,
@@ -3831,6 +3834,7 @@ private fun SceneModeToggle(selected: EditorMode, onSelect: (EditorMode) -> Unit
 @Composable
 private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val shape = RoundedCornerShape(8.dp)
     Surface(
         modifier = Modifier.height(48.dp).clip(shape),
@@ -3850,7 +3854,7 @@ private fun DeviceControl(selected: DeviceMode, onSelect: (DeviceMode) -> Unit) 
                 ) {
                     EditorSvgIcon(
                         icon = deviceIcon(mode),
-                        contentDescription = mode.title,
+                        contentDescription = strings.labels.deviceMode(mode),
                         modifier = Modifier.size(20.dp),
                         tint = if (active) colors.accent else Color.Black,
                     )
@@ -3908,6 +3912,7 @@ private fun FloatingToolbar(
 @Composable
 private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val activeTool = state.workspace.annotationTool
     val active = activeTool != AnnotationTool.None
     var lastKind by remember { mutableStateOf(AnnotationTool.Note) }
@@ -3931,7 +3936,7 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
         ) {
             EditorSvgIcon(
                 icon = EditorIcon.Comments,
-                contentDescription = "Annotation tools",
+                contentDescription = strings.canvas.annotationTools,
                 modifier = Modifier.size(24.dp),
                 tint = if (active) Color.White else colors.ink,
             )
@@ -3942,7 +3947,7 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
             ) {
                 EditorSvgIcon(
                     icon = EditorIcon.ChevronDown,
-                    contentDescription = "Choose annotation kind",
+                    contentDescription = strings.canvas.chooseAnnotationKind,
                     modifier = Modifier.size(10.dp),
                     tint = if (active) Color.White else colors.mutedInk,
                 )
@@ -3951,7 +3956,7 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             AnnotationKind.entries.forEach { kind ->
                 EditorDropdownMenuItem(
-                    text = annotationKindLabel(kind),
+                    text = strings.canvas.annotationKind(kind),
                     leadingContent = { AnnotationKindPreview(kind, Modifier.size(16.dp)) },
                     onClick = {
                         expanded = false
@@ -3973,6 +3978,7 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
 @Composable
 private fun DiagramToolFlyout(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val ws = state.workspace
     val active = ws.diagramEditNodeId.isNotBlank()
     val shape = RoundedCornerShape(8.dp)
@@ -3989,7 +3995,7 @@ private fun DiagramToolFlyout(state: MissionEditorStateHolder) {
         ) {
             EditorSvgIcon(
                 icon = EditorIcon.Diagram,
-                contentDescription = "Diagram tools",
+                contentDescription = strings.canvas.diagramTools,
                 modifier = Modifier.size(24.dp),
                 tint = if (active) Color.White else colors.ink,
             )
@@ -3999,7 +4005,7 @@ private fun DiagramToolFlyout(state: MissionEditorStateHolder) {
             ) {
                 EditorSvgIcon(
                     icon = EditorIcon.ChevronDown,
-                    contentDescription = "Choose diagram node type",
+                    contentDescription = strings.canvas.chooseDiagramNodeType,
                     modifier = Modifier.size(10.dp),
                     tint = if (active) Color.White else colors.mutedInk,
                 )
@@ -4033,6 +4039,7 @@ private fun DiagramToolFlyout(state: MissionEditorStateHolder) {
 @Composable
 private fun ExportIssuesAction(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val clipboard = LocalClipboardManager.current
     var expanded by remember { mutableStateOf(false) }
     var exportedPrompt by remember { mutableStateOf<String?>(null) }
@@ -4060,14 +4067,14 @@ private fun ExportIssuesAction(state: MissionEditorStateHolder) {
         ) {
             EditorSvgIcon(
                 icon = EditorIcon.Export,
-                contentDescription = "Выгрузить замечания",
+                contentDescription = strings.canvas.exportIssues,
                 modifier = Modifier.size(22.dp),
                 tint = colors.ink,
             )
         }
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             EditorDropdownMenuItem(
-                text = "Выбранная аннотация",
+                text = strings.canvas.scopeSelectedAnnotation,
                 leadingContent = { DropdownMenuIcon(EditorIcon.Select) },
                 onClick = {
                     expanded = false
@@ -4075,7 +4082,7 @@ private fun ExportIssuesAction(state: MissionEditorStateHolder) {
                 },
             )
             EditorDropdownMenuItem(
-                text = "Текущий экран",
+                text = strings.canvas.scopeCurrentScreen,
                 leadingContent = { DropdownMenuIcon(EditorIcon.Screens) },
                 onClick = {
                     expanded = false
@@ -4085,7 +4092,7 @@ private fun ExportIssuesAction(state: MissionEditorStateHolder) {
                 },
             )
             EditorDropdownMenuItem(
-                text = "Весь документ",
+                text = strings.canvas.scopeWholeDocument,
                 leadingContent = { DropdownMenuIcon(EditorIcon.Markdown) },
                 onClick = {
                     expanded = false
@@ -4104,6 +4111,7 @@ private fun ExportIssuesAction(state: MissionEditorStateHolder) {
 @Composable
 private fun ExportPromptPopup(prompt: String, onCopyAgain: () -> Unit, onDismiss: () -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     Popup(
         alignment = Alignment.Center,
         onDismissRequest = onDismiss,
@@ -4118,17 +4126,12 @@ private fun ExportPromptPopup(prompt: String, onCopyAgain: () -> Unit, onDismiss
         ) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Экспорт замечаний",
+                    strings.canvas.exportPromptTitle,
                     style = MaterialTheme.typography.titleSmall,
                     color = colors.ink,
                 )
                 Text(
-                    if (prompt.isBlank()) {
-                        "В выбранной области нет issue-аннотаций — промпт пуст."
-                    } else {
-                        "Промпт скопирован в буфер обмена. Если вставка не сработала " +
-                            "(например, страница открыта по HTTP), выделите и скопируйте текст вручную:"
-                    },
+                    if (prompt.isBlank()) strings.canvas.exportPromptEmpty else strings.canvas.exportPromptCopied,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.mutedInk,
                 )
@@ -4153,10 +4156,10 @@ private fun ExportPromptPopup(prompt: String, onCopyAgain: () -> Unit, onDismiss
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (prompt.isNotBlank()) {
-                        ExportPromptButton("Скопировать ещё раз", onClick = onCopyAgain)
+                        ExportPromptButton(strings.canvas.copyAgain, onClick = onCopyAgain)
                     }
                     Spacer(Modifier.weight(1f))
-                    ExportPromptButton("Закрыть", onClick = onDismiss)
+                    ExportPromptButton(strings.canvas.close, onClick = onDismiss)
                 }
             }
         }
@@ -4367,6 +4370,7 @@ private fun firstDiagramNodeId(document: DesignDocument, pageId: String): String
 @Composable
 private fun ToolbarButton(tool: EditorTool, selected: EditorTool, onSelect: (EditorTool) -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val active = tool == selected
     val shape = RoundedCornerShape(8.dp)
     Box(
@@ -4379,7 +4383,7 @@ private fun ToolbarButton(tool: EditorTool, selected: EditorTool, onSelect: (Edi
     ) {
         EditorSvgIcon(
             icon = toolIcon(tool),
-            contentDescription = tool.label,
+            contentDescription = strings.labels.editorTool(tool),
             modifier = Modifier.size(24.dp),
             tint = if (active) Color.White else colors.ink,
         )
@@ -4393,6 +4397,7 @@ private fun ToolbarButton(tool: EditorTool, selected: EditorTool, onSelect: (Edi
 @Composable
 private fun ShapeToolFlyout(selected: EditorTool, lastShapeTool: EditorTool, onSelect: (EditorTool) -> Unit) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val active = selected.isShapeTool
     val shape = RoundedCornerShape(8.dp)
     var expanded by remember { mutableStateOf(false) }
@@ -4413,7 +4418,7 @@ private fun ShapeToolFlyout(selected: EditorTool, lastShapeTool: EditorTool, onS
         ) {
             EditorSvgIcon(
                 icon = toolIcon(lastShapeTool),
-                contentDescription = "Shape tools",
+                contentDescription = strings.canvas.shapeTools,
                 modifier = Modifier.size(24.dp),
                 tint = if (active) Color.White else colors.ink,
             )
@@ -4424,7 +4429,7 @@ private fun ShapeToolFlyout(selected: EditorTool, lastShapeTool: EditorTool, onS
             ) {
                 EditorSvgIcon(
                     icon = EditorIcon.ChevronDown,
-                    contentDescription = "Choose shape tool",
+                    contentDescription = strings.canvas.chooseShapeTool,
                     modifier = Modifier.size(10.dp),
                     tint = if (active) Color.White else colors.mutedInk,
                 )
@@ -4433,7 +4438,7 @@ private fun ShapeToolFlyout(selected: EditorTool, lastShapeTool: EditorTool, onS
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             ShapeTools.forEach { tool ->
                 EditorDropdownMenuItem(
-                    text = tool.label,
+                    text = strings.labels.editorTool(tool),
                     leadingContent = tool.shapeTypeOrNull()?.let { shapeType ->
                         { FigureShapePreview(shapeType, previewStyle, Modifier.size(18.dp)) }
                     },
@@ -4492,6 +4497,7 @@ private val ShapeTools: List<EditorTool> = listOf(
 @Composable
 private fun ZoomControls(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val ws = state.workspace
     Surface(
         modifier = Modifier.height(48.dp),
@@ -4506,8 +4512,8 @@ private fun ZoomControls(state: MissionEditorStateHolder) {
             ZoomButton("+") { requestZoom(state) { base -> base * WorkspaceLimits.ZoomButtonStep } }
             Spacer(Modifier.width(2.dp))
             ZoomButton("1:1") { state.updateWorkspace { it.copy(pendingFit = PendingFit.None, pendingZoomTo = 1f) } }
-            ZoomIconButton(EditorIcon.ZoomFit, "Fit screen") { requestFit(state, fitSelection = false) }
-            ZoomIconButton(EditorIcon.Marquee, "Fit selection") { requestFit(state, fitSelection = true) }
+            ZoomIconButton(EditorIcon.ZoomFit, strings.canvas.fitScreen) { requestFit(state, fitSelection = false) }
+            ZoomIconButton(EditorIcon.Marquee, strings.canvas.fitSelection) { requestFit(state, fitSelection = true) }
         }
     }
 }

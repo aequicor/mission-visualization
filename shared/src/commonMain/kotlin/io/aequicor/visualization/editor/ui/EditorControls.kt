@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.editor.presentation.CompactLabel
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import kotlin.math.abs
@@ -349,7 +350,7 @@ internal fun SelectLike(value: String, modifier: Modifier = Modifier) {
         ) {
             DropdownLeadingBox(size = 18.dp) { DefaultDropdownLeadingContent(value, modifier = Modifier.size(16.dp)) }
             Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-            EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
+            EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = LocalStrings.current.common.openOptions, modifier = Modifier.size(13.dp), tint = colors.controlInk)
         }
     }
 }
@@ -382,7 +383,7 @@ internal fun SelectField(
                     if (leadingContent != null) leadingContent() else DefaultDropdownLeadingContent(value, modifier = Modifier.size(16.dp))
                 }
                 Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = "Open options", modifier = Modifier.size(13.dp), tint = colors.controlInk)
+                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = LocalStrings.current.common.openOptions, modifier = Modifier.size(13.dp), tint = colors.controlInk)
             }
         }
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {

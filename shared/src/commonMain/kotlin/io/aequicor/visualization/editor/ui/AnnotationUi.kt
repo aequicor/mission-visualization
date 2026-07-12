@@ -65,13 +65,3 @@ internal fun AnnotationKindPreview(kind: AnnotationKind, modifier: Modifier = Mo
         drawCircle(colors.badgeStroke(kind), radius = d * 0.14f, center = Offset(left + d / 2f, d / 2f))
     }
 }
-
-/** Display label of an annotation kind (kind switch / list rows). */
-internal fun annotationKindLabel(kind: AnnotationKind): String = when (kind) {
-    AnnotationKind.Note -> "Note"
-    AnnotationKind.Issue -> "Issue"
-}
-
-/** Inverse of [annotationKindLabel] for dropdown selection. */
-internal fun annotationKindForLabel(label: String): AnnotationKind? =
-    AnnotationKind.entries.firstOrNull { annotationKindLabel(it) == label }
