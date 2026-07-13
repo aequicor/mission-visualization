@@ -76,19 +76,22 @@ class DesignEditorReducerCommandsTest {
     // --- Selection ---
 
     @Test
-    fun multiSelectionAddsAndTogglesNodes() {
+    fun ancestorContainerDoesNotJoinDescendantMultiSelection() {
         var state = freshState()
         val root = state.rootFrameId()
-        val second = assertNotNull(state.document?.nodeById(root)?.children?.firstOrNull()?.id, "root has a child")
+        val document = assertNotNull(state.document)
+        val ancestor = assertNotNull(
+            document.nodeById(root)?.allDescendants()?.firstOrNull { it.children.isNotEmpty() },
+            "screen contains a nested container",
+        )
+        val child = ancestor.children.first().id
 
-        state = reduceDesignEditor(state, DesignEditorIntent.SelectNode(root))
-        state = reduceDesignEditor(state, DesignEditorIntent.ToggleNodeSelection(second))
-        assertEquals(setOf(root, second), state.selectedNodeIds)
-        assertTrue(state.hasMultiSelection)
+        state = reduceDesignEditor(state, DesignEditorIntent.SelectNode(ancestor.id))
+        state = reduceDesignEditor(state, DesignEditorIntent.ToggleNodeSelection(child))
 
-        state = reduceDesignEditor(state, DesignEditorIntent.ToggleNodeSelection(second))
-        assertEquals(setOf(root), state.selectedNodeIds)
-        assertEquals(root, state.selectedNodeId)
+        assertEquals(setOf(child), state.selectedNodeIds)
+        assertEquals(child, state.selectedNodeId)
+        assertFalse(state.hasMultiSelection)
     }
 
     @Test

@@ -41,4 +41,48 @@ class MarqueeSelectionTest {
             ).isEmpty(),
         )
     }
+
+    @Test
+    fun excludedRootContainerNeverJoinsMarqueeSelection() {
+        val marquee = DocumentRect.fromCorners(20.0, 20.0, 80.0, 80.0)
+
+        val result = marqueeSelection(
+            marquee,
+            listOf(
+                SelectableBounds("root", DocumentRect.fromCorners(0.0, 0.0, 500.0, 500.0)),
+                SelectableBounds("first", DocumentRect.fromCorners(30.0, 30.0, 40.0, 40.0)),
+                SelectableBounds("second", DocumentRect.fromCorners(60.0, 60.0, 70.0, 70.0)),
+            ),
+            excludedIds = setOf("root"),
+        )
+
+        assertEquals(setOf("first", "second"), result)
+    }
+
+    @Test
+    fun marqueeInsideComponentDoesNotSelectEnclosingLayers() {
+        val marquee = DocumentRect.fromCorners(40.0, 40.0, 80.0, 80.0)
+
+        val result = marqueeSelection(
+            marquee,
+            listOf(
+                SelectableBounds("workspace", DocumentRect.fromCorners(0.0, 0.0, 500.0, 500.0)),
+                SelectableBounds("panel-background", DocumentRect.fromCorners(20.0, 20.0, 120.0, 120.0)),
+                SelectableBounds("inside", DocumentRect.fromCorners(50.0, 50.0, 65.0, 65.0)),
+                SelectableBounds("crossed-edge", DocumentRect.fromCorners(70.0, 50.0, 90.0, 65.0)),
+            ),
+        )
+
+        assertEquals(setOf("inside", "crossed-edge"), result)
+    }
+
+    @Test
+    fun marqueeEqualToComponentBoundsCanStillSelectIt() {
+        val bounds = DocumentRect.fromCorners(20.0, 20.0, 120.0, 120.0)
+
+        assertEquals(
+            setOf("component"),
+            marqueeSelection(bounds, listOf(SelectableBounds("component", bounds))),
+        )
+    }
 }

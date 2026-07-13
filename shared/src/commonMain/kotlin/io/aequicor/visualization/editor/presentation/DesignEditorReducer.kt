@@ -565,7 +565,22 @@ private fun DesignEditorState.selectSingle(nodeId: String): DesignEditorState {
 }
 
 private fun DesignEditorState.selectMany(ids: Set<String>): DesignEditorState {
-    val existing = ids.filter { document?.nodeById(it) != null }.toSet()
+    val doc = document
+    val valid = ids.filter { doc?.nodeById(it) != null }.toSet()
+    // A marquee intersects every enclosing frame on the way to the actual objects. Keeping those
+    // ancestors would make the group box equal the largest container (often Desktop Workspace)
+    // and group move/resize would target the container instead of the components. When both an
+    // ancestor and one of its descendants are present, the deeper explicit object wins. The same
+    // invariant also prevents an invalid parent+child multi-selection from Layers.
+    val existing = if (valid.size > 1 && doc != null) {
+        valid.filterNot { candidateAncestor ->
+            valid.any { descendant ->
+                descendant != candidateAncestor && doc.isSelfOrAncestor(candidateAncestor, descendant)
+            }
+        }.toSet()
+    } else {
+        valid
+    }
     if (existing.isEmpty()) return copy(selectedNodeId = "", selectedNodeIds = emptySet(), editingTextNodeId = "")
     val primary = if (selectedNodeId in existing) selectedNodeId else existing.last()
     val page = document?.pageOfNode(primary)

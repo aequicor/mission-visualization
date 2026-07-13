@@ -504,7 +504,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 minThumbLengthPx = CanvasScrollbarMinThumbDp * density,
             )
         } ?: CanvasScrollbarsMetrics()
-        val multiSelectionBox = if (design.selectedNodeIds.size > 1) selectionHandleBounds(layout, design.selectedNodeIds) else null
+        val multiSelectionBox = if (design.selectedNodeIds.size > 1) {
+            selectionHandleBounds(layout, design.selectedNodeIds)
+        } else {
+            null
+        }
 
         // Primary (single) selection geometry — the only case that gets rotated handles,
         // a rotate affordance and center lines; multi-selection keeps its plain bbox. Every
@@ -552,11 +556,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var radiusIndicator by remember { mutableStateOf<RadiusIndicator?>(null) }
 
         // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Space
-        // for pan, Alt for the read-only measurement overlay). Ctrl/Cmd additive selection is
-        // captured from the pointer event that starts each gesture (see CanvasGestureStart).
+        // for pan, Alt for the read-only measurement overlay). Ctrl/Cmd is also tracked here:
+        // some pointer backends report it only after the initial mouse-down event.
         val focusRequester = remember { FocusRequester() }
         var shiftHeld by remember { mutableStateOf(false) }
         var altHeld by remember { mutableStateOf(false) }
+        var ctrlOrMetaHeld by remember { mutableStateOf(false) }
         var spaceHeld by remember { mutableStateOf(false) }
         val latestSpaceHeld by rememberUpdatedState(spaceHeld)
         val windowFocused = LocalWindowInfo.current.isWindowFocused
@@ -565,6 +570,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         fun resetHeldModifiers() {
             shiftHeld = false
             altHeld = false
+            ctrlOrMetaHeld = false
             spaceHeld = false
         }
         LaunchedEffect(pageId) { runCatching { focusRequester.requestFocus() } }
@@ -600,6 +606,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     .onPreviewKeyEvent { event ->
                         shiftHeld = event.isShiftPressed
                         altHeld = event.isAltPressed
+                        ctrlOrMetaHeld = event.isCtrlPressed || event.isMetaPressed
                         if (event.key == Key.Spacebar && state.designState.editingTextNodeId.isBlank()) {
                             spaceHeld = event.type == KeyEventType.KeyDown
                             return@onPreviewKeyEvent true
@@ -688,7 +695,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val down = gestureStart.change
                             shiftHeld = gestureStart.shiftPressed
                             altHeld = gestureStart.altPressed
-                            val additiveSelectionPressed = gestureStart.shiftPressed || gestureStart.ctrlOrMetaPressed
+                            val ctrlOrMetaPressedAtStart = gestureStart.ctrlOrMetaPressed || ctrlOrMetaHeld
+                            val additiveSelectionPressed = gestureStart.shiftPressed || ctrlOrMetaPressedAtStart
                             // Ctrl/Cmd changes where a marquee may start; Shift changes how
                             // its result combines with the previous selection. Keeping these
                             // semantics separate prevents a selected container from remaining
@@ -714,8 +722,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // rubber-band even when the press lands on a node/container body or
                             // one of the current selection's handles. A click without crossing
                             // slop still keeps the existing Ctrl/Cmd-click toggle behaviour.
-                            val forceMarquee = pressWorkspace.tool == EditorTool.Select &&
-                                gestureStart.ctrlOrMetaPressed && !forcePan
+                            var modifierMarquee = pressWorkspace.tool == EditorTool.Select &&
+                                ctrlOrMetaPressedAtStart && !forcePan
                             if (forcePan) down.consume()
                             // Annotation tool: a click drops a note/issue on the review layer
                             // instead of running any canvas operation (select/move/create).
@@ -758,7 +766,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
                             val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && !forceMarquee && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
+                            val handlesActive = !forcePan && !modifierMarquee && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
                             // Arc/donut ellipse: grabbing a rim (start/end) or inner-ratio handle is
                             // resolved here — not in a separate full-canvas overlay — so a selected
                             // arc/donut ellipse never swallows presses meant to select or move other
@@ -804,14 +812,28 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
                             val hitId = hitNode(pressLayout, pressDocument, viewport, start)
-                            val mode = resolveCanvasOperation(
+                            // A multi-selection is one temporary canvas object. Its common frame
+                            // claims a drag from anywhere inside the union, including transparent
+                            // gaps between the selected nodes; a click without movement still falls
+                            // through to the actual node under the pointer on release.
+                            val multiSelectionFrameHit = groupFrameContains(
+                                multiSelectionUnion,
+                                viewport.toDocX(start.x),
+                                viewport.toDocY(start.y),
+                            )
+                            val operationHitId = if (multiSelectionFrameHit) {
+                                pressDesign.selectedNodeIds.firstOrNull().orEmpty()
+                            } else {
+                                hitId
+                            }
+                            var mode = resolveCanvasOperation(
                                 pressWorkspace.tool,
                                 forcePan,
-                                forceMarquee,
+                                modifierMarquee,
                                 radiusHandle,
                                 handle,
                                 rotateHit,
-                                hitId,
+                                operationHitId,
                             )
 
                             // Unified selection: a plain click over a diagram BLOCK/edge selects that
@@ -820,7 +842,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // area falls through and selects the whole diagram (its container). This runs
                             // when entering from the root/plain selection; the diagram overlay handles the
                             // twin case of switching straight from another diagram's edit mode.
-                            if (mode == CanvasOperation.Move && !additiveSelectionPressed && pressWorkspace.diagramEditNodeId != hitId) {
+                            if (mode == CanvasOperation.Move && !multiSelectionFrameHit && !additiveSelectionPressed && pressWorkspace.diagramEditNodeId != hitId) {
                                 val diagramTarget = resolveDiagramElementSelection(
                                     pressLayout, pressDocument, viewport.toDocX(start.x), viewport.toDocY(start.y), zoomPx,
                                 )
@@ -844,7 +866,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // "drag moves object"; a nested object is reached by double-click). An
                             // unrelated object stacked on top is not part of the selection, so it still
                             // wins the press (§10 "topmost selectable layer gets priority").
-                            val pressOnSelection = pressDocument.pressHitBelongsToSelection(pressDesign.selectedNodeIds, hitId)
+                            val pressOnSelection = multiSelectionFrameHit ||
+                                pressDocument.pressHitBelongsToSelection(pressDesign.selectedNodeIds, hitId)
 
                             // Pre-press selection so a drag moves the pressed node — but never when the
                             // press already lands on the current selection (reselecting there would grab
@@ -1014,6 +1037,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 val modifiers = event.keyboardModifiers
                                 shiftHeld = modifiers.isShiftPressed
                                 altHeld = modifiers.isPointerAltPressed
+                                val ctrlOrMetaPressed = modifiers.isCtrlPressed || modifiers.isMetaPressed || ctrlOrMetaHeld
+                                mode = resolveCanvasDragOperation(
+                                    current = mode,
+                                    tool = pressWorkspace.tool,
+                                    forcePan = forcePan,
+                                    ctrlOrMetaPressed = ctrlOrMetaPressed,
+                                    moved = moved,
+                                )
+                                if (mode == CanvasOperation.Marquee && ctrlOrMetaPressed) modifierMarquee = true
                                 val change = event.changes.firstOrNull() ?: break
                                 releasePosition = change.position
                                 if (mode == CanvasOperation.Pan && panFromTertiaryButton && !event.buttons.isTertiaryPressed) break
@@ -1248,17 +1280,28 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 max(start.x, releasePosition.x),
                                                 max(start.y, releasePosition.y),
                                             )
-                                            val ids = nodesIn(pressLayout, pressDocument, viewport, finalRect)
+                                            val ids = nodesIn(
+                                                pressLayout,
+                                                pressDocument,
+                                                viewport,
+                                                finalRect,
+                                                excludedIds = setOf(pressRootId),
+                                            )
                                             val next = marqueeSelectionResult(
-                                                existing = pressDesign.selectedNodeIds,
+                                                existing = pressDesign.selectedNodeIds - pressRootId,
                                                 hits = ids,
                                                 additive = additiveMarqueePressed,
                                             )
                                             state.dispatch(DesignEditorIntent.SelectNodes(next))
-                                        } else if (forceMarquee && hitId.isNotBlank()) {
+                                        } else if (modifierMarquee && hitId.isNotBlank()) {
                                             // The modifier changes only a drag into marquee; preserve
                                             // Ctrl/Cmd-click as an additive selection toggle.
-                                            state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
+                                            val next = if (hitId in pressDesign.selectedNodeIds) {
+                                                pressDesign.selectedNodeIds - hitId
+                                            } else {
+                                                pressDesign.selectedNodeIds + hitId
+                                            }
+                                            state.dispatch(DesignEditorIntent.SelectNodes(next))
                                         } else if (hitId.isBlank() && !additiveSelectionPressed) {
                                             // Clicking inside the root frame's body selects the root
                                             // (Figma: clicking a frame's empty area selects the frame);
@@ -1496,7 +1539,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             snapGuides.forEach { guide -> drawAnchorGuide(guide, project, guideStyle, textMeasurer) }
             spacingBars.forEach { bar -> drawSpacingBar(bar, project, guideStyle, textMeasurer) }
 
-            if (multiSelectionBox != null && ws.vectorEditNodeId.isBlank()) {
+            if (design.selectedNodeIds.size > 1 && multiSelectionBox != null) {
+                // Multi-selection is represented by one interactive group frame. The pointer
+                // handler uses this same box for move and proportional group resize.
                 drawRotatedOutline(multiSelectionBox, 0.0, viewport, colors.accent, width = 1.5f)
                 drawRotatedHandles(multiSelectionBox, 0.0, viewport, colors.accent)
                 drawSizeBadge(multiSelectionBox, 0.0, viewport, textMeasurer, colors)
@@ -1963,6 +2008,9 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
     val colors = LocalEditorColors.current
     val editId = state.workspace.vectorEditNodeId
     if (editId.isBlank()) return
+    // A marquee or Select All may replace the vector selection while the workspace still carries
+    // its old edit id. Do not let that stale edit layer cover the multi-selection overlay/input.
+    if (state.designState.selectedNodeIds != setOf(editId)) return
     val node = state.designState.document?.nodeById(editId) ?: return
     val kind = node.kind as? DesignNodeKind.Shape ?: return
     val box = layout?.findBySourceId(editId) ?: return
@@ -2785,6 +2833,24 @@ internal fun resolveCanvasOperation(
     rotateHit -> CanvasOperation.Rotate
     hitId.isNotBlank() -> CanvasOperation.Move
     else -> CanvasOperation.Marquee
+}
+
+/**
+ * Pointer backends may attach Ctrl/Cmd to the first move rather than the down event. Until the
+ * gesture crosses drag slop it is still safe to promote any select-tool operation to marquee.
+ */
+internal fun resolveCanvasDragOperation(
+    current: CanvasOperation,
+    tool: EditorTool,
+    forcePan: Boolean,
+    ctrlOrMetaPressed: Boolean,
+    moved: Boolean,
+): CanvasOperation = if (
+    !moved && !forcePan && ctrlOrMetaPressed && tool == EditorTool.Select
+) {
+    CanvasOperation.Marquee
+} else {
+    current
 }
 
 internal fun marqueeSelectionResult(
@@ -4182,7 +4248,13 @@ internal fun resolveDiagramElementSelection(
     return DiagramElementTarget(id, selection)
 }
 
-private fun nodesIn(layout: LayoutBox?, document: DesignDocument?, viewport: CanvasViewport, screenRect: Rect): Set<String> {
+private fun nodesIn(
+    layout: LayoutBox?,
+    document: DesignDocument?,
+    viewport: CanvasViewport,
+    screenRect: Rect,
+    excludedIds: Set<String> = emptySet(),
+): Set<String> {
     layout ?: return emptySet()
     val docRect = DocumentRect.fromCorners(
         viewport.toDocX(screenRect.left),
@@ -4192,10 +4264,15 @@ private fun nodesIn(layout: LayoutBox?, document: DesignDocument?, viewport: Can
     )
     val candidates = mutableListOf<SelectableBounds>()
     fun collect(box: LayoutBox) {
-        box.children.forEach { child ->
+        box.children.forEachIndexed { index, child ->
             val id = child.node.selectableId
             val node = document?.nodeById(id)
-            if (id.isNotBlank()) {
+            // Authored frames commonly use their first child as a full-size painted backdrop
+            // (for example preview_background inside Video Preview). A marquee over the actual
+            // controls intersects that layer too, and its bounds then make the group look exactly
+            // like the parent/root was selected. Keep the backdrop selectable by click/Layers,
+            // but don't let it dominate a marquee multi-selection.
+            if (id.isNotBlank() && !isParentSizedMarqueeBackdrop(box, child, index)) {
                 candidates += SelectableBounds(
                     id = id,
                     bounds = DocumentRect.fromCorners(child.x, child.y, child.right, child.bottom),
@@ -4207,7 +4284,16 @@ private fun nodesIn(layout: LayoutBox?, document: DesignDocument?, viewport: Can
         }
     }
     collect(layout)
-    return marqueeSelection(docRect, candidates)
+    return marqueeSelection(docRect, candidates, excludedIds)
+}
+
+internal fun isParentSizedMarqueeBackdrop(parent: LayoutBox, child: LayoutBox, index: Int): Boolean {
+    if (index != 0 || child.children.isNotEmpty()) return false
+    val epsilon = 0.001
+    return abs(child.x - parent.x) <= epsilon &&
+        abs(child.y - parent.y) <= epsilon &&
+        abs(child.width - parent.width) <= epsilon &&
+        abs(child.height - parent.height) <= epsilon
 }
 
 private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set<String>): List<ResizeTarget> {
@@ -4238,11 +4324,11 @@ private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set
 
 private data class FitRect(val x: Double, val y: Double, val w: Double, val h: Double)
 
-private fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): BoundsBox? {
+internal fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): BoundsBox? {
     layout ?: return null
     // Union each node's *visual* bounds (own rotation + inherited ancestor rotation), so the
     // multi-selection bbox covers the real on-screen extent under a rotated ancestor too.
-    val boxes = ids.mapNotNull { id -> layout.effectiveTransformFor(id)?.let { it.box.visualBounds(it.rotation) } }
+    val boxes = ids.mapNotNull(layout::effectiveTransformFor).map { it.box.visualBounds(it.rotation) }
     if (boxes.isEmpty()) return null
     val minX = boxes.minOf { it.x }
     val minY = boxes.minOf { it.y }
@@ -4250,6 +4336,10 @@ private fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): BoundsB
     val maxY = boxes.maxOf { it.bottom }
     return BoundsBox(minX, minY, maxX - minX, maxY - minY)
 }
+
+/** The common multi-selection frame behaves as one temporary canvas object. */
+internal fun groupFrameContains(box: BoundsBox?, docX: Double, docY: Double): Boolean =
+    box != null && docX >= box.x && docX <= box.right && docY >= box.y && docY <= box.bottom
 
 /** Union of the selected nodes' boxes in document coordinates, or null when empty. */
 private fun selectionBounds(layout: LayoutBox, ids: Set<String>): FitRect? {

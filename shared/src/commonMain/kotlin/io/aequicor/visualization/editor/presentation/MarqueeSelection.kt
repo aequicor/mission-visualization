@@ -13,6 +13,11 @@ data class DocumentRect(
     fun intersects(other: DocumentRect): Boolean =
         left < other.right && right > other.left && top < other.bottom && bottom > other.top
 
+    fun contains(other: DocumentRect): Boolean =
+        left <= other.left && top <= other.top && right >= other.right && bottom >= other.bottom
+
+    fun strictlyContains(other: DocumentRect): Boolean = contains(other) && this != other
+
     companion object {
         fun fromCorners(x1: Double, y1: Double, x2: Double, y2: Double): DocumentRect =
             DocumentRect(
@@ -35,9 +40,19 @@ data class SelectableBounds(
 fun marqueeSelection(
     marquee: DocumentRect,
     candidates: List<SelectableBounds>,
+    excludedIds: Set<String> = emptySet(),
 ): Set<String> =
     candidates
         .asSequence()
-        .filter { it.visible && !it.locked && it.bounds.intersects(marquee) }
+        .filter {
+            it.id !in excludedIds &&
+                it.visible &&
+                !it.locked &&
+                it.bounds.intersects(marquee) &&
+                // A drag made inside a component must not select every enclosing visual
+                // layer behind it. Equal bounds remain selectable; only a strictly larger
+                // candidate that contains the entire marquee is treated as context/backdrop.
+                !it.bounds.strictlyContains(marquee)
+        }
         .map { it.id }
         .toSet()

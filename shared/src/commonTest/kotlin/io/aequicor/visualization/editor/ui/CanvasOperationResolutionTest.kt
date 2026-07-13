@@ -58,6 +58,34 @@ class CanvasOperationResolutionTest {
     }
 
     @Test
+    fun modifierDetectedOnFirstMoveStillStartsMarquee() {
+        assertEquals(
+            CanvasOperation.Marquee,
+            resolveCanvasDragOperation(
+                current = CanvasOperation.Move,
+                tool = EditorTool.Select,
+                forcePan = false,
+                ctrlOrMetaPressed = true,
+                moved = false,
+            ),
+        )
+    }
+
+    @Test
+    fun modifierCannotReplaceAnOperationAfterDragHasStarted() {
+        assertEquals(
+            CanvasOperation.Move,
+            resolveCanvasDragOperation(
+                current = CanvasOperation.Move,
+                tool = EditorTool.Select,
+                forcePan = false,
+                ctrlOrMetaPressed = true,
+                moved = true,
+            ),
+        )
+    }
+
+    @Test
     fun modifierMarqueeReplacesPreviouslySelectedContainer() {
         assertEquals(
             setOf("child-a", "child-b"),
