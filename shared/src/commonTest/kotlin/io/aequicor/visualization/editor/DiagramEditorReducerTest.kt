@@ -20,6 +20,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.TableNode
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -139,6 +140,36 @@ class DiagramEditorReducerTest {
                 edgeId = "e3",
                 source = DiagramEndpoint.FloatingAnchor(DiagramNodeId("a")),
                 target = DiagramEndpoint.FloatingAnchor(DiagramNodeId("missing")),
+            ),
+        )
+        assertSame(next, invalid, "unresolvable endpoint must be a no-op")
+    }
+
+    @Test
+    fun reconnectEdgeRepinsTheDraggedEndAndRefusesMissingNodes() {
+        val next = reduceDesignEditor(
+            freshState(),
+            DiagramEditorIntent.ReconnectDiagramEdge(
+                nodeId = "canvas",
+                edgeId = "e1",
+                end = DiagramEdgeEnd.TARGET,
+                endpoint = DiagramEndpoint.FloatingAnchor(DiagramNodeId("grid")),
+            ),
+        )
+        val edge = assertNotNull(next.graphOf("canvas").edgeById(DiagramEdgeId("e1")))
+        assertEquals(DiagramEndpoint.FloatingAnchor(DiagramNodeId("a")), edge.source, "source end untouched")
+        assertEquals(DiagramEndpoint.FloatingAnchor(DiagramNodeId("grid")), edge.target, "target re-pinned to grid")
+        assertTrue(next.previousSources.isNotEmpty(), "reconnect wrote back to the source")
+        assertTrue("Edge e1 from a to grid" in next.sourceContent(), "re-pin persisted as a CNL sentence")
+
+        // Re-pinning to a missing node is refused: state unchanged.
+        val invalid = reduceDesignEditor(
+            next,
+            DiagramEditorIntent.ReconnectDiagramEdge(
+                nodeId = "canvas",
+                edgeId = "e1",
+                end = DiagramEdgeEnd.SOURCE,
+                endpoint = DiagramEndpoint.FloatingAnchor(DiagramNodeId("missing")),
             ),
         )
         assertSame(next, invalid, "unresolvable endpoint must be a no-op")

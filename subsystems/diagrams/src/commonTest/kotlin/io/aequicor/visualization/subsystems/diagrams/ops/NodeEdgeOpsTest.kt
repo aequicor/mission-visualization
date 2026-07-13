@@ -6,6 +6,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosit
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
@@ -232,5 +233,31 @@ class NodeEdgeOpsTest {
         assertEquals(DiagramEndpoint.FloatingAnchor(a), edge.source)
         assertEquals(DiagramEndpoint.FloatingAnchor(cloneId), edge.target)
         assertEquals(DiagramRelation.Transition, edge.relation)
+    }
+
+    @Test
+    fun directionalCloneOffsetIsAxisAlignedWithGap() {
+        val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 120.0, height = 60.0) }
+        // One node-extent (120/60) plus the default 40-unit gap, centered on the shared axis.
+        assertEquals(160.0 to 0.0, graph.directionalCloneOffset(a, DiagramNodeSide.RIGHT))
+        assertEquals(-160.0 to 0.0, graph.directionalCloneOffset(a, DiagramNodeSide.LEFT))
+        assertEquals(0.0 to 100.0, graph.directionalCloneOffset(a, DiagramNodeSide.BOTTOM))
+        assertEquals(0.0 to -100.0, graph.directionalCloneOffset(a, DiagramNodeSide.TOP))
+    }
+
+    @Test
+    fun directionalCloneOffsetSkipsPastAnOccupyingNode() {
+        val graph = diagramGraph {
+            node("a", x = 0.0, y = 0.0, width = 120.0, height = 60.0)
+            node("b", x = 160.0, y = 0.0, width = 120.0, height = 60.0)
+        }
+        // The first right-step lands exactly on b, so it advances another extent+gap.
+        assertEquals(320.0 to 0.0, graph.directionalCloneOffset(a, DiagramNodeSide.RIGHT))
+    }
+
+    @Test
+    fun directionalCloneOffsetIsNullWhenSourceMissing() {
+        val graph = diagramGraph { node("a") }
+        assertEquals(null, graph.directionalCloneOffset(DiagramNodeId("missing"), DiagramNodeSide.RIGHT))
     }
 }

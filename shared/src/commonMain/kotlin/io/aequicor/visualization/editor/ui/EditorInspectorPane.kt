@@ -3626,6 +3626,29 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
             DiagramOutline(state, nodeId, graph, selection, locked)
         }
 
+        // Layers: visibility / lock toggles, add / delete — surfaces the layer backend (draw.io
+        // detail-level workflow). A layer's content moves to the default layer when it is removed.
+        if (graph.layers.isNotEmpty() || !locked) {
+            Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    InspectorSubLabel(strings.inspector.layers)
+                    Spacer(Modifier.weight(1f))
+                    if (!locked) {
+                        Box(
+                            modifier = Modifier.size(22.dp).clip(RoundedCornerShape(5.dp)).clickable {
+                                state.dispatch(DiagramEditorIntent.AddDiagramLayer(nodeId, mintDiagramId(graph, "layer")))
+                            },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            EditorSvgIcon(EditorIcon.Plus, contentDescription = strings.inspector.layers, modifier = Modifier.size(15.dp), tint = colors.mutedInk)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                DiagramLayers(state, nodeId, graph, locked)
+            }
+        }
+
         // Contextual properties of the selected element / edge.
         Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
             val selectedElement = selection.elementIds.singleOrNull()?.let { graph.nodeById(DiagramNodeId(it)) }
@@ -3957,6 +3980,79 @@ private fun DiagramOutlineRow(
                 EditorSvgIcon(EditorIcon.Trash, contentDescription = strings.common.delete, modifier = Modifier.size(14.dp), tint = colors.mutedInk)
             }
         }
+    }
+}
+
+/** Layers panel: each layer's visibility / lock toggle + delete (add is the section "+" button). */
+@Composable
+private fun DiagramLayers(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    graph: io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph,
+    locked: Boolean,
+) {
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    if (graph.layers.isEmpty()) return
+    graph.layers.forEach { layer ->
+        val layerId = layer.id.value
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                layer.name.ifBlank { layerId },
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            DiagramLayerToggle(
+                icon = if (layer.visible) EditorIcon.Visibility else EditorIcon.VisibilityOff,
+                description = strings.inspector.layers,
+                tint = if (layer.visible) colors.mutedInk else colors.subtleInk,
+                enabled = !locked,
+                onClick = { state.dispatch(DiagramEditorIntent.SetDiagramLayerVisible(nodeId, layerId, !layer.visible)) },
+            )
+            DiagramLayerToggle(
+                icon = EditorIcon.Lock,
+                description = strings.inspector.layers,
+                tint = if (layer.locked) colors.ink else colors.subtleInk,
+                enabled = !locked,
+                onClick = { state.dispatch(DiagramEditorIntent.SetDiagramLayerLocked(nodeId, layerId, !layer.locked)) },
+            )
+            if (!locked) {
+                DiagramLayerToggle(
+                    icon = EditorIcon.Trash,
+                    description = strings.common.delete,
+                    tint = colors.mutedInk,
+                    enabled = true,
+                    onClick = { state.dispatch(DiagramEditorIntent.RemoveDiagramLayer(nodeId, layerId)) },
+                )
+            }
+        }
+    }
+}
+
+/** A 20dp icon button for the layers rows (visibility / lock / delete). */
+@Composable
+private fun DiagramLayerToggle(
+    icon: EditorIcon,
+    description: String,
+    tint: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(20.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        EditorSvgIcon(icon, contentDescription = description, modifier = Modifier.size(14.dp), tint = tint)
     }
 }
 

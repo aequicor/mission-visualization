@@ -224,7 +224,12 @@ import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import io.aequicor.visualization.engine.backend.compose.selectableNodeId
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
+import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
+import io.aequicor.visualization.subsystems.diagrams.hittest.hitTest as diagramHitTest
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
+import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
 import io.aequicor.visualization.subsystems.figures.Affine2D
 import io.aequicor.visualization.subsystems.figures.compose.FigurePreviewStyle
 import io.aequicor.visualization.subsystems.figures.compose.FigureShapePreview
@@ -780,6 +785,30 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 } == true
                             val hitId = hitNode(pressLayout, pressDocument, viewport, start)
                             val mode = resolveCanvasOperation(pressWorkspace.tool, forcePan, radiusHandle, handle, rotateHit, hitId)
+
+                            // Unified selection: a plain click over a diagram BLOCK/edge selects that
+                            // element directly — the same way a click selects a rectangle or text —
+                            // auto-entering the diagram's edit layer. A click over the diagram's empty
+                            // area falls through and selects the whole diagram (its container). This runs
+                            // when entering from the root/plain selection; the diagram overlay handles the
+                            // twin case of switching straight from another diagram's edit mode.
+                            if (mode == CanvasOperation.Move && !shiftHeld && pressWorkspace.diagramEditNodeId != hitId) {
+                                val diagramTarget = resolveDiagramElementSelection(
+                                    pressLayout, pressDocument, viewport.toDocX(start.x), viewport.toDocY(start.y), zoomPx,
+                                )
+                                if (diagramTarget != null) {
+                                    state.dispatch(DesignEditorIntent.SelectNode(diagramTarget.diagramId))
+                                    state.updateWorkspace {
+                                        it.copy(
+                                            diagramEditNodeId = diagramTarget.diagramId,
+                                            diagramTool = DiagramTool.Select,
+                                            diagramSelection = diagramTarget.selection,
+                                        )
+                                    }
+                                    down.consume()
+                                    return@awaitEachGesture
+                                }
+                            }
 
                             // A press whose top-most hit is the current selection — or a descendant
                             // showing through inside a selected container — drags the selection instead
@@ -2548,6 +2577,20 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
     val design = state.designState
     val selection = design.selectedNodeIds
     val step = if (shift) 10.0 else 1.0
+    // In diagram edit mode, arrow keys nudge the selected diagram element(s) — never the whole
+    // diagram IR node. Consumed even with an empty selection, so an arrow press can't fall
+    // through to moving the diagram container.
+    fun diagramNudge(dx: Double, dy: Double): Boolean {
+        val ws = state.workspace
+        if (ws.diagramEditNodeId.isBlank()) return false
+        val ids = ws.diagramSelection.elementIds
+        if (ids.isNotEmpty()) {
+            state.dispatch(DesignEditorIntent.BeginInteraction)
+            ids.forEach { state.dispatch(DiagramEditorIntent.MoveDiagramNode(ws.diagramEditNodeId, it, dx, dy)) }
+            state.dispatch(DesignEditorIntent.EndInteraction)
+        }
+        return true
+    }
     fun nudge(dx: Double, dy: Double): Boolean {
         if (selection.isEmpty()) return false
         val startPositions = design.document?.let { document ->
@@ -2572,10 +2615,22 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         return true
     }
     return when {
-        key == Key.DirectionLeft -> nudge(-step, 0.0)
-        key == Key.DirectionRight -> nudge(step, 0.0)
-        key == Key.DirectionUp -> nudge(0.0, -step)
-        key == Key.DirectionDown -> nudge(0.0, step)
+        key == Key.DirectionLeft -> diagramNudge(-step, 0.0) || nudge(-step, 0.0)
+        key == Key.DirectionRight -> diagramNudge(step, 0.0) || nudge(step, 0.0)
+        key == Key.DirectionUp -> diagramNudge(0.0, -step) || nudge(0.0, -step)
+        key == Key.DirectionDown -> diagramNudge(0.0, step) || nudge(0.0, step)
+        // F2 renames the single selected diagram element (opens its inline label editor).
+        key == Key.F2 && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            val ids = state.workspace.diagramSelection.elementIds
+            if (ids.size == 1) state.updateWorkspace { it.copy(diagramTextEditRequest = ids.first()) }
+            true
+        }
+        // Tab / Shift+Tab cycle the diagram selection through the graph's nodes; consumed so
+        // Compose focus traversal doesn't move focus off the canvas.
+        key == Key.Tab && state.workspace.diagramEditNodeId.isNotBlank() -> {
+            cycleDiagramSelection(state, forward = !shift)
+            true
+        }
         // In diagram edit mode Delete/Backspace removes the selected diagram elements —
         // and with nothing selected it must never fall through to deleting the diagram node.
         (key == Key.Delete || key == Key.Backspace) && state.workspace.diagramEditNodeId.isNotBlank() -> {
@@ -2631,8 +2686,13 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             when {
                 // A live drag takes priority: abort it (revert + no undo entry).
                 state.activeDrag -> state.requestCancelDrag()
+                // Two-step exit (draw.io): first Escape clears the element selection, second leaves
+                // diagram edit mode entirely.
+                state.workspace.diagramEditNodeId.isNotBlank() &&
+                    !state.workspace.diagramSelection.isEmpty ->
+                    state.updateWorkspace { it.copy(diagramSelection = DiagramSelection.Empty) }
                 state.workspace.diagramEditNodeId.isNotBlank() -> state.updateWorkspace {
-                    it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select, diagramSelection = DiagramSelection.Empty)
+                    it.copy(diagramEditNodeId = "", diagramTool = DiagramTool.Select)
                 }
                 state.workspace.vectorEditNodeId.isNotBlank() -> state.updateWorkspace { it.copy(vectorEditNodeId = "", vectorSelectedPoint = null, vectorSelectedVertex = null) }
                 state.designState.editingTextNodeId.isNotBlank() -> state.dispatch(DesignEditorIntent.SetEditingText(""))
@@ -2643,6 +2703,22 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         }
         else -> false
     }
+}
+
+/** Advances the diagram element selection to the next / previous graph node (Tab / Shift+Tab). */
+private fun cycleDiagramSelection(state: MissionEditorStateHolder, forward: Boolean) {
+    val ws = state.workspace
+    val graph = (state.designState.document?.nodeById(ws.diagramEditNodeId)?.kind as? DesignNodeKind.Diagram)?.graph
+        ?: return
+    val order = graph.nodes.filter { it.visible && !it.locked }.map { it.id.value }
+    if (order.isEmpty()) return
+    val index = order.indexOf(ws.diagramSelection.elementIds.firstOrNull())
+    val next = when {
+        index < 0 -> order.first()
+        forward -> order[(index + 1) % order.size]
+        else -> order[(index - 1 + order.size) % order.size]
+    }
+    state.updateWorkspace { it.copy(diagramSelection = DiagramSelection(elementIds = setOf(next))) }
 }
 
 // --- Gesture model -----------------------------------------------------------
@@ -4003,6 +4079,51 @@ private fun hitNode(layout: LayoutBox?, document: DesignDocument?, viewport: Can
     if (id == layout.node.sourceId) return ""
     val node = document?.nodeById(id) ?: return ""
     return if (node.locked || node.visible.literalOrNull() == false) "" else id
+}
+
+/** Screen-space pick radius for a diagram element hit resolved from the main canvas. */
+private const val DiagramElementHitRadiusPx = 8f
+
+/** A diagram node plus the in-diagram selection a single click resolved inside it. */
+internal data class DiagramElementTarget(val diagramId: String, val selection: DiagramSelection)
+
+/**
+ * If the press at [pos] lands on a diagram element (block, edge, port, or edge label) of the
+ * diagram node topmost under the pointer, returns that diagram's id plus the [DiagramSelection]
+ * to apply. Returns null when the pointer is over a diagram's empty area — or not over a diagram
+ * at all — so the caller can instead select the whole diagram (the container of that space) or a
+ * plain node.
+ *
+ * This is the single seam that makes a diagram element selectable in one click from anywhere: the
+ * root canvas, an existing plain selection, or while a *different* diagram is being edited. It
+ * mirrors [hitNode]'s deep hit-test + lock/visibility rules, then runs the diagram subsystem's own
+ * [diagramHitTest] in the diagram's local coordinate space.
+ */
+internal fun resolveDiagramElementSelection(
+    layout: LayoutBox?,
+    document: DesignDocument?,
+    docX: Double,
+    docY: Double,
+    zoomPx: Float,
+): DiagramElementTarget? {
+    layout ?: return null
+    val hit = layout.hitTest(docX, docY) ?: return null
+    val id = selectableNodeId(hit)
+    val node = document?.nodeById(id) ?: return null
+    if (node.locked || node.visible.literalOrNull() == false) return null
+    val graph = (node.kind as? DesignNodeKind.Diagram)?.graph ?: return null
+    val box = layout.findBySourceId(id) ?: return null
+    val point = DiagramPoint(docX - box.x, docY - box.y)
+    val tolerance = (DiagramElementHitRadiusPx / zoomPx).toDouble().coerceAtLeast(2.0)
+    val routes = routeAllEdgesLenient(graph, RoutingOptions.Default).mapValues { it.value.points }
+    val selection = when (val elementHit = diagramHitTest(graph, routes, point, tolerance)) {
+        is DiagramHit.Node -> DiagramSelection(elementIds = setOf(elementHit.nodeId.value))
+        is DiagramHit.Port -> DiagramSelection(elementIds = setOf(elementHit.nodeId.value))
+        is DiagramHit.Edge -> DiagramSelection(edgeIds = setOf(elementHit.edgeId.value))
+        is DiagramHit.LabelHandle -> DiagramSelection(edgeIds = setOf(elementHit.edgeId.value))
+        else -> return null
+    }
+    return DiagramElementTarget(id, selection)
 }
 
 private fun nodesIn(layout: LayoutBox?, document: DesignDocument?, viewport: CanvasViewport, screenRect: Rect): Set<String> {

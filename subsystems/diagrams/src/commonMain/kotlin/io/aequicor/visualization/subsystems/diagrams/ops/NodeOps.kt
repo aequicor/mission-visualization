@@ -6,6 +6,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
@@ -126,6 +127,37 @@ public fun DiagramGraph.removePort(id: DiagramNodeId, portId: DiagramPortId): Di
             edge.copy(source = edge.source.detached(), target = edge.target.detached())
         },
     )
+}
+
+/**
+ * Collision-aware offset for a directional-arrow clone of [sourceId] toward [side]: one
+ * node-extent-plus-[gap] step, center-aligned on the perpendicular axis, then advanced by
+ * further steps while the clone's rect would overlap another visible node — so repeated
+ * clicks lay clones out in a row instead of stacking. Returns `null` when the source is
+ * missing. Feed the result straight into [cloneNodeAndConnect]'s `offsetX`/`offsetY`.
+ */
+public fun DiagramGraph.directionalCloneOffset(
+    sourceId: DiagramNodeId,
+    side: DiagramNodeSide,
+    gap: Double = 40.0,
+): Pair<Double, Double>? {
+    val source = nodeById(sourceId) ?: return null
+    val (stepX, stepY) = when (side) {
+        DiagramNodeSide.TOP -> 0.0 to -(source.height + gap)
+        DiagramNodeSide.BOTTOM -> 0.0 to (source.height + gap)
+        DiagramNodeSide.LEFT -> -(source.width + gap) to 0.0
+        DiagramNodeSide.RIGHT -> (source.width + gap) to 0.0
+    }
+    var offsetX = stepX
+    var offsetY = stepY
+    repeat(32) {
+        val rect = DiagramRect(source.x + offsetX, source.y + offsetY, source.width, source.height)
+        val overlaps = nodes.any { it.id != sourceId && it.visible && it.bounds.intersects(rect) }
+        if (!overlaps) return offsetX to offsetY
+        offsetX += stepX
+        offsetY += stepY
+    }
+    return offsetX to offsetY
 }
 
 /**

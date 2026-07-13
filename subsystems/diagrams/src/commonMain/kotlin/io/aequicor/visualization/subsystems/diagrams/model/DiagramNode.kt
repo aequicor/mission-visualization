@@ -47,6 +47,31 @@ data class DiagramPort(
 
         /** The four predefined mid-side ports (draw.io-style connection points). */
         fun standardPorts(): List<DiagramPort> = DiagramNodeSide.entries.map { side(it) }
+
+        /**
+         * The dense draw.io-style connection-point grid offered around a node: the four
+         * canonical mid-sides FIRST (ids `top`/`right`/`bottom`/`left`, so nearest-point
+         * ties keep the canonical ids), then the eight side quarter-points (`<side>-q1` at
+         * offset `0.25`, `<side>-q3` at `0.75`) and the four corners as normalized points
+         * (`top-left`=(0,0), `top-right`=(1,0), `bottom-right`=(1,1), `bottom-left`=(0,1)).
+         * Sixteen ports with unique, round-trip-safe ids (lowercase letters, digits, hyphens).
+         */
+        fun connectionPointGrid(): List<DiagramPort> {
+            val quarters = DiagramNodeSide.entries.flatMap { side ->
+                val name = side.name.lowercase()
+                listOf(
+                    DiagramPort(DiagramPortId("$name-q1"), DiagramPortAnchor.SideOffset(side, 0.25)),
+                    DiagramPort(DiagramPortId("$name-q3"), DiagramPortAnchor.SideOffset(side, 0.75)),
+                )
+            }
+            val corners = listOf(
+                DiagramPort(DiagramPortId("top-left"), DiagramPortAnchor.RelativePoint(0.0, 0.0)),
+                DiagramPort(DiagramPortId("top-right"), DiagramPortAnchor.RelativePoint(1.0, 0.0)),
+                DiagramPort(DiagramPortId("bottom-right"), DiagramPortAnchor.RelativePoint(1.0, 1.0)),
+                DiagramPort(DiagramPortId("bottom-left"), DiagramPortAnchor.RelativePoint(0.0, 1.0)),
+            )
+            return standardPorts() + quarters + corners
+        }
     }
 }
 
