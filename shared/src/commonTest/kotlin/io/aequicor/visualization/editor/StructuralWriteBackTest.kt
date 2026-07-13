@@ -9,6 +9,7 @@ import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
+import io.aequicor.visualization.editor.presentation.semanticallyEquivalent
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPoint
@@ -63,6 +64,14 @@ class StructuralWriteBackTest {
         )
     }
 
+    /** One or more owning sources changed and the complete source set recompiles at IR parity. */
+    private fun DesignEditorState.assertRoundTripWroteBack(before: DesignEditorState) {
+        assertNotEquals(before.sources, sources, "at least one owning source rewritten")
+        val recompiled = assertNotNull(compileMissionDocuments(sources).document)
+        assertTrue(semanticallyEquivalent(assertNotNull(document), recompiled))
+        assertTrue(diagnostics.none { it.severity == DesignSeverity.Error })
+    }
+
     @Test
     fun deleteWritesBackAndSurvivorsIntact() {
         val before = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode("win_bg"))
@@ -102,10 +111,9 @@ class StructuralWriteBackTest {
     }
 
     @Test
-    fun deleteMultiPageSelectionFallsBack() {
+    fun deleteMultiPageSelectionWritesAllOwningSources() {
         val before = freshState()
-        // Two heading-anchored nodes on different pages: a single-source patch can't express the
-        // two-file transaction, so the delete stays in-memory with every source untouched.
+        // Two heading-anchored nodes on different pages commit as one editor transaction.
         val ids = setOf("win_bg", "telemetry_header")
         assertNotNull(before.document?.nodeById("telemetry_header"), "telemetry_header present")
 
@@ -113,11 +121,7 @@ class StructuralWriteBackTest {
 
         // Document still reflects BOTH deletes.
         ids.forEach { id -> assertNull(next.document?.nodeById(id), "$id deleted in-memory") }
-        // But no source was rewritten.
-        before.sources.forEach { source ->
-            assertEquals(source.content, next.sourceOf(source.fileName), "${source.fileName} untouched by multi-page delete")
-        }
-        assertTrue(next.previousSources.isEmpty(), "no source undo entry for the in-memory fallback")
+        next.assertRoundTripWroteBack(before)
     }
 
     @Test
@@ -146,12 +150,12 @@ class StructuralWriteBackTest {
 
         val next = reduceDesignEditor(before, DesignEditorIntent.DeleteNodes(setOf("section1")))
 
-        // The in-memory delete stands: "section1" gone, "section2" survives.
-        assertNull(next.document?.nodeById("section1"), "selected node deleted in-memory")
-        assertNotNull(next.document?.nodeById("section2"), "sibling survives in-memory")
-        // But the veto discarded the patched source — the source is byte-identical, no undo entry.
+        // The semantic veto rejects the entire operation: neither document nor source diverges.
+        assertNotNull(next.document?.nodeById("section1"), "rejected delete restores selected node")
+        assertNotNull(next.document?.nodeById("section2"), "sibling survives")
         assertEquals(before.sources, next.sources, "drift-inducing patch discarded, source intact")
         assertTrue(next.previousSources.isEmpty(), "vetoed write-back records no source undo entry")
+        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     // --- Create ------------------------------------------------------------------
@@ -426,17 +430,13 @@ class StructuralWriteBackTest {
 
         val next = reduceDesignEditor(before, DesignEditorIntent.ReorderNode("third", ZOrderMove.Backward))
 
-        // The canvas reflects the move (document is the authority + fallback)...
-        assertEquals(
-            "third",
-            next.document?.nodeById("deck")?.children?.get(1)?.id,
-            "in-memory reorder applied (third stepped back past first, landing after the prose child)",
-        )
-        // ...but the unaddressable prose sibling forced an in-memory fallback: every source byte-identical.
+        // The unaddressable prose sibling rejects the whole move; document and source stay aligned.
+        assertEquals(before.document, next.document)
         before.sources.forEach { source ->
             assertEquals(source.content, next.sourceOf(source.fileName), "${source.fileName} untouched by prose-sibling reorder")
         }
-        assertTrue(next.previousSources.isEmpty(), "in-memory fallback records no source undo entry")
+        assertTrue(next.previousSources.isEmpty(), "rejected operation records no source undo entry")
+        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     // --- Reparent ----------------------------------------------------------------
@@ -491,10 +491,9 @@ class StructuralWriteBackTest {
     // only (anti-corruption veto), so atomic CNL source persistence of that case is a tracked gap.
 
     @Test
-    fun reparentCrossPageFallsBack() {
+    fun reparentCrossPageWritesBothOwningSources() {
         val before = freshState()
-        // win_bg lives on the Overview page; frame_telemetry roots the Telemetry page. A
-        // cross-page reparent is a two-source transaction a single-source patch can't express.
+        // win_bg lives on the Overview page; frame_telemetry roots the Telemetry page.
         assertNotNull(before.document?.nodeById("frame_telemetry"), "telemetry root present")
 
         val next = reduceDesignEditor(before, DesignEditorIntent.ReparentNode("win_bg", "frame_telemetry"))
@@ -504,11 +503,7 @@ class StructuralWriteBackTest {
             next.document?.nodeById("frame_telemetry")?.children?.any { it.id == "win_bg" } == true,
             "window moved under the telemetry root in-memory",
         )
-        // ...but no source was rewritten and no source-undo entry recorded.
-        before.sources.forEach { source ->
-            assertEquals(source.content, next.sourceOf(source.fileName), "${source.fileName} untouched by cross-page reparent")
-        }
-        assertTrue(next.previousSources.isEmpty(), "in-memory fallback records no source undo entry")
+        next.assertRoundTripWroteBack(before)
     }
 
     @Test
@@ -543,19 +538,16 @@ class StructuralWriteBackTest {
         val next = reduceDesignEditor(before, DesignEditorIntent.ReparentNode("panel", "d"))
 
         // The document reflects the move, but the depth gate kept the source byte-identical.
-        assertTrue(
-            next.document?.nodeById("d")?.children?.any { it.id == "panel" } == true,
-            "panel reparented under d in-memory",
-        )
+        assertEquals(before.document, next.document, "depth-overflow reparent is rejected atomically")
         assertEquals(before.sources, next.sources, "depth-overflow reparent left the source untouched")
-        assertTrue(next.previousSources.isEmpty(), "in-memory fallback records no source undo entry")
+        assertTrue(next.previousSources.isEmpty(), "rejected operation records no source undo entry")
+        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     @Test
-    fun duplicateInstanceFallsBackInMemory() {
+    fun duplicateInstanceWritesComponentReferenceBack() {
         val before = freshState()
-        // t_tile_1 is a component instance — the section writer can't round-trip its component ref,
-        // so the duplicate stays in-memory with every source byte-identical.
+        // t_tile_1 is a component instance; its component reference must survive re-emission.
         assertTrue(before.document?.nodeById("t_tile_1")?.kind is DesignNodeKind.Instance, "t_tile_1 is an instance")
 
         val next = reduceDesignEditor(before, DesignEditorIntent.DuplicateNodes(setOf("t_tile_1")))
@@ -564,10 +556,6 @@ class StructuralWriteBackTest {
         val cloneId = next.selectedNodeIds.first()
         assertNotEquals("t_tile_1", cloneId)
         assertTrue(next.document?.nodeById(cloneId)?.kind is DesignNodeKind.Instance, "clone is still an instance")
-        // ...but no source was rewritten and no source-undo entry was recorded.
-        before.sources.forEach { source ->
-            assertEquals(source.content, next.sourceOf(source.fileName), "${source.fileName} untouched by instance duplicate")
-        }
-        assertTrue(next.previousSources.isEmpty(), "in-memory fallback records no source undo entry")
+        next.assertRoundTripWroteBack(before)
     }
 }

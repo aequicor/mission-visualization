@@ -465,6 +465,7 @@ internal fun EditorDropdownMenu(
 internal fun EditorDropdownMenuItem(
     text: String,
     leadingContent: (@Composable () -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
@@ -487,6 +488,7 @@ internal fun EditorDropdownMenuItem(
                 if (leadingContent != null) leadingContent() else DefaultDropdownLeadingContent(text, modifier = Modifier.size(16.dp))
             }
         },
+        trailingIcon = trailingContent,
     )
 }
 

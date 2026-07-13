@@ -165,6 +165,11 @@ private fun structuralPlan(
                 ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
             writer.delete(span)
         }
+        is ReplaceSection -> {
+            val span = editIndex.anchorOwners[edit.nodeId]
+                ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
+            writer.replace(span, edit.subtree)
+        }
         is InsertChildSubtree -> {
             val parentSpan = editIndex.anchorOwners[edit.nodeId]
                 ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)

@@ -61,6 +61,11 @@ interface MenuStrings {
     val copyAgentFile: String
     // Desktop MCP server dialog.
     val mcpTitle: String
+    val mcpDescription: String
+    val mcpStepServer: String
+    val mcpStepConnectionPrompt: String
+    val mcpStepSetupPrompt: String
+    val mcpStepVerify: String
     val mcpPort: String
     val mcpAllowedFolder: String
     val mcpChooseFolder: String
@@ -72,8 +77,14 @@ interface MenuStrings {
     val mcpStart: String
     val mcpStop: String
     val mcpEndpoint: String
-    val mcpPrompt: String
-    val mcpCopyPrompt: String
+    val mcpConnectionPromptHelp: String
+    val mcpSetupPromptHelp: String
+    val mcpCopyConnectionPrompt: String
+    val mcpCopySetupPrompt: String
+    val mcpClipboardBusy: String
+    val mcpWaitingVerification: String
+    fun mcpVerified(agentName: String): String
+    val mcpVerificationFailed: String
     val mcpClose: String
     // Language pane.
     val chooseLanguage: String
@@ -130,6 +141,11 @@ object MenuStringsEn : MenuStrings {
     override val downloadClaudeFile = "Download CLAUDE.md"
     override val copyAgentFile = "Copy to clipboard"
     override val mcpTitle = "MCP Server"
+    override val mcpDescription = "Connect any MCP-compatible AI agent to this project, then install the canonical Mission Visualization skills."
+    override val mcpStepServer = "1. Start the project server"
+    override val mcpStepConnectionPrompt = "2. Connect MCP in the AI agent"
+    override val mcpStepSetupPrompt = "3. After reload, install skills and validate"
+    override val mcpStepVerify = "4. Check the target project"
     override val mcpPort = "Port"
     override val mcpAllowedFolder = "Allowed folder"
     override val mcpChooseFolder = "Choose folder"
@@ -141,8 +157,14 @@ object MenuStringsEn : MenuStrings {
     override val mcpStart = "Start server"
     override val mcpStop = "Stop server"
     override val mcpEndpoint = "Endpoint"
-    override val mcpPrompt = "Prompt for the AI agent"
-    override val mcpCopyPrompt = "Copy prompt"
+    override val mcpConnectionPromptHelp = "Paste Prompt 1 first. It configures the project MCP connection and tells you whether the agent needs a reload."
+    override val mcpSetupPromptHelp = "After the connection is active, paste Prompt 2. It installs the skills and runs validation."
+    override val mcpCopyConnectionPrompt = "Copy Prompt 1 — connect MCP"
+    override val mcpCopySetupPrompt = "Copy Prompt 2 — install and validate"
+    override val mcpClipboardBusy = "Could not copy: the system clipboard is busy. Close the app using it and try again."
+    override val mcpWaitingVerification = "Waiting for the target agent to finish setup and call validation."
+    override fun mcpVerified(agentName: String) = "Connected and verified by $agentName"
+    override val mcpVerificationFailed = "The agent reached MCP, but project validation failed."
     override val mcpClose = "Close"
     override val chooseLanguage = "Choose language"
 }
@@ -198,6 +220,11 @@ object MenuStringsRu : MenuStrings {
     override val downloadClaudeFile = "Скачать CLAUDE.md"
     override val copyAgentFile = "Скопировать в буфер обмена"
     override val mcpTitle = "MCP Server"
+    override val mcpDescription = "Подключите к этому проекту любой ИИ-агент с поддержкой MCP и установите canonical skills Mission Visualization."
+    override val mcpStepServer = "1. Запустите сервер проекта"
+    override val mcpStepConnectionPrompt = "2. Подключите MCP в ИИ-агенте"
+    override val mcpStepSetupPrompt = "3. После reload установите скиллы и запустите проверку"
+    override val mcpStepVerify = "4. Проверьте целевой проект"
     override val mcpPort = "Порт"
     override val mcpAllowedFolder = "Разрешённая папка"
     override val mcpChooseFolder = "Выбрать папку"
@@ -209,8 +236,14 @@ object MenuStringsRu : MenuStrings {
     override val mcpStart = "Запустить сервер"
     override val mcpStop = "Остановить сервер"
     override val mcpEndpoint = "Endpoint"
-    override val mcpPrompt = "Prompt для ИИ-агента"
-    override val mcpCopyPrompt = "Скопировать prompt"
+    override val mcpConnectionPromptHelp = "Сначала вставьте Prompt 1. Он настроит MCP для проекта и подскажет, нужен ли reload агента."
+    override val mcpSetupPromptHelp = "Когда подключение станет активно, вставьте Prompt 2. Он установит скиллы и запустит валидацию."
+    override val mcpCopyConnectionPrompt = "Скопировать Prompt 1 — подключить MCP"
+    override val mcpCopySetupPrompt = "Скопировать Prompt 2 — установить и проверить"
+    override val mcpClipboardBusy = "Не удалось скопировать: системный буфер обмена занят. Закройте использующее его приложение и повторите."
+    override val mcpWaitingVerification = "Ожидаем, когда целевой агент завершит настройку и вызовет проверку."
+    override fun mcpVerified(agentName: String) = "Подключено и проверено: $agentName"
+    override val mcpVerificationFailed = "Агент подключился к MCP, но проверка проекта не пройдена."
     override val mcpClose = "Закрыть"
     override val chooseLanguage = "Выбор языка"
 }

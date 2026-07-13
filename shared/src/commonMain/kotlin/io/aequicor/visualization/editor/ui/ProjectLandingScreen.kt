@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -54,6 +56,8 @@ private sealed interface LandingCard {
     data class Recent(val project: RecentProject) : LandingCard
     data object OpenProject : LandingCard
 }
+
+private val LandingCardHeight = 88.dp
 
 /** Native desktop counterpart of the WASM startup project screen. */
 @Composable
@@ -113,7 +117,9 @@ internal fun ProjectLandingScreen(state: MissionEditorStateHolder) {
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().widthIn(max = 760.dp),
+            // Keep widthIn outside fillMaxSize: fillMaxSize first would lock the child to the
+            // window width, making the 760 dp cap ineffective on desktop.
+            modifier = Modifier.widthIn(max = 760.dp).fillMaxSize(),
             verticalArrangement = Arrangement.Center,
         ) {
             Row(
@@ -259,9 +265,10 @@ private fun ProjectLandingCard(
         is LandingCard.Recent -> Triple(EditorIcon.Folder, card.project.displayName, strings.landing.localFolder)
         LandingCard.OpenProject -> Triple(EditorIcon.Plus, strings.landing.connectFolder, "")
     }
+    val shape = RoundedCornerShape(14.dp)
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth().height(LandingCardHeight).clip(shape).clickable(onClick = onClick),
+        shape = shape,
         color = colors.raisedSurface,
         border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) colors.accent else colors.panelStroke),
     ) {

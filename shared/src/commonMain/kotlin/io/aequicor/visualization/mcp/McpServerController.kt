@@ -4,6 +4,13 @@ import androidx.compose.runtime.Stable
 
 enum class McpServerStatus { Stopped, Starting, Running, Error }
 
+data class McpProjectVerification(
+    val verified: Boolean,
+    val agentName: String,
+    val projectPath: String,
+    val message: String,
+)
+
 /** Platform boundary used by the common editor UI. Only the desktop app supplies a real server. */
 @Stable
 interface McpServerController {
@@ -12,9 +19,12 @@ interface McpServerController {
     val port: String
     val allowedFolder: String
     val endpoint: String
-    val prompt: String
+    val connectionPrompt: String
+    val setupPrompt: String
+    val projectVerification: McpProjectVerification?
     val errorMessage: String?
 
+    fun useProjectFolder(path: String?)
     fun updatePort(value: String)
     fun chooseAllowedFolder()
     fun start()
@@ -27,8 +37,11 @@ object NoMcpServerController : McpServerController {
     override val port: String = "7331"
     override val allowedFolder: String = ""
     override val endpoint: String = ""
-    override val prompt: String = ""
+    override val connectionPrompt: String = ""
+    override val setupPrompt: String = ""
+    override val projectVerification: McpProjectVerification? = null
     override val errorMessage: String? = null
+    override fun useProjectFolder(path: String?) = Unit
     override fun updatePort(value: String) = Unit
     override fun chooseAllowedFolder() = Unit
     override fun start() = Unit

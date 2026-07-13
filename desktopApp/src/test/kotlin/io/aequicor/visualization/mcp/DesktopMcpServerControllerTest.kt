@@ -6,6 +6,7 @@ import java.net.ServerSocket
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.delay
@@ -23,7 +24,15 @@ class DesktopMcpServerControllerTest {
                 controller.start()
                 awaitStatus(controller, McpServerStatus.Running)
                 assertEquals("http://127.0.0.1:$port/mcp", controller.endpoint)
-                assertTrue(controller.prompt.contains("[mcp_servers.mission_visualization]"))
+                assertTrue(controller.connectionPrompt.contains("native project-scoped MCP configuration"))
+                assertTrue(controller.connectionPrompt.contains(controller.endpoint))
+                assertTrue(controller.connectionPrompt.contains("Do not install skills"))
+                assertFalse(controller.connectionPrompt.contains("get_mcp_skill"))
+                assertTrue(controller.setupPrompt.contains("get_mcp_skill"))
+                assertTrue(controller.setupPrompt.contains("get_slm_skills"))
+                assertTrue(controller.setupPrompt.contains("validate_project_setup"))
+                assertFalse(controller.setupPrompt.contains(controller.endpoint))
+                assertTrue(controller.setupPrompt.contains(root.toString()))
 
                 controller.stop()
                 awaitStatus(controller, McpServerStatus.Stopped)
@@ -38,6 +47,21 @@ class DesktopMcpServerControllerTest {
             } finally {
                 controller.close()
             }
+        }
+    }
+
+    @Test
+    fun activeProjectFolderBecomesTheDefaultAllowedRoot() {
+        val previous = createTempDirectory("mcp-previous")
+        val project = createTempDirectory("mcp-active-project")
+        val controller = controller(previous.toString(), ServerSocket(0).use { it.localPort })
+        try {
+            controller.useProjectFolder(project.toString())
+            assertEquals(project.toRealPath().toString(), controller.allowedFolder)
+            assertTrue(controller.connectionPrompt.contains(project.toRealPath().toString()))
+            assertTrue(controller.setupPrompt.contains(project.toRealPath().toString()))
+        } finally {
+            controller.close()
         }
     }
 

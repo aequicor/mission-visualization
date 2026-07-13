@@ -79,6 +79,18 @@ class DiagramHitTestTest {
     }
 
     @Test
+    fun virtualDrawIoConnectionPointBeatsNodeBody() {
+        val graph = diagramGraph {
+            node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+        }
+
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(25.0, 1.0), tolerance = 5.0)
+
+        assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("top-q1")), hit)
+        assertEquals(emptyList(), graph.nodeById(DiagramNodeId("a"))!!.ports, "hit-test must not persist the virtual port")
+    }
+
+    @Test
     fun resizeHandleBeatsPortOnSelectedNode() {
         val cornerPort = DiagramPort(DiagramPortId("tl"), DiagramPortAnchor.RelativePoint(0.0, 0.0))
         val graph = diagramGraph {

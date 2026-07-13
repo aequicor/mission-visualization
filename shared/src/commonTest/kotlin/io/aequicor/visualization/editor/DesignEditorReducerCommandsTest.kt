@@ -108,13 +108,47 @@ class DesignEditorReducerCommandsTest {
         val sizeBefore = state.document?.nodeById(root)?.size
         val fillsBefore = state.document?.nodeById(root)?.fills
         val strokesBefore = state.document?.nodeById(root)?.strokes
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
         state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(root), dx = 10.0, dy = -5.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
         val after = assertNotNull(state.document?.nodeById(root)?.position)
         assertEquals(before.x.orZero + 10.0, after.x.orZero)
         assertEquals(before.y.orZero - 5.0, after.y.orZero)
         assertEquals(sizeBefore, state.document?.nodeById(root)?.size)
         assertEquals(fillsBefore, state.document?.nodeById(root)?.fills)
         assertEquals(strokesBefore, state.document?.nodeById(root)?.strokes)
+    }
+
+    @Test
+    fun multiSelectionMovesAndDeletesAsAGroup() {
+        var state = freshState()
+        val root = state.rootFrameId()
+        state = reduceDesignEditor(
+            state,
+            DesignEditorIntent.CreateObject(NewObjectKind.Rectangle, root, x = 20.0, y = 30.0, width = 80.0, height = 50.0),
+        )
+        val first = state.selectedNodeId
+        state = reduceDesignEditor(
+            state,
+            DesignEditorIntent.CreateObject(NewObjectKind.Rectangle, root, x = 140.0, y = 160.0, width = 90.0, height = 60.0),
+        )
+        val second = state.selectedNodeId
+        val ids = setOf(first, second)
+
+        state = reduceDesignEditor(state, DesignEditorIntent.SelectNodes(ids))
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(state.selectedNodeIds, dx = 12.0, dy = -7.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
+
+        assertEquals(32.0, state.document?.nodeById(first)?.position?.x?.orZero)
+        assertEquals(23.0, state.document?.nodeById(first)?.position?.y?.orZero)
+        assertEquals(152.0, state.document?.nodeById(second)?.position?.x?.orZero)
+        assertEquals(153.0, state.document?.nodeById(second)?.position?.y?.orZero)
+
+        state = reduceDesignEditor(state, DesignEditorIntent.DeleteNodes(state.selectedNodeIds))
+        assertNull(state.document?.nodeById(first))
+        assertNull(state.document?.nodeById(second))
+        assertTrue(state.selectedNodeIds.isEmpty())
     }
 
     @Test
@@ -152,7 +186,9 @@ class DesignEditorReducerCommandsTest {
         assertEquals(34.0, node.position?.y?.orZero)
 
         // Now that it's absolute, MoveNodes takes effect (isCoordinatePositioned is true).
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
         state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(setOf(flowChild), dx = 1.0, dy = 1.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
         assertEquals(13.0, state.document?.nodeById(flowChild)?.position?.x?.orZero)
         assertEquals(35.0, state.document?.nodeById(flowChild)?.position?.y?.orZero)
     }
@@ -386,8 +422,11 @@ class DesignEditorReducerCommandsTest {
         val root = state.rootFrameId()
         state = reduceDesignEditor(state, DesignEditorIntent.EffectCommand(root, EffectOp.Add(EffectType.DropShadow)))
         assertEquals(1, state.document?.nodeById(root)?.effects?.size)
+        val beforeToggle = state
         state = reduceDesignEditor(state, DesignEditorIntent.EffectCommand(root, EffectOp.ToggleAt(0)))
-        assertEquals(false, state.document?.nodeById(root)?.effects?.first()?.visible?.literalOrNull())
+        assertEquals(beforeToggle.document, state.document)
+        assertEquals(beforeToggle.sources, state.sources)
+        assertTrue(state.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     // --- Typography ---

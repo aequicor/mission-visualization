@@ -5,9 +5,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.aequicor.visualization.editor.data.KeyValueStore
 import io.aequicor.visualization.editor.data.createKeyValueStore
+import io.aequicor.visualization.editor.platform.chooseNativeFolder
 import java.nio.file.Files
 import java.nio.file.Path
-import javax.swing.JFileChooser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,6 +23,8 @@ class DesktopMcpServerController(
     private val lifecycleLock = Any()
     private var host: MissionMcpServerHost? = null
     private var closed = false
+    private var projectFolder: String? = null
+    private var manualFolderOverride = false
 
     override val available: Boolean = true
     override var status: McpServerStatus by mutableStateOf(McpServerStatus.Stopped)
@@ -33,34 +35,54 @@ class DesktopMcpServerController(
         private set
     override var errorMessage: String? by mutableStateOf(null)
         private set
+    override var projectVerification: McpProjectVerification? by mutableStateOf(null)
+        private set
 
     override val endpoint: String
         get() = "http://127.0.0.1:${port.toIntOrNull() ?: DefaultPort}/mcp"
 
-    override val prompt: String
-        get() = buildPrompt(endpoint, allowedFolder)
+    override val connectionPrompt: String
+        get() = buildConnectionPrompt(endpoint, allowedFolder)
+
+    override val setupPrompt: String
+        get() = buildSetupPrompt(allowedFolder)
+
+    override fun useProjectFolder(path: String?) {
+        val normalized = path?.takeIf(String::isNotBlank)?.let { raw ->
+            runCatching { Path.of(raw).toRealPath().toString() }
+                .getOrDefault(Path.of(raw).toAbsolutePath().normalize().toString())
+        } ?: return
+        projectFolder = normalized
+        if (status == McpServerStatus.Starting || status == McpServerStatus.Running) return
+        if (!manualFolderOverride || allowedFolder.isBlank()) {
+            allowedFolder = normalized
+            store.putString(RootKey, normalized)
+            projectVerification = null
+        }
+    }
 
     override fun updatePort(value: String) {
         if (status == McpServerStatus.Starting || status == McpServerStatus.Running) return
         port = value
         value.toIntOrNull()?.takeIf { it in 1024..65535 }?.let { store.putString(PortKey, it.toString()) }
         errorMessage = null
+        projectVerification = null
         if (status == McpServerStatus.Error) status = McpServerStatus.Stopped
     }
 
     override fun chooseAllowedFolder() {
         if (status == McpServerStatus.Starting || status == McpServerStatus.Running) return
-        val chooser = JFileChooser().apply {
-            dialogTitle = "Choose the folder available to MCP"
-            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-            isAcceptAllFileFilterUsed = false
-            allowedFolder.takeIf(String::isNotBlank)?.let { currentDirectory = Path.of(it).toFile() }
-        }
-        if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-            allowedFolder = runCatching { chooser.selectedFile.toPath().toRealPath().toString() }
-                .getOrDefault(chooser.selectedFile.absolutePath)
+        val selectedFolder = chooseNativeFolder(
+            title = "Choose the folder available to MCP",
+            initialDirectory = allowedFolder.takeIf(String::isNotBlank)?.let(Path::of),
+        )
+        if (selectedFolder != null) {
+            allowedFolder = runCatching { selectedFolder.toRealPath().toString() }
+                .getOrDefault(selectedFolder.toAbsolutePath().normalize().toString())
+            manualFolderOverride = allowedFolder != projectFolder
             store.putString(RootKey, allowedFolder)
             errorMessage = null
+            projectVerification = null
             if (status == McpServerStatus.Error) status = McpServerStatus.Stopped
         }
     }
@@ -78,12 +100,21 @@ class DesktopMcpServerController(
         }
         status = McpServerStatus.Starting
         errorMessage = null
+        projectVerification = null
         scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     val root = Path.of(allowedFolder).toRealPath()
                     require(Files.isDirectory(root)) { "Allowed folder is not accessible: $root" }
-                    val started = MissionMcpServerHost.start(parsedPort, root)
+                    val started = MissionMcpServerHost.start(
+                        port = parsedPort,
+                        allowedRoot = root,
+                        onProjectVerification = { verification ->
+                            scope.launch {
+                                if (status == McpServerStatus.Running) projectVerification = verification
+                            }
+                        },
+                    )
                     val stopImmediately = synchronized(lifecycleLock) {
                         if (closed) true else {
                             host = started
@@ -107,12 +138,14 @@ class DesktopMcpServerController(
     override fun stop() {
         val running = synchronized(lifecycleLock) { host.also { host = null } } ?: run {
             status = McpServerStatus.Stopped
+            projectVerification = null
             return
         }
         scope.launch {
             runCatching { withContext(Dispatchers.IO) { running.stop() } }
                 .onFailure { errorMessage = it.message }
             status = McpServerStatus.Stopped
+            projectVerification = null
         }
     }
 
@@ -124,6 +157,7 @@ class DesktopMcpServerController(
         runCatching { running?.stop() }
         scope.cancel()
         status = McpServerStatus.Stopped
+        projectVerification = null
     }
 
     private fun fail(message: String) {
@@ -141,27 +175,45 @@ class DesktopMcpServerController(
         }
     }
 
-    private fun buildPrompt(endpoint: String, root: String): String = """
-        Connect the Mission Visualization MCP server named `mission_visualization`.
+    private fun buildConnectionPrompt(endpoint: String, root: String): String = """
+        Connect Mission Visualization MCP to the project you are currently working in.
 
-        Add this project-scoped configuration to `.codex/config.toml`:
+        MCP server name: `mission_visualization`
+        Transport: Streamable HTTP
+        Endpoint: `$endpoint`
+        Expected project root: `$root`
 
-        ```toml
-        [mcp_servers.mission_visualization]
-        url = "$endpoint"
-        ```
+        Use the native project-scoped MCP configuration mechanism supported by your current AI
+        coding client. Preserve every unrelated existing MCP server, setting, instruction, and skill.
 
-        Restart Codex after adding the MCP server.
+        Add or update only the `mission_visualization` connection using the endpoint above.
+        Do not install skills and do not call MCP tools in this step. After saving the configuration,
+        tell me exactly what must be reloaded or restarted for the connection to become available.
+        If your client applies project MCP changes immediately, tell me that I can paste Prompt 2 now.
+    """.trimIndent()
 
-        Allowed folder: $root
+    private fun buildSetupPrompt(root: String): String = """
+        Finish Mission Visualization setup in the project you are currently working in.
 
-        Workflow:
-        1. Edit a `*.layout.md` file inside the allowed folder with normal file tools.
-        2. Call `check_layout` with `layout_path` and fix compiler diagnostics until `valid: true`.
-        3. Call `render_layout` with `layout_path` and a target: `screen`, `component`, or `group`.
-        4. Analyze both the returned PNG and diagnostics, then iterate on the source file.
+        Expected project root: `$root`
 
-        The MCP server is read-only and never edits `.layout.md` itself.
+        The project-scoped `mission_visualization` MCP connection was configured in the previous
+        step. Do not edit MCP configuration in this step.
+
+        - Confirm that the `mission_visualization` MCP tools are available. If they are not, stop and
+          report that the connection is not active yet.
+        - Call `get_mcp_skill` and install the returned canonical root skill project-scoped using your
+          client's native skill mechanism.
+        - Call `get_slm_skills` with `skill: "all"` and install every returned SLM and subsystem skill
+          project-scoped. Preserve every unrelated project instruction and skill.
+        - Call `validate_project_setup` with:
+          - `project_path`: `$root`
+          - `agent_name`: the name of your current AI coding client
+          - `root_skill_installed`: `true` only after installation succeeds
+          - `slm_skills_installed`: every skill name returned by `get_slm_skills`
+
+        Report setup complete only when `validate_project_setup` returns `verified: true`.
+        If its allowed root differs from the current project, stop and report the mismatch.
     """.trimIndent()
 
     private companion object {

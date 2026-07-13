@@ -81,14 +81,13 @@ class InteractionMotionReducerTest {
     }
 
     @Test
-    fun cubicBezierTransitionFallsBackInMemory() {
+    fun cubicBezierTransitionIsExplicitlyRejected() {
         val added = reduceDesignEditor(freshState(), DesignEditorIntent.InteractionCommand(nodeId, InteractionOp.Add))
         val bezier = DesignTransition(TransitionType.Push, easing = DesignEasing.CubicBezier(0.25, 0.1, 0.25, 1.0), durationMs = 300.0)
         val next = reduceDesignEditor(added, DesignEditorIntent.InteractionCommand(nodeId, InteractionOp.SetActionTransition(0, 0, bezier)))
-        // Mirrored onto the working document...
-        assertEquals(bezier, (next.node().interactions.single().actions.single() as DesignAction.Navigate).transition)
-        // ...but the source is byte-identical to before this inexpressible edit (in-memory fallback).
+        assertEquals(added.document, next.document)
         assertNull(changedSource(added, next), "cubic-bezier is inexpressible → source untouched")
+        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     @Test

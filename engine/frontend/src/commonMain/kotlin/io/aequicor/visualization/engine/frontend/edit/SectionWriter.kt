@@ -44,6 +44,22 @@ internal class SectionWriter(
         return WritePlan.Ops(listOf(TextOp(start, end, "")))
     }
 
+    /** Re-emits a subtree at the exact heading level and byte footprint of its current section. */
+    fun replace(anchorSpan: SlmSourceSpan, subtree: DesignNode): WritePlan {
+        val heading = headingAt(anchorSpan.startLine)
+            ?: return WritePlan.Failed(
+                "Node has no heading section to replace; only heading-anchored nodes are structurally editable",
+                anchorSpan.startLine,
+            )
+        if (heading.level <= 1) {
+            return WritePlan.Failed("The screen root section cannot be replaced", heading.span.startLine)
+        }
+        val start = lineIndex.lineStartOffset(heading.span.startLine)
+        val end = lineIndex.lineStartOffset(footprintEndLine(heading))
+        val text = frameInsert(NodeSectionWriter.emitSubtree(subtree, heading.level, extensions), start)
+        return WritePlan.Ops(listOf(TextOp(start, end, text)))
+    }
+
     /**
      * Inserts [subtree] under the parent owning [parentSpan]. When [afterSiblingSpan] is given the
      * section lands right after that sibling's footprint; otherwise it appends at the end of the
@@ -128,7 +144,7 @@ internal class SectionWriter(
         val deleteStart = lineIndex.lineStartOffset(startLine)
         val deleteEnd = lineIndex.lineStartOffset(endLine)
         val insertOffset = lineIndex.lineStartOffset(insertBeforeLine)
-        if (insertOffset in deleteStart until deleteEnd) {
+        if (insertOffset > deleteStart && insertOffset < deleteEnd) {
             return WritePlan.Failed("A section cannot be moved inside itself", newParentSpan.startLine)
         }
 
@@ -137,6 +153,13 @@ internal class SectionWriter(
             .map { line -> lineIndex.lineText(line).let { if (line in headingStartLines) relevelHeading(it, delta) else it } }
             .dropLastWhile { it.isBlank() }
         val text = frameInsert(sectionLines, insertOffset)
+        // Reparenting a node under its immediately preceding sibling appends at exactly the
+        // moved section's current start. Represent that adjacent delete+insert as one replacement;
+        // two ops at the same offset would otherwise look overlapping even though the transform is
+        // perfectly well-defined (the bytes stay in place, only heading depth changes).
+        if (insertOffset == deleteStart) {
+            return WritePlan.Ops(listOf(TextOp(deleteStart, deleteEnd, text)))
+        }
         return WritePlan.Ops(listOf(TextOp(deleteStart, deleteEnd, ""), TextOp(insertOffset, insertOffset, text)))
     }
 

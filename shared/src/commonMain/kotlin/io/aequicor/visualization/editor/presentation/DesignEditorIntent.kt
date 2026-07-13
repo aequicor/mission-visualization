@@ -44,7 +44,7 @@ sealed interface DesignEditorIntent {
     /** Replaces the whole selection set; primary is the last id. */
     data class SelectNodes(val nodeIds: Set<String>) : DesignEditorIntent
 
-    /** Shift+click semantics: add when absent, remove when present. */
+    /** Ctrl/Cmd/Shift+click semantics: add when absent, remove when present. */
     data class ToggleNodeSelection(val nodeId: String) : DesignEditorIntent
 
     data object ClearSelection : DesignEditorIntent
@@ -453,7 +453,7 @@ sealed interface DesignEditorIntent {
 
     /**
      * Mutates the node's interaction list via [op] and writes the node's whole `interaction:`
-     * block set back to SLM (in-memory fallback when inexpressible). The op-command idiom keeps
+     * block set back to SLM (the atomic contract rejects inexpressible results). The op-command idiom keeps
      * the working document and the whole-set write-back payload in lockstep (like [FillCommand]).
      */
     data class InteractionCommand(val nodeId: String, val op: InteractionOp) : DesignEditorIntent

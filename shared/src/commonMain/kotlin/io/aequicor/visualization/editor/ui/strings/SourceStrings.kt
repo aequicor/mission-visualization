@@ -17,7 +17,11 @@ interface SourceStrings {
     val showLayer: String
     val bringForward: String
     val sendBackward: String
+    val expandAllLayers: String
+    val collapseLayerLevel: String
+    val locateSelectedLayer: String
     val screens: CompactLabel
+    val refreshScreens: String
     val createScreen: String
     fun screenPreset(preset: ScreenPreset): String
     val resourcesEmptyTitle: String
@@ -39,7 +43,11 @@ object SourceStringsEn : SourceStrings {
     override val showLayer = "Show layer"
     override val bringForward = "Bring forward"
     override val sendBackward = "Send backward"
+    override val expandAllLayers = "Expand all layers"
+    override val collapseLayerLevel = "Collapse next layer level"
+    override val locateSelectedLayer = "Locate selected layer"
     override val screens = CompactLabel("Screens", "Scr", "Scr")
+    override val refreshScreens = "Refresh screens from disk"
     override val createScreen = "Create screen"
     override fun screenPreset(preset: ScreenPreset): String = when (preset) {
         ScreenPreset.Desktop -> "Desktop"
@@ -66,7 +74,11 @@ object SourceStringsRu : SourceStrings {
     override val showLayer = "Показать слой"
     override val bringForward = "На передний план"
     override val sendBackward = "На задний план"
+    override val expandAllLayers = "Развернуть все слои"
+    override val collapseLayerLevel = "Свернуть следующий уровень слоёв"
+    override val locateSelectedLayer = "Перейти к выбранному слою"
     override val screens = CompactLabel("Экраны", "Экр", "Экр")
+    override val refreshScreens = "Обновить экраны с диска"
     override val createScreen = "Создать экран"
     override fun screenPreset(preset: ScreenPreset): String = when (preset) {
         ScreenPreset.Desktop -> "Десктоп"

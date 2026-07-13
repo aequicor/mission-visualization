@@ -27,6 +27,16 @@ sealed interface SlmEdit {
 }
 
 /**
+ * Requests a deterministic whole-sentence CNL re-emit from the caller-supplied patched node.
+ * This is the generic write-back escape hatch for editor properties that do not need a smaller
+ * surgical edit. [CnlWriter] still rewrites only the owning sentence, and the editor must
+ * recompile and prove semantic equivalence before accepting the result.
+ */
+data class ReemitNode(
+    override val nodeId: String,
+) : SlmEdit
+
+/**
  * Sets explicit sizing on one or both axes in a single transaction: both axes land
  * under one `layout: sizing:` subtree, creating the path once. An existing
  * `width: fill` shorthand (scalar) is upgraded in place to an inline map
@@ -291,6 +301,12 @@ data class InsertChildSubtree(
  */
 data class DeleteSection(
     override val nodeId: String,
+) : StructuralSlmEdit
+
+/** Replaces one heading-owned subtree in place while keeping its root id and sibling slot. */
+data class ReplaceSection(
+    override val nodeId: String,
+    val subtree: DesignNode,
 ) : StructuralSlmEdit
 
 /**

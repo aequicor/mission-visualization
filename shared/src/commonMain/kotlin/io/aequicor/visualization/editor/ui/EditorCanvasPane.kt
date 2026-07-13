@@ -213,6 +213,8 @@ import io.aequicor.visualization.editor.platform.ProjectResourceStore
 import io.aequicor.visualization.editor.platform.createProjectResourceStore
 import io.aequicor.visualization.editor.platform.IngestionError
 import io.aequicor.visualization.editor.platform.installResourceIngestion
+import io.aequicor.visualization.editor.platform.platformCanvasWheelPanPixels
+import io.aequicor.visualization.editor.platform.platformCanvasWheelZoomUnits
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -269,7 +271,7 @@ import kotlinx.coroutines.channels.Channel
 
 /**
  * Center canvas: viewport (zoom/pan/fit), the rendered artboard, and all direct
- * manipulation — hover, click / shift-click / marquee selection, drag-move, handle
+ * manipulation — hover, click / Ctrl/Cmd/Shift-click / marquee selection, drag-move, handle
  * resize, canvas rotation and tool-driven object creation — plus keyboard
  * nudge/duplicate/delete/undo. Every gesture maps into a [DesignEditorIntent]; the
  * workspace owns zoom/pan. The artboard renders content only ([DesignArtboard] is called
@@ -549,7 +551,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var radiusIndicator by remember { mutableStateOf<RadiusIndicator?>(null) }
 
         // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Space
-        // for pan, Alt for the read-only measurement overlay).
+        // for pan, Alt for the read-only measurement overlay). Ctrl/Cmd additive selection is
+        // captured from the pointer event that starts each gesture (see CanvasGestureStart).
         val focusRequester = remember { FocusRequester() }
         var shiftHeld by remember { mutableStateOf(false) }
         var altHeld by remember { mutableStateOf(false) }
@@ -622,7 +625,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             state.updateWorkspace { it.copy(pendingZoomTo = null) }
                                         }
                                         if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
-                                            val factor = zoomFactorForScroll(-change.scrollDelta.y)
+                                            val factor = zoomFactorForScroll(
+                                                platformCanvasWheelZoomUnits(-change.scrollDelta.y),
+                                            )
                                             if (factor != 1f) {
                                                 // Anchor to the live *visible* zoom, not the pending
                                                 // target: a direction reversal (notably at the min/max
@@ -638,8 +643,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         } else {
                                             val scrollX = if (modifiers.isShiftPressed) change.scrollDelta.y else change.scrollDelta.x
                                             val scrollY = if (modifiers.isShiftPressed) 0f else change.scrollDelta.y
+                                            val panX = platformCanvasWheelPanPixels(-scrollX, density)
+                                            val panY = platformCanvasWheelPanPixels(-scrollY, density)
                                             state.updateWorkspace {
-                                                it.copy(viewport = it.viewport.panByScreenDelta(-scrollX, -scrollY, density))
+                                                it.copy(viewport = it.viewport.panByScreenDelta(panX, panY, density))
                                             }
                                         }
                                         change.consume()
@@ -680,6 +687,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val down = gestureStart.change
                             shiftHeld = gestureStart.shiftPressed
                             altHeld = gestureStart.altPressed
+                            val additiveSelectionPressed = gestureStart.shiftPressed || gestureStart.ctrlOrMetaPressed
+                            // Ctrl/Cmd changes where a marquee may start; Shift changes how
+                            // its result combines with the previous selection. Keeping these
+                            // semantics separate prevents a selected container from remaining
+                            // selected together with every child caught by a Ctrl/Cmd marquee.
+                            val additiveMarqueePressed = gestureStart.shiftPressed
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
                             // The pointerInput coroutine can outlive document/layout recompositions
@@ -696,6 +709,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 .orEmpty()
                             val panFromTertiaryButton = gestureStart.tertiaryButton || currentEvent.buttons.isTertiaryPressed
                             val forcePan = panFromTertiaryButton || spaceHeld
+                            // Figma-style modifier marquee: Ctrl/Cmd + primary drag starts a
+                            // rubber-band even when the press lands on a node/container body or
+                            // one of the current selection's handles. A click without crossing
+                            // slop still keeps the existing Ctrl/Cmd-click toggle behaviour.
+                            val forceMarquee = pressWorkspace.tool == EditorTool.Select &&
+                                gestureStart.ctrlOrMetaPressed && !forcePan
                             if (forcePan) down.consume()
                             // Annotation tool: a click drops a note/issue on the review layer
                             // instead of running any canvas operation (select/move/create).
@@ -738,7 +757,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
                             val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
+                            val handlesActive = !forcePan && !forceMarquee && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
                             // Arc/donut ellipse: grabbing a rim (start/end) or inner-ratio handle is
                             // resolved here — not in a separate full-canvas overlay — so a selected
                             // arc/donut ellipse never swallows presses meant to select or move other
@@ -784,7 +803,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
                             val hitId = hitNode(pressLayout, pressDocument, viewport, start)
-                            val mode = resolveCanvasOperation(pressWorkspace.tool, forcePan, radiusHandle, handle, rotateHit, hitId)
+                            val mode = resolveCanvasOperation(
+                                pressWorkspace.tool,
+                                forcePan,
+                                forceMarquee,
+                                radiusHandle,
+                                handle,
+                                rotateHit,
+                                hitId,
+                            )
 
                             // Unified selection: a plain click over a diagram BLOCK/edge selects that
                             // element directly — the same way a click selects a rectangle or text —
@@ -792,7 +819,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // area falls through and selects the whole diagram (its container). This runs
                             // when entering from the root/plain selection; the diagram overlay handles the
                             // twin case of switching straight from another diagram's edit mode.
-                            if (mode == CanvasOperation.Move && !shiftHeld && pressWorkspace.diagramEditNodeId != hitId) {
+                            if (mode == CanvasOperation.Move && !additiveSelectionPressed && pressWorkspace.diagramEditNodeId != hitId) {
                                 val diagramTarget = resolveDiagramElementSelection(
                                     pressLayout, pressDocument, viewport.toDocX(start.x), viewport.toDocY(start.y), zoomPx,
                                 )
@@ -820,8 +847,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
 
                             // Pre-press selection so a drag moves the pressed node — but never when the
                             // press already lands on the current selection (reselecting there would grab
-                            // the nested element) nor on a shift-add.
-                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !shiftHeld) {
+                            // the nested element) nor while an additive-selection modifier is held.
+                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !additiveSelectionPressed) {
                                 state.dispatch(DesignEditorIntent.SelectNode(hitId))
                             }
                             // Selection may have changed on this very down event. Resolve the move frame
@@ -928,6 +955,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             var documentBegan = false
                             var canceled = false
                             var last = start
+                            var releasePosition = start
                             val resizeBaseline = (mode as? CanvasOperation.Resize)?.let { selectedResizeBox }
                             val resizeTargets = (mode as? CanvasOperation.Resize)?.let {
                                 resizeTargets(pressDocument, pressLayout, state.designState.selectedNodeIds)
@@ -986,6 +1014,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 shiftHeld = modifiers.isShiftPressed
                                 altHeld = modifiers.isPointerAltPressed
                                 val change = event.changes.firstOrNull() ?: break
+                                releasePosition = change.position
                                 if (mode == CanvasOperation.Pan && panFromTertiaryButton && !event.buttons.isTertiaryPressed) break
                                 // Escape (routed through the key handler) aborts a live drag; check
                                 // before the up-test so an Escape-then-release still cancels.
@@ -1208,13 +1237,28 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 when (mode) {
                                     CanvasOperation.Marquee -> {
                                         if (moved) {
-                                            val rect = marquee
-                                            if (rect != null) {
-                                                val ids = nodesIn(pressLayout, pressDocument, viewport, rect)
-                                                val next = if (shiftHeld) pressDesign.selectedNodeIds + ids else ids
-                                                state.dispatch(DesignEditorIntent.SelectNodes(next))
-                                            }
-                                        } else if (hitId.isBlank()) {
+                                            // Commit from gesture-local coordinates rather than
+                                            // reading the transient Compose drawing state. This also
+                                            // covers an up event whose final position was not followed
+                                            // by another rendered frame.
+                                            val finalRect = Rect(
+                                                min(start.x, releasePosition.x),
+                                                min(start.y, releasePosition.y),
+                                                max(start.x, releasePosition.x),
+                                                max(start.y, releasePosition.y),
+                                            )
+                                            val ids = nodesIn(pressLayout, pressDocument, viewport, finalRect)
+                                            val next = marqueeSelectionResult(
+                                                existing = pressDesign.selectedNodeIds,
+                                                hits = ids,
+                                                additive = additiveMarqueePressed,
+                                            )
+                                            state.dispatch(DesignEditorIntent.SelectNodes(next))
+                                        } else if (forceMarquee && hitId.isNotBlank()) {
+                                            // The modifier changes only a drag into marquee; preserve
+                                            // Ctrl/Cmd-click as an additive selection toggle.
+                                            state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
+                                        } else if (hitId.isBlank() && !additiveSelectionPressed) {
                                             // Clicking inside the root frame's body selects the root
                                             // (Figma: clicking a frame's empty area selects the frame);
                                             // clicking the canvas outside all frames clears the selection.
@@ -1286,8 +1330,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             val doubleClick = lastTapId == hitId &&
                                                 (lastTapMark?.let { (now - it).inWholeMilliseconds < 320 } ?: false)
                                             when {
+                                                additiveSelectionPressed -> state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
                                                 doubleClick -> enterEditMode(state, hitId)
-                                                shiftHeld -> state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
                                                 else -> state.dispatch(DesignEditorIntent.SelectNode(hitId))
                                             }
                                             lastTapMark = now
@@ -2723,9 +2767,10 @@ private fun cycleDiagramSelection(state: MissionEditorStateHolder, forward: Bool
 
 // --- Gesture model -----------------------------------------------------------
 
-private fun resolveCanvasOperation(
+internal fun resolveCanvasOperation(
     tool: EditorTool,
     forcePan: Boolean,
+    forceMarquee: Boolean,
     radiusHandle: CornerRadiusHandle?,
     handle: ResizeHandle?,
     rotateHit: Boolean,
@@ -2733,12 +2778,19 @@ private fun resolveCanvasOperation(
 ): CanvasOperation = when {
     forcePan -> CanvasOperation.Pan
     tool.creates != null -> CanvasOperation.Create(tool.creates)
+    forceMarquee && tool == EditorTool.Select -> CanvasOperation.Marquee
     radiusHandle != null -> CanvasOperation.AdjustCornerRadius(radiusHandle)
     handle != null -> CanvasOperation.Resize(handle)
     rotateHit -> CanvasOperation.Rotate
     hitId.isNotBlank() -> CanvasOperation.Move
     else -> CanvasOperation.Marquee
 }
+
+internal fun marqueeSelectionResult(
+    existing: Set<String>,
+    hits: Set<String>,
+    additive: Boolean,
+): Set<String> = if (additive) existing + hits else hits
 
 private data class ResizeTarget(
     val nodeId: String,
@@ -3220,6 +3272,7 @@ private data class CanvasGestureStart(
     val change: PointerInputChange,
     val tertiaryButton: Boolean,
     val shiftPressed: Boolean,
+    val ctrlOrMetaPressed: Boolean,
     val altPressed: Boolean,
 )
 
@@ -3238,6 +3291,7 @@ private suspend fun AwaitPointerEventScope.awaitCanvasGestureStart(): CanvasGest
                 change = change,
                 tertiaryButton = true,
                 shiftPressed = modifiers.isShiftPressed,
+                ctrlOrMetaPressed = modifiers.isCtrlPressed || modifiers.isMetaPressed,
                 altPressed = modifiers.isPointerAltPressed,
             )
         }
@@ -3248,6 +3302,7 @@ private suspend fun AwaitPointerEventScope.awaitCanvasGestureStart(): CanvasGest
                 change = change,
                 tertiaryButton = false,
                 shiftPressed = modifiers.isShiftPressed,
+                ctrlOrMetaPressed = modifiers.isCtrlPressed || modifiers.isMetaPressed,
                 altPressed = modifiers.isPointerAltPressed,
             )
         }

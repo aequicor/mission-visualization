@@ -358,6 +358,9 @@ internal fun DesignEditorState.diagramWriteBack(
     val patch: (DesignNode) -> DesignNode = { n ->
         if (n.kind is DesignNodeKind.Diagram) n.copy(kind = DesignNodeKind.Diagram(newGraph)) else n
     }
+    // Diagram drags can emit many graph updates. Keep only the preview in memory; the unified
+    // interaction contract writes the final graph once at EndInteraction.
+    if (interacting) return editUnlockedNode(nodeId, patch)
     if (sources.isEmpty() || sources.size != compiledResults.size) return editUnlockedNode(nodeId, patch)
     val index = owningSourceIndex(nodeId) ?: return editUnlockedNode(nodeId, patch)
     val source = sources[index]

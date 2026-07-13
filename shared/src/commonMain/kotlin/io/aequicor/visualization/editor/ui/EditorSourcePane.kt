@@ -120,6 +120,7 @@ import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.mcp.McpServerStatus
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -203,7 +204,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                                     state.showProjectLanding()
                                 } else {
                                     scope.launch {
-                                        if (state.folderSync != FolderSyncPresence.Idle) state.disconnectFolder()
+                                        state.leaveProjectForLanding()
                                         platformSetActiveProjectId("")
                                         platformInstallLanding(
                                             buildLandingConfigJson(
@@ -229,7 +230,11 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             }
                         }
                         if (state.mcpServer.available) {
-                            EditorDropdownMenuItem(strings.menu.mcpServer, leadingContent = { DropdownMenuIcon(EditorIcon.Code) }) {
+                            EditorDropdownMenuItem(
+                                strings.menu.mcpServer,
+                                leadingContent = { DropdownMenuIcon(EditorIcon.Code) },
+                                trailingContent = { McpMenuStatusLight(state.mcpServer.status) },
+                            ) {
                                 closeMenu()
                                 mcpDialogVisible = true
                             }
@@ -422,6 +427,31 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     }
     if (mcpDialogVisible) {
         McpServerDialog(state.mcpServer) { mcpDialogVisible = false }
+    }
+}
+
+@Composable
+private fun McpMenuStatusLight(status: McpServerStatus) {
+    val colors = LocalEditorColors.current
+    val lightColor = when (status) {
+        McpServerStatus.Stopped -> colors.mutedInk
+        McpServerStatus.Starting -> colors.statusWarning
+        McpServerStatus.Running -> colors.statusPositive
+        McpServerStatus.Error -> colors.statusDanger
+    }
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .clip(CircleShape)
+            .background(lightColor.copy(alpha = 0.18f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(lightColor),
+        )
     }
 }
 
@@ -906,13 +936,28 @@ private data class LayerRow(val node: DesignNode, val depth: Int)
 @Composable
 private fun LayersTree(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val design = state.designState
     val ws = state.workspace
     val page = design.document?.pageById(design.selectedPageId)
     val focusRequester = remember { FocusRequester() }
+    val scrollState = rememberScrollState()
     val rows = remember(page, ws.collapsedLayers) {
         page?.let { flattenLayers(it, ws.collapsedLayers) } ?: emptyList()
     }
+    val collapsibleLayerIds = remember(page) { page?.let(::collapsibleLayerIds).orEmpty() }
+    val collapsedOnPage = remember(collapsibleLayerIds, ws.collapsedLayers) {
+        ws.collapsedLayers intersect collapsibleLayerIds
+    }
+    val nextCollapseIds = remember(page, collapsedOnPage) {
+        page?.let { collapseLayerFrontier(it, collapsedOnPage) }.orEmpty()
+    }
+    val selectedLayerId = remember(page, design.selectedNodeId, design.selectedNodeIds) {
+        sequenceOf(design.selectedNodeId, design.selectedNodeIds.firstOrNull().orEmpty())
+            .firstOrNull { id -> id.isNotBlank() && page?.let { layerPathToNode(it, id) } != null }
+            .orEmpty()
+    }
+    var pendingRevealId by remember(design.selectedPageId) { mutableStateOf("") }
     val rowHeightPx = with(LocalDensity.current) { LayerRowHeight.toPx() }
     // One indent level in px (matches LayerRowView's `depth * 16.dp` start padding). Horizontal drag
     // distance / this = how many levels the pointer wants to nest in or pop out of at a trailing gap.
@@ -954,47 +999,110 @@ private fun LayersTree(state: MissionEditorStateHolder) {
                 } else {
                     false
                 }
-            }
-            .verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
+            },
     ) {
-        val gap = dropTarget as? LayerDropTarget.InsertGap
-        rows.forEachIndexed { index, row ->
-            LayerRowView(
-                state = state,
-                row = row,
-                isDropTarget = dragId.isNotEmpty() &&
-                    (dropTarget as? LayerDropTarget.IntoContainer)?.rowIndex == index,
-                dropLineAbove = dragId.isNotEmpty() && gap?.gapIndex == index,
-                dropLineBelow = dragId.isNotEmpty() && index == rows.lastIndex && gap?.gapIndex == rows.size,
-                dropLineIndent = (8 + (gap?.depth ?: 0) * 16).dp,
-                onRequestFocus = { runCatching { focusRequester.requestFocus() } },
-                onDragStart = { localY ->
-                    dragId = row.node.id
-                    dragBaseDepth = row.depth
-                    dragDx = 0f
-                    dragPointerY = index * rowHeightPx + localY
-                    dropTarget = null
-                },
-                onDrag = { dx, dy ->
-                    if (dragId.isNotEmpty()) {
-                        dragDx += dx
-                        dragPointerY += dy
-                        val pointerDepth = (dragBaseDepth + (dragDx / indentStepPx).roundToInt()).coerceAtLeast(0)
-                        dropTarget = state.designState.document?.let { doc ->
-                            resolveLayerDropTarget(doc, rowModels, dragId, (dragPointerY / rowHeightPx).toDouble(), pointerDepth)
-                        }
+        Row(
+            modifier = Modifier.fillMaxWidth().height(38.dp).background(colors.raisedSurface).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(1f))
+            SmallIconButton(
+                icon = EditorIcon.ExpandAll,
+                contentDescription = strings.source.expandAllLayers,
+                enabled = collapsedOnPage.isNotEmpty(),
+                onClick = {
+                    state.updateWorkspace { current ->
+                        current.copy(collapsedLayers = current.collapsedLayers - collapsibleLayerIds)
                     }
                 },
-                onDrop = {
-                    val target = dropTarget
-                    if (dragId.isNotEmpty() && target != null) applyLayerDrop(state, target, dragId)
-                    clearDrag()
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            SmallIconButton(
+                icon = EditorIcon.CollapseAll,
+                contentDescription = strings.source.collapseLayerLevel,
+                enabled = nextCollapseIds.isNotEmpty(),
+                onClick = {
+                    pendingRevealId = ""
+                    state.updateWorkspace { current ->
+                        current.copy(collapsedLayers = current.collapsedLayers + nextCollapseIds)
+                    }
                 },
-                onDragCancel = { clearDrag() },
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            SmallIconButton(
+                icon = EditorIcon.LocateSelection,
+                contentDescription = strings.source.locateSelectedLayer,
+                enabled = selectedLayerId.isNotEmpty(),
+                onClick = {
+                    val targetId = selectedLayerId
+                    val path = page?.let { layerPathToNode(it, targetId) }.orEmpty()
+                    if (targetId.isNotEmpty() && path.isNotEmpty()) {
+                        val ancestors = path.dropLast(1).toSet()
+                        state.updateWorkspace { current ->
+                            current.copy(collapsedLayers = current.collapsedLayers - ancestors)
+                        }
+                        pendingRevealId = targetId
+                    }
+                },
+                modifier = Modifier.size(28.dp),
             )
         }
-        if (rows.isEmpty()) {
-            Text(LocalStrings.current.source.emptyScreen, color = colors.mutedInk, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            val viewportHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+            LaunchedEffect(pendingRevealId, rows, viewportHeightPx) {
+                val index = rows.indexOfFirst { it.node.id == pendingRevealId }
+                if (pendingRevealId.isNotEmpty() && index >= 0) {
+                    // Let the newly expanded rows reach layout before scrolling, then keep the
+                    // selected row near the middle of the Layers viewport (IDEA-style locate).
+                    withFrameNanos { }
+                    val centeredOffset = index * rowHeightPx - (viewportHeightPx - rowHeightPx) / 2f
+                    scrollState.animateScrollTo(centeredOffset.roundToInt().coerceAtLeast(0))
+                    pendingRevealId = ""
+                }
+            }
+            Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(vertical = 6.dp)) {
+                val gap = dropTarget as? LayerDropTarget.InsertGap
+                rows.forEachIndexed { index, row ->
+                    LayerRowView(
+                        state = state,
+                        row = row,
+                        isDropTarget = dragId.isNotEmpty() &&
+                            (dropTarget as? LayerDropTarget.IntoContainer)?.rowIndex == index,
+                        dropLineAbove = dragId.isNotEmpty() && gap?.gapIndex == index,
+                        dropLineBelow = dragId.isNotEmpty() && index == rows.lastIndex && gap?.gapIndex == rows.size,
+                        dropLineIndent = (8 + (gap?.depth ?: 0) * 16).dp,
+                        onRequestFocus = { runCatching { focusRequester.requestFocus() } },
+                        onDragStart = { localY ->
+                            dragId = row.node.id
+                            dragBaseDepth = row.depth
+                            dragDx = 0f
+                            dragPointerY = index * rowHeightPx + localY
+                            dropTarget = null
+                        },
+                        onDrag = { dx, dy ->
+                            if (dragId.isNotEmpty()) {
+                                dragDx += dx
+                                dragPointerY += dy
+                                val pointerDepth = (dragBaseDepth + (dragDx / indentStepPx).roundToInt()).coerceAtLeast(0)
+                                dropTarget = state.designState.document?.let { doc ->
+                                    resolveLayerDropTarget(doc, rowModels, dragId, (dragPointerY / rowHeightPx).toDouble(), pointerDepth)
+                                }
+                            }
+                        },
+                        onDrop = {
+                            val target = dropTarget
+                            if (dragId.isNotEmpty() && target != null) applyLayerDrop(state, target, dragId)
+                            clearDrag()
+                        },
+                        onDragCancel = { clearDrag() },
+                    )
+                }
+                if (rows.isEmpty()) {
+                    Text(strings.source.emptyScreen, color = colors.mutedInk, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+                }
+            }
         }
     }
 }
@@ -1190,6 +1298,47 @@ private fun flattenLayers(page: DesignPage, collapsed: Set<String>): List<LayerR
     return rows
 }
 
+/** IDs of containers that expose a disclosure control in the Layers tree. */
+private fun collapsibleLayerIds(page: DesignPage): Set<String> = buildSet {
+    fun visit(node: DesignNode) {
+        if (node.children.isNotEmpty()) add(node.id)
+        node.children.forEach(::visit)
+    }
+    page.children.forEach(::visit)
+}
+
+/**
+ * Deepest currently expanded container in every visible branch. Repeating this operation
+ * walks bottom-up until only the page's root rows remain visible.
+ */
+private fun collapseLayerFrontier(page: DesignPage, collapsed: Set<String>): Set<String> = buildSet {
+    fun visit(node: DesignNode) {
+        if (node.children.isEmpty() || node.id in collapsed) return
+        val expandedChildContainers = node.children.filter { child ->
+            child.children.isNotEmpty() && child.id !in collapsed
+        }
+        if (expandedChildContainers.isEmpty()) {
+            add(node.id)
+        } else {
+            expandedChildContainers.forEach(::visit)
+        }
+    }
+    page.children.forEach(::visit)
+}
+
+/** Node path in document order, including [nodeId]; null when it is not on [page]. */
+private fun layerPathToNode(page: DesignPage, nodeId: String): List<String>? {
+    fun find(nodes: List<DesignNode>, path: List<String>): List<String>? {
+        nodes.forEach { node ->
+            val nodePath = path + node.id
+            if (node.id == nodeId) return nodePath
+            find(node.children, nodePath)?.let { return it }
+        }
+        return null
+    }
+    return find(page.children, emptyList())
+}
+
 @Composable
 private fun LayerIconAction(
     icon: EditorIcon,
@@ -1261,19 +1410,27 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
-                Box {
-                    SmallIconButton(EditorIcon.Plus, contentDescription = strings.source.createScreen, onClick = { presetMenu = true })
-                    EditorDropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
-                        ScreenPreset.entries.forEach { preset ->
-                            EditorDropdownMenuItem(
-                                text = "${strings.source.screenPreset(preset)}  ${preset.width.toInt()}x${preset.height.toInt()}",
-                                onClick = {
-                                    presetMenu = false
-                                    val count = (document?.pages?.size ?: 0) + 1
-                                    state.dispatch(DesignEditorIntent.CreateScreen(preset, "Screen $count"))
-                                },
-                                leadingContent = { ScreenPresetPreview(preset) },
-                            )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SmallIconButton(
+                        icon = EditorIcon.Refresh,
+                        contentDescription = strings.source.refreshScreens,
+                        enabled = state.folderSync == FolderSyncPresence.Watching,
+                        onClick = state::refreshScreensFromDisk,
+                    )
+                    Box {
+                        SmallIconButton(EditorIcon.Plus, contentDescription = strings.source.createScreen, onClick = { presetMenu = true })
+                        EditorDropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
+                            ScreenPreset.entries.forEach { preset ->
+                                EditorDropdownMenuItem(
+                                    text = "${strings.source.screenPreset(preset)}  ${preset.width.toInt()}x${preset.height.toInt()}",
+                                    onClick = {
+                                        presetMenu = false
+                                        val count = (document?.pages?.size ?: 0) + 1
+                                        state.dispatch(DesignEditorIntent.CreateScreen(preset, "Screen $count"))
+                                    },
+                                    leadingContent = { ScreenPresetPreview(preset) },
+                                )
+                            }
                         }
                     }
                 }

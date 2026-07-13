@@ -98,6 +98,9 @@ internal expect fun platformReconnectSavedFolder()
 /** Stops the watcher and forgets the live connection. */
 internal expect fun platformDisconnectFolder()
 
+/** Re-reads every supported source file from the currently watched folder. No-op when disconnected. */
+internal expect fun platformRefreshFolder()
+
 /** Name of the saved/connected folder, or null when none is remembered. */
 internal expect fun platformSavedFolderName(): String?
 
@@ -116,11 +119,30 @@ internal expect fun folderSyncStatus(): String?
 /** Last human-readable folder error, cleared when a new operation starts or succeeds. */
 internal expect fun folderSyncError(): String?
 
+/** One compare-and-swap entry in an outbound folder transaction. */
+internal data class FolderFileWrite(
+    val fileName: String,
+    /** Content observed at the last successful sync; null means the file must not exist. */
+    val baseContent: String?,
+    /** New content, or null to delete the file. */
+    val content: String?,
+)
+
+/**
+ * Commits all [writes] as one optimistic transaction. Implementations must verify every base
+ * before changing any target. False means nothing was committed (or a partial commit was rolled
+ * back) and the caller must keep its previous sync base.
+ */
+internal expect fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean
+
 /**
  * Writes [content] to [fileName] in the connected folder, recording the write so the watcher does
  * not mistake this echo for an external change. No-op when not connected.
  */
 internal expect fun platformWriteFolderFile(fileName: String, content: String)
+
+/** Writes a source-fingerprinted recovery snapshot; successfully compiled SLM always wins. */
+internal expect fun platformWriteFolderEditorState(content: String)
 
 /** Id of the folder currently connected/watched, or null when none — used to record recents. */
 internal expect fun platformActiveFolderId(): String?

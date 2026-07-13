@@ -56,6 +56,7 @@ internal enum class EditorIcon(resourceName: String) {
     ColorSelector("color_selector"),
     Gradient("gradient"),
     ZoomFit("zoom_fit"),
+    LocateSelection("my_location"),
     Export("export"),
     AlignHorizontalLeft("align_horizontal_left"),
     AlignHorizontalCenter("align_horizontal_center"),
@@ -71,11 +72,14 @@ internal enum class EditorIcon(resourceName: String) {
     ConstraintVertical("constraint_vertical"),
     ChevronDown("chevron_down"),
     ChevronUp("chevron_up"),
+    ExpandAll("expand_all"),
+    CollapseAll("collapse_all"),
     Duplicate("duplicate"),
     Trash("trash"),
     Plus("plus"),
     Close("close"),
     Save("save"),
+    Refresh("refresh"),
     FolderOpen("folder_open"),
     Folder("folder"),
     Home("home"),
@@ -142,6 +146,11 @@ internal fun EditorSvgIcon(
 @Composable
 private fun rememberSvgIcon(icon: EditorIcon): State<ImageVector?> =
     produceState<ImageVector?>(initialValue = svgIconCache[icon], key1 = icon) {
+        // produceState retains its State when a key changes, so initialValue alone does not
+        // replace the previously rendered vector. Reset from the cache for the new key before
+        // loading; otherwise a dynamic icon (for example visibility_off -> visibility) keeps
+        // showing the old, non-null vector forever.
+        value = svgIconCache[icon]
         // A cold first load fires every icon's fetch at once, racing the browser's HTTP
         // cache and Compose's own resource cache into existence — a transient failure
         // there must not blank the icon forever, so retry a few times before giving up.

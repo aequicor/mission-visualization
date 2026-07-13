@@ -42,6 +42,8 @@ internal actual fun platformReconnectSavedFolder() = Unit
 
 internal actual fun platformDisconnectFolder() = Unit
 
+internal actual fun platformRefreshFolder() = Unit
+
 internal actual fun platformSavedFolderName(): String? = null
 
 internal actual fun folderSyncRevision(): Int = 0
@@ -52,7 +54,11 @@ internal actual fun folderSyncStatus(): String? = null
 
 internal actual fun folderSyncError(): String? = null
 
+internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean = false
+
 internal actual fun platformWriteFolderFile(fileName: String, content: String) = Unit
+
+internal actual fun platformWriteFolderEditorState(content: String) = Unit
 
 internal actual fun platformEpochMillis(): Long = System.currentTimeMillis()
 

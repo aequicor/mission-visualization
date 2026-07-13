@@ -9,6 +9,7 @@ import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.bindable
@@ -56,9 +57,9 @@ class TextRangeIntentsReducerTest {
         if (before.length() < 4) return
         val red = listOf<DesignPaint>(DesignPaint.Solid(DesignColor.fromHex("#FF0000")!!.bindable()))
         val next = reduceDesignEditor(before, DesignEditorIntent.SetTextRangeFills(nodeId, 0, 4, red))
-        val range = next.textKind().styleRanges.firstOrNull { it.start == 0 && it.end == 4 }
-        assertNotNull(range?.fills, "range fills set")
-        assertTrue(range.fills!!.isNotEmpty())
+        assertEquals(before.document, next.document)
+        assertEquals(before.sources, next.sources)
+        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     @Test

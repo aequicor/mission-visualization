@@ -187,7 +187,10 @@ fun hitTest(
     }
 
     for (node in nodesTopDown) {
-        node.ports.forEach { port ->
+        // The overlay exposes both persisted ports and the virtual draw.io connection grid.
+        // Hit the same set that is drawn; a virtual port is materialized only after a drag
+        // successfully creates a connector, so an ordinary click remains model-neutral.
+        node.connectionPorts().forEach { port ->
             if (distance(point, node.portPosition(port)) <= tolerance) {
                 return DiagramHit.Port(node.id, port.id)
             }

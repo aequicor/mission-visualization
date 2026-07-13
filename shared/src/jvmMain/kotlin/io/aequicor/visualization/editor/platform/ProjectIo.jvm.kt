@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.platform
 
 import io.aequicor.visualization.editor.data.decodeProjectSnapshot
+import io.aequicor.visualization.editor.data.EditorStateRelativePath
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import java.nio.charset.StandardCharsets
@@ -14,7 +15,6 @@ import java.nio.file.WatchKey
 import java.nio.file.WatchService
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
-import javax.swing.JFileChooser
 
 internal actual val platformProjectLandingMode: ProjectLandingMode = ProjectLandingMode.Compose
 
@@ -71,6 +71,8 @@ internal actual fun platformReconnectSavedFolder() = JvmFolderSync.reconnect()
 
 internal actual fun platformDisconnectFolder() = JvmFolderSync.disconnect(forget = true)
 
+internal actual fun platformRefreshFolder() = JvmFolderSync.refresh()
+
 internal actual fun platformSavedFolderName(): String? = JvmFolderSync.savedFolderName()
 
 internal actual fun folderSyncRevision(): Int = JvmFolderSync.revision.get()
@@ -81,8 +83,14 @@ internal actual fun folderSyncStatus(): String? = JvmFolderSync.status
 
 internal actual fun folderSyncError(): String? = JvmFolderSync.lastError
 
+internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean =
+    JvmFolderSync.writeBatchFromEditor(writes)
+
 internal actual fun platformWriteFolderFile(fileName: String, content: String) =
     JvmFolderSync.writeFromEditor(fileName, content)
+
+internal actual fun platformWriteFolderEditorState(content: String) =
+    JvmFolderSync.writeEditorState(content)
 
 internal actual fun platformEpochMillis(): Long = System.currentTimeMillis()
 
@@ -104,6 +112,7 @@ private object JvmFolderSync {
     private val settingsDir: Path = Path.of(System.getProperty("user.home") ?: ".", ".mission-visualization")
     private val savedRootFile: Path = settingsDir.resolve("folder-sync-root.txt")
     private val expectedWrites = ConcurrentHashMap<Path, Int>()
+    private val expectedDeletes = ConcurrentHashMap.newKeySet<Path>()
     private var watchService: WatchService? = null
     private var watchThread: Thread? = null
     private var activeRoot: Path? = null
@@ -127,15 +136,10 @@ private object JvmFolderSync {
     }
 
     fun chooseFolder(): Path? {
-        val chooser = JFileChooser().apply {
-            dialogTitle = "Choose a folder with .layout.md files"
-            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-            isAcceptAllFileFilterUsed = false
-            (activeRoot ?: savedRoot)?.toFile()?.let { currentDirectory = it }
-        }
-        return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-            chooser.selectedFile.toPath()
-        } else null
+        return chooseNativeFolder(
+            title = "Choose a folder with .layout.md files",
+            initialDirectory = activeRoot ?: savedRoot,
+        )
     }
 
     fun reconnect() {
@@ -210,12 +214,22 @@ private object JvmFolderSync {
             activeFolderId = null
             snapshotJson = null
             expectedWrites.clear()
+            expectedDeletes.clear()
             if (forget) {
                 savedRoot = null
                 runCatching { Files.deleteIfExists(savedRootFile) }
             }
             status = "idle"
             lastError = null
+        }
+    }
+
+    fun refresh() {
+        synchronized(stateLock) {
+            val root = activeRoot ?: return
+            if (status != "watching") return
+            runCatching { refreshSnapshot(root) }
+                .onFailure { fail(it.message ?: "Unable to read folder") }
         }
     }
 
@@ -247,6 +261,105 @@ private object JvmFolderSync {
         }.onFailure { fail(it.message ?: "Unable to write $fileName") }
     }
 
+    /**
+     * Compare-and-swap all affected source files. Temp files are fully written before the commit
+     * phase. Existing targets are moved to same-directory backups, making rollback possible if an
+     * atomic replace in the middle of a multi-file transaction fails.
+     */
+    fun writeBatchFromEditor(writes: List<FolderFileWrite>): Boolean = synchronized(stateLock) {
+        val root = activeRoot ?: return@synchronized false
+        if (status != "watching") return@synchronized false
+        if (writes.isEmpty()) return@synchronized true
+
+        data class Prepared(
+            val write: FolderFileWrite,
+            val target: Path,
+            val bytes: ByteArray?,
+            var staged: Path? = null,
+            var backup: Path? = null,
+            var installed: Boolean = false,
+        )
+
+        val prepared = mutableListOf<Prepared>()
+        try {
+            writes.forEach { write ->
+                val target = safeResolve(root, write.fileName)
+                val actual = target.takeIf(Files::isRegularFile)?.let(Files::readString)
+                require(actual == write.baseContent) { "folder-write-conflict:${write.fileName}" }
+                val bytes = write.content?.toByteArray(StandardCharsets.UTF_8)
+                val item = Prepared(write, target, bytes)
+                if (bytes != null) {
+                    Files.createDirectories(target.parent)
+                    item.staged = Files.createTempFile(target.parent, ".mv-stage-", ".tmp").also {
+                        Files.write(it, bytes)
+                    }
+                }
+                prepared += item
+            }
+
+            prepared.forEach { item ->
+                if (Files.exists(item.target)) {
+                    val backup = Files.createTempFile(item.target.parent, ".mv-backup-", ".tmp")
+                    Files.deleteIfExists(backup)
+                    moveReplacing(item.target, backup)
+                    item.backup = backup
+                }
+                item.staged?.let { staged ->
+                    moveReplacing(staged, item.target)
+                    item.staged = null
+                    item.installed = true
+                }
+            }
+
+            prepared.forEach { item ->
+                item.backup?.let(Files::deleteIfExists)
+                item.bytes?.let { bytes ->
+                    expectedDeletes.remove(item.target)
+                    expectedWrites[item.target] = bytes.contentHashCode()
+                } ?: run {
+                    expectedWrites.remove(item.target)
+                    expectedDeletes.add(item.target)
+                }
+            }
+            true
+        } catch (failure: Throwable) {
+            prepared.asReversed().forEach { item ->
+                runCatching {
+                    if (item.installed) Files.deleteIfExists(item.target)
+                    item.backup?.takeIf(Files::exists)?.let { moveReplacing(it, item.target) }
+                }
+            }
+            val message = failure.message ?: "Unable to commit folder transaction"
+            if (message.startsWith("folder-write-conflict:")) {
+                // Keep watching and publish the conflicting disk version immediately. The holder
+                // retains the local sources as its recoverable conflict backup when it adopts this
+                // newer revision.
+                lastError = message
+                refreshSnapshot(root)
+                status = "watching"
+            } else {
+                fail(message)
+            }
+            false
+        } finally {
+            prepared.forEach { item ->
+                item.staged?.let { runCatching { Files.deleteIfExists(it) } }
+                item.backup?.let { runCatching { Files.deleteIfExists(it) } }
+            }
+        }
+    }
+
+    fun writeEditorState(content: String) {
+        val root = activeRoot ?: return
+        runCatching {
+            val target = root.resolve(EditorStateRelativePath).normalize().toAbsolutePath()
+            require(target.startsWith(root)) { "Editor state path escapes the project folder" }
+            val bytes = content.toByteArray(StandardCharsets.UTF_8)
+            expectedWrites[target] = bytes.contentHashCode()
+            atomicWrite(target, bytes)
+        }.onFailure { fail(it.message ?: "Unable to write editor state") }
+    }
+
     private fun safeResolve(root: Path, relativeName: String): Path {
         require(!Path.of(relativeName).isAbsolute) { "Expected a relative project file path" }
         val canonicalRoot = root.toRealPath()
@@ -273,6 +386,14 @@ private object JvmFolderSync {
             }
         } finally {
             Files.deleteIfExists(temp)
+        }
+    }
+
+    private fun moveReplacing(from: Path, to: Path) {
+        runCatching {
+            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        }.getOrElse {
+            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING)
         }
     }
 
@@ -323,14 +444,25 @@ private object JvmFolderSync {
                     if (event.kind() == StandardWatchEventKinds.ENTRY_CREATE && Files.isDirectory(changed)) {
                         runCatching { registerRecursively(changed, watcher) }
                     }
-                    if (changed.fileName.toString().endsWith(".layout.md", ignoreCase = true)) {
+                    if (
+                        changed.fileName.toString().endsWith(".layout.md", ignoreCase = true) ||
+                        changed == root.resolve(EditorStateRelativePath).normalize().toAbsolutePath()
+                    ) {
                         if (!consumeExpectedWrite(changed)) relevantExternalChange = true
                     }
                 }
                 if (!key.reset()) watchKeys.remove(key)
                 if (relevantExternalChange) {
                     Thread.sleep(80)
-                    runCatching { refreshSnapshot(root) }.onFailure { fail(it.message ?: "Unable to read folder") }
+                    // A closed watcher can still finish a batch it took before project switching.
+                    // Serialize the final identity check with connect/disconnect so an old folder
+                    // can never publish its snapshot over the newly active project.
+                    synchronized(stateLock) {
+                        if (watchService === watcher && activeRoot == root) {
+                            runCatching { refreshSnapshot(root, suppressEditorEcho = true) }
+                                .onFailure { fail(it.message ?: "Unable to read folder") }
+                        }
+                    }
                 }
             }
         } catch (_: ClosedWatchServiceException) {
@@ -343,6 +475,7 @@ private object JvmFolderSync {
     }
 
     private fun consumeExpectedWrite(path: Path): Boolean {
+        if (expectedDeletes.remove(path) && !Files.exists(path)) return true
         val expected = expectedWrites[path] ?: return false
         val actual = runCatching { Files.readAllBytes(path).contentHashCode() }.getOrNull() ?: run {
             expectedWrites.remove(path)
@@ -358,7 +491,7 @@ private object JvmFolderSync {
         }
     }
 
-    private fun refreshSnapshot(root: Path) {
+    private fun refreshSnapshot(root: Path, suppressEditorEcho: Boolean = false) {
         val sources = Files.walk(root).use { paths ->
             paths.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".layout.md", ignoreCase = true) }
                 .sorted()
@@ -370,10 +503,35 @@ private object JvmFolderSync {
                 }
                 .toList()
         }
-        val next = encodeProjectSourcesJson(root.fileName?.toString().orEmpty(), sources)
+        val editorStatePath = root.resolve(EditorStateRelativePath)
+        val editorStateJson = editorStatePath.takeIf(Files::isRegularFile)?.let(Files::readString)
+        val next = encodeProjectSourcesJson(root.fileName?.toString().orEmpty(), sources, editorStateJson)
         if (next != snapshotJson) {
+            val previousSnapshot = snapshotJson?.let(::decodeProjectSnapshot)
+            val previousByName = previousSnapshot?.sources.orEmpty()
+                .associate { it.fileName to it.content }
+            val nextByName = sources.associate { it.fileName to it.content }
+            val changedNames = previousByName.keys.union(nextByName.keys)
+                .filter { previousByName[it] != nextByName[it] }
+            val sourceChangesAreEditorEchoes = changedNames.all { fileName ->
+                val target = root.resolve(fileName.replace('/', java.io.File.separatorChar)).normalize().toAbsolutePath()
+                val content = nextByName[fileName]
+                if (content == null) {
+                    target in expectedDeletes
+                } else {
+                    expectedWrites[target] == content.toByteArray(StandardCharsets.UTF_8).contentHashCode()
+                }
+            }
+            val editorStateChanged = previousSnapshot?.editorStateJson != editorStateJson
+            val editorStateIsEditorEcho = !editorStateChanged || editorStateJson?.let { content ->
+                val target = root.resolve(EditorStateRelativePath).normalize().toAbsolutePath()
+                expectedWrites[target] == content.toByteArray(StandardCharsets.UTF_8).contentHashCode()
+            } == true
+            val editorEchoOnly = suppressEditorEcho &&
+                (changedNames.isNotEmpty() || editorStateChanged) &&
+                sourceChangesAreEditorEchoes && editorStateIsEditorEcho
             snapshotJson = next
-            revision.incrementAndGet()
+            if (!editorEchoOnly) revision.incrementAndGet()
         }
     }
 }

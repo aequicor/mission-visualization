@@ -13,12 +13,15 @@ import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolAnnotations
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.Base64
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -32,11 +35,14 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             port: Int,
             allowedRoot: Path,
             renderOutputDirectory: Path? = null,
+            onProjectVerification: (McpProjectVerification) -> Unit = {},
         ): MissionMcpServerHost {
             val renderer = renderOutputDirectory?.let { LayoutPngRenderer(allowedRoot, it) }
                 ?: LayoutPngRenderer(allowedRoot)
             val engine = embeddedServer(CIO, host = "127.0.0.1", port = port) {
-                mcpStreamableHttp(path = "/mcp") { createServer(renderer, allowedRoot) }
+                mcpStreamableHttp(path = "/mcp") {
+                    createServer(renderer, allowedRoot, onProjectVerification)
+                }
             }
             engine.start(wait = false)
             return MissionMcpServerHost {
@@ -44,20 +50,115 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             }
         }
 
-        private fun createServer(renderer: LayoutPngRenderer, allowedRoot: Path): Server {
+        private fun createServer(
+            renderer: LayoutPngRenderer,
+            allowedRoot: Path,
+            onProjectVerification: (McpProjectVerification) -> Unit,
+        ): Server {
             val server = Server(
                 serverInfo = Implementation("mission-visualization", "1.0.0"),
                 options = ServerOptions(
                     capabilities = ServerCapabilities(tools = ServerCapabilities.Tools(listChanged = false)),
                 ),
                 instructions = """
-                    This server is read-only. It renders Semantic Layout Markdown files under:
-                    ${allowedRoot.toAbsolutePath()}
-
-                    Edit *.layout.md with the agent's normal file tools, call check_layout to validate it,
-                    then call render_layout to inspect the resulting PNG. The MCP server never edits source files.
+                    Mission Visualization MCP is read-only and is restricted to ${allowedRoot.toAbsolutePath()}.
+                    During project setup call get_mcp_skill, install it with the client's native
+                    project-skill mechanism, then call get_slm_skills with skill=all and finally
+                    validate_project_setup. For layout work edit *.layout.md with normal file tools,
+                    call check_layout until valid, call render_layout, inspect the PNG, and iterate.
                 """.trimIndent(),
             )
+            server.addTool(
+                name = "get_mcp_skill",
+                description = "Get the canonical root skill that documents every Mission Visualization MCP tool and workflow.",
+                inputSchema = emptyToolSchema(),
+                toolAnnotations = ToolAnnotations(readOnlyHint = true, openWorldHint = false),
+            ) {
+                val markdown = getMissionVisualizationMcpSkill()
+                CallToolResult(
+                    content = listOf(
+                        TextContent(
+                            """
+                            skill_name: $MissionVisualizationMcpSkillName
+                            skill_version: $MissionVisualizationMcpSkillVersion
+                            sha256: ${sha256(markdown)}
+                            install_hint: Install the Markdown below as a project-scoped skill using this client's native skill mechanism.
+
+                            --- BEGIN SKILL.md ---
+                            $markdown--- END SKILL.md ---
+                            """.trimIndent(),
+                        ),
+                    ),
+                )
+            }
+            server.addTool(
+                name = "get_slm_skills",
+                description = "Get canonical, self-contained instructions for authoring SLM and its specialist subsystems.",
+                inputSchema = skillToolSchema(),
+                toolAnnotations = ToolAnnotations(readOnlyHint = true, openWorldHint = false),
+            ) { request ->
+                try {
+                    val args = request.arguments ?: buildJsonObject {}
+                    val selector = args["skill"]?.jsonPrimitive?.contentOrNull ?: "all"
+                    val bundle = getSlmSkillBundle(selector)
+                    CallToolResult(
+                        content = listOf(
+                            TextContent(
+                                """
+                                skill_set: ${bundle.selector}
+                                included_skills: ${bundle.includedSkills.joinToString(", ")}
+                                file_count: ${bundle.files.size}
+                                install_hint: Install every returned SKILL.md as a project-scoped skill using this client's native skill mechanism. Preserve unrelated skills and instructions.
+                                """.trimIndent(),
+                            ),
+                        ) + bundle.files.map { file ->
+                            TextContent(
+                                """
+                                skill_name: ${file.name}
+                                sha256: ${sha256(file.markdown)}
+
+                                --- BEGIN ${file.name}/SKILL.md ---
+                                ${file.markdown}--- END ${file.name}/SKILL.md ---
+                                """.trimIndent(),
+                            )
+                        },
+                    )
+                } catch (failure: Exception) {
+                    CallToolResult(
+                        content = listOf(TextContent(failure.message ?: "get_slm_skills failed")),
+                        isError = true,
+                    )
+                }
+            }
+            server.addTool(
+                name = "validate_project_setup",
+                description = "Verify that the target agent can call this MCP server, uses the allowed project root, and completed skill setup.",
+                inputSchema = validationToolSchema(),
+                toolAnnotations = ToolAnnotations(readOnlyHint = true, openWorldHint = false),
+            ) { request ->
+                try {
+                    val verification = validateProjectSetup(request.arguments ?: buildJsonObject {}, allowedRoot)
+                    onProjectVerification(verification)
+                    CallToolResult(
+                        content = listOf(
+                            TextContent(
+                                """
+                                verified: ${verification.verified}
+                                agent_name: ${verification.agentName}
+                                project_path: ${verification.projectPath}
+                                allowed_root: ${allowedRoot.toRealPath()}
+                                message: ${verification.message}
+                                """.trimIndent(),
+                            ),
+                        ),
+                    )
+                } catch (failure: Exception) {
+                    CallToolResult(
+                        content = listOf(TextContent(failure.message ?: "validate_project_setup failed")),
+                        isError = true,
+                    )
+                }
+            }
             server.addTool(
                 name = "check_layout",
                 description = "Compile a .layout.md file and return its validity, fingerprint, and diagnostics without rendering PNG.",
@@ -120,6 +221,26 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             return server
         }
 
+        private fun emptyToolSchema(): ToolSchema = ToolSchema(
+            properties = buildJsonObject {},
+            required = emptyList(),
+        )
+
+        private fun skillToolSchema(): ToolSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("skill") {
+                    put("type", "string")
+                    put("description", "Return all skills, base SLM only, or one SLM specialist together with the base skill.")
+                    put("enum", buildJsonArray {
+                        listOf("all", "slm", "diagrams", "vector_graphics", "typography", "annotations", "editor")
+                            .forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                    })
+                    put("default", "all")
+                }
+            },
+            required = emptyList(),
+        )
+
         private fun checkToolSchema(): ToolSchema = ToolSchema(
             properties = buildJsonObject {
                 putJsonObject("layout_path") {
@@ -128,6 +249,29 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                 }
             },
             required = listOf("layout_path"),
+        )
+
+        private fun validationToolSchema(): ToolSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("project_path") {
+                    put("type", "string")
+                    put("description", "Absolute path of the target project's root folder.")
+                }
+                putJsonObject("agent_name") {
+                    put("type", "string")
+                    put("description", "Name of the connected AI coding client or agent.")
+                }
+                putJsonObject("root_skill_installed") {
+                    put("type", "boolean")
+                    put("description", "True after the canonical mission-visualization-mcp root skill was installed project-scoped.")
+                }
+                putJsonObject("slm_skills_installed") {
+                    put("type", "array")
+                    put("items", buildJsonObject { put("type", "string") })
+                    put("description", "Installed canonical SLM skill names returned by get_slm_skills.")
+                }
+            },
+            required = listOf("project_path", "agent_name", "root_skill_installed", "slm_skills_installed"),
         )
 
         private fun renderToolSchema(): ToolSchema = ToolSchema(
@@ -179,6 +323,50 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             })
             put("additionalProperties", false)
         }
+
+        private fun validateProjectSetup(
+            args: kotlinx.serialization.json.JsonObject,
+            allowedRoot: Path,
+        ): McpProjectVerification {
+            val projectPath = args["project_path"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val agentName = args["agent_name"]?.jsonPrimitive?.contentOrNull.orEmpty().ifBlank { "unknown" }
+            val rootSkillInstalled = args["root_skill_installed"]?.jsonPrimitive?.booleanOrNull == true
+            val installedSkills = args["slm_skills_installed"]?.jsonArray
+                ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+                ?.toSet()
+                .orEmpty()
+            val requiredSkills = setOf(
+                "slm",
+                "slm-diagrams",
+                "slm-vector-graphics",
+                "slm-typography",
+                "slm-annotations",
+                "slm-editor",
+            )
+            val canonicalAllowedRoot = allowedRoot.toRealPath()
+            val canonicalProjectRoot = projectPath.takeIf(String::isNotBlank)?.let { raw ->
+                runCatching { Path.of(raw).toRealPath() }.getOrNull()
+            }
+            val rootMatches = canonicalProjectRoot == canonicalAllowedRoot
+            val missingSkills = requiredSkills - installedSkills
+            val verified = rootMatches && rootSkillInstalled && missingSkills.isEmpty()
+            val message = when {
+                !rootMatches -> "The target project root does not match the MCP allowed root."
+                !rootSkillInstalled -> "The canonical root skill was not reported as installed."
+                missingSkills.isNotEmpty() -> "Missing SLM skills: ${missingSkills.sorted().joinToString(", ")}"
+                else -> "Mission Visualization MCP and project skills are ready."
+            }
+            return McpProjectVerification(
+                verified = verified,
+                agentName = agentName,
+                projectPath = canonicalProjectRoot?.toString() ?: projectPath,
+                message = message,
+            )
+        }
+
+        private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
 
         private fun formatMetadata(result: RenderLayoutResult): String {
             return """

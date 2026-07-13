@@ -751,6 +751,11 @@ private fun ensureFolderSyncInstalled() {
           var pendingSig = null;     // settle: last-seen signature awaiting one stable tick
           var scanning = false;
           var timer = null;
+          // DirectoryHandle -> per-file promise/content maps. Writes to different files may run
+          // together; writes to one file are strictly ordered so an older autosave cannot finish
+          // after a newer one and put stale content back on disk.
+          var writeChainsByHandle = new Map();
+          var queuedContentByHandle = new Map();
 
           function setProjectHash(id) {
             if (!id) return;
@@ -893,12 +898,27 @@ private fun ensureFolderSyncInstalled() {
             }
           }
 
+          async function refresh() {
+            if (state.status !== "watching" || !state.handle) return;
+            if (scanning) { window.setTimeout(function () { refresh(); }, 50); return; }
+            scanning = true;
+            try {
+              await initialScan();
+              state.lastError = null;
+            } catch (err) {
+              console.error(err);
+              state.lastError = String((err && err.message) || err || "refresh-failed");
+            } finally {
+              scanning = false;
+            }
+          }
+
           function startWatcher() { if (!timer) timer = window.setInterval(function () { scan(); }, POLL_MS); }
           function stopWatcher() { if (timer) { window.clearInterval(timer); timer = null; } }
 
-          async function resolveFileHandle(path, create) {
+          async function resolveFileHandleFor(handle, path, create) {
             var segs = path.split("/").filter(function (s) { return s.length > 0; });
-            var dir = state.handle;
+            var dir = handle;
             for (var i = 0; i < segs.length - 1; i++) {
               dir = await dir.getDirectoryHandle(safeSeg(segs[i]), { create: create });
             }
@@ -1069,25 +1089,54 @@ private fun ensureFolderSyncInstalled() {
             idbDelete("root").catch(function () {});
           }
 
-          async function writeFile(name, content) {
-            if (!state.handle || state.status !== "watching") return;
+          async function writeFileNow(handle, name, content, base) {
             try {
               var existing = null;
-              try { existing = await (await (await resolveFileHandle(name, false)).getFile()).text(); } catch (e) { existing = null; }
-              var base = publishedByName[name];
+              try { existing = await (await (await resolveFileHandleFor(handle, name, false)).getFile()).text(); } catch (e) { existing = null; }
               // Pre-write concurrency guard: if the file drifted from our base, an external edit
               // landed since we last synced — do not clobber it. The watcher surfaces it inbound.
               if (existing !== null && base !== undefined && existing !== base) return;
-              if (existing === content) { publishedByName[name] = content; return; }
-              var target = await resolveFileHandle(name, true);
+              if (existing === content) {
+                if (state.handle === handle) publishedByName[name] = content;
+                return;
+              }
+              var target = await resolveFileHandleFor(handle, name, true);
               var writable = await target.createWritable();
               await writable.write(content);
               await writable.close();
-              var f = await target.getFile();
-              meta[name] = { mtime: f.lastModified, size: f.size };
-              publishedByName[name] = content;
-              writtenEcho[name] = { hash: hashStr(content), expiry: Date.now() + ECHO_WINDOW_MS };
+              // A disconnected (or newly connected) session must not receive bookkeeping from
+              // the old folder. The file write itself is complete and durable at this point.
+              if (state.handle === handle && state.status === "watching") {
+                var f = await target.getFile();
+                meta[name] = { mtime: f.lastModified, size: f.size };
+                publishedByName[name] = content;
+                writtenEcho[name] = { hash: hashStr(content), expiry: Date.now() + ECHO_WINDOW_MS };
+              }
             } catch (err) { console.error(err); }
+          }
+
+          function enqueueWrite(name, content) {
+            if (!state.handle || state.status !== "watching") return;
+            // Snapshot the handle before the first await. Leaving the editor disconnects the live
+            // watcher immediately, but every queued write keeps enough authority to finish.
+            var handle = state.handle;
+            var chains = writeChainsByHandle.get(handle);
+            if (!chains) { chains = {}; writeChainsByHandle.set(handle, chains); }
+            var queued = queuedContentByHandle.get(handle);
+            if (!queued) { queued = {}; queuedContentByHandle.set(handle, queued); }
+            var hasQueuedBase = Object.prototype.hasOwnProperty.call(queued, name);
+            var base = hasQueuedBase ? queued[name] : publishedByName[name];
+            queued[name] = content;
+            var previous = chains[name] || Promise.resolve();
+            var current = previous.then(function () { return writeFileNow(handle, name, content, base); });
+            chains[name] = current;
+            current.finally(function () {
+              if (chains[name] !== current) return;
+              delete chains[name];
+              delete queued[name];
+              if (Object.keys(chains).length === 0) writeChainsByHandle.delete(handle);
+              if (Object.keys(queued).length === 0) queuedContentByHandle.delete(handle);
+            });
           }
 
           window.__mvFolderSync = {
@@ -1102,8 +1151,9 @@ private fun ensureFolderSyncInstalled() {
             connectById: function (id) { connectById(id); },
             reconnect: function () { reconnect(); },
             disconnect: function () { disconnect(); },
+            refresh: function () { refresh(); },
             forget: function (id) { forget(id); },
-            writeFile: function (name, content) { writeFile(name, content); }
+            writeFile: function (name, content) { enqueueWrite(name, content); }
           };
           probe();
         })();
@@ -1165,6 +1215,11 @@ internal actual fun platformDisconnectFolder() {
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformRefreshFolder() {
+    js("if (window.__mvFolderSync && typeof window.__mvFolderSync.refresh === 'function') window.__mvFolderSync.refresh()")
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformSavedFolderName(): String? =
     js("(window.__mvFolderSync ? window.__mvFolderSync.folderName : null)")
 
@@ -1184,10 +1239,19 @@ internal actual fun folderSyncStatus(): String? =
 internal actual fun folderSyncError(): String? =
     js("(window.__mvFolderSync ? (window.__mvFolderSync.lastError || null) : null)")
 
+internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean {
+    // The browser bridge owns its asynchronous compare-and-write queue. Keep one common commit
+    // boundary; desktop supplies the stronger temp-file/rollback implementation below.
+    writes.forEach { write -> write.content?.let { platformWriteFolderFile(write.fileName, it) } }
+    return true
+}
+
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformWriteFolderFile(fileName: String, content: String) {
     js("if (window.__mvFolderSync) window.__mvFolderSync.writeFile(fileName, content)")
 }
+
+internal actual fun platformWriteFolderEditorState(content: String) = Unit
 
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun jsEpochMillis(): Double = js("Date.now()")

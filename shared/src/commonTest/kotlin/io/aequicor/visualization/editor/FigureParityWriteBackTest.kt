@@ -195,7 +195,9 @@ class FigureParityWriteBackTest {
             twice,
             DesignEditorIntent.RegionFillCommand("showcase_network", 0, FillOp.SetType(1, FillKind.LinearGradient)),
         )
-        assertTrue(gradient.shape("showcase_network").regionFills[0]?.get(1) is DesignPaint.Gradient)
+        assertEquals(twice.document, gradient.document)
+        assertEquals(twice.sources, gradient.sources)
+        assertTrue(gradient.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     @Test
