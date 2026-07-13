@@ -302,8 +302,10 @@ private fun DrawScope.drawDirectionalArrow(
         lineTo(base.x - px * size, base.y - py * size)
         close()
     }
-    drawPath(triangle, style.accent.copy(alpha = 0.5f))
-    drawPath(triangle, style.accent.copy(alpha = 0.9f), style = Stroke(1.2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    // Faint blue idle-hint opacities (draw.io parity): the chevrons read as a light hint over the
+    // shape until the pointer engages them, not as solid blue.
+    drawPath(triangle, style.accent.copy(alpha = 0.18f))
+    drawPath(triangle, style.accent.copy(alpha = 0.45f), style = Stroke(1.2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
 }
 
 /** Free helper for hosts that already own a Canvas: same chrome, no extra composable. */
