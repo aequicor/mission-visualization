@@ -250,6 +250,45 @@ class DiagramHitTestTest {
     }
 
     @Test
+    fun edgeLabelIsHitEvenWhenTheEdgeIsUnselected() {
+        val graph = diagramGraph {
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 0.0),
+                target = DiagramEndpoint.FreePoint(100.0, 0.0),
+                label = "hello",
+            )
+        }
+        // draw.io: the label is part of the edge — hittable straight from hover, no selection.
+        // The MIDDLE label sits lifted EDGE_LABEL_LINE_GAP above the horizontal edge's midpoint.
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(50.0, -EDGE_LABEL_LINE_GAP))
+        assertEquals(
+            DiagramHit.LabelHandle(DiagramEdgeId("e"), DiagramEdgeLabelPosition.MIDDLE),
+            hit,
+        )
+    }
+
+    @Test
+    fun edgeLabelBeatsAnOverlappingNodeBody() {
+        val graph = diagramGraph {
+            // A node whose body covers the label anchor (50, -EDGE_LABEL_LINE_GAP).
+            node("under", x = 0.0, y = -40.0, width = 120.0, height = 80.0)
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 0.0),
+                target = DiagramEndpoint.FreePoint(100.0, 0.0),
+                label = "hello",
+            )
+        }
+        // The label wins even sitting on top of a node body (label pass outranks the node pass).
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(50.0, -EDGE_LABEL_LINE_GAP))
+        assertEquals(
+            DiagramHit.LabelHandle(DiagramEdgeId("e"), DiagramEdgeLabelPosition.MIDDLE),
+            hit,
+        )
+    }
+
+    @Test
     fun laterNodeInListWinsOverlap() {
         val graph = diagramGraph {
             node("back", x = 0.0, y = 0.0, width = 100.0, height = 100.0)

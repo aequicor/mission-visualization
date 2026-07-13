@@ -582,6 +582,7 @@ internal fun DiagramEditOverlay(
                     val tapKey = when (hit) {
                         is DiagramHit.Node -> "node:${hit.nodeId.value}"
                         is DiagramHit.Edge -> "edge:${hit.edgeId.value}"
+                        is DiagramHit.LabelHandle -> "label:${hit.edgeId.value}:${hit.position}"
                         null -> "empty"
                         else -> "other"
                     }
@@ -633,18 +634,40 @@ internal fun DiagramEditOverlay(
                         }
 
                         is DiagramHit.LabelHandle -> {
+                            // The label is part of the edge (draw.io): it is a hit target from hover,
+                            // no prior selection needed. Double-click edits it; press+drag moves it;
+                            // a plain click selects the owning edge.
                             val edge = live.edgeById(hit.edgeId) ?: return@awaitEachGesture
                             val label = edge.labels.firstOrNull { it.position == hit.position } ?: return@awaitEachGesture
+                            if (doubleClick) {
+                                textEdit = DiagramTextEditTarget.EdgeLabel(hit.edgeId.value, hit.position)
+                                return@awaitEachGesture
+                            }
                             val route = routedPoints[hit.edgeId] ?: return@awaitEachGesture
                             val anchor = edgeLabelAnchorPoint(route, label)
                             val base = DiagramPoint(anchor.x - label.offsetX, anchor.y - label.offsetY)
-                            dragDiagramFrames(state, down) { position ->
+                            val moved = dragDiagramFrames(state, down) { position ->
                                 val at = graphPointOf(position)
                                 state.dispatch(
                                     DiagramEditorIntent.MoveDiagramEdgeLabel(
                                         editId, hit.edgeId.value, hit.position, at.x - base.x, at.y - base.y,
                                     ),
                                 )
+                            }
+                            if (!moved) {
+                                // A click (no drag) selects the label's edge, honoring shift like the
+                                // Edge branch, so you can pick an edge straight from its label.
+                                state.updateWorkspace {
+                                    val current = it.diagramSelection
+                                    val edgeId = hit.edgeId.value
+                                    val next = when {
+                                        shiftHeld && edgeId in current.edgeIds ->
+                                            current.copy(edgeIds = current.edgeIds - edgeId)
+                                        shiftHeld -> current.copy(edgeIds = current.edgeIds + edgeId)
+                                        else -> DiagramSelection(edgeIds = setOf(edgeId))
+                                    }
+                                    it.copy(diagramSelection = next)
+                                }
                             }
                         }
 
