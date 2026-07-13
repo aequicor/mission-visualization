@@ -23,7 +23,7 @@ import io.aequicor.visualization.subsystems.figures.VectorAssetProvider
  * returned provider resolves against the [document] assets only.
  */
 @Composable
-internal fun rememberVectorAssetProvider(document: DesignDocument): VectorAssetProvider {
+fun rememberVectorAssetProvider(document: DesignDocument): VectorAssetProvider {
     val svgSources = rememberEditorIconSvgSources().value
     return remember(svgSources, document) {
         SlmVectorAssetProvider(svgSources = svgSources, document = document)

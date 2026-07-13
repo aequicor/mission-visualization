@@ -9,6 +9,7 @@ interface MenuStrings {
     val save: String
     val export: String
     val agentFile: String
+    val mcpServer: String
     val fullscreen: String
     /** Label of the language row; the current language name is appended after a colon. */
     val language: String
@@ -57,6 +58,22 @@ interface MenuStrings {
     val downloadAgentsFile: String
     val downloadClaudeFile: String
     val copyAgentFile: String
+    // Desktop MCP server dialog.
+    val mcpTitle: String
+    val mcpPort: String
+    val mcpAllowedFolder: String
+    val mcpChooseFolder: String
+    val mcpStatus: String
+    val mcpStopped: String
+    val mcpStarting: String
+    val mcpRunning: String
+    val mcpError: String
+    val mcpStart: String
+    val mcpStop: String
+    val mcpEndpoint: String
+    val mcpPrompt: String
+    val mcpCopyPrompt: String
+    val mcpClose: String
     // Language pane.
     val chooseLanguage: String
 }
@@ -68,6 +85,7 @@ object MenuStringsEn : MenuStrings {
     override val save = "Save"
     override val export = "Export"
     override val agentFile = "AGENTS.md"
+    override val mcpServer = "MCP Server"
     override val fullscreen = "Fullscreen (F10)"
     override val language = "Language"
     override val welcomeProject = "Welcome project"
@@ -109,6 +127,21 @@ object MenuStringsEn : MenuStrings {
     override val downloadAgentsFile = "Download AGENTS.md"
     override val downloadClaudeFile = "Download CLAUDE.md"
     override val copyAgentFile = "Copy to clipboard"
+    override val mcpTitle = "MCP Server"
+    override val mcpPort = "Port"
+    override val mcpAllowedFolder = "Allowed folder"
+    override val mcpChooseFolder = "Choose folder"
+    override val mcpStatus = "Status"
+    override val mcpStopped = "Stopped"
+    override val mcpStarting = "Starting"
+    override val mcpRunning = "Running"
+    override val mcpError = "Error"
+    override val mcpStart = "Start server"
+    override val mcpStop = "Stop server"
+    override val mcpEndpoint = "Endpoint"
+    override val mcpPrompt = "Prompt for the AI agent"
+    override val mcpCopyPrompt = "Copy prompt"
+    override val mcpClose = "Close"
     override val chooseLanguage = "Choose language"
 }
 
@@ -119,6 +152,7 @@ object MenuStringsRu : MenuStrings {
     override val save = "Сохранить"
     override val export = "Экспортировать"
     override val agentFile = "AGENTS.md"
+    override val mcpServer = "MCP Server"
     override val fullscreen = "Развернуть на весь экран (F10)"
     override val language = "Язык"
     override val welcomeProject = "Welcome-проект"
@@ -160,5 +194,20 @@ object MenuStringsRu : MenuStrings {
     override val downloadAgentsFile = "Скачать AGENTS.md"
     override val downloadClaudeFile = "Скачать CLAUDE.md"
     override val copyAgentFile = "Скопировать в буфер обмена"
+    override val mcpTitle = "MCP Server"
+    override val mcpPort = "Порт"
+    override val mcpAllowedFolder = "Разрешённая папка"
+    override val mcpChooseFolder = "Выбрать папку"
+    override val mcpStatus = "Состояние"
+    override val mcpStopped = "Остановлен"
+    override val mcpStarting = "Запускается"
+    override val mcpRunning = "Работает"
+    override val mcpError = "Ошибка"
+    override val mcpStart = "Запустить сервер"
+    override val mcpStop = "Остановить сервер"
+    override val mcpEndpoint = "Endpoint"
+    override val mcpPrompt = "Prompt для ИИ-агента"
+    override val mcpCopyPrompt = "Скопировать prompt"
+    override val mcpClose = "Закрыть"
     override val chooseLanguage = "Выбор языка"
 }

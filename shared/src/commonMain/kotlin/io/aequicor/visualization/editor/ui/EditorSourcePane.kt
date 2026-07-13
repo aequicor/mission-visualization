@@ -155,6 +155,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     var menuExpanded by remember { mutableStateOf(false) }
     var menuPane by remember { mutableStateOf(ProjectMenuPane.Root) }
     var selectedAgentSkills by remember { mutableStateOf(emptySet<AgentSkillId>()) }
+    var mcpDialogVisible by remember { mutableStateOf(false) }
 
     fun openRootMenu() {
         menuPane = ProjectMenuPane.Root
@@ -220,6 +221,12 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             EditorDropdownMenuItem(strings.menu.agentFile, leadingContent = { DropdownMenuIcon(EditorIcon.Markdown) }) {
                                 selectedAgentSkills = emptySet()
                                 menuPane = ProjectMenuPane.AgentSkills
+                            }
+                        }
+                        if (state.mcpServer.available) {
+                            EditorDropdownMenuItem(strings.menu.mcpServer, leadingContent = { DropdownMenuIcon(EditorIcon.Code) }) {
+                                closeMenu()
+                                mcpDialogVisible = true
                             }
                         }
                         EditorDropdownMenuItem(
@@ -397,6 +404,9 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
             )
         }
+    }
+    if (mcpDialogVisible) {
+        McpServerDialog(state.mcpServer) { mcpDialogVisible = false }
     }
 }
 

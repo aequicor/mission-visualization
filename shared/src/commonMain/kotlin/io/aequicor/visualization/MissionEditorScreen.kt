@@ -117,6 +117,8 @@ import io.aequicor.visualization.editor.ui.theme.EditorTheme
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.mcp.McpServerController
+import io.aequicor.visualization.mcp.NoMcpServerController
 
 /**
  * Presentation holder for the Mission Editor: keeps the design-document state
@@ -152,6 +154,7 @@ class MissionEditorStateHolder(
     private val folderPending: DraftController? = null,
     private val languagePreference: LanguagePreference? = null,
     private val recentProjects: RecentProjectsRepository? = null,
+    val mcpServer: McpServerController = NoMcpServerController,
 ) {
     private val defaultDocuments = loadDesignDocument()
 
@@ -743,7 +746,7 @@ class MissionEditorStateHolder(
 }
 
 @Composable
-fun MissionEditorApp() {
+fun MissionEditorApp(mcpServer: McpServerController = NoMcpServerController) {
     EditorTheme {
         val scope = rememberCoroutineScope()
         val state = remember {
@@ -772,6 +775,7 @@ fun MissionEditorApp() {
                 ),
                 languagePreference = LanguagePreference(keyValueStore),
                 recentProjects = DefaultRecentProjectsRepository(keyValueStore),
+                mcpServer = mcpServer,
             )
         }
         LaunchedEffect(state) { state.runPersistence() }
