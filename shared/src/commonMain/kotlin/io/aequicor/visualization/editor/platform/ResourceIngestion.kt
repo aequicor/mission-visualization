@@ -5,18 +5,19 @@ interface ResourceIngestionHandle {
     fun dispose()
 }
 
-/** No-op handle for platforms without OS resource ingestion (everything but web in v1). */
+/** No-op handle for platforms without OS resource ingestion. */
 internal val NoResourceIngestion: ResourceIngestionHandle = object : ResourceIngestionHandle {
     override fun dispose() = Unit
 }
 
 /**
  * Installs OS drag-drop and paste listeners that surface image files the user brings in from
- * outside the app. On web the Compose canvas lives in a shadow-root that never receives these as
- * Compose events, so the listeners live at the DOM level and forward the payload here.
+ * outside the app. Web installs DOM listeners around the Compose shadow-root; desktop bridges the
+ * native AWT drop target and system clipboard into the same callbacks.
  *
  * [onDrop] fires with the base64 file bytes, the original file name, the image's intrinsic
- * width/height, and the drop point in CSS pixels (the caller maps it into canvas/doc space).
+ * width/height, and the drop point in platform window pixels (CSS/AWT logical pixels; the caller
+ * maps it into canvas/doc space).
  * [onPaste] fires the same minus coordinates (paste has no drop point). [onDragOver] toggles true
  * while an OS file drag hovers the app and false when it leaves or drops, so the canvas can show a
  * drop affordance. [onError] reports a non-fatal ingestion problem by [IngestionError] so the caller

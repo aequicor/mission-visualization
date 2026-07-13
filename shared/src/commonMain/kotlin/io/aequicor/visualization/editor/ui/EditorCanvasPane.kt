@@ -338,11 +338,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
     // system fonts on wasm); shared with the inline text-edit overlay for aligned metrics.
     val fontProvider = rememberBundledFontProvider()
 
-    // Project resource store (IndexedDB on web) shared by the render provider and drag/paste
-    // ingestion, so dropped bytes are visible to the image provider under the same path.
+    // Project resource store (IndexedDB on web, active res/ folder on desktop) shared by the render
+    // provider and drag/paste ingestion, so dropped bytes are visible under the same path.
     val resourceStore = remember { createProjectResourceStore() }
     val ingestScope = rememberCoroutineScope()
-    // Drag-over affordance + transient ingestion-error state, driven by the DOM listeners.
+    // Drag-over affordance + transient ingestion-error state, driven by platform listeners.
     val dragActive = remember { mutableStateOf(false) }
     val ingestError = remember { mutableStateOf<IngestionError?>(null) }
     LaunchedEffect(ingestError.value) {
@@ -4081,8 +4081,8 @@ private fun commitCreate(
 // --- External resource ingestion (drag-drop / paste) ------------------------
 
 /**
- * Maps an OS file drop (CSS-pixel client coords) into the canvas and places the image there. The
- * drop point outside the canvas surface is ignored (drops onto other panes do nothing).
+ * Maps an OS file drop (platform logical-pixel window coords) into the canvas and places the image
+ * there. The drop point outside the canvas surface is ignored (drops onto other panes do nothing).
  */
 internal suspend fun ingestDroppedResource(
     state: MissionEditorStateHolder,
@@ -4095,7 +4095,7 @@ internal suspend fun ingestDroppedResource(
     clientY: Double,
 ) {
     val bounds = state.canvasExportBounds ?: return
-    // DOM clientX/Y are CSS px; the canvas (and boundsInWindow) are backing px = css * density.
+    // DOM CSS and desktop AWT coordinates are logical px; Compose bounds are backing px.
     val localX = (clientX * bounds.density - bounds.left).toFloat()
     val localY = (clientY * bounds.density - bounds.top).toFloat()
     if (localX < 0f || localY < 0f || localX > bounds.width.toFloat() || localY > bounds.height.toFloat()) return

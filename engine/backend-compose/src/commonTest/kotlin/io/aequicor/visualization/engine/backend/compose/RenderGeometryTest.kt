@@ -124,6 +124,22 @@ class RenderGeometryTest {
     }
 
     @Test
+    fun fillModeToleratesRoundoffWhenScaledContentExactlyCoversBox() {
+        val box = RenderRect(50.0, 50.0, 609.3, 609.3)
+
+        // On IEEE-754 doubles, 273 * (609.3 / 273) rounds to 609.2999999999998.
+        // The old far-edge clamp then produced an empty 50.0000000000001..50.0 range.
+        val content = mediaContentRect(
+            box = box,
+            intrinsicWidth = 273.0,
+            intrinsicHeight = 273.0,
+            fillMode = ImageScaleMode.Fill,
+        )
+
+        assertEquals(box, content)
+    }
+
+    @Test
     fun fitModeLetterboxesCentered() {
         val content = mediaContentRect(
             box = RenderRect(0.0, 0.0, 100.0, 100.0),

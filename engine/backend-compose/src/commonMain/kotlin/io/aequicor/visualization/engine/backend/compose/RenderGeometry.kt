@@ -59,13 +59,13 @@ internal fun mediaContentRect(
     return when (fillMode) {
         ImageScaleMode.Fill, ImageScaleMode.Crop -> {
             val scale = maxOf(box.width / intrinsicWidth, box.height / intrinsicHeight)
-            val width = intrinsicWidth * scale
-            val height = intrinsicHeight * scale
+            // Cover must stay a cover even when `intrinsic * (box / intrinsic)` rounds a fraction
+            // below the box size.
+            val width = maxOf(box.width, intrinsicWidth * scale)
+            val height = maxOf(box.height, intrinsicHeight * scale)
             // Center the focal point, then clamp so the image still covers the box.
-            val x = (box.x + box.width / 2.0 - focalX.coerceIn(0.0, 1.0) * width)
-                .coerceIn(box.right - width, box.x)
-            val y = (box.y + box.height / 2.0 - focalY.coerceIn(0.0, 1.0) * height)
-                .coerceIn(box.bottom - height, box.y)
+            val x = coveredAxisStart(box.x, box.width, width, focalX)
+            val y = coveredAxisStart(box.y, box.height, height, focalY)
             RenderRect(x, y, width, height)
         }
         ImageScaleMode.Fit -> {
@@ -81,6 +81,22 @@ internal fun mediaContentRect(
         }
         ImageScaleMode.Stretch, ImageScaleMode.Tile -> box
     }
+}
+
+/**
+ * Start of covered content along one axis. Deriving the lower bound from overflow avoids the
+ * cancellation in `(boxStart + boxSize) - contentSize`, which can round above [boxStart] and make
+ * [Double.coerceIn] receive an empty range when the sizes are effectively equal.
+ */
+private fun coveredAxisStart(
+    boxStart: Double,
+    boxSize: Double,
+    contentSize: Double,
+    focal: Double,
+): Double {
+    val overflow = (contentSize - boxSize).coerceAtLeast(0.0)
+    val preferred = boxStart + boxSize / 2.0 - focal.coerceIn(0.0, 1.0) * contentSize
+    return preferred.coerceIn(boxStart - overflow, boxStart)
 }
 
 /** Where the focal crosshair lands: the focal point mapped through the content rect. */
