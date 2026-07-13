@@ -31,6 +31,7 @@ interface MenuStrings {
     fun folderReconnect(name: String): String
     // Save pane.
     val saveInBrowser: String
+    val saveNow: String
     val saveToFolder: String
     val saveAsZip: String
     // Browser-only project banner.
@@ -103,6 +104,7 @@ object MenuStringsEn : MenuStrings {
     override val folderDismiss = "Dismiss"
     override fun folderReconnect(name: String) = "Reconnect “" + name + "”"
     override val saveInBrowser = "Save work in the browser"
+    override val saveNow = "Save now"
     override val saveToFolder = "Save to a folder on this PC"
     override val saveAsZip = "Save as a ZIP archive"
     override val browserOnlyNotice = "Changes are saved in your browser only."
@@ -170,6 +172,7 @@ object MenuStringsRu : MenuStrings {
     override val folderDismiss = "Скрыть"
     override fun folderReconnect(name: String) = "Переподключить «" + name + "»"
     override val saveInBrowser = "Сохранить работу в браузере"
+    override val saveNow = "Сохранить сейчас"
     override val saveToFolder = "Сохранить в папку на ПК"
     override val saveAsZip = "Сохранить ZIP архивом"
     override val browserOnlyNotice = "Изменения сохраняются только в браузере."

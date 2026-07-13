@@ -1,5 +1,7 @@
 package io.aequicor.visualization.editor.platform
 
+import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
+import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import java.nio.file.Files
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
@@ -7,6 +9,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class JvmFolderSyncTest {
@@ -33,6 +36,76 @@ class JvmFolderSyncTest {
         waitUntil { Files.readString(file) == "# Editor\n" }
         Thread.sleep(350)
         assertEquals(beforeOwnWrite, folderSyncRevision())
+    }
+
+    @Test
+    fun desktopUsesComposeLandingAndDiskOnlyProjects() {
+        assertEquals(ProjectLandingMode.Compose, platformProjectLandingMode)
+        assertEquals(ProjectStorageMode.DiskOnly, platformProjectStorageMode)
+    }
+
+    @Test
+    fun opensAnyRecentFolderByCanonicalPath() {
+        val first = createTempDirectory("folder-recent-first")
+        val second = createTempDirectory("folder-recent-second")
+        first.resolve("first.layout.md").writeText("# First\n")
+        second.resolve("second.layout.md").writeText("# Second\n")
+
+        platformConnectFolderByIdForTest(first.toString())
+        assertEquals(first.toRealPath().toString(), platformActiveFolderId())
+        platformConnectFolderByIdForTest(second.toString())
+
+        assertEquals("watching", folderSyncStatus())
+        assertEquals(second.toRealPath().toString(), platformActiveFolderId())
+        assertTrue(folderSyncSnapshotJson().orEmpty().contains("# Second"))
+    }
+
+    @Test
+    fun createsWelcomeCopyWithoutOverwritingExistingProject() {
+        val target = createTempDirectory("folder-create")
+        val sources = listOf(
+            MissionDocumentSource("welcome.layout.md", "# Welcome\n"),
+            MissionDocumentSource("nested/vectors.layout.md", "# Vectors\n"),
+        )
+        platformCreateFolderForTest(target, encodeProjectSourcesJson("Welcome", sources))
+
+        assertEquals("watching", folderSyncStatus())
+        assertEquals("# Welcome\n", Files.readString(target.resolve("welcome.layout.md")))
+        assertEquals("# Vectors\n", Files.readString(target.resolve("nested/vectors.layout.md")))
+
+        platformResetFolderSyncForTest()
+        val existing = createTempDirectory("folder-existing")
+        existing.resolve("existing.layout.md").writeText("# Existing\n")
+        platformCreateFolderForTest(existing, encodeProjectSourcesJson("Welcome", sources))
+
+        assertEquals("error", folderSyncStatus())
+        assertEquals("folder-contains-project", folderSyncError())
+        assertFalse(Files.exists(existing.resolve("welcome.layout.md")))
+        assertEquals("# Existing\n", Files.readString(existing.resolve("existing.layout.md")))
+    }
+
+    @Test
+    fun rejectsEscapingProjectFilePath() {
+        val target = createTempDirectory("folder-safe")
+        val escaped = target.parent.resolve("escaped.layout.md")
+        Files.deleteIfExists(escaped)
+        val sources = listOf(MissionDocumentSource("../escaped.layout.md", "# Escape\n"))
+
+        platformCreateFolderForTest(target, encodeProjectSourcesJson("Unsafe", sources))
+
+        assertEquals("error", folderSyncStatus())
+        assertEquals("project-create-failed", folderSyncError())
+        assertFalse(Files.exists(escaped))
+    }
+
+    @Test
+    fun unavailableRecentPathReportsErrorWithoutOpeningAnotherProject() {
+        val missing = createTempDirectory("folder-missing").resolve("gone")
+        platformConnectFolderByIdForTest(missing.toString())
+
+        assertEquals("error", folderSyncStatus())
+        assertEquals("project-unavailable", folderSyncError())
+        assertEquals(null, platformActiveFolderId())
     }
 
     private fun waitUntil(timeoutMillis: Long = 4_000, condition: () -> Boolean) {

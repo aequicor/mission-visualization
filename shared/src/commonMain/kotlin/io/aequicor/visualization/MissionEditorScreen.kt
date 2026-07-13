@@ -77,16 +77,23 @@ import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
 import io.aequicor.visualization.subsystems.annotations.ExportScope
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
 import io.aequicor.visualization.editor.platform.folderSyncRevision
+import io.aequicor.visualization.editor.platform.folderSyncError
 import io.aequicor.visualization.editor.platform.folderSyncSnapshotJson
 import io.aequicor.visualization.editor.platform.folderSyncStatus
+import io.aequicor.visualization.editor.platform.ProjectLandingMode
+import io.aequicor.visualization.editor.platform.ProjectStorageMode
 import io.aequicor.visualization.editor.platform.platformActiveFolderId
+import io.aequicor.visualization.editor.platform.platformConnectFolderById
 import io.aequicor.visualization.editor.platform.platformConnectFolderLive
 import io.aequicor.visualization.editor.platform.platformCreateFolderProject
 import io.aequicor.visualization.editor.platform.platformDisconnectFolder
 import io.aequicor.visualization.editor.platform.platformEpochMillis
+import io.aequicor.visualization.editor.platform.platformForgetFolder
 import io.aequicor.visualization.editor.platform.platformInitFolderSync
 import io.aequicor.visualization.editor.platform.platformInstallLanding
 import io.aequicor.visualization.editor.platform.platformLandingPendingActionJson
+import io.aequicor.visualization.editor.platform.platformProjectLandingMode
+import io.aequicor.visualization.editor.platform.platformProjectStorageMode
 import io.aequicor.visualization.editor.platform.platformReconnectSavedFolder
 import io.aequicor.visualization.editor.platform.platformSavedFolderName
 import io.aequicor.visualization.editor.platform.platformSetActiveProjectId
@@ -108,6 +115,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import io.aequicor.visualization.editor.ui.EditorIcon
 import io.aequicor.visualization.editor.ui.EditorInspectorPane
+import io.aequicor.visualization.editor.ui.ProjectLandingScreen
 import io.aequicor.visualization.editor.ui.EditorSourcePane
 import io.aequicor.visualization.editor.ui.EditorSvgIcon
 import io.aequicor.visualization.editor.ui.horizontalResizeCursor
@@ -174,6 +182,19 @@ class MissionEditorStateHolder(
     var projectName by mutableStateOf("")
         private set
 
+    /** Native Compose project screen; the web owns its equivalent DOM overlay. */
+    var projectLandingVisible by mutableStateOf(platformProjectLandingMode == ProjectLandingMode.Compose)
+        private set
+
+    var projectLandingError by mutableStateOf<String?>(null)
+        private set
+
+    var recentProjectItems by mutableStateOf(recentProjects?.list() ?: emptyList())
+        private set
+
+    val usesEmbeddedDraftProjects: Boolean
+        get() = platformProjectStorageMode == ProjectStorageMode.EmbeddedDraft
+
     /** Stable deep-link id of the active browser-only project; null for Welcome/folder projects. */
     private var browserProjectId: String? = null
 
@@ -184,7 +205,7 @@ class MissionEditorStateHolder(
     /**
      * True once the working set is a persistent (browser-saved) project: a restored draft,
      * an explicit save, or the first write-back edit of the bundled in-memory Welcome (which
-     * also raises [browserSaveNoticeVisible]). Until this flips, autosave stays off, so a
+     * also raises [projectCreationPromptVisible]). Until this flips, autosave stays off, so a
      * reload (or «Открыть → Welcome») restores the pristine screens.
      */
     var persistenceEnabled by mutableStateOf(false)
@@ -194,21 +215,23 @@ class MissionEditorStateHolder(
      * True once the in-memory Welcome project has been turned into a browser-saved project by
      * a user edit (or a recovered draft was restored) and the user has not yet dismissed or
      * acted on the "save to disk" nudge. Drives the top banner; cleared on reseed
-     * ([openWelcomeProject], [resetToDefaults], live-folder adopt) and by [dismissBrowserSaveNotice].
+     * ([openWelcomeProject], [resetToDefaults], live-folder adopt) and by
+     * [dismissProjectCreationPrompt].
      */
-    var browserSaveNoticeVisible by mutableStateOf(false)
+    var projectCreationPromptVisible by mutableStateOf(false)
         private set
 
-    fun dismissBrowserSaveNotice() {
-        browserSaveNoticeVisible = false
+    fun dismissProjectCreationPrompt() {
+        projectCreationPromptVisible = false
     }
 
     /** Turns the edited in-memory Welcome copy into a browser-only project. */
     fun createBrowserProject() {
+        if (!usesEmbeddedDraftProjects) return
         val draft = draft ?: return
         val projectId = ensureBrowserProjectId()
         persistenceEnabled = true
-        browserSaveNoticeVisible = false
+        projectCreationPromptVisible = false
         platformSetActiveProjectId(projectId)
         draft.saveNow(designState.sources, displayProjectName, projectId = projectId)
     }
@@ -218,6 +241,20 @@ class MissionEditorStateHolder(
         if (!platformSupportsFolderSync) return
         hasAdoptedLiveFolder = false
         platformCreateFolderProject(encodeProjectSourcesJson(displayProjectName, designState.sources))
+    }
+
+    /** Creates a fresh disk project seeded from the pristine Welcome tour. */
+    fun createWelcomeFolderProject() {
+        if (!platformSupportsFolderSync) return
+        prepareForProjectSwitch()
+        hasAdoptedLiveFolder = false
+        projectLandingError = null
+        platformCreateFolderProject(
+            encodeProjectSourcesJson(
+                projectName = projectDisplayName("", defaultDocuments.document?.name, defaultDocuments.sources),
+                sources = defaultDocuments.sources,
+            ),
+        )
     }
 
     /**
@@ -336,8 +373,8 @@ class MissionEditorStateHolder(
      */
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     suspend fun runPersistence() {
-        val draft = draft ?: return
-        draft.restore()?.takeIf { it.folderId == null }?.let { restored ->
+        val embeddedDraft = draft.takeIf { usesEmbeddedDraftProjects }
+        embeddedDraft?.restore()?.takeIf { it.folderId == null }?.let { restored ->
             browserProjectId = restored.projectId
             persistenceEnabled = true
             projectName = restored.projectName
@@ -356,7 +393,7 @@ class MissionEditorStateHolder(
                     .drop(1)
                     .distinctUntilChanged()
                     .collect { sources ->
-                        if (liveFolderConnected && sources != lastSyncedSources) {
+                        if (usesEmbeddedDraftProjects && liveFolderConnected && sources != lastSyncedSources) {
                             platformActiveFolderId()?.let { folderId ->
                                 folderPending?.save(sources, displayProjectName, folderId)
                             }
@@ -371,7 +408,7 @@ class MissionEditorStateHolder(
                     .collect { sources ->
                         when {
                             liveFolderConnected -> writeSourcesToFolder(sources)
-                            persistenceEnabled -> draft.save(
+                            persistenceEnabled && embeddedDraft != null -> embeddedDraft.save(
                                 sources,
                                 displayProjectName,
                                 projectId = ensureBrowserProjectId(),
@@ -379,7 +416,7 @@ class MissionEditorStateHolder(
                             sources != inMemoryBaselineSources -> {
                                 // First write-back edit of Welcome asks where the new project
                                 // should live. Until the user chooses, it remains in memory only.
-                                browserSaveNoticeVisible = true
+                                projectCreationPromptVisible = true
                             }
                         }
                     }
@@ -397,8 +434,10 @@ class MissionEditorStateHolder(
         platformInitFolderSync()
         var lastRevision = -1
         while (true) {
-            val presence = folderPresenceOf(folderSyncStatus() ?: "idle")
+            val rawStatus = folderSyncStatus() ?: "idle"
+            val presence = folderPresenceOf(rawStatus)
             if (presence != folderSync) folderSync = presence
+            if (rawStatus == "error") projectLandingError = folderSyncError()
             platformSavedFolderName().let { if (it != folderName) folderName = it }
             if (presence != FolderSyncPresence.Watching) {
                 hasAdoptedLiveFolder = false
@@ -437,7 +476,7 @@ class MissionEditorStateHolder(
      * viewport/selection and back up any unsaved local edit they replace.
      */
     private suspend fun onFolderSnapshot(snapshot: ProjectSnapshot) {
-        val pending = if (!hasAdoptedLiveFolder) {
+        val pending = if (usesEmbeddedDraftProjects && !hasAdoptedLiveFolder) {
             val activeFolderId = platformActiveFolderId()
             folderPending?.restore()?.takeIf { it.folderId != null && it.folderId == activeFolderId }
         } else {
@@ -455,13 +494,15 @@ class MissionEditorStateHolder(
         folderExternalError = !isEmptyProject && docs.hasErrors
         if (!hasAdoptedLiveFolder) {
             persistenceEnabled = false
-            browserSaveNoticeVisible = false
+            projectCreationPromptVisible = false
             browserProjectId = null
             projectName = snapshot.projectName
             designState = createDesignEditorState(docs)
             lastSyncedSources = snapshot.sources
             folderConflictBackup = null
             hasAdoptedLiveFolder = true
+            projectLandingVisible = false
+            projectLandingError = null
             if (pending != null) {
                 if (pending.files == snapshot.sources) {
                     folderPending?.clear()
@@ -521,7 +562,9 @@ class MissionEditorStateHolder(
     /** Menu action: pick a local folder and start live two-way sync. */
     fun connectFolder() {
         if (!platformSupportsFolderSync) return
+        prepareForProjectSwitch()
         hasAdoptedLiveFolder = false
+        projectLandingError = null
         platformConnectFolderLive()
     }
 
@@ -540,6 +583,7 @@ class MissionEditorStateHolder(
         folderExternalError = false
         folderConflictBackup = null
         hasAdoptedLiveFolder = false
+        lastRecordedFolderId = null
     }
 
     /** Restores the in-editor edit that an external change replaced (the conflict backup). */
@@ -572,23 +616,53 @@ class MissionEditorStateHolder(
                 folderKey = id,
             ),
         )
+        recentProjectItems = repo.list()
         lastRecordedFolderId = id
     }
 
     // --- Startup landing ("recent projects + Welcome") ----------------------------------------
 
     /** The recent projects shown on the startup landing, newest-first (folders only). */
-    fun recentProjectsList(): List<RecentProject> = recentProjects?.list() ?: emptyList()
+    fun recentProjectsList(): List<RecentProject> = recentProjectItems
+
+    fun showProjectLanding() {
+        if (platformProjectLandingMode != ProjectLandingMode.Compose) return
+        prepareForProjectSwitch()
+        recentProjectItems = recentProjects?.list() ?: emptyList()
+        projectLandingError = null
+        projectLandingVisible = true
+    }
+
+    fun openRecentProject(id: String) {
+        prepareForProjectSwitch()
+        hasAdoptedLiveFolder = false
+        projectLandingError = null
+        platformConnectFolderById(id)
+    }
+
+    fun removeRecentProject(id: String) {
+        recentProjects?.remove(id)
+        platformForgetFolder(id)
+        if (lastRecordedFolderId == id) lastRecordedFolderId = null
+        recentProjectItems = recentProjects?.list() ?: emptyList()
+    }
+
+    /** Flushes a connected project before changing its folder, then tears down the watcher. */
+    private fun prepareForProjectSwitch() {
+        if (liveFolderConnected) writeSourcesToFolder(designState.sources)
+        if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
+    }
 
     /** True when a browser-only project exists; folder-bound safety copies stay hidden. */
     suspend fun hasRecoveryDraft(): Boolean {
+        if (!usesEmbeddedDraftProjects) return false
         val stored = draft?.restore() ?: return false
         return stored.folderId == null
     }
 
     /** Stable deep-link id of the stored browser-only project, if it has one. */
     suspend fun storedBrowserProjectId(): String? =
-        draft?.restore()?.takeIf { it.folderId == null }?.projectId
+        if (usesEmbeddedDraftProjects) draft?.restore()?.takeIf { it.folderId == null }?.projectId else null
 
     /**
      * Polls the landing screen's action queue and drives the editor from the user's explicit choice:
@@ -616,8 +690,7 @@ class MissionEditorStateHolder(
             // The landing's own language switcher: also update the editor + persist the choice.
             "setLanguage" -> action.id?.let { selectLanguage(AppLanguage.fromCode(it)) }
             "remove" -> action.id?.let { id ->
-                recentProjects?.remove(id)
-                if (lastRecordedFolderId == id) lastRecordedFolderId = null
+                removeRecentProject(id)
             }
         }
     }
@@ -628,7 +701,7 @@ class MissionEditorStateHolder(
         browserProjectId = null
         val projectId = ensureBrowserProjectId()
         persistenceEnabled = true
-        browserSaveNoticeVisible = false
+        projectCreationPromptVisible = false
         projectName = ""
         designState = createDesignEditorState(compileMissionDocuments(emptyList()))
         inMemoryBaselineSources = emptyList()
@@ -646,7 +719,7 @@ class MissionEditorStateHolder(
             val projectId = restored.projectId ?: ensureBrowserProjectId()
             browserProjectId = projectId
             persistenceEnabled = true
-            browserSaveNoticeVisible = false
+            projectCreationPromptVisible = false
             projectName = restored.projectName
             designState = createDesignEditorState(compileMissionDocuments(restored.files))
             platformSetActiveProjectId(projectId)
@@ -661,11 +734,17 @@ class MissionEditorStateHolder(
      * opt-in that turns the in-memory Welcome project into a persistent one.
      */
     fun saveDraftNow() {
+        if (!usesEmbeddedDraftProjects) return
         val draft = draft ?: return
         val projectId = ensureBrowserProjectId()
         persistenceEnabled = true
         platformSetActiveProjectId(projectId)
         draft.saveNow(designState.sources, displayProjectName, projectId = projectId)
+    }
+
+    /** Desktop Save: flush to the connected folder or choose one for the current in-memory sources. */
+    fun saveProjectNow() {
+        if (liveFolderConnected) writeSourcesToFolder(designState.sources) else createFolderProject()
     }
 
     /**
@@ -675,13 +754,15 @@ class MissionEditorStateHolder(
      * explicitly saves it.
      */
     fun openWelcomeProject() {
-        if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
+        prepareForProjectSwitch()
         persistenceEnabled = false
-        browserSaveNoticeVisible = false
+        projectCreationPromptVisible = false
         browserProjectId = null
         projectName = ""
         designState = createDesignEditorState(loadDesignDocument())
         inMemoryBaselineSources = designState.sources
+        projectLandingVisible = false
+        projectLandingError = null
         platformSetActiveProjectId("welcome")
     }
 
@@ -691,7 +772,7 @@ class MissionEditorStateHolder(
      */
     fun resetToDefaults() {
         persistenceEnabled = false
-        browserSaveNoticeVisible = false
+        projectCreationPromptVisible = false
         val draft = draft
         if (draft == null) {
             projectName = ""
@@ -799,7 +880,7 @@ fun MissionEditorApp(mcpServer: McpServerController = NoMcpServerController) {
             }
         }
         CompositionLocalProvider(LocalStrings provides appStringsFor(state.language)) {
-            MissionEditorScreen(state)
+            if (state.projectLandingVisible) ProjectLandingScreen(state) else MissionEditorScreen(state)
         }
     }
 }

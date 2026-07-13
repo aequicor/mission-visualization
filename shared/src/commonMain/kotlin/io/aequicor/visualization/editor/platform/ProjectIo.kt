@@ -15,6 +15,16 @@ data class CanvasExportCrop(
     val height: Double,
 )
 
+/** How this platform presents the project picker at application startup. */
+internal enum class ProjectLandingMode { None, WebDom, Compose }
+
+/** Whether a project may live in app-private draft storage without a folder. */
+internal enum class ProjectStorageMode { EmbeddedDraft, DiskOnly }
+
+internal expect val platformProjectLandingMode: ProjectLandingMode
+
+internal expect val platformProjectStorageMode: ProjectStorageMode
+
 /** Wall-clock time in epoch milliseconds; used to stamp recent-project recency. */
 internal expect fun platformEpochMillis(): Long
 
@@ -73,6 +83,9 @@ internal expect fun platformInitFolderSync()
 /** Picks a folder (readwrite), persists its handle, enumerates sources and starts the watcher. */
 internal expect fun platformConnectFolderLive()
 
+/** Opens a previously recorded folder by its stable id (an absolute path on desktop). */
+internal expect fun platformConnectFolderById(id: String)
+
 /** Creates a live folder project from the current in-memory sources. */
 internal expect fun platformCreateFolderProject(sourcesJson: String)
 
@@ -99,6 +112,9 @@ internal expect fun folderSyncSnapshotJson(): String?
  * `error`. Null is treated as `idle`.
  */
 internal expect fun folderSyncStatus(): String?
+
+/** Last human-readable folder error, cleared when a new operation starts or succeeds. */
+internal expect fun folderSyncError(): String?
 
 /**
  * Writes [content] to [fileName] in the connected folder, recording the write so the watcher does

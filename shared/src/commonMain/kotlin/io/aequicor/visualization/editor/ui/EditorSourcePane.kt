@@ -96,8 +96,9 @@ import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
 import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
 import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
 import io.aequicor.visualization.editor.platform.platformSetActiveProjectId
+import io.aequicor.visualization.editor.platform.ProjectLandingMode
+import io.aequicor.visualization.editor.platform.platformProjectLandingMode
 import io.aequicor.visualization.editor.platform.platformSupportsAgentFileExport
-import io.aequicor.visualization.editor.platform.platformSupportsLanding
 import io.aequicor.visualization.editor.platform.platformSupportsProjectDiskIo
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
@@ -192,25 +193,29 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 when (menuPane) {
                     ProjectMenuPane.Root -> {
                         FolderSyncMenuStatus(state)
-                        if (platformSupportsLanding) {
+                        if (platformProjectLandingMode != ProjectLandingMode.None) {
                             EditorDropdownMenuItem(
                                 strings.menu.projects,
                                 leadingContent = { DropdownMenuIcon(EditorIcon.Home) },
                             ) {
                                 closeMenu()
-                                scope.launch {
-                                    if (state.folderSync != FolderSyncPresence.Idle) state.disconnectFolder()
-                                    platformSetActiveProjectId("")
-                                    platformInstallLanding(
-                                        buildLandingConfigJson(
-                                            colors = colors,
-                                            recents = state.recentProjectsList(),
-                                            supportsFolders = state.supportsFolderSync,
-                                            hasRecovery = state.hasRecoveryDraft(),
-                                            browserProjectId = state.storedBrowserProjectId(),
-                                            language = state.language,
-                                        ),
-                                    )
+                                if (platformProjectLandingMode == ProjectLandingMode.Compose) {
+                                    state.showProjectLanding()
+                                } else {
+                                    scope.launch {
+                                        if (state.folderSync != FolderSyncPresence.Idle) state.disconnectFolder()
+                                        platformSetActiveProjectId("")
+                                        platformInstallLanding(
+                                            buildLandingConfigJson(
+                                                colors = colors,
+                                                recents = state.recentProjectsList(),
+                                                supportsFolders = state.supportsFolderSync,
+                                                hasRecovery = state.hasRecoveryDraft(),
+                                                browserProjectId = state.storedBrowserProjectId(),
+                                                language = state.language,
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -283,11 +288,21 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                     }
                     ProjectMenuPane.Save -> {
                         EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
-                        EditorDropdownMenuItem(strings.menu.saveInBrowser, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
-                            closeMenu()
-                            state.saveDraftNow()
+                        if (!state.usesEmbeddedDraftProjects) {
+                            EditorDropdownMenuItem(
+                                if (state.folderSync == FolderSyncPresence.Watching) strings.menu.saveNow else strings.menu.createProjectOnDisk,
+                                leadingContent = { DropdownMenuIcon(EditorIcon.Save) },
+                            ) {
+                                closeMenu()
+                                state.saveProjectNow()
+                            }
+                        } else {
+                            EditorDropdownMenuItem(strings.menu.saveInBrowser, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
+                                closeMenu()
+                                state.saveDraftNow()
+                            }
                         }
-                        if (platformSupportsProjectDiskIo) {
+                        if (state.usesEmbeddedDraftProjects && platformSupportsProjectDiskIo) {
                             EditorDropdownMenuItem(strings.menu.saveToFolder, leadingContent = { DropdownMenuIcon(EditorIcon.Folder) }) {
                                 closeMenu()
                                 // A completed disk save makes the working set persistent: keep the
@@ -545,10 +560,10 @@ private fun FolderSyncBanner(state: MissionEditorStateHolder) {
 /** Prompts for a storage mode after the first edit to the in-memory Welcome tour. */
 @Composable
 fun EditorBrowserSaveBanner(state: MissionEditorStateHolder) {
-    if (!state.browserSaveNoticeVisible) return
+    if (!state.projectCreationPromptVisible) return
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
-    Dialog(onDismissRequest = state::dismissBrowserSaveNotice) {
+    Dialog(onDismissRequest = state::dismissProjectCreationPrompt) {
         Surface(
             modifier = Modifier.width(420.dp),
             shape = RoundedCornerShape(14.dp),
@@ -570,21 +585,23 @@ fun EditorBrowserSaveBanner(state: MissionEditorStateHolder) {
                     color = colors.mutedInk,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                ProjectCreationChoice(
-                    text = strings.menu.createProjectInBrowser,
-                    accent = true,
-                    onClick = state::createBrowserProject,
-                )
+                if (state.usesEmbeddedDraftProjects) {
+                    ProjectCreationChoice(
+                        text = strings.menu.createProjectInBrowser,
+                        accent = true,
+                        onClick = state::createBrowserProject,
+                    )
+                }
                 if (state.supportsFolderSync) {
                     ProjectCreationChoice(
                         text = strings.menu.createProjectOnDisk,
-                        accent = false,
+                        accent = !state.usesEmbeddedDraftProjects,
                         onClick = state::createFolderProject,
                     )
                 }
                 Text(
                     text = strings.menu.cancel,
-                    modifier = Modifier.align(Alignment.End).clickable { state.dismissBrowserSaveNotice() }.padding(8.dp),
+                    modifier = Modifier.align(Alignment.End).clickable { state.dismissProjectCreationPrompt() }.padding(8.dp),
                     color = colors.mutedInk,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,

@@ -16,6 +16,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JFileChooser
 
+internal actual val platformProjectLandingMode: ProjectLandingMode = ProjectLandingMode.Compose
+
+internal actual val platformProjectStorageMode: ProjectStorageMode = ProjectStorageMode.DiskOnly
+
 internal actual val platformSupportsProjectDiskIo: Boolean = false
 
 internal actual fun platformOpenProjectZipArchive() = Unit
@@ -55,16 +59,12 @@ internal actual fun platformConnectFolderLive() {
     JvmFolderSync.chooseFolder()?.let(JvmFolderSync::connect)
 }
 
+internal actual fun platformConnectFolderById(id: String) = JvmFolderSync.connectById(id)
+
 internal actual fun platformCreateFolderProject(sourcesJson: String) {
     val snapshot = decodeProjectSnapshot(sourcesJson) ?: return
     val folder = JvmFolderSync.chooseFolder() ?: return
-    runCatching {
-        snapshot.sources.forEach { source -> JvmFolderSync.writeInitial(folder, source) }
-    }.onSuccess {
-        JvmFolderSync.connect(folder)
-    }.onFailure {
-        JvmFolderSync.fail(it.message ?: "Unable to create project folder")
-    }
+    JvmFolderSync.createProject(folder, snapshot.sources)
 }
 
 internal actual fun platformReconnectSavedFolder() = JvmFolderSync.reconnect()
@@ -78,6 +78,8 @@ internal actual fun folderSyncRevision(): Int = JvmFolderSync.revision.get()
 internal actual fun folderSyncSnapshotJson(): String? = JvmFolderSync.snapshotJson
 
 internal actual fun folderSyncStatus(): String? = JvmFolderSync.status
+
+internal actual fun folderSyncError(): String? = JvmFolderSync.lastError
 
 internal actual fun platformWriteFolderFile(fileName: String, content: String) =
     JvmFolderSync.writeFromEditor(fileName, content)
@@ -112,13 +114,16 @@ private object JvmFolderSync {
     @Volatile var snapshotJson: String? = null
     @Volatile var status: String = "idle"
     @Volatile var activeFolderId: String? = null
+    @Volatile var lastError: String? = null
 
     fun init() {
         if (activeRoot != null) return
         savedRoot = runCatching {
             savedRootFile.takeIf(Files::isRegularFile)?.let { Path.of(Files.readString(it)).toRealPath() }
         }.getOrNull()?.takeIf(Files::isDirectory)
-        status = if (savedRoot == null) "idle" else "reconnect-needed"
+        // Desktop paths do not require a browser-style permission reconnect. The remembered path
+        // is only the initial directory for the next native folder chooser; recents drive opening.
+        status = "idle"
     }
 
     fun chooseFolder(): Path? {
@@ -142,8 +147,42 @@ private object JvmFolderSync {
         connect(root)
     }
 
+    fun connectById(id: String) {
+        runCatching { Path.of(id) }
+            .onSuccess(::connect)
+            .onFailure { fail("project-unavailable") }
+    }
+
+    fun createProject(folder: Path, sources: List<MissionDocumentSource>) {
+        status = "connecting"
+        lastError = null
+        runCatching {
+            val root = folder.toRealPath()
+            require(Files.isDirectory(root)) { "project-unavailable" }
+            val alreadyContainsProject = Files.walk(root).use { paths ->
+                paths.anyMatch { Files.isRegularFile(it) && it.fileName.toString().endsWith(".layout.md", ignoreCase = true) }
+            }
+            require(!alreadyContainsProject) {
+                "folder-contains-project"
+            }
+            sources.forEach { source ->
+                val target = safeResolve(root, source.fileName)
+                require(!Files.exists(target)) { "project-file-exists" }
+            }
+            sources.forEach { source -> writeInitial(root, source) }
+            root
+        }.onSuccess(::connect)
+            .onFailure { failure ->
+                val code = failure.message?.takeIf {
+                    it == "project-unavailable" || it == "folder-contains-project" || it == "project-file-exists"
+                } ?: "project-create-failed"
+                fail(code)
+            }
+    }
+
     fun connect(candidate: Path, persist: Boolean = true) {
         status = "connecting"
+        lastError = null
         runCatching {
             val root = candidate.toRealPath()
             require(Files.isDirectory(root)) { "Folder is not accessible: $root" }
@@ -159,8 +198,9 @@ private object JvmFolderSync {
                 refreshSnapshot(root)
                 startWatcher(root)
                 status = "watching"
+                lastError = null
             }
-        }.onFailure { fail(it.message ?: "Unable to connect folder") }
+        }.onFailure { fail("project-unavailable") }
     }
 
     fun disconnect(forget: Boolean) {
@@ -174,12 +214,14 @@ private object JvmFolderSync {
                 savedRoot = null
                 runCatching { Files.deleteIfExists(savedRootFile) }
             }
-            status = if (!forget && savedRoot != null) "reconnect-needed" else "idle"
+            status = "idle"
+            lastError = null
         }
     }
 
     fun fail(message: String) {
         System.err.println("Folder sync: $message")
+        lastError = message
         status = "error"
     }
 
@@ -207,8 +249,14 @@ private object JvmFolderSync {
 
     private fun safeResolve(root: Path, relativeName: String): Path {
         require(!Path.of(relativeName).isAbsolute) { "Expected a relative project file path" }
-        val target = root.resolve(relativeName.replace('/', java.io.File.separatorChar)).normalize().toAbsolutePath()
-        require(target.startsWith(root.toAbsolutePath().normalize())) { "Project path escapes the connected folder" }
+        val canonicalRoot = root.toRealPath()
+        val target = canonicalRoot.resolve(relativeName.replace('/', java.io.File.separatorChar)).normalize().toAbsolutePath()
+        require(target.startsWith(canonicalRoot)) { "Project path escapes the connected folder" }
+        val existingAncestor = generateSequence(target.parent) { it.parent }.firstOrNull { Files.exists(it) }
+            ?: error("Project target has no accessible parent")
+        require(existingAncestor.toRealPath().startsWith(canonicalRoot)) {
+            "Project path escapes the connected folder through a symbolic link"
+        }
         require(target.fileName.toString().endsWith(".layout.md", ignoreCase = true)) { "Only .layout.md files are writable" }
         return target
     }
@@ -332,5 +380,12 @@ private object JvmFolderSync {
 
 // Narrow JVM test seam; production callers use the expect/actual functions above.
 internal fun platformConnectFolderForTest(path: Path) = JvmFolderSync.connect(path, persist = false)
+
+internal fun platformConnectFolderByIdForTest(id: String) = JvmFolderSync.connectById(id)
+
+internal fun platformCreateFolderForTest(path: Path, sourcesJson: String) {
+    val snapshot = decodeProjectSnapshot(sourcesJson) ?: error("Invalid project snapshot")
+    JvmFolderSync.createProject(path, snapshot.sources)
+}
 
 internal fun platformResetFolderSyncForTest() = JvmFolderSync.disconnect(forget = false)

@@ -2,6 +2,10 @@ package io.aequicor.visualization.editor.platform
 
 import kotlin.js.ExperimentalWasmJsInterop
 
+internal actual val platformProjectLandingMode: ProjectLandingMode = ProjectLandingMode.WebDom
+
+internal actual val platformProjectStorageMode: ProjectStorageMode = ProjectStorageMode.EmbeddedDraft
+
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun ensureProjectIoInstalled() {
     js(
@@ -703,6 +707,7 @@ private fun callFinishPdf(fileName: String): Unit = js("window.__mvProjectIo.fin
 private fun callToggleFullscreen(): Unit =
     js("(function(){if(document.fullscreenElement){if(document.exitFullscreen)document.exitFullscreen();}else{var el=document.documentElement;if(el.requestFullscreen)el.requestFullscreen().catch(function(){});}})()")
 
+@OptIn(ExperimentalWasmJsInterop::class)
 private fun openUrlInBrowser(url: String): Unit = js("{ window.open(url, '_blank'); }")
 
 internal actual fun platformOpenUrl(url: String) = openUrlInBrowser(url)
@@ -1124,6 +1129,15 @@ internal actual fun platformConnectFolderLive() {
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun platformConnectFolderById(id: String) {
+    ensureFolderSyncInstalled()
+    folderSyncConnectById(id)
+}
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun folderSyncConnectById(id: String): Unit = js("window.__mvFolderSync.connectById(id)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
 private fun folderSyncConnect(): Unit = js("window.__mvFolderSync.connect()")
 
 @OptIn(ExperimentalWasmJsInterop::class)
@@ -1165,6 +1179,10 @@ internal actual fun folderSyncSnapshotJson(): String? =
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun folderSyncStatus(): String? =
     js("(window.__mvFolderSync ? window.__mvFolderSync.status : null)")
+
+@OptIn(ExperimentalWasmJsInterop::class)
+internal actual fun folderSyncError(): String? =
+    js("(window.__mvFolderSync ? (window.__mvFolderSync.lastError || null) : null)")
 
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformWriteFolderFile(fileName: String, content: String) {
