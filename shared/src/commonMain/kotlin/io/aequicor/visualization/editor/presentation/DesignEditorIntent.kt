@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignPaint
@@ -207,6 +208,25 @@ sealed interface DesignEditorIntent {
     // --- Layout container --------------------------------------------------
 
     data class SetLayoutMode(val nodeId: String, val mode: EditorLayoutMode) : DesignEditorIntent
+
+    /** Resolved geometry captured immediately before a container-kind conversion. */
+    data class BakedChildGeometry(
+        val nodeId: String,
+        val x: Double,
+        val y: Double,
+        val width: Double,
+        val height: Double,
+    )
+
+    /** Atomically converts a free Frame and an Auto Layout container. */
+    data class ConvertContainer(
+        val nodeId: String,
+        val target: ContainerKind,
+        val targetMode: LayoutMode = LayoutMode.None,
+        val width: Double,
+        val height: Double,
+        val children: List<BakedChildGeometry>,
+    ) : DesignEditorIntent
 
     data class SetLayoutGap(val nodeId: String, val gap: Double) : DesignEditorIntent
 

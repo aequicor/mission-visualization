@@ -10,7 +10,6 @@ import io.aequicor.visualization.editor.platform.platformResetFolderSyncForTest
 import io.aequicor.visualization.editor.platform.platformWriteFolderEditorState
 import io.aequicor.visualization.editor.platform.platformWriteFolderFiles
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
-import io.aequicor.visualization.editor.presentation.PaddingSide
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.editor.presentation.semanticallyEquivalent
@@ -43,7 +42,6 @@ class DesktopSlmPersistenceIntegrationTest {
         var state = createDesignEditorState(compileMissionDocuments(opened.sources))
         state = reduceDesignEditor(state, DesignEditorIntent.RenameNode("win_bg", "PersistentBackground"))
         state = reduceDesignEditor(state, DesignEditorIntent.ResizeNode("win_bg", width = 777.0, height = 333.0))
-        state = reduceDesignEditor(state, DesignEditorIntent.SetLayoutPadding("frame_overview", PaddingSide.All, 29.0))
         state = reduceDesignEditor(state, DesignEditorIntent.RenameNode("telemetry_header", "PersistentTelemetry"))
         state = reduceDesignEditor(state, DesignEditorIntent.DuplicateNodes(setOf("t_tile_1")))
 

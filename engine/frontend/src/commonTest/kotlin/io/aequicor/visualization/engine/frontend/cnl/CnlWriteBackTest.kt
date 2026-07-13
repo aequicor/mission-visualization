@@ -163,7 +163,7 @@ class CnlWriteBackTest {
     fun nonSurgicalEditReemitsSentenceInsteadOfYamlFallback() {
         // RenameNode is not surgically expressible in a CNL sentence → tier-3 re-emit from the
         // patched node. It must regenerate the sentence in CNL, never append a YAML typed block.
-        val source = screen("## Frame: Card id card column gap 12 color #FFFFFF")
+        val source = screen("## AutoLayout: Card id card column gap 12 color #FFFFFF")
         val compiled = compileSlm(source)
         val node = assertNotNull(compiled.document).pages.single().children.single()
             .allDescendants().first { it.id == "card" }
@@ -184,7 +184,7 @@ class CnlWriteBackTest {
     fun cnlNodeEditWithoutPatchedNodeFailsInsteadOfYaml() {
         // Without a patched node, tier-3 is unavailable; a non-surgical edit must fail (→ in-memory
         // fallback in the reducer), NOT silently append a YAML typed block to the CNL sentence.
-        val source = screen("## Frame: Card id card column gap 12 color #FFFFFF")
+        val source = screen("## AutoLayout: Card id card column gap 12 color #FFFFFF")
         val compiled = compileSlm(source)
         val result = applySlmEdit(source, RenameNode("card", "Panel"), compiled)
         assertNull(result.newSource, "no patched node → no write-back, no YAML leak")

@@ -15,6 +15,7 @@ import io.aequicor.visualization.engine.frontend.edit.isInteractionExpressibleIn
 import io.aequicor.visualization.engine.frontend.edit.MoveSection
 import io.aequicor.visualization.engine.frontend.edit.RenameNode as RenameNodeEdit
 import io.aequicor.visualization.engine.frontend.edit.ReplaceSection
+import io.aequicor.visualization.engine.frontend.edit.ReemitNode
 import io.aequicor.visualization.engine.frontend.edit.SetEffects
 import io.aequicor.visualization.engine.frontend.edit.SetFills
 import io.aequicor.visualization.engine.frontend.edit.SetInteractions
@@ -44,6 +45,8 @@ import io.aequicor.visualization.engine.frontend.edit.YamlScalarValue
 import io.aequicor.visualization.engine.frontend.edit.applySlmEdits
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.subsystems.figures.DesignViewBox
@@ -70,6 +73,7 @@ import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.GridTrack
 import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.SizingMode
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
@@ -248,24 +252,28 @@ internal fun reduceDesignEditorUnchecked(state: DesignEditorState, intent: Desig
         is DesignEditorIntent.EditSource -> state.editSource(intent)
 
         // --- Layout container ---
-        is DesignEditorIntent.SetLayoutMode -> state.writeBackEdits(
-            intent.nodeId,
-            listOf(SetLayoutProperty(intent.nodeId, LayoutProp.Mode, YamlScalarValue.Str(layoutModeToken(intent.mode.toLayoutMode())))),
-        ) { node -> node.copy(layout = node.layout.copy(mode = intent.mode.toLayoutMode())) }
-        is DesignEditorIntent.SetLayoutGap -> state.writeBackEdits(
-            intent.nodeId,
-            listOf(SetLayoutProperty(intent.nodeId, LayoutProp.Gap, YamlScalarValue.Num(intent.gap))),
-        ) { node -> node.copy(layout = node.layout.copy(gap = DesignGap.Fixed(intent.gap.bindable()))) }
-        is DesignEditorIntent.SetLayoutPadding -> state.writeBackEdits(
-            intent.nodeId,
-            paddingWriteBackEdits(intent.nodeId, intent.side, intent.value),
-        ) { node -> node.copy(layout = node.layout.copy(padding = node.layout.padding.withSide(intent.side, intent.value))) }
-        is DesignEditorIntent.SetLayoutAlign -> state.editUnlockedNode(intent.nodeId) { node ->
-            node.copy(layout = node.layout.copy(
-                alignItems = intent.alignItems ?: node.layout.alignItems,
-                justifyContent = intent.justifyContent ?: node.layout.justifyContent,
-            ))
-        }
+        is DesignEditorIntent.SetLayoutMode -> state.setAutoLayoutMode(intent)
+        is DesignEditorIntent.ConvertContainer -> state.convertContainer(intent)
+        is DesignEditorIntent.SetLayoutGap -> if (state.isAutoLayout(intent.nodeId)) {
+            state.writeBackEdits(
+                intent.nodeId,
+                listOf(SetLayoutProperty(intent.nodeId, LayoutProp.Gap, YamlScalarValue.Num(intent.gap))),
+            ) { node -> node.copy(layout = node.layout.copy(gap = DesignGap.Fixed(intent.gap.bindable()))) }
+        } else state
+        is DesignEditorIntent.SetLayoutPadding -> if (state.isAutoLayout(intent.nodeId)) {
+            state.writeBackEdits(
+                intent.nodeId,
+                paddingWriteBackEdits(intent.nodeId, intent.side, intent.value),
+            ) { node -> node.copy(layout = node.layout.copy(padding = node.layout.padding.withSide(intent.side, intent.value))) }
+        } else state
+        is DesignEditorIntent.SetLayoutAlign -> if (state.isAutoLayout(intent.nodeId)) {
+            state.editUnlockedNode(intent.nodeId) { node ->
+                node.copy(layout = node.layout.copy(
+                    alignItems = intent.alignItems ?: node.layout.alignItems,
+                    justifyContent = intent.justifyContent ?: node.layout.justifyContent,
+                ))
+            }
+        } else state
         is DesignEditorIntent.SetClipsContent -> state.editUnlockedNode(intent.nodeId) { node ->
             node.copy(layout = node.layout.copy(clipsContent = intent.clips))
         }
@@ -1022,6 +1030,121 @@ private fun DesignEditorState.detachInstanceReduce(nodeId: String): DesignEditor
         expectedPageIds = expected,
     )
 }
+
+private fun DesignEditorState.convertContainer(
+    intent: DesignEditorIntent.ConvertContainer,
+): DesignEditorState {
+    val before = document ?: return this
+    val current = before.nodeById(intent.nodeId) ?: return this
+    if (current.kind !is DesignNodeKind.Frame || isNodeLocked(intent.nodeId)) return this
+    if (intent.target == ContainerKind.AutoLayout && intent.targetMode == LayoutMode.None) return this
+    val geometry = intent.children.associateBy { it.nodeId }
+    if (current.children.any { it.kind !is DesignNodeKind.Annotation && it.id !in geometry }) return this
+
+    val convertedChildren = when (intent.target) {
+        ContainerKind.Frame -> current.children.map { child ->
+            val box = geometry[child.id] ?: return@map child
+            child.copy(
+                position = DesignPoint(box.x, box.y),
+                size = DesignSize(box.width, box.height),
+                sizing = DesignSizing(SizingMode.Fixed, SizingMode.Fixed),
+                constraints = io.aequicor.visualization.engine.ir.model.DesignConstraints(
+                    HorizontalConstraint.Left,
+                    VerticalConstraint.Top,
+                ),
+                layoutChild = child.layoutChild.copy(absolute = true),
+            )
+        }
+        ContainerKind.AutoLayout -> {
+            fun key(child: DesignNode): Pair<Double, Double> {
+                val box = geometry[child.id]
+                return when (intent.targetMode) {
+                    LayoutMode.Horizontal -> (box?.x ?: 0.0) to (box?.y ?: 0.0)
+                    LayoutMode.Vertical, LayoutMode.Grid, LayoutMode.None ->
+                        (box?.y ?: 0.0) to (box?.x ?: 0.0)
+                }
+            }
+            val sortedFlow = current.children
+                .withIndex()
+                .filterNot { it.value.kind is DesignNodeKind.Annotation }
+                .sortedWith(compareBy<IndexedValue<DesignNode>>({ key(it.value).first }, { key(it.value).second }, { it.index }))
+                .map { indexed ->
+                    indexed.value.copy(
+                        position = null,
+                        constraints = io.aequicor.visualization.engine.ir.model.DesignConstraints(),
+                        layoutChild = indexed.value.layoutChild.copy(absolute = false),
+                    )
+                }
+                .iterator()
+            current.children.map { child ->
+                if (child.kind is DesignNodeKind.Annotation) child else sortedFlow.next()
+            }
+        }
+    }
+
+    val nextLayout = when (intent.target) {
+        ContainerKind.Frame -> DesignAutoLayout(
+            mode = LayoutMode.None,
+            clipsContent = current.layout.clipsContent,
+        )
+        ContainerKind.AutoLayout -> DesignAutoLayout(
+            mode = intent.targetMode,
+            clipsContent = current.layout.clipsContent,
+            columns = if (intent.targetMode == LayoutMode.Grid) {
+                listOf(GridTrack.Flex(1.0.bindable()), GridTrack.Flex(1.0.bindable()))
+            } else {
+                emptyList()
+            },
+            implicitRows = if (intent.targetMode == LayoutMode.Grid) GridTrack.Hug else null,
+        )
+    }
+    val converted = current.copy(
+        containerKind = intent.target,
+        size = DesignSize(intent.width, intent.height),
+        sizing = DesignSizing(SizingMode.Fixed, SizingMode.Fixed),
+        layout = nextLayout,
+        children = convertedChildren,
+    )
+    val nextDocument = before.updateNode(intent.nodeId) { converted }
+    val inMemory = pushHistory(before).copy(document = nextDocument)
+    val expected = compiledResults.getOrNull(owningSourceIndex(intent.nodeId) ?: -1)
+        ?.document?.pageTreeIds() ?: return this
+    val persisted = withStructuralSource(
+        ownerNodeId = intent.nodeId,
+        edits = listOf(ReplaceSection(intent.nodeId, converted)),
+        inMemory = inMemory,
+        expectedPageIds = expected,
+        verify = { doc ->
+            val actual = doc.nodeById(intent.nodeId)
+            actual != null && semanticallyEquivalent(
+                DesignDocument(pages = listOf(DesignPage(id = "conversion", children = listOf(converted)))),
+                DesignDocument(pages = listOf(DesignPage(id = "conversion", children = listOf(actual)))),
+            )
+        },
+    )
+    return if (persisted.sources == sources) copy(diagnostics = persisted.diagnostics) else persisted
+}
+
+private fun DesignEditorState.setAutoLayoutMode(intent: DesignEditorIntent.SetLayoutMode): DesignEditorState {
+    val node = document?.nodeById(intent.nodeId) ?: return this
+    if (node.containerKind != ContainerKind.AutoLayout) return this
+    val mode = intent.mode.toLayoutMode()
+    if (mode == LayoutMode.None) return this
+    return writeBackEdits(intent.nodeId, listOf(ReemitNode(intent.nodeId))) { current ->
+        current.copy(
+            layout = current.layout.copy(
+                mode = mode,
+                columns = if (mode == LayoutMode.Grid && current.layout.columns.isEmpty()) {
+                    listOf(GridTrack.Flex(1.0.bindable()), GridTrack.Flex(1.0.bindable()))
+                } else if (mode == LayoutMode.Grid) current.layout.columns else emptyList(),
+                implicitRows = if (mode == LayoutMode.Grid) current.layout.implicitRows ?: GridTrack.Hug else null,
+            ),
+        )
+    }
+}
+
+private fun DesignEditorState.isAutoLayout(nodeId: String): Boolean =
+    document?.nodeById(nodeId)?.containerKind == ContainerKind.AutoLayout
 
 /**
  * Adds a fresh screen [page][EditorNodeFactory.newScreen] to the working document (the authority

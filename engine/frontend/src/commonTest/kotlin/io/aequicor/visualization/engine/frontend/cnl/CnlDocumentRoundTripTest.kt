@@ -26,15 +26,15 @@ class CnlDocumentRoundTripTest {
     """.trimIndent()
 
     private val body = """
-        # Mission Overview column gap 24 padding 48 color #0B1220
+        # Mission Overview column gap 24 padding 48 color #0B1220 auto-layout
 
-        ## Header row gap 12 padding 16 color #111827 radius 12
+        ## AutoLayout: Header row gap 12 padding 16 color #111827 radius 12
 
         Text «Active missions» size 20 bold color #F8FAFC
         Text «12 in progress» size 14 color #94A3B8
         Button «Create mission» size 16 bold color #22C55E
 
-        ## Metrics grid columns (count 3 track 1fr) gap (row 16 column 16) padding 24
+        ## AutoLayout: Metrics grid columns (count 3 track 1fr) gap (row 16 column 16) padding 24
 
         Rectangle 200 by 80 color #1E293B radius 8 stroke (color #334155 weight 1)
         Rectangle 200 by 80 gradient (linear from (0 0) to (0 1) stops (#4F46E5 at 0) (#9333EA at 1)) radius 8

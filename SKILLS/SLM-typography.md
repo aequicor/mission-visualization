@@ -203,7 +203,7 @@ TextStyle typography.emphasis font «Inter» size 14 weight 600 line-height 20
 
 # Typography Sample
 
-## Content id content column width (fill) height (hug) padding 24 gap 12
+## AutoLayout: Content id content column width (fill) height (hug) padding 24 gap 12
 
 Text id title «Mission Control» key sample.title text-style $typography.heading width (fill) height (hug) maxLines 1
 Text id body «Read the mission brief» key sample.body text-style $typography.body span (range (5 12) style typography.emphasis) link (range (5 12) to brief_screen) width (fill) height (hug) maxLines 2

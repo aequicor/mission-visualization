@@ -16,6 +16,8 @@ data class DesignNode(
     val id: String,
     val type: String,
     val kind: DesignNodeKind,
+    /** Container behavior is independent from semantic [type] (`screen`, `component`, etc.). */
+    val containerKind: ContainerKind = ContainerKind.Frame,
     val name: String = "",
     /** Semantic role from SLM, e.g. "primaryAction"; free-form, resolve-neutral. */
     val role: String = "",
@@ -85,6 +87,9 @@ data class DesignNode(
         return if (changed) copy(children = updated) else this
     }
 }
+
+/** A free-positioned frame or a flow-constrained Auto Layout container. */
+enum class ContainerKind { Frame, AutoLayout }
 
 /** Type-specific payload of a node, discriminated by the JSON `type` field. */
 sealed interface DesignNodeKind {

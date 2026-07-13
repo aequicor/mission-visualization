@@ -1,6 +1,7 @@
 package io.aequicor.visualization.engine.ir.serialization
 
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
@@ -16,6 +17,25 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class DesignJsonParserTest {
+
+    @Test
+    fun containerKindDefaultsToFrameAndRoundTripsAutoLayout() {
+        val free = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode("""{ "id": "free", "type": "frame" }"""),
+        ).node
+        assertEquals(ContainerKind.Frame, free.containerKind)
+
+        val stack = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode(
+                """{ "id": "stack", "type": "frame", "containerKind": "autoLayout", "layout": { "mode": "vertical" } }""",
+            ),
+        ).node
+        assertEquals(ContainerKind.AutoLayout, stack.containerKind)
+        assertEquals(
+            ContainerKind.AutoLayout,
+            assertIs<DesignNodeParseResult.Success>(parseDesignNode(writeDesignNode(stack).toJsonString())).node.containerKind,
+        )
+    }
 
     @Test
     fun parsesDocumentStructureWithBindingsAndAutoLayout() {

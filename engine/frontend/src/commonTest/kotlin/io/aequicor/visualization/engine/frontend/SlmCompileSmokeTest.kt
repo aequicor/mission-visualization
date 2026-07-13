@@ -34,7 +34,7 @@ class SlmCompileSmokeTest {
 
         # Панель миссий
 
-        ## Панель деталей id missionPanel column gap ${'$'}space.4 width (fill) height (hug) radius 8 color ${'$'}color.surface
+        ## AutoLayout: Панель деталей id missionPanel column gap ${'$'}space.4 width (fill) height (hug) radius 8 color ${'$'}color.surface
 
         Text id missionTitle «Mission Control» key missionDashboard.title
         Instance id cardInstance of ds/MissionCard variant (status nominal)

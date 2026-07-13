@@ -17,7 +17,7 @@ class NeverTranslatedTest {
 
 ![Схема](assets/icons/alert.svg)
 
-## Технический блок column gap ${'$'}space.4 color ${'$'}color.surface
+## AutoLayout: Технический блок column gap ${'$'}space.4 color ${'$'}color.surface
 """
         val result = compileSlm(source)
         val values = result.resources.values.flatMap { it.values }

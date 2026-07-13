@@ -115,6 +115,8 @@ import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.strings.MenuStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
@@ -1238,7 +1240,7 @@ private fun LayerRowView(
             }
         }
         EditorSvgIcon(
-            icon = layerIcon(node.type),
+            icon = layerIcon(node),
             contentDescription = node.type,
             modifier = Modifier.size(16.dp),
             tint = if (selected) colors.accent else colors.mutedInk,
@@ -1375,12 +1377,17 @@ private fun sourceTabIcon(tab: SourceTab): EditorIcon = when (tab) {
     SourceTab.Layers -> EditorIcon.Layers
 }
 
-private fun layerIcon(type: String): EditorIcon = when (type) {
+private fun layerIcon(node: DesignNode): EditorIcon = when {
+    node.containerKind == ContainerKind.AutoLayout && node.layout.mode == LayoutMode.Vertical -> EditorIcon.AutoLayoutVertical
+    node.containerKind == ContainerKind.AutoLayout && node.layout.mode == LayoutMode.Horizontal -> EditorIcon.AutoLayoutHorizontal
+    node.containerKind == ContainerKind.AutoLayout && node.layout.mode == LayoutMode.Grid -> EditorIcon.AutoLayoutGrid
+    else -> when (node.type) {
     "frame", "group", "section", "screen" -> EditorIcon.Frame
     "text" -> EditorIcon.Text
     "instance" -> EditorIcon.Component
     "shape" -> EditorIcon.Rectangle
     else -> EditorIcon.Layers
+    }
 }
 
 // --- Screens panel -----------------------------------------------------------

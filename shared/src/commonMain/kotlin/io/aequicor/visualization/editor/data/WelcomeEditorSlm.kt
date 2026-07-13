@@ -129,7 +129,7 @@ val WelcomeEditorSlm: String = missionSlm(
 
     ### Text: id cv_title characters «Canvas — Welcome» name «Canvas Title» width hug height hug position 24 26 color §color.text size 20 key welcome.canvas.title bold font «Inter» autosize both
 
-    ### Frame: id cv_badge name «Tour Badge» width (hug 118) height (hug 28) position 300 26 row gap 6 padding 5 12 color §color.accent radius 999 align (block center)
+    ### AutoLayout: id cv_badge name «Tour Badge» width (hug 118) height (hug 28) position 300 26 row gap 6 padding 5 12 color §color.accent radius 999 align (block center)
 
     #### Ellipse: id cv_badge_dot name «Tour Dot» 8 by 8 color #FFFFFF motion duration 900 loop frames (0 opacity 0.4) (0.5 opacity 1) (1 opacity 0.4)
 
@@ -173,7 +173,7 @@ val WelcomeEditorSlm: String = missionSlm(
 
     #### Vector: id cv_cursor_arrow name «Cursor» 22 by 22 position 0 0 color #7048E8 viewbox (0 0 24 24) path «M2 2 L22 10 L12 13 L9 23 Z»
 
-    #### Frame: id cv_cursor_chip name «Cursor Chip» width (hug 84) height (hug 24) position 24 18 row padding 4 10 color #7048E8 radius 999
+    #### AutoLayout: id cv_cursor_chip name «Cursor Chip» width (hug 84) height (hug 24) position 24 18 row padding 4 10 color #7048E8 radius 999
 
     ##### Text: id cv_cursor_label characters «SLM Agent» name «Cursor Label» width hug height hug color #FFFFFF size 11 key welcome.canvas.cursor semibold font «Inter» autosize both
 

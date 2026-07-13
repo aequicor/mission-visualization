@@ -36,7 +36,7 @@ class CnlComponentsDocumentTest {
 
         ## Component: Wire Tile id cmpWireTileHighlight component-name WireTile set cmpWireTileSet axis kind (default highlight) variant (kind highlight) color #E97155
 
-        ## Component: Log Row id cmpLogRow component-name «Log Row» prop label (text default «Event») prop time (text default «00:00») row
+        ## Component: Log Row id cmpLogRow component-name «Log Row» prop label (text default «Event») prop time (text default «00:00») row auto-layout
 
         Text id logLabel characters ${'$'}prop.label
         Text id logTime characters ${'$'}prop.time

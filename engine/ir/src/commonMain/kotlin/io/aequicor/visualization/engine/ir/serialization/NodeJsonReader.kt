@@ -4,6 +4,7 @@ import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
 import io.aequicor.visualization.engine.ir.model.DesignCondition
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignExpression
 import io.aequicor.visualization.engine.ir.model.DesignMask
 import io.aequicor.visualization.engine.ir.model.DesignMedia
@@ -51,10 +52,19 @@ internal fun DesignDocumentReader.readNode(element: JsonElement, pointer: String
     val type = obj.stringOrDefault("type", "frame")
     val kind = readKind(type, obj, pointer)
     val layoutObj = obj["layout"] as? JsonObject
+    val containerKind = when (val raw = obj.stringOrDefault("containerKind", "frame")) {
+        "frame" -> ContainerKind.Frame
+        "autoLayout" -> ContainerKind.AutoLayout
+        else -> {
+            error("$pointer/containerKind", "Unknown containerKind '$raw'; expected frame or autoLayout")
+            ContainerKind.Frame
+        }
+    }
     return DesignNode(
         id = obj.stringOrDefault("id"),
         type = type,
         kind = kind,
+        containerKind = containerKind,
         name = obj.stringOrDefault("name"),
         role = obj.stringOrDefault("role"),
         visible = readBindableBoolean(obj["visible"], true),

@@ -51,9 +51,9 @@ frame: { preset: desktop-1440, width: 1440, height: 1024 }
 
 # Sample Screen
 
-## App Shell id app_shell column width (fill) height (fill) padding 24 gap 16 clip overflow (y auto) color #FFFFFF
+## Frame: App Shell id app_shell 1392 by 976 position 24 24 clip overflow (y auto) color #FFFFFF
 
-Text id page_title «Sample Screen» key sample.title font «Inter» bold size 24 line-height 32 width (fill) height (hug) maxLines 1
+Text id page_title «Sample Screen» key sample.title font «Inter» bold size 24 line-height 32 width 400 height 32 position 24 24 maxLines 1
 ```
 
 The `App Shell` heading represents a container. Its following text sentence is a child.
@@ -71,10 +71,11 @@ the generated keys and makes strict document validation fail on missing messages
    theme, density, inputs, states, primary actions, and navigation.
 2. Build information architecture: root shell, navigation, main regions, repeated rows,
    dialogs, overlays, loading/empty/error states.
-3. Prefer auto layout (`column`, `row`, `grid`) with padding, gap, fill/hug/fixed sizing,
-   min/max bounds, and clipping. Use `absolute` only for intentionally freeform content.
-4. Name container headings before their properties: `## Results Panel column gap 12`,
-   not `## column gap 12`.
+3. Use a free `Frame` by default. Give every direct child an explicit `position`, `width`,
+   and `height`, so the user can drag it freely after generation. Use `AutoLayout` only
+   when the user explicitly asks for auto layout, flow, stacks, rows, columns, or a grid.
+4. Name container headings before their properties: `## Frame: Results Panel 720 by 480`,
+   or, only when requested, `## AutoLayout: Results Panel column gap 12`.
 5. Use primitives when a component library is not known. Never invent widget nouns such
    as `dataGrid`, `codeViewer`, `chartWidget`, or `treeView`.
 6. Perform the autonomous source self-check at the end of this guide. Trace the heading
@@ -107,7 +108,8 @@ Known nouns are fixed:
 | `Line`, `Star`, `Polygon`, `Arrow` | corresponding shape |
 | `Text` / `label` | text node |
 | `Button` | text node with button role |
-| `Frame` / `container` | frame |
+| `Frame` / `container` | free-positioned frame |
+| `AutoLayout` | auto-layout frame; requires `row`, `column`, or `grid` |
 | `group` | group |
 | `section`, `screen` | semantic section/root node |
 | `Image` | media node |
@@ -139,9 +141,17 @@ Anchor values are literal; bound anchor insets do not round-trip.
 
 ## Layout and grid
 
+`Frame` and `AutoLayout` are persisted container kinds, independent from semantic node
+type. A `Frame` is always free: it cannot carry `row`, `column`, `grid`, gap, padding,
+distribution, wrap, or grid tracks. An `AutoLayout` always carries exactly one of `row`,
+`column`, or `grid`; `free` is invalid. For semantic containers keep their noun and add
+the modifier: `## Component: Card auto-layout row`, `## Section: Filters auto-layout column`,
+or `## Screen: Dashboard auto-layout grid`. `clip`, scroll, sizing, constraints, guides,
+layout-grid overlays, and visual properties remain available on either kind.
+
 | Meaning | CNL phrase | Example |
 | --- | --- | --- |
-| layout mode | `column`, `row`, `grid`, `free` | `column` |
+| Auto Layout direction | `column`, `row`, `grid` | `column` |
 | wrapping | `wrap` | `row wrap` |
 | gap | `gap N`, `gap auto`, `gap (row N column N)` | `gap (row 16 column 8)` |
 | distribution | `distribute center\|end\|space-between` | `distribute space-between` |
@@ -213,7 +223,7 @@ Define a reusable component with a `Component:` heading; its nested subtree is t
 definition. Give the definition an explicit id and component name.
 
 ```md
-## Component: Mission Card id component_mission_card component-name ds/MissionCard axis status (nominal warning critical) prop title (text default «Mission name») prop showBadge (boolean default true) column gap 12
+## Component: Mission Card id component_mission_card component-name ds/MissionCard axis status (nominal warning critical) prop title (text default «Mission name») prop showBadge (boolean default true) auto-layout column gap 12
 ```
 
 Instance phrases:
@@ -344,6 +354,10 @@ Before finishing, inspect the source text yourself and verify all of these:
 - no outer fence, body typed YAML block, or `ir` fence exists;
 - every UI line starts with a known noun and stays on one physical line;
 - every heading has a name before properties and nesting never exceeds level 6;
+- every generated container is a free `Frame` unless the user explicitly requested Auto
+  Layout; every direct child of a `Frame` has explicit `position`, `width`, and `height`;
+- every `AutoLayout` has `row`, `column`, or `grid`, and every semantic auto-layout
+  container has the explicit `auto-layout` modifier;
 - ids are unique; every component, node, action, span link, mask, and diagram reference resolves;
 - every runtime/Prototype Variable read uses `{{name}}`; `$name` is reserved for a
   Collection/design-token reference;

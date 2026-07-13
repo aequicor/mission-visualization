@@ -206,6 +206,7 @@ class PatchMerger(
         return node.copy(
             type = patch.type ?: node.type,
             kind = patch.type?.let { kindForType(it, node.kind) } ?: node.kind,
+            containerKind = patch.containerKind ?: node.containerKind,
             name = patch.name ?: node.name,
             role = patch.role ?: node.role,
             visible = patch.visible ?: node.visible,

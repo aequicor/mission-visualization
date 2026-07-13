@@ -41,7 +41,7 @@ class CnlFullDocumentEmitTest {
         Paint surface.card color ${'$'}color.surface
         TextStyle type.body font Inter size 16 weight 500
 
-        # Full Demo column gap 24 padding 48 styles (fill surface.card)
+        # Full Demo column gap 24 padding 48 styles (fill surface.card) auto-layout
 
         Instance id cardOne of cmpCard props (label «Telemetry nominal»)
         Text id status «Online» text-style type.body

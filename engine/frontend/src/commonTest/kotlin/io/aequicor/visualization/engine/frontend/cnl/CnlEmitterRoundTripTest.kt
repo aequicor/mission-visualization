@@ -406,13 +406,13 @@ class CnlEmitterRoundTripTest {
 
     @Test
     fun containerAlignDistributeWrapClip() =
-        assertLeafRoundTrips("Frame column align (inline stretch) distribute space-between wrap clip") {
+        assertLeafRoundTrips("AutoLayout column align (inline stretch) distribute space-between wrap clip") {
             it is DesignNodeKind.Frame
         }
 
     @Test
     fun frameWithTokenGapPaddingAndRadius() =
-        assertLeafRoundTrips("Frame column gap \$space padding \$padV \$padH radius \$radius") {
+        assertLeafRoundTrips("AutoLayout column gap \$space padding \$padV \$padH radius \$radius") {
             it is DesignNodeKind.Frame
         }
 
@@ -428,11 +428,11 @@ class CnlEmitterRoundTripTest {
 
     @Test
     fun gapAxes() =
-        assertLeafRoundTrips("Frame grid gap (row 24 column 24)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid gap (row 24 column 24)") { it is DesignNodeKind.Frame }
 
     @Test
     fun gapAuto() =
-        assertLeafRoundTrips("Frame row gap auto") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout row gap auto") { it is DesignNodeKind.Frame }
 
     @Test
     fun overflowAndScroll() =
@@ -442,23 +442,23 @@ class CnlEmitterRoundTripTest {
 
     @Test
     fun gridColumnsImplicitRowsGap() =
-        assertLeafRoundTrips("Frame grid columns (count 12 track 1fr) rows (auto min 96) gap (row 24 column 24)") {
+        assertLeafRoundTrips("AutoLayout grid columns (count 12 track 1fr) rows (auto min 96) gap (row 24 column 24)") {
             it is DesignNodeKind.Frame
         }
 
     @Test
     fun gridExplicitRows() =
-        assertLeafRoundTrips("Frame grid columns (count 3 track 2fr) rows (count 2 track 1fr)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (count 3 track 2fr) rows (count 2 track 1fr)") { it is DesignNodeKind.Frame }
 
     @Test
     fun gridHeterogeneousColumnsAndImplicitHugRows() =
-        assertLeafRoundTrips("Frame grid columns (tracks (1fr 2fr hug)) rows (auto track hug min 96)") {
+        assertLeafRoundTrips("AutoLayout grid columns (tracks (1fr 2fr hug)) rows (auto track hug min 96)") {
             it is DesignNodeKind.Frame
         }
 
     @Test
     fun gridHeterogeneousRows() =
-        assertLeafRoundTrips("Frame grid rows (tracks (hug 2fr 96))") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid rows (tracks (hug 2fr 96))") { it is DesignNodeKind.Frame }
 
     @Test
     fun gridChildPlacement() =
@@ -470,18 +470,18 @@ class CnlEmitterRoundTripTest {
     fun gridFixedTrackTokenRef() {
         assertEquals(
             listOf(GridTrack.Fixed(Bindable.VarRef("col.width"))),
-            columnsOf("Frame grid columns (track \$col.width)"),
+            columnsOf("AutoLayout grid columns (track \$col.width)"),
         )
-        assertLeafRoundTrips("Frame grid columns (track \$col.width)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (track \$col.width)") { it is DesignNodeKind.Frame }
     }
 
     @Test
     fun gridFixedTrackDataBinding() {
         assertEquals(
             listOf(GridTrack.Fixed(Bindable.DataRef(DesignExpression("data.colWidth")))),
-            columnsOf("Frame grid columns (track {{data.colWidth}})"),
+            columnsOf("AutoLayout grid columns (track {{data.colWidth}})"),
         )
-        assertLeafRoundTrips("Frame grid columns (track {{data.colWidth}})") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (track {{data.colWidth}})") { it is DesignNodeKind.Frame }
     }
 
     private fun columnsOf(sentence: String): List<GridTrack> =
@@ -493,18 +493,18 @@ class CnlEmitterRoundTripTest {
         // Fixed ref whose id ends in `fr` (see gridFixedTrackTokenRefEndingInFr).
         assertEquals(
             listOf(GridTrack.Flex(Bindable.VarRef("colWeight"))),
-            columnsOf("Frame grid columns (track \${colWeight}fr)"),
+            columnsOf("AutoLayout grid columns (track \${colWeight}fr)"),
         )
-        assertLeafRoundTrips("Frame grid columns (track \${colWeight}fr)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (track \${colWeight}fr)") { it is DesignNodeKind.Frame }
     }
 
     @Test
     fun gridFlexTrackPropRef() {
         assertEquals(
             listOf(GridTrack.Flex(Bindable.PropRef("weight"))),
-            columnsOf("Frame grid columns (track \${prop.weight}fr)"),
+            columnsOf("AutoLayout grid columns (track \${prop.weight}fr)"),
         )
-        assertLeafRoundTrips("Frame grid columns (track \${prop.weight}fr)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (track \${prop.weight}fr)") { it is DesignNodeKind.Frame }
     }
 
     /** Regression: a Fixed track bound to a var whose id ends in `fr` must not read as Flex. */
@@ -512,9 +512,9 @@ class CnlEmitterRoundTripTest {
     fun gridFixedTrackTokenRefEndingInFr() {
         assertEquals(
             listOf(GridTrack.Fixed(Bindable.VarRef("railfr"))),
-            columnsOf("Frame grid columns (track \$railfr)"),
+            columnsOf("AutoLayout grid columns (track \$railfr)"),
         )
-        assertLeafRoundTrips("Frame grid columns (track \$railfr)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (track \$railfr)") { it is DesignNodeKind.Frame }
     }
 
     /** Regression: a Fixed track bound to a prop whose name ends in `fr` must not read as Flex. */
@@ -522,9 +522,9 @@ class CnlEmitterRoundTripTest {
     fun gridFixedTrackPropRefEndingInFr() {
         assertEquals(
             listOf(GridTrack.Fixed(Bindable.PropRef("weightfr"))),
-            columnsOf("Frame grid columns (track \$prop.weightfr)"),
+            columnsOf("AutoLayout grid columns (track \$prop.weightfr)"),
         )
-        assertLeafRoundTrips("Frame grid columns (track \$prop.weightfr)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (track \$prop.weightfr)") { it is DesignNodeKind.Frame }
     }
 
     /** A Fixed ref ending in `fr` and a Flex ref stripped of it must be two distinct tracks. */
@@ -532,7 +532,7 @@ class CnlEmitterRoundTripTest {
     fun gridFixedFrRefAndFlexRefStayDistinct() {
         assertEquals(
             listOf(GridTrack.Fixed(Bindable.VarRef("railfr")), GridTrack.Flex(Bindable.VarRef("rail"))),
-            columnsOf("Frame grid columns (tracks (\$railfr \${rail}fr))"),
+            columnsOf("AutoLayout grid columns (tracks (\$railfr \${rail}fr))"),
         )
     }
 
@@ -540,18 +540,18 @@ class CnlEmitterRoundTripTest {
     fun gridFlexTrackDataBinding() {
         assertEquals(
             listOf(GridTrack.Flex(Bindable.DataRef(DesignExpression("data.colWeight")))),
-            columnsOf("Frame grid columns (track {{data.colWeight}}fr)"),
+            columnsOf("AutoLayout grid columns (track {{data.colWeight}}fr)"),
         )
-        assertLeafRoundTrips("Frame grid columns (track {{data.colWeight}}fr)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (track {{data.colWeight}}fr)") { it is DesignNodeKind.Frame }
     }
 
     @Test
     fun gridImplicitRowMinTokenRef() =
-        assertLeafRoundTrips("Frame grid columns (count 12 track 1fr) rows (auto min \$row.min)") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (count 12 track 1fr) rows (auto min \$row.min)") { it is DesignNodeKind.Frame }
 
     @Test
     fun gridImplicitRowMinDataBinding() =
-        assertLeafRoundTrips("Frame grid columns (count 12 track 1fr) rows (auto min {{data.rowMin}})") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (count 12 track 1fr) rows (auto min {{data.rowMin}})") { it is DesignNodeKind.Frame }
 
     @Test
     fun gridHeterogeneousTracksWithRefs() {
@@ -561,9 +561,9 @@ class CnlEmitterRoundTripTest {
                 GridTrack.Flex(1.0.bindable()),
                 GridTrack.Flex(Bindable.VarRef("rail")),
             ),
-            columnsOf("Frame grid columns (tracks (\$sidebar 1fr \${rail}fr))"),
+            columnsOf("AutoLayout grid columns (tracks (\$sidebar 1fr \${rail}fr))"),
         )
-        assertLeafRoundTrips("Frame grid columns (tracks (\$sidebar 1fr \${rail}fr))") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout grid columns (tracks (\$sidebar 1fr \${rail}fr))") { it is DesignNodeKind.Frame }
     }
 
     @Test
@@ -691,7 +691,7 @@ class CnlEmitterRoundTripTest {
     @Test
     fun containerHeadingRoundTrips() {
         val doc = """
-            ## Card column gap 12 padding 24 color #111827 radius 16
+            ## AutoLayout: Card column gap 12 padding 24 color #111827 radius 16
 
             Rectangle 100 by 8 color #22C55E
             Text «Active missions» size 20 bold color #F8FAFC
@@ -711,7 +711,7 @@ class CnlEmitterRoundTripTest {
     @Test
     fun typedContainerHeadingRoundTrips() {
         val doc = """
-            ## Frame: Card id card column gap 12 padding 24 color #111827 radius 16
+            ## AutoLayout: Card id card column gap 12 padding 24 color #111827 radius 16
 
             Rectangle id rule name «Rule» 100 by 8 color #22C55E
         """.trimIndent()
@@ -923,7 +923,7 @@ class CnlEmitterRoundTripTest {
 
     @Test
     fun responsiveLayoutVariant() =
-        assertLeafRoundTrips("Frame column gap 12 when (breakpoint sm) column gap 8") { it is DesignNodeKind.Frame }
+        assertLeafRoundTrips("AutoLayout column gap 12 when (breakpoint sm) column gap 8") { it is DesignNodeKind.Frame }
 
     @Test
     fun responsiveStyleVariant() =
@@ -933,7 +933,7 @@ class CnlEmitterRoundTripTest {
 
     @Test
     fun responsiveMultiDimensionVariants() =
-        assertLeafRoundTrips("Frame when (platform ios density high) radius 12 when (breakpoint lg) row gap 24") {
+        assertLeafRoundTrips("AutoLayout when (platform ios density high) radius 12 when (breakpoint lg) row gap 24") {
             it is DesignNodeKind.Frame
         }
 
@@ -970,11 +970,11 @@ class CnlEmitterRoundTripTest {
     }
 
     @Test
-    fun typedFrameHeadingStillAcceptsCompatibleSuffix() {
+    fun typedAutoLayoutHeadingAcceptsCompatibleSuffix() {
         val diagnostics = DiagnosticCollector("test.layout.md")
-        val split = assertNotNull(CnlParser.parseHeading("Frame: Card id card column gap 12", lineNumber = 1, baseColumn = 1, diagnostics))
+        val split = assertNotNull(CnlParser.parseHeading("AutoLayout: Card id card column gap 12", lineNumber = 1, baseColumn = 1, diagnostics))
 
-        assertEquals("Frame: Card", split.name)
+        assertEquals("AutoLayout: Card", split.name)
         assertTrue(split.element.properties.isNotEmpty())
         assertTrue(diagnostics.diagnostics.isEmpty(), diagnostics.diagnostics.joinToString { it.message })
     }

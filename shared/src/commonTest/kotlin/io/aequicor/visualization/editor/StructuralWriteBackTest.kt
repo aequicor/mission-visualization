@@ -413,7 +413,7 @@ class StructuralWriteBackTest {
 
             # Screen id root name «Screen»
 
-            ## Frame: id deck name «Deck» column
+            ## AutoLayout: id deck name «Deck» column
 
             A floating annotation.
 

@@ -58,6 +58,9 @@ object LabelStringsEn : LabelStrings {
     override fun editorTool(tool: EditorTool): String = when (tool) {
         EditorTool.Select -> "Move"
         EditorTool.Frame -> "Frame"
+        EditorTool.AutoLayoutVertical -> "Auto Layout — Vertical"
+        EditorTool.AutoLayoutHorizontal -> "Auto Layout — Horizontal"
+        EditorTool.AutoLayoutGrid -> "Auto Layout — Grid"
         EditorTool.Rectangle -> "Rectangle"
         EditorTool.Ellipse -> "Ellipse"
         EditorTool.Polygon -> "Polygon"
@@ -116,6 +119,9 @@ object LabelStringsRu : LabelStrings {
     override fun editorTool(tool: EditorTool): String = when (tool) {
         EditorTool.Select -> "Перемещение"
         EditorTool.Frame -> "Фрейм"
+        EditorTool.AutoLayoutVertical -> "Автолайаут — вертикальный"
+        EditorTool.AutoLayoutHorizontal -> "Автолайаут — горизонтальный"
+        EditorTool.AutoLayoutGrid -> "Автолайаут — сетка"
         EditorTool.Rectangle -> "Прямоугольник"
         EditorTool.Ellipse -> "Эллипс"
         EditorTool.Polygon -> "Многоугольник"

@@ -308,7 +308,11 @@ private class SemanticExtractor(
             isSingleWordPrefix && CnlVocabulary.nouns[prefix.lowercase()] != null -> {
                 val noun = CnlVocabulary.nouns.getValue(prefix.lowercase())
                 section.name = text.drop(colon + 1).trim()
-                section.semanticPatches += NodePatch(type = noun.nodeType, role = noun.role)
+                section.semanticPatches += NodePatch(
+                    type = noun.nodeType,
+                    role = noun.role,
+                    containerKind = noun.containerKind,
+                )
                 noun.shapeKind?.let { shapeKind ->
                     shapeTypeOf(shapeKind)?.let { section.semanticPatches += ShapePatch(kind = it) }
                 }

@@ -12,7 +12,7 @@ import io.aequicor.visualization.editor.presentation.DraftController
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.platform.platformConnectFolderForTest
 import io.aequicor.visualization.editor.platform.platformResetFolderSyncForTest
-import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 import java.nio.file.Files
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createTempDirectory
@@ -72,8 +72,8 @@ class DesktopProjectPersistenceTest {
 
         try {
             waitUntil { !state.projectLandingVisible && state.designState.document?.nodeById("frame_overview") != null }
-            state.dispatch(DesignEditorIntent.SetLayoutAlign("frame_overview", alignItems = AlignItems.End))
-            assertEquals(AlignItems.End, state.designState.document?.nodeById("frame_overview")?.layout?.alignItems)
+            state.dispatch(DesignEditorIntent.UpdateOpacity("win_bg", 0.73))
+            assertEquals(0.73, state.designState.document?.nodeById("win_bg")?.opacity?.literalOrNull())
 
             val overviewPath = root.resolve("mission-overview.layout.md")
             val authoritative = state.designState.sources.single { it.fileName == "mission-overview.layout.md" }.content
@@ -94,7 +94,7 @@ class DesktopProjectPersistenceTest {
             state.openRecentProject(root.toString())
             waitUntil { !state.projectLandingVisible }
 
-            assertEquals(AlignItems.End, state.designState.document?.nodeById("frame_overview")?.layout?.alignItems)
+            assertEquals(0.73, state.designState.document?.nodeById("win_bg")?.opacity?.literalOrNull())
         } finally {
             scope.cancel()
             platformResetFolderSyncForTest()

@@ -1,5 +1,7 @@
 package io.aequicor.visualization.engine.frontend.cnl
 
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+
 /**
  * CNL keyword tables — the single source of truth for the grammar's words. English is the
  * sole authored language: nouns map to node types, keywords to [CnlPropertyKind], enum words
@@ -20,7 +22,9 @@ internal object CnlVocabulary {
         "arrow" to shape("arrow"),
         "text" to node("text"), "label" to node("text"),
         "button" to CnlNoun("text", role = "button"),
-        "frame" to node("frame"), "container" to node("frame"),
+        "frame" to CnlNoun("frame", containerKind = ContainerKind.Frame),
+        "container" to CnlNoun("frame", containerKind = ContainerKind.Frame),
+        "autolayout" to CnlNoun("frame", containerKind = ContainerKind.AutoLayout),
         "group" to node("group"),
         "section" to node("section"),
         "screen" to node("screen"),
@@ -48,6 +52,7 @@ internal object CnlVocabulary {
         "styles" to CnlPropertyKind.StyleRefs,
         "rotate" to CnlPropertyKind.Rotation, "rotation" to CnlPropertyKind.Rotation,
         "padding" to CnlPropertyKind.Padding,
+        "auto-layout" to CnlPropertyKind.AutoLayout,
         "gap" to CnlPropertyKind.Gap,
         "width" to CnlPropertyKind.Width,
         "height" to CnlPropertyKind.Height,

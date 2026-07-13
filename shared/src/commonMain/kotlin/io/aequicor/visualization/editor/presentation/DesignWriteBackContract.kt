@@ -100,6 +100,7 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.DeleteScreen,
     is DesignEditorIntent.CreateDiagramObject,
     is DesignEditorIntent.AddResourceMedia,
+    is DesignEditorIntent.ConvertContainer,
     is DesignEditorIntent.SetLayoutMode,
     is DesignEditorIntent.SetLayoutGap,
     is DesignEditorIntent.SetLayoutPadding,

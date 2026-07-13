@@ -302,11 +302,12 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
             DeviceControl(ws.deviceMode) { mode -> state.updateWorkspace { it.copy(deviceMode = mode) } }
             SceneModeToggle(ws.mode) { mode -> state.updateWorkspace { it.copy(mode = mode) } }
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                FloatingToolbar(state, ws.tool, ws.lastShapeTool) { tool ->
+                FloatingToolbar(state, ws.tool, ws.lastShapeTool, ws.lastContainerTool) { tool ->
                     state.updateWorkspace {
                         it.copy(
                             tool = tool,
                             lastShapeTool = if (tool.isShapeTool) tool else it.lastShapeTool,
+                            lastContainerTool = if (tool.isContainerTool) tool else it.lastContainerTool,
                             // Picking a canvas tool leaves annotation mode (one axis active at a time).
                             annotationTool = AnnotationTool.None,
                         )
@@ -4408,6 +4409,7 @@ private fun FloatingToolbar(
     state: MissionEditorStateHolder,
     selected: EditorTool,
     lastShapeTool: EditorTool,
+    lastContainerTool: EditorTool,
     onSelect: (EditorTool) -> Unit,
 ) {
     val colors = LocalEditorColors.current
@@ -4427,7 +4429,7 @@ private fun FloatingToolbar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             ToolbarButton(EditorTool.Select, selected, onSelect)
-            ToolbarButton(EditorTool.Frame, selected, onSelect)
+            ContainerToolFlyout(selected, lastContainerTool, onSelect)
             ShapeToolFlyout(selected, lastShapeTool, onSelect)
             ToolbarButton(EditorTool.Pen, selected, onSelect)
             ToolbarButton(EditorTool.Text, selected, onSelect)
@@ -4438,6 +4440,67 @@ private fun FloatingToolbar(
             ExportIssuesAction(state)
             // Referenced so an unused-`slots` warning never appears if the explicit list drifts.
             check(slots.isNotEmpty())
+        }
+    }
+}
+
+private val ContainerTools = listOf(
+    EditorTool.Frame,
+    EditorTool.AutoLayoutVertical,
+    EditorTool.AutoLayoutHorizontal,
+    EditorTool.AutoLayoutGrid,
+)
+
+/** Figma-style container slot: a fast-path main button plus a fully visual preset menu. */
+@Composable
+private fun ContainerToolFlyout(
+    selected: EditorTool,
+    lastContainerTool: EditorTool,
+    onSelect: (EditorTool) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    val active = selected.isContainerTool
+    val shape = RoundedCornerShape(8.dp)
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            modifier = Modifier.size(36.dp)
+                .background(if (active) colors.accent else colors.controlSurface, shape)
+                .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                .clip(shape)
+                .clickable { onSelect(lastContainerTool) },
+            contentAlignment = Alignment.Center,
+        ) {
+            EditorSvgIcon(
+                icon = toolIcon(lastContainerTool),
+                contentDescription = strings.labels.editorTool(lastContainerTool),
+                modifier = Modifier.size(24.dp),
+                tint = if (active) Color.White else colors.ink,
+            )
+            Box(
+                modifier = Modifier.align(Alignment.BottomEnd).size(12.dp).clip(shape).clickable { expanded = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                EditorSvgIcon(
+                    EditorIcon.ChevronDown,
+                    contentDescription = strings.common.openOptions,
+                    modifier = Modifier.size(10.dp),
+                    tint = if (active) Color.White else colors.mutedInk,
+                )
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ContainerTools.forEach { tool ->
+                EditorDropdownMenuItem(
+                    text = strings.labels.editorTool(tool),
+                    leadingContent = { DropdownMenuIcon(toolIcon(tool)) },
+                    onClick = {
+                        expanded = false
+                        onSelect(tool)
+                    },
+                )
+            }
         }
     }
 }
@@ -5000,6 +5063,9 @@ private fun deviceIcon(mode: DeviceMode): EditorIcon = when (mode) {
 private fun toolIcon(tool: EditorTool): EditorIcon = when (tool) {
     EditorTool.Select -> EditorIcon.Select
     EditorTool.Frame -> EditorIcon.Frame
+    EditorTool.AutoLayoutVertical -> EditorIcon.AutoLayoutVertical
+    EditorTool.AutoLayoutHorizontal -> EditorIcon.AutoLayoutHorizontal
+    EditorTool.AutoLayoutGrid -> EditorIcon.AutoLayoutGrid
     EditorTool.Rectangle -> EditorIcon.Rectangle
     EditorTool.Ellipse -> EditorIcon.Ellipse
     EditorTool.Polygon -> EditorIcon.Polygon

@@ -61,7 +61,7 @@ class CnlReemitWriteBackTest {
 
     @Test
     fun rotationRoundTripsAndPreservesSiblingPhrases() {
-        val source = screen("## Frame: Card id card column gap 12 color #FFFFFF")
+        val source = screen("## AutoLayout: Card id card column gap 12 color #FFFFFF")
         val result = compiled(source)
         val patched = result.node("card").copy(rotation = 45.0)
         val next = assertNotNull(applySlmEdit(source, SetNodeRotation("card", 45.0), result, patched).newSource)
@@ -84,7 +84,7 @@ class CnlReemitWriteBackTest {
     fun rotationWithoutPatchedNodeStaysInMemory() {
         // SetNodeRotation is not surgically expressible in a CNL sentence; without a patched node
         // tier-3 is unavailable, so it must fail cleanly (→ in-memory fallback), never a YAML splice.
-        val source = screen("## Frame: Card id card column gap 12 color #FFFFFF")
+        val source = screen("## AutoLayout: Card id card column gap 12 color #FFFFFF")
         assertNull(applySlmEdit(source, SetNodeRotation("card", 45.0), compiled(source)).newSource)
     }
 

@@ -6,6 +6,42 @@ import kotlin.test.Test
 class LayoutChecksTest {
 
     @Test
+    fun frameWithFlowLayoutIsAnError() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "legacy", "type": "frame", "layout": { "mode": "vertical", "gap": 8 } }
+            ] } ] }
+            """.trimIndent(),
+        ).assertHas("IR-LAYOUT-009", DesignSeverity.Error, messagePart = "legacy")
+    }
+
+    @Test
+    fun autoLayoutWithoutDirectionIsAnError() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "stack", "type": "frame", "containerKind": "autoLayout", "layout": { "mode": "none" } }
+            ] } ] }
+            """.trimIndent(),
+        ).assertHas("IR-LAYOUT-010", DesignSeverity.Error, messagePart = "stack")
+    }
+
+    @Test
+    fun matchingContainerKindsAreValid() {
+        val diagnostics = validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "free", "type": "frame", "containerKind": "frame", "layout": { "mode": "none" } },
+              { "id": "stack", "type": "frame", "containerKind": "autoLayout", "layout": { "mode": "horizontal", "gap": 8 } }
+            ] } ] }
+            """.trimIndent(),
+        )
+        diagnostics.assertNone("IR-LAYOUT-009")
+        diagnostics.assertNone("IR-LAYOUT-010")
+    }
+
+    @Test
     fun fillChildInFreeLayoutWithoutConstraintsWarns() {
         validate(
             """

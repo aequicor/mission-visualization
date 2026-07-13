@@ -59,7 +59,7 @@ IR должен быть language-neutral.
 Kotlin-патчи, не YAML.
 
 ```md
-## Frame: Missions Panel column gap 16 padding 24 color #FFFFFF radius 12
+## AutoLayout: Missions Panel column gap 16 padding 24 color #FFFFFF radius 12
 
 Rectangle 120 by 15 color #00B843 radius 15
 Text «Active missions» size 20 bold color #0F172A
@@ -333,7 +333,7 @@ permissions or product rollout. Он должен уметь описать фи
 CNL-предложение выражает весь узел:
 
 ```md
-## Frame: CTA Card row padding (16 24) gap 12 distribute space-between align center width (fill) height (hug) color color.surface radius radius.md styles (effect shadow.card)
+## AutoLayout: CTA Card row padding 16 24 gap 12 distribute space-between align center width (fill) height (hug) color color.surface radius radius.md styles (effect shadow.card)
 ```
 
 Внутри компилятора это одно предложение десугарится в набор типизированных патчей
@@ -513,7 +513,7 @@ generic `group`.
 Авторская форма — layout-фразы в CNL-предложении узла:
 
 ```md
-## Frame: Mission Detail Panel column padding (20 24) gap (row 16 column 8) align (inline stretch) width (fill min 320 max 520) height (hug) clip overflow (x hidden y auto) scroll (direction vertical fixedChildren (missionPanelHeader))
+## AutoLayout: Mission Detail Panel column padding 20 24 gap (row 16 column 8) align (inline stretch) width (fill min 320 max 520) height (hug) clip overflow (x hidden y auto) scroll (direction vertical fixedChildren (missionPanelHeader))
 ```
 
 Layout-часть внутренней модели покрывает Auto layout, grid, absolute positioning,
@@ -554,7 +554,7 @@ direction, gap, padding, fills, stroke, radius, opacity, fontSize, fontWeight �
 см. «CNL Phrase Reference», Responsive):
 
 ```md
-## Frame: Card row gap 16 when (breakpoint mobile) column padding (16) gap 12 radius 0 when (breakpoint desktop density compact) row gap 8
+## AutoLayout: Card row gap 16 when (breakpoint mobile) column padding 16 gap 12 radius 0 when (breakpoint desktop density compact) row gap 8
 ```
 
 Во внутренней модели это список `responsive.variants`, каждый — пара

@@ -29,7 +29,7 @@ class SectionInsertTest {
 
         # Screen id root name «Screen»
 
-        ## Frame: Panel id panel column width (fill) height (hug)
+        ## AutoLayout: Panel id panel column width (fill) height (hug)
 
         ## Frame: Sidebar id sidebar
     """.trimIndent() + "\n"

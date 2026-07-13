@@ -42,17 +42,17 @@ class DesignWriteBackContractTest {
         val before = fresh()
         val next = reduceDesignEditor(
             before,
-            DesignEditorIntent.SetLayoutAlign("frame_overview", alignItems = AlignItems.End),
+            DesignEditorIntent.SetLayoutAlign("frame_eventlog", alignItems = AlignItems.End),
         )
 
-        assertEquals(AlignItems.End, next.document?.nodeById("frame_overview")?.layout?.alignItems)
+        assertEquals(AlignItems.End, next.document?.nodeById("frame_eventlog")?.layout?.alignItems)
         assertRoundTrip(before.sources, next)
     }
 
     @Test
     fun paddingRoundTripIsAccepted() {
         val before = fresh()
-        val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutPadding("frame_overview", PaddingSide.All, 32.0))
+        val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutPadding("frame_eventlog", PaddingSide.All, 32.0))
         assertRoundTrip(before.sources, next)
     }
 
@@ -197,7 +197,7 @@ class DesignWriteBackContractTest {
             "opacity" to DesignEditorIntent.UpdateOpacity("win_bg", 0.71),
             "visibility" to DesignEditorIntent.SetVisible("win_bg", false),
             "lock" to DesignEditorIntent.SetLocked("win_bg", true),
-            "layout-gap" to DesignEditorIntent.SetLayoutGap("frame_overview", 17.0),
+            "layout-gap" to DesignEditorIntent.SetLayoutGap("frame_eventlog", 17.0),
             "typography" to DesignEditorIntent.UpdateTypography("src_title", TypographyPatch(fontSize = 31.0)),
             "fill" to DesignEditorIntent.FillCommand("win_bg", FillOp.SetColor(0, DesignColor.fromHex("#E53935")!!)),
             "stroke" to DesignEditorIntent.StrokeCommand("win_bg", StrokeOp.SetColor(DesignColor.fromHex("#3949AB")!!)),

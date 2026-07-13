@@ -5,6 +5,7 @@ import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignEffect
@@ -57,6 +58,7 @@ enum class NodePositionMode { Auto, Absolute }
 /** `node:` block — common node contract fields. */
 data class NodePatch(
     val type: String? = null,
+    val containerKind: ContainerKind? = null,
     val id: String? = null,
     val name: String? = null,
     val role: String? = null,

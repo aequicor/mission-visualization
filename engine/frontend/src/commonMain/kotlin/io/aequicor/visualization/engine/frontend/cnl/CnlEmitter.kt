@@ -10,6 +10,7 @@ import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.PropValue
 import io.aequicor.visualization.subsystems.figures.ShapeType
 import io.aequicor.visualization.engine.ir.model.VariableType
@@ -314,7 +315,7 @@ internal object CnlEmitter {
                 return when (node.type) {
                     "group" -> "Group"
                     "section" -> null
-                    else -> "Frame"
+                    else -> if (node.containerKind == ContainerKind.AutoLayout) "AutoLayout" else "Frame"
                 }
             }
             else -> return null

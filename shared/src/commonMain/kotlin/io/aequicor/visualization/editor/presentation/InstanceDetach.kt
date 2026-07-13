@@ -1,6 +1,8 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
@@ -61,6 +63,7 @@ internal fun detachInstance(document: DesignDocument, nodeId: String): DesignDoc
     val frame = instance.copy(
         type = "frame",
         kind = DesignNodeKind.Frame,
+        containerKind = if (resolved.layout.mode == LayoutMode.None) ContainerKind.Frame else ContainerKind.AutoLayout,
         size = resolved.size,
         sizing = instance.sizing ?: resolved.sizing,
         layout = resolved.layout.toDesign(),
@@ -95,6 +98,11 @@ private fun ResolvedNode.toDesignNode(freshId: () -> String): DesignNode {
         id = freshId(),
         type = designType,
         kind = designKind,
+        containerKind = if (designKind is DesignNodeKind.Frame && layout.mode != LayoutMode.None) {
+            ContainerKind.AutoLayout
+        } else {
+            ContainerKind.Frame
+        },
         name = name,
         role = role,
         opacity = opacity.bindable(),
