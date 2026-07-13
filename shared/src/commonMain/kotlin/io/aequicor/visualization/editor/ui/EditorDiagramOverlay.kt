@@ -496,13 +496,31 @@ internal fun DiagramEditOverlay(
                         latestViewport.toDocY(position.y) - liveBox.y,
                     )
 
-                    // Presses outside the diagram box (plus the arrow margin) leave edit mode and
-                    // stay unconsumed so the main canvas handler processes them normally.
+                    // Presses outside the diagram box (plus the arrow margin) leave edit mode. If the
+                    // press lands on ANOTHER diagram's element, switch straight to it and select that
+                    // element in one click (unified selection — no intermediate "select the whole other
+                    // diagram" step). Anything else stays unconsumed so the main canvas handler selects
+                    // the plain node / whole diagram / empty target normally.
                     val margin = ((DiagramArrowDistance + 10f) / zoom).toDouble()
                     val insideBox = docX >= liveBox.x - margin && docX <= liveBox.right + margin &&
                         docY >= liveBox.y - margin && docY <= liveBox.bottom + margin
                     if (!insideBox) {
                         textEdit = null
+                        val switch = resolveDiagramElementSelection(
+                            state.artboardLayout, state.designState.document, docX, docY, zoom,
+                        )?.takeIf { it.diagramId != editId }
+                        if (switch != null) {
+                            state.dispatch(DesignEditorIntent.SelectNode(switch.diagramId))
+                            state.updateWorkspace {
+                                it.copy(
+                                    diagramEditNodeId = switch.diagramId,
+                                    diagramTool = DiagramTool.Select,
+                                    diagramSelection = switch.selection,
+                                )
+                            }
+                            down.consume()
+                            return@awaitEachGesture
+                        }
                         state.updateWorkspace {
                             it.copy(
                                 diagramEditNodeId = "",
@@ -826,9 +844,11 @@ internal fun DiagramEditOverlay(
                                 textEdit = DiagramTextEditTarget.NodeLabel(newId)
                                 return@awaitEachGesture
                             }
-                            // Empty diagram area: a plain click clears the selection; a drag rubber-bands
-                            // a marquee that selects every node it intersects (Shift adds to the selection).
-                            // Pure selection — no document edit — so it never touches undo/redo.
+                            // Empty diagram area: a plain click selects the whole diagram (the container
+                            // of that space) and leaves the block-edit layer — Figma's "click empty space
+                            // = select container". A drag rubber-bands a marquee that selects every node it
+                            // intersects (Shift adds to the selection). Pure selection — no document edit —
+                            // so it never touches undo/redo.
                             var selectionBox: DiagramRect? = null
                             var marqueeMoved = false
                             val marqueeSlop = viewConfiguration.touchSlop
@@ -855,7 +875,14 @@ internal fun DiagramEditOverlay(
                                     it.copy(diagramSelection = DiagramSelection(elementIds = base + hitIds))
                                 }
                             } else if (!marqueeMoved && !shiftHeld) {
-                                state.updateWorkspace { it.copy(diagramSelection = DiagramSelection.Empty) }
+                                state.updateWorkspace {
+                                    it.copy(
+                                        diagramEditNodeId = "",
+                                        diagramTool = DiagramTool.Select,
+                                        diagramSelection = DiagramSelection.Empty,
+                                    )
+                                }
+                                state.dispatch(DesignEditorIntent.SelectNode(editId))
                             }
                         }
                     }
