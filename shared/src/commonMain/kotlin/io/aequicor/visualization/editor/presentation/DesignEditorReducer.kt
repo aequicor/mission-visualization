@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
+import io.aequicor.visualization.editor.domain.annotationSidecarFileName
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.domain.editorSlmCompileOptions
 import io.aequicor.visualization.editor.domain.isAnnotationSidecarFileName
@@ -53,6 +54,7 @@ import io.aequicor.visualization.engine.ir.model.DesignInsets
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
+import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
@@ -238,6 +240,8 @@ internal fun reduceDesignEditorUnchecked(state: DesignEditorState, intent: Desig
         is DesignEditorIntent.CreateDiagramObject -> state.createDiagramObject(intent)
         is DesignEditorIntent.AddResourceMedia -> state.addResourceMedia(intent)
         is DesignEditorIntent.CreateScreen -> state.createScreenWriteBack(intent)
+        is DesignEditorIntent.DuplicateScreen -> state.duplicateScreenWriteBack(intent)
+        is DesignEditorIntent.DeleteScreen -> state.deleteScreenWriteBack(intent.pageId)
         is DesignEditorIntent.DetachInstance -> state.detachInstanceReduce(intent.nodeId)
 
         // --- Source ---
@@ -1067,6 +1071,115 @@ private fun DesignEditorState.createScreenWriteBack(intent: DesignEditorIntent.C
         diagnostics = documents.diagnostics,
         sources = documents.sources,
         compiledResults = documents.compiled,
+        previousSources = (previousSources + listOf(sources)).takeLast(MaxSourceHistory),
+    )
+}
+
+/**
+ * Copies a complete page into its own source. Every node and the page itself receive fresh ids;
+ * the canonical screen writer and the central semantic gate ensure the copy can be reloaded
+ * without drifting from the in-memory page before the operation is published.
+ */
+private fun DesignEditorState.duplicateScreenWriteBack(intent: DesignEditorIntent.DuplicateScreen): DesignEditorState {
+    val document = document ?: return this
+    val original = document.pages.firstOrNull { it.id == intent.pageId } ?: return this
+    val pageId = EditorNodeFactory.uniqueId(document, "screen")
+    var idDocument = document
+    val clonedChildren = buildList {
+        original.children.forEach { child ->
+            val clone = child.deepCopyWithFreshIds(idDocument).let { copied ->
+                if (isEmpty()) copied.copy(name = intent.title) else copied
+            }
+            add(clone)
+            idDocument = document.copy(
+                pages = document.pages + DesignPage(id = pageId, name = intent.title, children = toList()),
+            )
+        }
+    }
+    val page = DesignPage(id = pageId, name = intent.title, children = clonedChildren)
+    val rootId = page.children.firstOrNull()?.id.orEmpty()
+    val desiredDocument = document.addPage(page)
+    val inMemory = pushHistory(document).copy(
+        document = desiredDocument,
+        selectedPageId = page.id,
+        selectedNodeId = rootId,
+        selectedNodeIds = if (rootId.isBlank()) emptySet() else setOf(rootId),
+        editingTextNodeId = "",
+    )
+    fun rejected(reason: String) = inMemory.copy(
+        diagnostics = inMemory.diagnostics + DesignDiagnostic(
+            severity = DesignSeverity.Error,
+            message = "Screen duplication does not support SLM write-back: $reason",
+        ),
+    )
+    if (sources.size != compiledResults.size) return rejected("source/compile state is unavailable")
+
+    val sourceLocale = document.i18n.sourceLocale.ifBlank { "en-US" }
+    val fileName = "${page.id}.layout.md"
+    val text = ScreenSourceWriter.render(page, sourceLocale)
+    val compiled = compileSlm(text, editorSlmCompileOptions(fileName))
+    val compiledDocument = compiled.document ?: return rejected("the copied screen source does not compile")
+    val screenMatches = compiledDocument.screen?.id == page.id
+    val nodesMatch = compiledDocument.pageTreeIds() == page.allNodes().map { it.id }.toSet()
+    if (!screenMatches || !nodesMatch) return rejected("the copied screen source changed its minted ids")
+
+    val documents = compileMissionDocuments(sources + MissionDocumentSource(fileName, text))
+    val compiledMission = documents.document ?: return rejected("the project does not compile with the copied screen")
+    if (documents.hasErrors) return rejected("the project has errors after adding the copied screen")
+    // Compiling a new screen also extracts its title into the merged i18n resources. Compare the
+    // intended pages against that compiled metadata so the fidelity check targets the copied tree
+    // rather than rejecting the compiler-owned resource entry.
+    val expectedMission = compiledMission.copy(pages = desiredDocument.pages)
+    if (!semanticallyEquivalent(expectedMission, compiledMission)) {
+        return rejected(semanticMismatchSummary(expectedMission, compiledMission))
+    }
+    return inMemory.copy(
+        document = compiledMission,
+        diagnostics = documents.diagnostics,
+        sources = documents.sources,
+        compiledResults = documents.compiled,
+        previousSources = (previousSources + listOf(sources)).takeLast(MaxSourceHistory),
+    )
+}
+
+/** Removes the screen source and its review sidecar, then selects the nearest remaining page. */
+private fun DesignEditorState.deleteScreenWriteBack(pageId: String): DesignEditorState {
+    val document = document ?: return this
+    val pageIndex = document.pages.indexOfFirst { it.id == pageId }
+    if (pageIndex < 0 || sources.size != compiledResults.size) return this
+    val screenFileName = screenFileNamesByPageId()[pageId] ?: return this
+    val sidecarFileName = annotationSidecarFileName(screenFileName)
+    val nextSources = sources.filterNot { source ->
+        source.fileName == screenFileName || source.fileName == sidecarFileName
+    }
+    if (nextSources.size == sources.size) return this
+
+    val documents = compileMissionDocuments(nextSources)
+    if (documents.diagnostics.any { it.severity == DesignSeverity.Error }) return this
+    val nextDocument = documents.document ?: DesignDocument()
+    val preferredPageId = selectedPageId.takeIf { it != pageId }
+        ?: document.pages.getOrNull(pageIndex + 1)?.id
+        ?: document.pages.getOrNull(pageIndex - 1)?.id
+    val selectedPage = nextDocument.pages.firstOrNull { it.id == preferredPageId }
+        ?: nextDocument.pages.firstOrNull()
+    val keptSelection = selectedNodeIds.filter { id ->
+        nextDocument.nodeById(id) != null && nextDocument.pageOfNode(id)?.id == selectedPage?.id
+    }.toSet()
+    val nextSelectedNodeId = selectedNodeId.takeIf { it in keptSelection }
+        ?: keptSelection.firstOrNull()
+        ?: selectedPage?.children?.firstOrNull()?.id.orEmpty()
+    val nextSelection = keptSelection.ifEmpty {
+        if (nextSelectedNodeId.isBlank()) emptySet() else setOf(nextSelectedNodeId)
+    }
+    return pushHistory(document).copy(
+        document = nextDocument,
+        diagnostics = documents.diagnostics,
+        sources = documents.sources,
+        compiledResults = documents.compiled,
+        selectedPageId = selectedPage?.id.orEmpty(),
+        selectedNodeId = nextSelectedNodeId,
+        selectedNodeIds = nextSelection,
+        editingTextNodeId = "",
         previousSources = (previousSources + listOf(sources)).takeLast(MaxSourceHistory),
     )
 }

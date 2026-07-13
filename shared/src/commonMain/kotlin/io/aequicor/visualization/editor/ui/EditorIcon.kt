@@ -75,6 +75,7 @@ internal enum class EditorIcon(resourceName: String) {
     ExpandAll("expand_all"),
     CollapseAll("collapse_all"),
     Duplicate("duplicate"),
+    MoreHorizontal("more_horiz"),
     Trash("trash"),
     Plus("plus"),
     Close("close"),

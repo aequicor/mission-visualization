@@ -158,6 +158,12 @@ sealed interface DesignEditorIntent {
     /** Creates a new screen (top-level frame + its own page). */
     data class CreateScreen(val preset: ScreenPreset, val title: String) : DesignEditorIntent
 
+    /** Duplicates a complete screen into a new standalone SLM source and selects the copy. */
+    data class DuplicateScreen(val pageId: String, val title: String) : DesignEditorIntent
+
+    /** Deletes a screen and its optional annotation sidecar source. */
+    data class DeleteScreen(val pageId: String) : DesignEditorIntent
+
     /**
      * Creates a new diagram canvas node under [parentId] at parent-relative (x,y) with (w,h),
      * seeded with one diagram element of [payload] type centered in the canvas (an empty

@@ -23,6 +23,10 @@ interface SourceStrings {
     val screens: CompactLabel
     val refreshScreens: String
     val createScreen: String
+    val screenActions: String
+    val duplicateScreen: String
+    val deleteScreen: String
+    fun screenCopyName(original: String): String
     fun screenPreset(preset: ScreenPreset): String
     val resourcesEmptyTitle: String
     val resourcesEmptyHint: String
@@ -49,6 +53,10 @@ object SourceStringsEn : SourceStrings {
     override val screens = CompactLabel("Screens", "Scr", "Scr")
     override val refreshScreens = "Refresh screens from disk"
     override val createScreen = "Create screen"
+    override val screenActions = "Screen actions"
+    override val duplicateScreen = "Make a copy"
+    override val deleteScreen = "Delete"
+    override fun screenCopyName(original: String) = "$original copy"
     override fun screenPreset(preset: ScreenPreset): String = when (preset) {
         ScreenPreset.Desktop -> "Desktop"
         ScreenPreset.Tablet -> "Tablet"
@@ -80,6 +88,10 @@ object SourceStringsRu : SourceStrings {
     override val screens = CompactLabel("Экраны", "Экр", "Экр")
     override val refreshScreens = "Обновить экраны с диска"
     override val createScreen = "Создать экран"
+    override val screenActions = "Действия с экраном"
+    override val duplicateScreen = "Сделать копию"
+    override val deleteScreen = "Удалить"
+    override fun screenCopyName(original: String) = "$original — копия"
     override fun screenPreset(preset: ScreenPreset): String = when (preset) {
         ScreenPreset.Desktop -> "Десктоп"
         ScreenPreset.Tablet -> "Планшет"

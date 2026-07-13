@@ -96,6 +96,8 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.DetachInstance,
     is DesignEditorIntent.CreateObject,
     is DesignEditorIntent.CreateScreen,
+    is DesignEditorIntent.DuplicateScreen,
+    is DesignEditorIntent.DeleteScreen,
     is DesignEditorIntent.CreateDiagramObject,
     is DesignEditorIntent.AddResourceMedia,
     is DesignEditorIntent.SetLayoutMode,
@@ -304,6 +306,28 @@ private fun persistCandidate(
     intent: DesignEditorIntent,
 ): DesignEditorState {
     val desired = candidate.document ?: return before.writeBackRejected(intent, "edit produced no document")
+    if (desired.pages.isEmpty() && intent is DesignEditorIntent.DeleteScreen) {
+        val documents = compileMissionDocuments(candidate.sources)
+        if (documents.document != null || documents.diagnostics.any { it.severity == DesignSeverity.Error }) {
+            return before.writeBackRejected(intent, "deleting the final screen produced invalid remaining sources")
+        }
+        val checkpoint = before.document
+        return candidate.copy(
+            document = desired,
+            diagnostics = documents.diagnostics,
+            sources = documents.sources,
+            compiledResults = documents.compiled,
+            annotationLayers = annotationLayersFrom(documents.sources),
+            undoStack = checkpoint?.let { (before.undoStack + it).takeLast(MaxDocumentHistory) } ?: before.undoStack,
+            redoStack = emptyList(),
+            undoSourcesStack = checkpoint?.let {
+                (before.undoSourcesStack + listOf(before.sources)).takeLast(MaxDocumentHistory)
+            } ?: before.undoSourcesStack,
+            redoSourcesStack = emptyList(),
+            previousSources = if (documents.sources == before.sources) before.previousSources
+            else (before.previousSources + listOf(before.sources)).takeLast(MaxSourceHistory),
+        ).pruneSelectionAfterWriteBack()
+    }
     return when (val attempt = prepareSourcesForDocument(candidate.sources, desired)) {
         is WriteBackAttempt.Failure -> before.copy(
             diagnostics = before.diagnostics +
@@ -527,7 +551,8 @@ private fun DesignEditorState.atomicRedo(): DesignEditorState {
         ?: return writeBackRejected(DesignEditorIntent.Redo, "source history is unavailable")
     val documents = compileMissionDocuments(nextSources)
     val compiledDocument = documents.document
-    if (documents.hasErrors || compiledDocument == null || !semanticallyEquivalent(nextDocument, compiledDocument)) {
+        ?: nextDocument.takeIf { it.pages.isEmpty() && documents.diagnostics.none { diagnostic -> diagnostic.severity == DesignSeverity.Error } }
+    if (compiledDocument == null || documents.diagnostics.any { it.severity == DesignSeverity.Error } || !semanticallyEquivalent(nextDocument, compiledDocument)) {
         return writeBackRejected(DesignEditorIntent.Redo, "historical SLM does not reproduce the historical document")
     }
     val current = document ?: return this
@@ -547,8 +572,10 @@ private fun DesignEditorState.atomicRedo(): DesignEditorState {
 
 private fun DesignEditorState.pruneSelectionAfterWriteBack(): DesignEditorState {
     val doc = document ?: return this
+    val page = doc.pages.firstOrNull { it.id == selectedPageId } ?: doc.pages.firstOrNull()
     val kept = selectedNodeIds.filter { doc.nodeById(it) != null }.toSet()
     return copy(
+        selectedPageId = page?.id.orEmpty(),
         selectedNodeIds = kept,
         selectedNodeId = selectedNodeId.takeIf { it in kept } ?: kept.firstOrNull().orEmpty(),
     )

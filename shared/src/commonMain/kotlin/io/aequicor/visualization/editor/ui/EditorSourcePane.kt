@@ -1391,7 +1391,6 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
     val strings = LocalStrings.current
     val design = state.designState
     val document = design.document
-    val statusColors = listOf(colors.statusPositive, colors.statusWarning, colors.statusDanger)
     var presetMenu by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier,
@@ -1436,13 +1435,21 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
                 }
             }
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                document?.pages?.forEachIndexed { index, page ->
+                document?.pages?.forEach { page ->
                     ScreenRow(
                         title = page.name.ifBlank { page.id },
                         subtitle = "${page.children.firstOrNull()?.size?.width?.toInt() ?: 0} x ${page.children.firstOrNull()?.size?.height?.toInt() ?: 0}",
-                        status = statusColors[index % statusColors.size],
                         selected = page.id == design.selectedPageId,
                         onClick = { state.dispatch(DesignEditorIntent.SelectPage(page.id)) },
+                        onDuplicate = {
+                            state.dispatch(
+                                DesignEditorIntent.DuplicateScreen(
+                                    pageId = page.id,
+                                    title = strings.source.screenCopyName(page.name.ifBlank { page.id }),
+                                ),
+                            )
+                        },
+                        onDelete = { state.dispatch(DesignEditorIntent.DeleteScreen(page.id)) },
                     )
                 }
             }
@@ -1480,8 +1487,17 @@ private fun ScreenPresetPreview(preset: ScreenPreset, modifier: Modifier = Modif
 }
 
 @Composable
-private fun ScreenRow(title: String, subtitle: String, status: Color, selected: Boolean, onClick: () -> Unit) {
+private fun ScreenRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onDuplicate: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    var actionsExpanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().height(64.dp)
             .background(if (selected) colors.selectionFill else Color.White)
@@ -1496,6 +1512,31 @@ private fun ScreenRow(title: String, subtitle: String, status: Color, selected: 
             Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.ink, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.subtleInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
-        Box(Modifier.size(12.dp).background(status, CircleShape))
+        Box {
+            SmallIconButton(
+                icon = EditorIcon.MoreHorizontal,
+                contentDescription = strings.source.screenActions,
+                active = actionsExpanded,
+                onClick = { actionsExpanded = true },
+            )
+            EditorDropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                EditorDropdownMenuItem(
+                    text = strings.source.duplicateScreen,
+                    leadingContent = { DropdownMenuIcon(EditorIcon.Duplicate) },
+                    onClick = {
+                        actionsExpanded = false
+                        onDuplicate()
+                    },
+                )
+                EditorDropdownMenuItem(
+                    text = strings.source.deleteScreen,
+                    leadingContent = { DropdownMenuIcon(EditorIcon.Trash) },
+                    onClick = {
+                        actionsExpanded = false
+                        onDelete()
+                    },
+                )
+            }
+        }
     }
 }
