@@ -255,6 +255,26 @@ class DiagramCnlRoundTripTest {
         assertRoundTrips(graph, "node common part")
     }
 
+    @Test
+    fun materializedGridPortsRoundTrip() {
+        // When an edge pins to a draw.io connection-point grid point, the editor materializes
+        // it as a real port: corners become RelativePoint anchors, side quarter-points a
+        // SideOffset at 0.25/0.75. Both must survive emit → parse with identical ids + anchors.
+        val ports = listOf(
+            DiagramPort(DiagramPortId("top-left"), DiagramPortAnchor.RelativePoint(x = 0.0, y = 0.0)),
+            DiagramPort(DiagramPortId("bottom-right"), DiagramPortAnchor.RelativePoint(x = 1.0, y = 1.0)),
+            DiagramPort(DiagramPortId("top-q1"), DiagramPortAnchor.SideOffset(DiagramNodeSide.TOP, 0.25)),
+            DiagramPort(DiagramPortId("right-q3"), DiagramPortAnchor.SideOffset(DiagramNodeSide.RIGHT, 0.75)),
+        )
+        val n = node("n", DiagramNodePayload.BasicShape()).copy(ports = ports)
+        val graph = DiagramGraph(nodes = listOf(n))
+        assertRoundTrips(graph, "materialized grid ports")
+
+        // Explicit: the parsed node carries exactly the same ports (ids + anchors, order).
+        val parsed = parseBody(DiagramCnlWriter.sentences(graph))
+        assertEquals(ports, parsed.graph.nodes.single().ports, "grid ports must survive write-back")
+    }
+
     // --- edges ---
 
     @Test
