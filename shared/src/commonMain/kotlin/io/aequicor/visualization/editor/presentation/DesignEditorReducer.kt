@@ -47,6 +47,7 @@ import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
+import io.aequicor.visualization.engine.ir.model.DesignConstraints
 import io.aequicor.visualization.engine.ir.model.DesignCornerRadius
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.subsystems.figures.DesignViewBox
@@ -54,6 +55,7 @@ import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignEffect
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.DesignInsets
+import io.aequicor.visualization.engine.ir.model.DesignLayoutChild
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
@@ -238,6 +240,7 @@ internal fun reduceDesignEditorUnchecked(state: DesignEditorState, intent: Desig
         ) { it.copy(name = intent.name) }
         is DesignEditorIntent.DeleteNodes -> state.deleteNodesWriteBack(intent.nodeIds)
         is DesignEditorIntent.DuplicateNodes -> state.duplicateNodesWriteBack(intent.nodeIds)
+        is DesignEditorIntent.GroupNodes -> state.groupNodesWriteBack(intent)
         is DesignEditorIntent.ReorderNode -> state.reorderNodeWriteBack(intent)
         is DesignEditorIntent.ReparentNode -> state.reparentNodeWriteBack(intent)
         is DesignEditorIntent.CreateObject -> state.createObject(intent)
@@ -566,21 +569,10 @@ private fun DesignEditorState.selectSingle(nodeId: String): DesignEditorState {
 
 private fun DesignEditorState.selectMany(ids: Set<String>): DesignEditorState {
     val doc = document
-    val valid = ids.filter { doc?.nodeById(it) != null }.toSet()
-    // A marquee intersects every enclosing frame on the way to the actual objects. Keeping those
-    // ancestors would make the group box equal the largest container (often Desktop Workspace)
-    // and group move/resize would target the container instead of the components. When both an
-    // ancestor and one of its descendants are present, the deeper explicit object wins. The same
-    // invariant also prevents an invalid parent+child multi-selection from Layers.
-    val existing = if (valid.size > 1 && doc != null) {
-        valid.filterNot { candidateAncestor ->
-            valid.any { descendant ->
-                descendant != candidateAncestor && doc.isSelfOrAncestor(candidateAncestor, descendant)
-            }
-        }.toSet()
-    } else {
-        valid
-    }
+    // Preserve the exact marquee/Layers selection, including containers together with their
+    // descendants. Manipulation commands collapse that hierarchy to its outermost selected nodes
+    // so a child is not transformed twice when its selected parent moves or resizes.
+    val existing = ids.filter { doc?.nodeById(it) != null }.toSet()
     if (existing.isEmpty()) return copy(selectedNodeId = "", selectedNodeIds = emptySet(), editingTextNodeId = "")
     val primary = if (selectedNodeId in existing) selectedNodeId else existing.last()
     val page = document?.pageOfNode(primary)
@@ -596,7 +588,12 @@ private fun DesignEditorState.selectMany(ids: Set<String>): DesignEditorState {
 
 private fun DesignEditorState.moveNodes(intent: DesignEditorIntent.MoveNodes): DesignEditorState {
     val document = document ?: return this
-    val movable = intent.nodeIds.filter { id ->
+    val outermost = intent.nodeIds.filterNot { id ->
+        intent.nodeIds.any { ancestorId ->
+            ancestorId != id && document.isSelfOrAncestor(ancestorId, id)
+        }
+    }
+    val movable = outermost.filter { id ->
         val node = document.nodeById(id)
         node != null && !node.locked && document.isCoordinatePositioned(id)
     }
@@ -744,6 +741,107 @@ private fun DesignEditorState.duplicateNodesWriteBack(ids: Set<String>): DesignE
     return withStructuralSource(plan.first().originalId, edits, inMemory, expected)
 }
 
+private data class GroupingPlan(
+    val parentId: String,
+    val group: DesignNode,
+    val orderedChildren: List<DesignNode>,
+)
+
+/** Builds a Figma-style transparent group without changing the selected objects' visual geometry. */
+private fun DesignEditorState.groupingPlan(intent: DesignEditorIntent.GroupNodes): GroupingPlan? {
+    val document = document ?: return null
+    if (intent.nodeIds.size < 2) return null
+    val firstId = intent.nodeIds.firstOrNull() ?: return null
+    val parent = document.parentNodeOf(firstId) ?: return null
+    val selected = parent.children.filter { it.id in intent.nodeIds }
+    if (selected.size != intent.nodeIds.size || selected.size < 2) return null
+    if (selected.any { it.locked || !document.isCoordinatePositioned(it.id) }) return null
+
+    val authoredPositions = selected.associate { node -> node.id to node.position }
+    val fallbackPosition = if (authoredPositions.values.all { it != null } &&
+        selected.all { it.size.width != null && it.size.height != null }
+    ) {
+        val minX = selected.minOf { authoredPositions.getValue(it.id)!!.x.orZero }
+        val minY = selected.minOf { authoredPositions.getValue(it.id)!!.y.orZero }
+        DesignPoint(minX, minY)
+    } else {
+        null
+    }
+    val position = intent.position ?: fallbackPosition ?: return null
+    val fallbackSize = if (fallbackPosition != null) {
+        val maxX = selected.maxOf { authoredPositions.getValue(it.id)!!.x.orZero + (it.size.width ?: 0.0) }
+        val maxY = selected.maxOf { authoredPositions.getValue(it.id)!!.y.orZero + (it.size.height ?: 0.0) }
+        DesignSize(maxX - fallbackPosition.x.orZero, maxY - fallbackPosition.y.orZero)
+    } else {
+        null
+    }
+    val size = intent.size ?: fallbackSize ?: return null
+    val width = size.width?.takeIf { it > 0.0 } ?: return null
+    val height = size.height?.takeIf { it > 0.0 } ?: return null
+
+    val children = selected.map { node ->
+        val childPosition = intent.childPositions[node.id] ?: node.position?.let {
+            DesignPoint(it.x.orZero - position.x.orZero, it.y.orZero - position.y.orZero)
+        } ?: return null
+        node.copy(
+            position = childPosition,
+            anchors = null,
+            constraints = DesignConstraints(),
+            layoutChild = DesignLayoutChild(absolute = true),
+        )
+    }
+    val group = DesignNode(
+        id = EditorNodeFactory.uniqueId(document, "group"),
+        type = "group",
+        kind = DesignNodeKind.Frame,
+        containerKind = ContainerKind.Frame,
+        name = "Group",
+        position = position,
+        size = DesignSize(width, height),
+        sizing = DesignSizing(SizingMode.Fixed, SizingMode.Fixed),
+        layout = DesignAutoLayout(mode = LayoutMode.None),
+        layoutChild = DesignLayoutChild(absolute = true),
+        children = children,
+    )
+    return GroupingPlan(parent.id, group, children)
+}
+
+/** Replaces the selected sibling sections with one emitted group subtree, preserving their ids. */
+private fun DesignEditorState.groupNodesWriteBack(intent: DesignEditorIntent.GroupNodes): DesignEditorState {
+    val document = document ?: return this
+    val plan = groupingPlan(intent) ?: return this
+    // A nested heading cannot be interleaved with parent-owned CNL sentence nodes. Appending the
+    // new group keeps the source structurally valid and makes the persisted and in-memory z-order
+    // identical for both heading-authored and sentence-authored components.
+    val grouped = document.removeNodes(intent.nodeIds).insertNode(plan.parentId, plan.group)
+    if (grouped == document) return this
+    val inMemory = pushHistory(document).copy(
+        document = grouped,
+        selectedNodeId = plan.group.id,
+        selectedNodeIds = setOf(plan.group.id),
+        editingTextNodeId = "",
+    )
+
+    if (!plan.group.isStructurallyExpressible()) return inMemory
+    val parentOwner = owningSourceIndex(plan.parentId) ?: return inMemory
+    if (plan.orderedChildren.any { owningSourceIndex(it.id) != parentOwner }) return inMemory
+    val ownerIds = compiledResults.getOrNull(parentOwner)?.document?.pageTreeIds() ?: return inMemory
+    val edits = buildList<SlmEdit> {
+        // Reverse paint order keeps every earlier source anchor intact until it is deleted.
+        plan.orderedChildren.asReversed().forEach { child -> add(DeleteSection(child.id)) }
+        add(InsertChildSubtree(plan.parentId, plan.group))
+    }
+    return withStructuralSource(
+        ownerNodeId = plan.parentId,
+        edits = edits,
+        inMemory = inMemory,
+        expectedPageIds = ownerIds + plan.group.id,
+    ) { recompiled ->
+        recompiled.parentNodeOf(plan.group.id)?.id == plan.parentId &&
+            recompiled.nodeById(plan.group.id)?.children?.map { it.id } == plan.orderedChildren.map { it.id }
+    }
+}
+
 /**
  * Reorders [intent.nodeId] among its siblings in the candidate document
  * and, when the move is expressible as a same-parent heading relocation, mirrors the new z-order
@@ -802,9 +900,10 @@ private fun DesignEditorState.reorderNodeWriteBack(intent: DesignEditorIntent.Re
 
 /**
  * Reparents [intent.nodeId] under [intent.newParentId] and mirrors the move into the owning SLM
- * source(s). Same-file moves use [MoveSection]; cross-file moves use one delete+insert transaction.
- * Parent, id, depth and semantic parity are validated before the central contract publishes either
- * document or sources.
+ * source(s). Same-file moves normally use [MoveSection]. A CNL sentence landing after a heading
+ * sibling is promoted to its own heading through one delete+insert transaction because Markdown
+ * cannot place parent-owned prose after a nested heading. Cross-file moves use the same re-emission
+ * strategy. Parent, id, depth and semantic parity are validated before publication.
  */
 private fun DesignEditorState.reparentNodeWriteBack(intent: DesignEditorIntent.ReparentNode): DesignEditorState {
     val document = document ?: return this
@@ -829,10 +928,12 @@ private fun DesignEditorState.reparentNodeWriteBack(intent: DesignEditorIntent.R
     // source becomes visible to the editor.
     val movingOwner = owningSourceIndex(intent.nodeId) ?: return inMemory
     val parentOwner = owningSourceIndex(intent.newParentId) ?: return inMemory
-    // Post-move heading depth: the moved root lands one level under the parent (whose source level
-    // is its node-ancestor count + 1), and its subtree extends `subtreeHeight` deeper.
+    // Cross-source moves re-emit the whole IR subtree as headings, so its IR height must fit ATX 6.
+    // Same-source moves retain the authored mixture of headings and CNL sentence children; the
+    // source-aware SectionWriter validates the actual heading footprint without treating every
+    // sentence child as another heading level.
     val childLevel = document.ancestorIdsOf(intent.newParentId).size + 2
-    if (childLevel + moving.subtreeHeight() > 6) return inMemory
+    if (movingOwner != parentOwner && childLevel + moving.subtreeHeight() > 6) return inMemory
 
     // Placement: land right after the sibling preceding the moved node in its NEW order, so the
     // source order matches the in-memory tree. Landing before existing children (index 0 with
@@ -858,22 +959,34 @@ private fun DesignEditorState.reparentNodeWriteBack(intent: DesignEditorIntent.R
     }
 
     val expected = compiledResults[movingOwner].document?.pageTreeIds() ?: return inMemory
-    val edits = buildList {
-        add(MoveSection(intent.nodeId, intent.newParentId, afterSiblingId))
-        intent.position?.let {
-            add(SetNodePosition(intent.nodeId, it.x.orZero, it.y.orZero))
-            add(SetNodeConstraints(intent.nodeId, HorizontalConstraint.Left, VerticalConstraint.Top))
+    val ownerIndex = compiledResults[movingOwner].editIndex
+    val cnlSentenceAfterHeading = ownerIndex.isCnlSentence(intent.nodeId) &&
+        afterSiblingId?.let(ownerIndex::isHeading) == true
+    val edits: List<SlmEdit> = if (cnlSentenceAfterHeading) {
+        val finalNode = inMemory.document?.nodeById(intent.nodeId) ?: return inMemory
+        if (childLevel + finalNode.subtreeHeight() > 6) return inMemory
+        listOf(
+            DeleteSection(intent.nodeId),
+            InsertChildSubtree(intent.newParentId, finalNode, afterSiblingId),
+        )
+    } else {
+        buildList {
+            add(MoveSection(intent.nodeId, intent.newParentId, afterSiblingId))
+            intent.position?.let {
+                add(SetNodePosition(intent.nodeId, it.x.orZero, it.y.orZero))
+                add(SetNodeConstraints(intent.nodeId, HorizontalConstraint.Left, VerticalConstraint.Top))
+            }
+            intent.size?.let { size ->
+                add(
+                    SetSizing(
+                        nodeId = intent.nodeId,
+                        width = SizingSpec(SizingMode.Fixed, size.width),
+                        height = SizingSpec(SizingMode.Fixed, size.height),
+                    ),
+                )
+            }
+            intent.rotation?.let { add(SetNodeRotation(intent.nodeId, it)) }
         }
-        intent.size?.let { size ->
-            add(
-                SetSizing(
-                    nodeId = intent.nodeId,
-                    width = SizingSpec(SizingMode.Fixed, size.width),
-                    height = SizingSpec(SizingMode.Fixed, size.height),
-                ),
-            )
-        }
-        intent.rotation?.let { add(SetNodeRotation(intent.nodeId, it)) }
     }
     return withStructuralSource(intent.nodeId, edits, inMemory, expected) { recompiled ->
         val node = recompiled.nodeById(intent.nodeId)
@@ -1954,7 +2067,11 @@ private fun DesignEditorState.withStructuralSource(
         recompiled.diagnostics.firstOrNull()?.message ?: "patched source does not compile",
     )
     // Id-preservation veto: the patched source must recompile to EXACTLY the ids we expect.
-    if (recompiledDocument.pageTreeIds() != expectedPageIds) return rejected("patched source changed the expected node id set")
+    val actualPageIds = recompiledDocument.pageTreeIds()
+    if (actualPageIds != expectedPageIds) return rejected(
+        "patched source changed the expected node id set " +
+            "(missing=${(expectedPageIds - actualPageIds).sorted()}, unexpected=${(actualPageIds - expectedPageIds).sorted()})",
+    )
     // Identity veto: the recompiled owning document must reproduce the in-memory working tree
     // node-for-node — same id -> intrinsic fingerprint — not merely the same id *set*. Two
     // same-slug id-less nodes trading ids on recompile (an identity SWAP: e.g. a reparent that

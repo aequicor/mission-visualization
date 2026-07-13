@@ -29,6 +29,7 @@ internal enum class EditorIcon(resourceName: String) {
     HandPan("hand_pan"),
     Marquee("marquee"),
     Frame("frame"),
+    Group("group"),
     AutoLayoutVertical("auto_layout_vertical"),
     AutoLayoutHorizontal("auto_layout_horizontal"),
     AutoLayoutGrid("auto_layout_grid"),

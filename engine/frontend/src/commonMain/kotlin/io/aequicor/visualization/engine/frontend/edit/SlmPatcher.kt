@@ -6,6 +6,7 @@ import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.fnv1a64
+import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignNode
 
@@ -159,11 +160,19 @@ private fun structuralPlan(
     extensions: SlmExtensionRegistry = SlmExtensionRegistry.Empty,
 ): WritePlan {
     val writer = SectionWriter(source, lineIndex, fileName, extensions)
+    data class NodeAddress(val span: SlmSourceSpan, val isCnlSentence: Boolean)
+    fun nodeAddress(nodeId: String): NodeAddress? =
+        if (editIndex.isHeading(nodeId)) {
+            editIndex.anchorOwners[nodeId]?.let { NodeAddress(it, false) }
+        } else {
+            editIndex.cnlOwners[nodeId]?.let { NodeAddress(it, true) }
+                ?: editIndex.anchorOwners[nodeId]?.let { NodeAddress(it, false) }
+        }
     return when (edit) {
         is DeleteSection -> {
-            val span = editIndex.anchorOwners[edit.nodeId]
+            val address = nodeAddress(edit.nodeId)
                 ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
-            writer.delete(span)
+            writer.delete(address.span, address.isCnlSentence)
         }
         is ReplaceSection -> {
             val span = editIndex.anchorOwners[edit.nodeId]
@@ -174,21 +183,21 @@ private fun structuralPlan(
             val parentSpan = editIndex.anchorOwners[edit.nodeId]
                 ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
             val afterSpan = edit.afterSiblingId?.let { sibling ->
-                editIndex.anchorOwners[sibling]
+                nodeAddress(sibling)?.span
                     ?: return WritePlan.Failed(unaddressableMessage(sibling, editIndex), 0)
             }
             writer.insert(parentSpan, edit.subtree, afterSpan)
         }
         is MoveSection -> {
-            val subtreeSpan = editIndex.anchorOwners[edit.nodeId]
+            val subtreeAddress = nodeAddress(edit.nodeId)
                 ?: return WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
             val parentSpan = editIndex.anchorOwners[edit.newParentId]
                 ?: return WritePlan.Failed(unaddressableMessage(edit.newParentId, editIndex), 0)
             val afterSpan = edit.afterSiblingId?.let { sibling ->
-                editIndex.anchorOwners[sibling]
+                nodeAddress(sibling)?.span
                     ?: return WritePlan.Failed(unaddressableMessage(sibling, editIndex), 0)
             }
-            writer.move(subtreeSpan, parentSpan, afterSpan)
+            writer.move(subtreeAddress.span, parentSpan, afterSpan, subtreeAddress.isCnlSentence)
         }
     }
 }

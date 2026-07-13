@@ -63,8 +63,6 @@ internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boo
 
 internal actual fun platformWriteFolderFile(fileName: String, content: String) = Unit
 
-internal actual fun platformWriteFolderEditorState(content: String) = Unit
-
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 internal actual fun platformEpochMillis(): Long = platform.posix.time(null) * 1000L
 

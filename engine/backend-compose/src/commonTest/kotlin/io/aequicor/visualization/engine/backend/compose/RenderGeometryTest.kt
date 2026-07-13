@@ -288,6 +288,20 @@ class RenderGeometryTest {
         assertEquals(52.0, shifted.children.single().y)
     }
 
+    @Test
+    fun floatingDrawEntriesKeepOnlyOutermostMovableSelections() {
+        val child = box(node("child"))
+        val group = box(node("group"), children = listOf(child))
+        val mask = box(node("mask", mask = ResolvedMask(MaskType.Alpha)))
+        val root = box(node("root"), children = listOf(group, mask))
+
+        val childEntry = root.floatingDrawEntries(setOf("child")).single()
+        assertEquals("child", childEntry.box.node.sourceId)
+        assertEquals(listOf("root", "group"), childEntry.ancestors.map { it.node.sourceId })
+        assertEquals(listOf("group"), root.floatingDrawEntries(setOf("group", "child")).map { it.box.node.sourceId })
+        assertTrue(root.floatingDrawEntries(setOf("root", "mask", "missing")).isEmpty())
+    }
+
     // --- Helpers -----------------------------------------------------------------------
 
     private fun node(

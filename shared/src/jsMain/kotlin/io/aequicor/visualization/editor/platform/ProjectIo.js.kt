@@ -60,8 +60,6 @@ internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boo
 
 internal actual fun platformWriteFolderFile(fileName: String, content: String) = Unit
 
-internal actual fun platformWriteFolderEditorState(content: String) = Unit
-
 internal actual fun platformEpochMillis(): Long = kotlin.js.Date.now().toLong()
 
 internal actual fun platformActiveFolderId(): String? = null

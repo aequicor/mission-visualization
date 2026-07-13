@@ -91,6 +91,7 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.RenameNode,
     is DesignEditorIntent.DeleteNodes,
     is DesignEditorIntent.DuplicateNodes,
+    is DesignEditorIntent.GroupNodes,
     is DesignEditorIntent.ReorderNode,
     is DesignEditorIntent.ReparentNode,
     is DesignEditorIntent.DetachInstance,
@@ -208,10 +209,11 @@ private fun reducePreview(state: DesignEditorState, intent: DesignEditorIntent):
 
 private fun reduceCommitted(state: DesignEditorState, intent: DesignEditorIntent): DesignEditorState {
     val candidate = reduceDesignEditorUnchecked(state, intent)
-    if (candidate.document == state.document) return candidate
     if (state.interacting) {
         // No source escapes during a gesture. EndInteraction replays these prepared commands and
-        // validates the complete multi-node/multi-file result before publishing it atomically.
+        // validates the complete multi-node/multi-file result before publishing it atomically. A
+        // commit may be document-inert because its preview already applied the final value (for
+        // example UpdateSize followed by ResizeNode); it still must be queued to patch the source.
         val pending = if (intent is DiagramEditorIntent || intent is DesignEditorIntent.CommitVectorNetwork) {
             state.interactionPendingIntents
         } else {
@@ -231,6 +233,7 @@ private fun reduceCommitted(state: DesignEditorState, intent: DesignEditorIntent
             interactionPendingIntents = pending,
         )
     }
+    if (candidate.document == state.document) return candidate
     return persistCandidate(state, candidate, intent)
 }
 

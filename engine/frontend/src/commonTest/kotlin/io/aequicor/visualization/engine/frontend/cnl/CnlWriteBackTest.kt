@@ -21,6 +21,7 @@ import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.bindable
@@ -104,6 +105,31 @@ class CnlWriteBackTest {
         val edit = SetSizing(id, SizingSpec(SizingMode.Fixed, 200.0), SizingSpec(SizingMode.Fixed, 40.0))
         val next = assertNotNull(applySlmEdit(source, edit, compiled).newSource)
         assertTrue("200 by 40" in next, next)
+    }
+
+    @Test
+    fun editResizeCanReplaceOneDimensionSurgically() {
+        val source = screen("Rectangle 120 by 15 color #00B843")
+        val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
+        val edit = SetSizing(id, width = SizingSpec(SizingMode.Fixed, 200.0))
+
+        val next = assertNotNull(applySlmEdit(source, edit, compiled).newSource)
+
+        assertTrue("200 by 15" in next, next)
+        assertEquals(15.0, assertNotNull(compileSlm(next).document?.nodeById(id)).size.height)
+    }
+
+    @Test
+    fun canonicalStrokeKeepsDefaultWeightBeforeCenterAlignment() {
+        val source = screen("Rectangle 120 by 15 color #00B843 stroke #37414B 1 center")
+        val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
+        val node = assertNotNull(compiled.document?.nodeById(id))
+
+        val emitted = CnlEmitter.emitSentence(node, includeId = true)
+
+        assertTrue("stroke #37414B 1 center" in emitted, emitted)
+        val roundTrip = compileSlm(screen(emitted)).document?.nodeById(id)
+        assertEquals(StrokeAlign.Center, assertNotNull(roundTrip).strokes?.align)
     }
 
     @Test

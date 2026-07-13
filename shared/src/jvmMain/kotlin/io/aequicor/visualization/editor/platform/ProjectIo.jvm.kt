@@ -1,7 +1,6 @@
 package io.aequicor.visualization.editor.platform
 
 import io.aequicor.visualization.editor.data.decodeProjectSnapshot
-import io.aequicor.visualization.editor.data.EditorStateRelativePath
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import java.nio.charset.StandardCharsets
@@ -89,9 +88,6 @@ internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boo
 internal actual fun platformWriteFolderFile(fileName: String, content: String) =
     JvmFolderSync.writeFromEditor(fileName, content)
 
-internal actual fun platformWriteFolderEditorState(content: String) =
-    JvmFolderSync.writeEditorState(content)
-
 internal actual fun platformEpochMillis(): Long = System.currentTimeMillis()
 
 internal actual fun platformActiveFolderId(): String? = JvmFolderSync.activeFolderId
@@ -108,6 +104,7 @@ internal actual fun platformLandingPendingActionJson(): String? = null
 
 /** JVM implementation of the common live-folder contract. */
 private object JvmFolderSync {
+    private const val LegacyEditorStateRelativePath = ".mission-visualization/editor-state.json"
     private val stateLock = Any()
     private val settingsDir: Path = Path.of(System.getProperty("user.home") ?: ".", ".mission-visualization")
     private val savedRootFile: Path = settingsDir.resolve("folder-sync-root.txt")
@@ -199,6 +196,7 @@ private object JvmFolderSync {
                     Files.createDirectories(settingsDir)
                     Files.writeString(savedRootFile, root.toString())
                 }
+                removeLegacyEditorState(root)
                 refreshSnapshot(root)
                 startWatcher(root)
                 status = "watching"
@@ -228,7 +226,15 @@ private object JvmFolderSync {
         synchronized(stateLock) {
             val root = activeRoot ?: return
             if (status != "watching") return
-            runCatching { refreshSnapshot(root) }
+            runCatching {
+                val previousRevision = revision.get()
+                refreshSnapshot(root)
+                // Manual refresh is also the recovery path when a watcher notification was
+                // missed or consumed as an editor echo. Re-publish the current disk snapshot even
+                // when it is byte-for-byte equal to the backend cache so the state holder gets a
+                // fresh chance to adopt it.
+                if (revision.get() == previousRevision) revision.incrementAndGet()
+            }
                 .onFailure { fail(it.message ?: "Unable to read folder") }
         }
     }
@@ -349,17 +355,6 @@ private object JvmFolderSync {
         }
     }
 
-    fun writeEditorState(content: String) {
-        val root = activeRoot ?: return
-        runCatching {
-            val target = root.resolve(EditorStateRelativePath).normalize().toAbsolutePath()
-            require(target.startsWith(root)) { "Editor state path escapes the project folder" }
-            val bytes = content.toByteArray(StandardCharsets.UTF_8)
-            expectedWrites[target] = bytes.contentHashCode()
-            atomicWrite(target, bytes)
-        }.onFailure { fail(it.message ?: "Unable to write editor state") }
-    }
-
     private fun safeResolve(root: Path, relativeName: String): Path {
         require(!Path.of(relativeName).isAbsolute) { "Expected a relative project file path" }
         val canonicalRoot = root.toRealPath()
@@ -444,10 +439,7 @@ private object JvmFolderSync {
                     if (event.kind() == StandardWatchEventKinds.ENTRY_CREATE && Files.isDirectory(changed)) {
                         runCatching { registerRecursively(changed, watcher) }
                     }
-                    if (
-                        changed.fileName.toString().endsWith(".layout.md", ignoreCase = true) ||
-                        changed == root.resolve(EditorStateRelativePath).normalize().toAbsolutePath()
-                    ) {
+                    if (changed.fileName.toString().endsWith(".layout.md", ignoreCase = true)) {
                         if (!consumeExpectedWrite(changed)) relevantExternalChange = true
                     }
                 }
@@ -503,9 +495,7 @@ private object JvmFolderSync {
                 }
                 .toList()
         }
-        val editorStatePath = root.resolve(EditorStateRelativePath)
-        val editorStateJson = editorStatePath.takeIf(Files::isRegularFile)?.let(Files::readString)
-        val next = encodeProjectSourcesJson(root.fileName?.toString().orEmpty(), sources, editorStateJson)
+        val next = encodeProjectSourcesJson(root.fileName?.toString().orEmpty(), sources)
         if (next != snapshotJson) {
             val previousSnapshot = snapshotJson?.let(::decodeProjectSnapshot)
             val previousByName = previousSnapshot?.sources.orEmpty()
@@ -522,17 +512,19 @@ private object JvmFolderSync {
                     expectedWrites[target] == content.toByteArray(StandardCharsets.UTF_8).contentHashCode()
                 }
             }
-            val editorStateChanged = previousSnapshot?.editorStateJson != editorStateJson
-            val editorStateIsEditorEcho = !editorStateChanged || editorStateJson?.let { content ->
-                val target = root.resolve(EditorStateRelativePath).normalize().toAbsolutePath()
-                expectedWrites[target] == content.toByteArray(StandardCharsets.UTF_8).contentHashCode()
-            } == true
             val editorEchoOnly = suppressEditorEcho &&
-                (changedNames.isNotEmpty() || editorStateChanged) &&
-                sourceChangesAreEditorEchoes && editorStateIsEditorEcho
+                changedNames.isNotEmpty() && sourceChangesAreEditorEchoes
             snapshotJson = next
             if (!editorEchoOnly) revision.incrementAndGet()
         }
+    }
+
+    /** Deletes the pre-CNL document snapshot left by older desktop versions. */
+    private fun removeLegacyEditorState(root: Path) {
+        val legacy = root.resolve(LegacyEditorStateRelativePath).normalize().toAbsolutePath()
+        require(legacy.startsWith(root)) { "Legacy editor-state path escapes the project folder" }
+        Files.deleteIfExists(legacy)
+        legacy.parent?.let { directory -> runCatching { Files.deleteIfExists(directory) } }
     }
 }
 

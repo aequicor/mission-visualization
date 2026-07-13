@@ -268,7 +268,8 @@ private fun McpVerificationCard(controller: McpServerController) {
             }
             verification?.let {
                 Text(it.message, color = if (it.verified) colors.mutedInk else colors.statusDanger, style = MaterialTheme.typography.bodySmall)
-                Text(it.projectPath, color = colors.codeInk, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                Text("${strings.mcpAgentProject}: ${it.agentProjectPath}", color = colors.codeInk, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                Text("${strings.mcpLayoutsFolder}: ${it.layoutsPath}", color = colors.codeInk, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
         }
     }

@@ -2,6 +2,7 @@ package io.aequicor.visualization.engine.frontend.cnl
 
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import kotlin.test.Test
@@ -71,12 +72,36 @@ class ContainerKindCnlTest {
     }
 
     @Test
+    fun legacySemanticHeadingInfersAutoLayoutWithoutMisreadingNameKeywords() {
+        val compiled = compileSlm(
+            source(
+                """
+                ## Media Library Header id media_library_header row gap 8
+
+                Text id label «Media» width (hug) height (hug)
+
+                ## Component: Legacy Card id legacy_card component-name Card column gap 12
+
+                Text id title «Card» width (hug) height (hug)
+                """.trimIndent(),
+            ),
+        )
+
+        assertTrue(compiled.diagnostics.none { it.severity == DesignSeverity.Error }, compiled.diagnostics.joinToString { it.message })
+        val header = assertNotNull(compiled.document?.nodeById("media_library_header"))
+        assertEquals("Media Library Header", header.name)
+        assertTrue(header.kind is DesignNodeKind.Frame)
+        assertEquals(ContainerKind.AutoLayout, header.containerKind)
+        assertEquals(LayoutMode.Horizontal, header.layout.mode)
+        assertEquals(ContainerKind.AutoLayout, assertNotNull(compiled.document).components["legacy_card"]?.root?.containerKind)
+    }
+
+    @Test
     fun mismatchedKindsProduceCompileErrors() {
         listOf(
             "## Frame: Legacy row gap 8",
             "## AutoLayout: Missing Direction",
             "## AutoLayout: Free free",
-            "## Component: Legacy Component component-name Legacy column gap 8",
         ).forEach { heading ->
             val result = compileSlm(source(heading))
             assertTrue(

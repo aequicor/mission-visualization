@@ -59,8 +59,8 @@ fun solveMoveSnap(
 
     val guides = ArrayList<AnchorGuide>()
     val spacing = ArrayList<SpacingBar>()
-    x?.let { buildAxisOverlay(it, alongX = true, snapped, guides, spacing) }
-    y?.let { buildAxisOverlay(it, alongX = false, snapped, guides, spacing) }
+    x?.let { buildResolvedAxisOverlay(it, AxisX, alongX = true, snapped, guides, spacing) }
+    y?.let { buildResolvedAxisOverlay(it, AxisY, alongX = false, snapped, guides, spacing) }
     return MoveSnapOutput(
         dx = dx,
         dy = dy,

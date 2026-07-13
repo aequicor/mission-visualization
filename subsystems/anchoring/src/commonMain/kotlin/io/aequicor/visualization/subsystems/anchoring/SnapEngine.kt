@@ -12,8 +12,16 @@ data class SnapResult(
     val guides: List<SnapLine>,
 )
 
-/** One axis's winning alignment: how far to nudge, the line it aligned to, and which target owns it. */
-private data class AxisSnap(val delta: Double, val aligned: Double, val target: SnapBox)
+/** One axis's winning alignment plus every relationship made true by the same magnetic delta. */
+private data class AxisSnap(
+    val delta: Double,
+    val aligned: Double,
+    val target: SnapBox,
+    val coincident: List<AxisAlignmentTarget>,
+)
+
+/** A target line reached by the winning alignment delta; retained for complete overlay feedback. */
+internal data class AxisAlignmentTarget(val coordinate: Double, val target: SnapBox)
 
 /**
  * Best alignment on one axis: compares each of [sourceLines] (a dragged box's left/center/right
@@ -31,6 +39,7 @@ private fun snapAxis(
     var best: AxisSnap? = null
     var bestDistance = Double.MAX_VALUE
     var bestRank = Int.MAX_VALUE
+    val coincident = ArrayList<AxisAlignmentTarget>()
     targets.forEach { target ->
         val targetLines = targetLinesOf(target)
         sourceLines.forEach { (src, srcCenter) ->
@@ -40,16 +49,21 @@ private fun snapAxis(
                 if (distance <= threshold) {
                     val rank = if (srcCenter && dstCenter) 0 else if (srcCenter || dstCenter) 1 else 2
                     val better = distance < bestDistance || (distance == bestDistance && rank < bestRank)
+                    val currentBest = best
                     if (better) {
+                        if (currentBest == null || abs(delta - currentBest.delta) > AlignmentOverlayEpsilon) coincident.clear()
+                        coincident += AxisAlignmentTarget(dst, target)
                         bestDistance = distance
                         bestRank = rank
-                        best = AxisSnap(delta = delta, aligned = dst, target = target)
+                        best = AxisSnap(delta = delta, aligned = dst, target = target, coincident = emptyList())
+                    } else if (currentBest != null && abs(delta - currentBest.delta) <= AlignmentOverlayEpsilon) {
+                        coincident += AxisAlignmentTarget(dst, target)
                     }
                 }
             }
         }
     }
-    return best
+    return best?.copy(coincident = coincident.toList())
 }
 
 /**
@@ -143,8 +157,8 @@ fun computeAnchors(
 
     val guides = ArrayList<AnchorGuide>()
     val spacing = ArrayList<SpacingBar>()
-    xWinner?.let { buildAxisOverlay(it, alongX = true, snapped, guides, spacing) }
-    yWinner?.let { buildAxisOverlay(it, alongX = false, snapped, guides, spacing) }
+    xWinner?.let { buildResolvedAxisOverlay(it, AxisX, alongX = true, snapped, guides, spacing) }
+    yWinner?.let { buildResolvedAxisOverlay(it, AxisY, alongX = false, snapped, guides, spacing) }
     return AnchorResult(dx, dy, guides, spacing)
 }
 
@@ -221,6 +235,7 @@ internal data class AxisWinner(
     val crossLo: Double?,
     val crossHi: Double?,
     val plan: SpacingPlan? = null,
+    val alignmentTargets: List<AxisAlignmentTarget> = emptyList(),
 )
 
 private fun rangesOverlap(aLo: Double, aHi: Double, bLo: Double, bHi: Double): Boolean = aLo < bHi && bLo < aHi
@@ -335,7 +350,15 @@ private fun existingGaps(axis: BoxAxis, flankable: List<SnapBox>): List<Triple<D
 /** Picks the axis winner: real-geometry [align]ment wins ties over the [beauty] anchors (its higher priority). */
 private fun chooseAxisWinner(axis: BoxAxis, align: AxisSnap?, beauty: BeautyAnchor?): AxisWinner? {
     val alignWinner = align?.let {
-        AxisWinner(it.delta, it.aligned, AnchorKind.Alignment, null, axis.crossLo(it.target), axis.crossHi(it.target))
+        AxisWinner(
+            it.delta,
+            it.aligned,
+            AnchorKind.Alignment,
+            null,
+            axis.crossLo(it.target),
+            axis.crossHi(it.target),
+            alignmentTargets = it.coincident,
+        )
     }
     val beautyWinner = beauty?.let {
         AxisWinner(it.delta, it.target, it.kind, it.label, it.crossLo, it.crossHi, it.plan)
@@ -385,3 +408,59 @@ internal fun buildAxisOverlay(
     }
     guides += AnchorGuide(line, winner.kind, winner.label)
 }
+
+/**
+ * Builds the visible overlay for one resolved axis. A single alignment delta can make several
+ * relationships true at once: equal-width boxes, for example, align their low edge, center and
+ * high edge together. The magnetic solver still keeps one deterministic winner, but the overlay
+ * must expose every coincident line so an edge guide does not disappear behind a center tie-break.
+ */
+internal fun buildResolvedAxisOverlay(
+    winner: AxisWinner,
+    axis: BoxAxis,
+    alongX: Boolean,
+    snapped: SnapBox,
+    guides: MutableList<AnchorGuide>,
+    spacing: MutableList<SpacingBar>,
+) {
+    if (winner.kind != AnchorKind.Alignment) {
+        buildAxisOverlay(winner, alongX, snapped, guides, spacing)
+        return
+    }
+
+    data class OverlaySpan(val coordinate: Double, var crossLo: Double, var crossHi: Double)
+
+    val sourceCrossLo = axis.crossLo(snapped)
+    val sourceCrossHi = axis.crossHi(snapped)
+    val spans = ArrayList<OverlaySpan>()
+    winner.alignmentTargets.forEach { alignment ->
+        val targetCrossLo = axis.crossLo(alignment.target)
+        val targetCrossHi = axis.crossHi(alignment.target)
+        val existing = spans.firstOrNull { abs(it.coordinate - alignment.coordinate) <= AlignmentOverlayEpsilon }
+        if (existing == null) {
+            spans += OverlaySpan(
+                coordinate = alignment.coordinate,
+                crossLo = minOf(sourceCrossLo, targetCrossLo),
+                crossHi = maxOf(sourceCrossHi, targetCrossHi),
+            )
+        } else {
+            existing.crossLo = minOf(existing.crossLo, sourceCrossLo, targetCrossLo)
+            existing.crossHi = maxOf(existing.crossHi, sourceCrossHi, targetCrossHi)
+        }
+    }
+
+    if (spans.isEmpty()) {
+        buildAxisOverlay(winner, alongX, snapped, guides, spacing)
+        return
+    }
+    spans.sortedBy { it.coordinate }.forEach { span ->
+        val line = if (alongX) {
+            SnapLine(span.coordinate, span.crossLo, span.coordinate, span.crossHi)
+        } else {
+            SnapLine(span.crossLo, span.coordinate, span.crossHi, span.coordinate)
+        }
+        guides += AnchorGuide(line, AnchorKind.Alignment)
+    }
+}
+
+private const val AlignmentOverlayEpsilon = 0.000001

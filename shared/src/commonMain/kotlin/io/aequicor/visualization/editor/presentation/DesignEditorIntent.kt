@@ -123,6 +123,18 @@ sealed interface DesignEditorIntent {
 
     data class DuplicateNodes(val nodeIds: Set<String>) : DesignEditorIntent
 
+    /**
+     * Wraps sibling objects in a transparent free-positioned group. Canvas callers may provide
+     * resolved geometry so grouping hug/fill-sized objects keeps their exact visual bounds;
+     * keyboard and reducer tests can omit it and use the authored positions/sizes.
+     */
+    data class GroupNodes(
+        val nodeIds: Set<String>,
+        val position: DesignPoint? = null,
+        val size: DesignSize? = null,
+        val childPositions: Map<String, DesignPoint> = emptyMap(),
+    ) : DesignEditorIntent
+
     /** Steps a node within its sibling list; z-order = paint order (later = front). */
     data class ReorderNode(val nodeId: String, val move: ZOrderMove) : DesignEditorIntent
 

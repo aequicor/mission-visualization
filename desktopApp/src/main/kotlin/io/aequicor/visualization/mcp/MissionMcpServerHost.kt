@@ -61,7 +61,9 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                     capabilities = ServerCapabilities(tools = ServerCapabilities.Tools(listChanged = false)),
                 ),
                 instructions = """
-                    Mission Visualization MCP is read-only and is restricted to ${allowedRoot.toAbsolutePath()}.
+                    Mission Visualization MCP is read-only and its layouts root is restricted to ${allowedRoot.toAbsolutePath()}.
+                    The layouts root is not necessarily the AI agent's project root. Install all
+                    project-scoped skills at the agent project root, not automatically at the layouts root.
                     During project setup call get_mcp_skill, install it with the client's native
                     project-skill mechanism, then call get_slm_skills with skill=all and finally
                     validate_project_setup. For layout work edit *.layout.md with normal file tools,
@@ -82,7 +84,7 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                             skill_name: $MissionVisualizationMcpSkillName
                             skill_version: $MissionVisualizationMcpSkillVersion
                             sha256: ${sha256(markdown)}
-                            install_hint: Install the Markdown below as a project-scoped skill using this client's native skill mechanism.
+                            install_hint: Install the Markdown below at the AI agent's actual project root using this client's native project-scoped skill mechanism. The MCP allowed layouts root may only be a subfolder; do not infer skill scope from it.
 
                             --- BEGIN SKILL.md ---
                             $markdown--- END SKILL.md ---
@@ -108,7 +110,7 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                                 skill_set: ${bundle.selector}
                                 included_skills: ${bundle.includedSkills.joinToString(", ")}
                                 file_count: ${bundle.files.size}
-                                install_hint: Install every returned SKILL.md as a project-scoped skill using this client's native skill mechanism. Preserve unrelated skills and instructions.
+                                install_hint: Install every returned SKILL.md at the AI agent's actual project root using this client's native project-scoped skill mechanism. The MCP allowed layouts root may only be a subfolder. Preserve unrelated skills and instructions.
                                 """.trimIndent(),
                             ),
                         ) + bundle.files.map { file ->
@@ -132,7 +134,7 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             }
             server.addTool(
                 name = "validate_project_setup",
-                description = "Verify that the target agent can call this MCP server, uses the allowed project root, and completed skill setup.",
+                description = "Verify MCP connectivity, the separate agent project and layouts roots, and project-scoped skill setup.",
                 inputSchema = validationToolSchema(),
                 toolAnnotations = ToolAnnotations(readOnlyHint = true, openWorldHint = false),
             ) { request ->
@@ -145,8 +147,9 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                                 """
                                 verified: ${verification.verified}
                                 agent_name: ${verification.agentName}
-                                project_path: ${verification.projectPath}
-                                allowed_root: ${allowedRoot.toRealPath()}
+                                agent_project_path: ${verification.agentProjectPath}
+                                layouts_path: ${verification.layoutsPath}
+                                allowed_layouts_root: ${allowedRoot.toRealPath()}
                                 message: ${verification.message}
                                 """.trimIndent(),
                             ),
@@ -253,9 +256,13 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
 
         private fun validationToolSchema(): ToolSchema = ToolSchema(
             properties = buildJsonObject {
-                putJsonObject("project_path") {
+                putJsonObject("agent_project_path") {
                     put("type", "string")
-                    put("description", "Absolute path of the target project's root folder.")
+                    put("description", "Absolute root of the project opened by the AI coding client, where project-scoped skills were installed.")
+                }
+                putJsonObject("layouts_path") {
+                    put("type", "string")
+                    put("description", "Absolute folder containing layouts. It may be a project subfolder and must match the MCP allowed layouts root.")
                 }
                 putJsonObject("agent_name") {
                     put("type", "string")
@@ -263,7 +270,7 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                 }
                 putJsonObject("root_skill_installed") {
                     put("type", "boolean")
-                    put("description", "True after the canonical mission-visualization-mcp root skill was installed project-scoped.")
+                    put("description", "True after the canonical mission-visualization-mcp skill was installed project-scoped at agent_project_path.")
                 }
                 putJsonObject("slm_skills_installed") {
                     put("type", "array")
@@ -271,7 +278,7 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                     put("description", "Installed canonical SLM skill names returned by get_slm_skills.")
                 }
             },
-            required = listOf("project_path", "agent_name", "root_skill_installed", "slm_skills_installed"),
+            required = listOf("agent_project_path", "layouts_path", "agent_name", "root_skill_installed", "slm_skills_installed"),
         )
 
         private fun renderToolSchema(): ToolSchema = ToolSchema(
@@ -328,7 +335,8 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             args: kotlinx.serialization.json.JsonObject,
             allowedRoot: Path,
         ): McpProjectVerification {
-            val projectPath = args["project_path"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val agentProjectPath = args["agent_project_path"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val layoutsPath = args["layouts_path"]?.jsonPrimitive?.contentOrNull.orEmpty()
             val agentName = args["agent_name"]?.jsonPrimitive?.contentOrNull.orEmpty().ifBlank { "unknown" }
             val rootSkillInstalled = args["root_skill_installed"]?.jsonPrimitive?.booleanOrNull == true
             val installedSkills = args["slm_skills_installed"]?.jsonArray
@@ -344,14 +352,19 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                 "slm-editor",
             )
             val canonicalAllowedRoot = allowedRoot.toRealPath()
-            val canonicalProjectRoot = projectPath.takeIf(String::isNotBlank)?.let { raw ->
+            val canonicalAgentProjectRoot = agentProjectPath.takeIf(String::isNotBlank)?.let { raw ->
                 runCatching { Path.of(raw).toRealPath() }.getOrNull()
             }
-            val rootMatches = canonicalProjectRoot == canonicalAllowedRoot
+            val canonicalLayoutsRoot = layoutsPath.takeIf(String::isNotBlank)?.let { raw ->
+                runCatching { Path.of(raw).toRealPath() }.getOrNull()
+            }
+            val agentProjectExists = canonicalAgentProjectRoot?.let(java.nio.file.Files::isDirectory) == true
+            val layoutsRootMatches = canonicalLayoutsRoot == canonicalAllowedRoot
             val missingSkills = requiredSkills - installedSkills
-            val verified = rootMatches && rootSkillInstalled && missingSkills.isEmpty()
+            val verified = agentProjectExists && layoutsRootMatches && rootSkillInstalled && missingSkills.isEmpty()
             val message = when {
-                !rootMatches -> "The target project root does not match the MCP allowed root."
+                !agentProjectExists -> "The AI agent project root is missing or is not an accessible directory."
+                !layoutsRootMatches -> "The layouts path does not match the MCP allowed layouts root."
                 !rootSkillInstalled -> "The canonical root skill was not reported as installed."
                 missingSkills.isNotEmpty() -> "Missing SLM skills: ${missingSkills.sorted().joinToString(", ")}"
                 else -> "Mission Visualization MCP and project skills are ready."
@@ -359,7 +372,8 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             return McpProjectVerification(
                 verified = verified,
                 agentName = agentName,
-                projectPath = canonicalProjectRoot?.toString() ?: projectPath,
+                agentProjectPath = canonicalAgentProjectRoot?.toString() ?: agentProjectPath,
+                layoutsPath = canonicalLayoutsRoot?.toString() ?: layoutsPath,
                 message = message,
             )
         }

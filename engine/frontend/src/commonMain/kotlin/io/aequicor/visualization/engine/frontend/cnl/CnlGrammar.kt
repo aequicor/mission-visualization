@@ -713,7 +713,12 @@ internal object CnlGrammar {
             val paint = strokes.paints[0] as DesignPaint.Solid
             val token = colorToken(paint.color) ?: return renderStrokeRecord(strokes)
             val parts = mutableListOf("stroke", token)
-            strokes.weight.literalOrNull()?.takeIf { it != 1.0 }?.let { parts += num(it) }
+            // Flat stroke alignment follows the optional numeric weight. Keep the default `1`
+            // when an alignment token follows, otherwise `stroke #hex center` is parsed as a bad
+            // numeric weight and silently falls back to Inside on round-trip.
+            strokes.weight.literalOrNull()
+                ?.takeIf { it != 1.0 || strokes.align != StrokeAlign.Inside }
+                ?.let { parts += num(it) }
             when (strokes.align) {
                 StrokeAlign.Inside -> {}
                 StrokeAlign.Outside -> parts += "outside"

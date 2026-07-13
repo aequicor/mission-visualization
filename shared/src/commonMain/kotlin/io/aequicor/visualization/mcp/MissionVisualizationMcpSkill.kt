@@ -1,7 +1,7 @@
 package io.aequicor.visualization.mcp
 
 const val MissionVisualizationMcpSkillName = "mission-visualization-mcp"
-const val MissionVisualizationMcpSkillVersion = "1"
+const val MissionVisualizationMcpSkillVersion = "2"
 
 /** Canonical project skill returned by the MCP server during target-project onboarding. */
 fun getMissionVisualizationMcpSkill(): String = """
@@ -23,8 +23,9 @@ fun getMissionVisualizationMcpSkill(): String = """
     - `get_slm_skills`: returns the canonical base SLM skill plus requested subsystem skills.
       Call it with `skill: "all"` during initial setup. Supported selectors are `all`, `slm`,
       `diagrams`, `vector_graphics`, `typography`, `annotations`, and `editor`.
-    - `validate_project_setup`: proves that this client can call the MCP server and that its project
-      root matches the server's allowed root. Call it after installing the root and SLM skills.
+    - `validate_project_setup`: proves that this client can call the MCP server and that skill setup
+      is complete. Pass `agent_project_path` (where project-scoped skills are installed) separately
+      from `layouts_path` (the MCP content root). Call it after installing the root and SLM skills.
     - `check_layout`: compiles one `*.layout.md` file and returns `valid`, diagnostics, and the
       source fingerprint. Fix errors until `valid: true`.
     - `render_layout`: compiles and renders a screen, placed component, or group. It returns PNG,
@@ -40,5 +41,8 @@ fun getMissionVisualizationMcpSkill(): String = """
     6. Fix layout, clipping, overflow, text, spacing, contrast, and responsive issues, then repeat.
     7. Finish only when the source is valid and the latest PNG has been visually reviewed.
 
-    Never ask the MCP server to edit project sources and never access a layout outside its allowed root.
+    The layouts root can be a subfolder of the agent project or a separate folder. Never install
+    project-scoped skills into the layouts root merely because MCP exposes it there. Install them at
+    the actual agent project root. Never ask the MCP server to edit project sources and never access
+    a layout outside its allowed layouts root.
 """.trimIndent() + "\n"

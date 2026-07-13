@@ -2,12 +2,15 @@ package io.aequicor.visualization.engine.frontend.markdown
 
 import io.aequicor.visualization.engine.frontend.blocks.CnlContainerExtension
 import io.aequicor.visualization.engine.frontend.blocks.CnlContainerLine
+import io.aequicor.visualization.engine.frontend.blocks.NodePatch
 import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.blocks.aggregateErased
 import io.aequicor.visualization.engine.frontend.blocks.parseSentenceErased
 import io.aequicor.visualization.engine.frontend.cnl.CnlParser
+import io.aequicor.visualization.engine.frontend.cnl.CnlPropertyKind
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 
 /**
  * Hand-rolled block-level SLM markdown parser: frontmatter split, ATX headings 1–6,
@@ -295,7 +298,31 @@ class SlmMarkdownParser(
             span = SlmSourceSpan(line.number, line.number),
         )
         val typed = split?.let {
-            val entries = CnlParser.desugar(it.element, line.number, diagnostics)
+            val entries = CnlParser.desugar(it.element, line.number, diagnostics).toMutableList()
+            val hasFlowDirection = it.element.properties.any { property ->
+                property.kind == CnlPropertyKind.Direction
+            }
+            val explicitContainerKind = it.name.substringBefore(':', missingDelimiterValue = "")
+                .trim()
+                .lowercase()
+            if (hasFlowDirection && explicitContainerKind !in setOf("frame", "autolayout")) {
+                // Before Frame and AutoLayout became distinct authoring kinds, semantic
+                // headings expressed flow directly (`## Card row gap 8`). Preserve that
+                // syntax as an inferred AutoLayout while keeping `Frame: ... row` invalid.
+                val nodeIndex = entries.indexOfFirst { entry -> entry.kind == TypedBlockKind.Node }
+                if (nodeIndex >= 0) {
+                    val entry = entries[nodeIndex]
+                    entries[nodeIndex] = entry.copy(
+                        patch = (entry.patch as NodePatch).copy(containerKind = ContainerKind.AutoLayout),
+                    )
+                } else {
+                    entries += DirectPatchEntry(
+                        key = TypedBlockKind.Node.key,
+                        patch = NodePatch(containerKind = ContainerKind.AutoLayout),
+                        span = SlmSourceSpan(line.number, line.number),
+                    )
+                }
+            }
             entries.takeIf { list -> list.isNotEmpty() }
                 ?.let { list -> TypedAttributeBlock(list, SlmSourceSpan(line.number, line.number)) }
         }

@@ -27,10 +27,13 @@ class DesktopMcpServerControllerTest {
                 assertTrue(controller.connectionPrompt.contains("native project-scoped MCP configuration"))
                 assertTrue(controller.connectionPrompt.contains(controller.endpoint))
                 assertTrue(controller.connectionPrompt.contains("Do not install skills"))
+                assertTrue(controller.connectionPrompt.contains("not necessarily the root"))
                 assertFalse(controller.connectionPrompt.contains("get_mcp_skill"))
                 assertTrue(controller.setupPrompt.contains("get_mcp_skill"))
                 assertTrue(controller.setupPrompt.contains("get_slm_skills"))
                 assertTrue(controller.setupPrompt.contains("validate_project_setup"))
+                assertTrue(controller.setupPrompt.contains("agent_project_path"))
+                assertTrue(controller.setupPrompt.contains("layouts_path"))
                 assertFalse(controller.setupPrompt.contains(controller.endpoint))
                 assertTrue(controller.setupPrompt.contains(root.toString()))
 

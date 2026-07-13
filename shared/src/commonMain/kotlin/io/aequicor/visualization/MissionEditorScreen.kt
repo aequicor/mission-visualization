@@ -22,6 +22,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,9 +53,7 @@ import io.aequicor.visualization.editor.data.FolderPendingStorageKey
 import io.aequicor.visualization.editor.data.LanguagePreference
 import io.aequicor.visualization.editor.data.ProjectSnapshot
 import io.aequicor.visualization.editor.data.createKeyValueStore
-import io.aequicor.visualization.editor.data.decodeEditorStateSnapshot
 import io.aequicor.visualization.editor.data.decodeProjectSnapshot
-import io.aequicor.visualization.editor.data.encodeEditorStateSnapshot
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
 import io.aequicor.visualization.editor.domain.AppLanguage
 import io.aequicor.visualization.editor.domain.RecentProject
@@ -105,7 +107,6 @@ import io.aequicor.visualization.editor.platform.platformSetActiveProjectId
 import io.aequicor.visualization.editor.platform.platformSupportsFolderSync
 import io.aequicor.visualization.editor.platform.platformSupportsLanding
 import io.aequicor.visualization.editor.platform.platformWriteFolderFiles
-import io.aequicor.visualization.editor.platform.platformWriteFolderEditorState
 import io.aequicor.visualization.editor.ui.EditorBrowserSaveBanner
 import io.aequicor.visualization.editor.ui.EditorCanvasPane
 import io.aequicor.visualization.editor.ui.buildLandingConfigJson
@@ -189,6 +190,13 @@ class MissionEditorStateHolder(
     var projectName by mutableStateOf("")
         private set
 
+    /**
+     * Whether the current working set is the bundled, unsaved Welcome project. Folder and
+     * browser projects keep their identity even when their persistence backend is temporarily
+     * unavailable; backend status alone must never turn them back into a Welcome copy.
+     */
+    private var isWelcomeProject = true
+
     /** Native Compose project screen; the web owns its equivalent DOM overlay. */
     var projectLandingVisible by mutableStateOf(platformProjectLandingMode == ProjectLandingMode.Compose)
         private set
@@ -237,6 +245,7 @@ class MissionEditorStateHolder(
         if (!usesEmbeddedDraftProjects) return
         val draft = draft ?: return
         val projectId = ensureBrowserProjectId()
+        isWelcomeProject = false
         persistenceEnabled = true
         projectCreationPromptVisible = false
         platformSetActiveProjectId(projectId)
@@ -301,11 +310,8 @@ class MissionEditorStateHolder(
     /** Sources as of the last inbound-adopt or outbound-write: the base for concurrency detection. */
     private var lastSyncedSources: List<MissionDocumentSource> = emptyList()
 
-    /** Full document as of the last desktop editor-state adopt/write. */
+    /** Full document represented by [lastSyncedSources], used only for conflict detection. */
     private var lastSyncedDocument: DesignDocument? = null
-
-    /** A full-document edit waiting for the current interaction to finish before it is written. */
-    private var editorStateDirty = false
 
     /** Folder id last written to the recent-projects list this session, to record each connection once. */
     private var lastRecordedFolderId: String? = null
@@ -360,23 +366,19 @@ class MissionEditorStateHolder(
     }
 
     fun dispatch(intent: DesignEditorIntent) {
-        val previousDocument = designState.document
         val previousSources = designState.sources
         designState = reduceDesignEditor(designState, intent)
-        if (designState.document != previousDocument) editorStateDirty = true
         // Reducer previews keep sources checkpointed, so this fires once on EndInteraction rather
         // than once per pointer frame. Committed inspector/command edits reach disk synchronously;
         // app shutdown can no longer cancel the debounce before the authoritative SLM is written.
-        val sourceCommitOk = if (
+        val sourceCommitted = if (
             liveFolderConnected && !designState.interacting && designState.sources != previousSources
         ) {
             writeSourcesToFolder(designState.sources)
         } else {
-            true
+            false
         }
-        if (sourceCommitOk && editorStateDirty && liveFolderConnected && !designState.interacting) {
-            designState.document?.let { writeEditorStateToFolder(it, designState.sources) }
-        }
+        if (sourceCommitted) lastSyncedDocument = designState.document
         // Annotation view intents (expand/select/tool) live in workspace state, and a
         // deleted annotation prunes its view entries; every other intent is a no-op here.
         updateWorkspace { reduceAnnotationWorkspace(it, intent) }
@@ -397,8 +399,7 @@ class MissionEditorStateHolder(
 
     /**
      * Restores a persisted draft (if any) into the editor, then autosaves subsequent
-     * SLM-source changes (debounced). Full desktop document snapshots are written by [dispatch]
-     * when an edit or interaction completes. Runs until cancelled; call once from a
+     * SLM-source changes (debounced). Runs until cancelled; call once from a
      * `LaunchedEffect`. A null [draft] disables persistence.
      */
     @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -406,6 +407,7 @@ class MissionEditorStateHolder(
         val embeddedDraft = draft.takeIf { usesEmbeddedDraftProjects }
         embeddedDraft?.restore()?.takeIf { it.folderId == null }?.let { restored ->
             browserProjectId = restored.projectId
+            isWelcomeProject = false
             persistenceEnabled = true
             projectName = restored.projectName
             designState = createDesignEditorState(compileMissionDocuments(restored.files))
@@ -442,7 +444,7 @@ class MissionEditorStateHolder(
                                 displayProjectName,
                                 projectId = ensureBrowserProjectId(),
                             )
-                            sources != inMemoryBaselineSources -> {
+                            isWelcomeProject && sources != inMemoryBaselineSources -> {
                                 // First write-back edit of Welcome asks where the new project
                                 // should live. Until the user chooses, it remains in memory only.
                                 projectCreationPromptVisible = true
@@ -514,15 +516,7 @@ class MissionEditorStateHolder(
         }
         val incomingSources = pending?.files ?: snapshot.sources
         val docs = compileMissionDocuments(incomingSources)
-        val persistedDocument = if (pending == null) {
-            decodeEditorStateSnapshot(snapshot.editorStateJson, incomingSources)
-        } else {
-            null
-        }
-        // Compiled SLM is always authoritative. The sidecar is consulted only if the exact same
-        // source fingerprint can no longer compile (recovery from a compiler regression), never
-        // to override a successfully compiled `.layout.md` project.
-        val incomingDocument = docs.document?.takeUnless { docs.hasErrors } ?: persistedDocument
+        val incomingDocument = docs.document?.takeUnless { docs.hasErrors }
         val isEmptyProject = incomingSources.isEmpty()
         // Compile-gate: a torn or broken non-empty external file yields no document — hold the
         // last good canvas. An empty folder is a valid empty project and must not reveal Welcome.
@@ -532,6 +526,7 @@ class MissionEditorStateHolder(
         }
         folderExternalError = !isEmptyProject && (docs.document == null || docs.hasErrors)
         if (!hasAdoptedLiveFolder) {
+            isWelcomeProject = false
             persistenceEnabled = false
             projectCreationPromptVisible = false
             browserProjectId = null
@@ -539,7 +534,6 @@ class MissionEditorStateHolder(
             designState = editorStateFrom(docs, incomingDocument)
             lastSyncedSources = snapshot.sources
             lastSyncedDocument = designState.document
-            editorStateDirty = false
             folderConflictBackup = null
             hasAdoptedLiveFolder = true
             projectLandingVisible = false
@@ -564,7 +558,6 @@ class MissionEditorStateHolder(
         if (incoming == current && incomingDocument == currentDocument) {
             lastSyncedSources = incoming
             lastSyncedDocument = incomingDocument
-            editorStateDirty = false
             return
         }
         val userEditedLocally = current != lastSyncedSources || currentDocument != lastSyncedDocument
@@ -591,7 +584,6 @@ class MissionEditorStateHolder(
         if (userEditedLocally) folderConflictBackup = current
         lastSyncedSources = incoming
         lastSyncedDocument = incomingDocument
-        editorStateDirty = false
     }
 
     private fun editorStateFrom(docs: MissionDocuments, document: DesignDocument?): DesignEditorState {
@@ -625,12 +617,6 @@ class MissionEditorStateHolder(
         return committed
     }
 
-    private fun writeEditorStateToFolder(document: DesignDocument, sources: List<MissionDocumentSource>) {
-        platformWriteFolderEditorState(encodeEditorStateSnapshot(sources, document))
-        lastSyncedDocument = document
-        editorStateDirty = false
-    }
-
     /** Menu action: pick a local folder and start live two-way sync. */
     fun connectFolder() {
         if (!platformSupportsFolderSync) return
@@ -657,7 +643,6 @@ class MissionEditorStateHolder(
         hasAdoptedLiveFolder = false
         lastRecordedFolderId = null
         lastSyncedDocument = null
-        editorStateDirty = false
     }
 
     /** Pulls a fresh full snapshot from disk when live folder sync is connected. */
@@ -672,7 +657,6 @@ class MissionEditorStateHolder(
         if (docs.document != null) designState = createDesignEditorState(docs)
         lastSyncedSources = backup
         lastSyncedDocument = designState.document
-        editorStateDirty = false
         folderConflictBackup = null
     }
 
@@ -736,8 +720,7 @@ class MissionEditorStateHolder(
     /** Flushes a connected project before changing its folder, then tears down the watcher. */
     private fun prepareForProjectSwitch() {
         if (liveFolderConnected) {
-            writeSourcesToFolder(designState.sources)
-            designState.document?.let { writeEditorStateToFolder(it, designState.sources) }
+            if (writeSourcesToFolder(designState.sources)) lastSyncedDocument = designState.document
         }
         if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
     }
@@ -789,6 +772,7 @@ class MissionEditorStateHolder(
         if (folderSync != FolderSyncPresence.Idle) disconnectFolder()
         browserProjectId = null
         val projectId = ensureBrowserProjectId()
+        isWelcomeProject = false
         persistenceEnabled = true
         projectCreationPromptVisible = false
         projectName = ""
@@ -807,6 +791,7 @@ class MissionEditorStateHolder(
         draft.restore()?.takeIf { it.folderId == null }?.let { restored ->
             val projectId = restored.projectId ?: ensureBrowserProjectId()
             browserProjectId = projectId
+            isWelcomeProject = false
             persistenceEnabled = true
             projectCreationPromptVisible = false
             projectName = restored.projectName
@@ -826,6 +811,7 @@ class MissionEditorStateHolder(
         if (!usesEmbeddedDraftProjects) return
         val draft = draft ?: return
         val projectId = ensureBrowserProjectId()
+        isWelcomeProject = false
         persistenceEnabled = true
         platformSetActiveProjectId(projectId)
         draft.saveNow(designState.sources, displayProjectName, projectId = projectId)
@@ -834,8 +820,7 @@ class MissionEditorStateHolder(
     /** Desktop Save: flush to the connected folder or choose one for the current in-memory sources. */
     fun saveProjectNow() {
         if (liveFolderConnected) {
-            writeSourcesToFolder(designState.sources)
-            designState.document?.let { writeEditorStateToFolder(it, designState.sources) }
+            if (writeSourcesToFolder(designState.sources)) lastSyncedDocument = designState.document
         } else {
             createFolderProject()
         }
@@ -849,6 +834,7 @@ class MissionEditorStateHolder(
      */
     fun openWelcomeProject() {
         prepareForProjectSwitch()
+        isWelcomeProject = true
         persistenceEnabled = false
         projectCreationPromptVisible = false
         browserProjectId = null
@@ -865,6 +851,7 @@ class MissionEditorStateHolder(
      * Destructive counterpart of [openWelcomeProject]; currently has no UI entry point.
      */
     fun resetToDefaults() {
+        isWelcomeProject = true
         persistenceEnabled = false
         projectCreationPromptVisible = false
         val draft = draft
@@ -981,6 +968,21 @@ fun MissionEditorApp(mcpServer: McpServerController = NoMcpServerController) {
 
 @Composable
 private fun MissionEditorScreen(state: MissionEditorStateHolder) {
+    val strings = LocalStrings.current
+    val colors = LocalEditorColors.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(state.folderExternalError, strings.menu.folderExternalError) {
+        if (state.folderExternalError) {
+            snackbarHostState.showSnackbar(
+                message = strings.menu.folderExternalError,
+                withDismissAction = true,
+                duration = SnackbarDuration.Indefinite,
+            )
+        } else {
+            snackbarHostState.currentSnackbarData?.dismiss()
+        }
+    }
+
     // The editor fills the window edge-to-edge: no chrome frame, no shell margin, no
     // rounded shell corners — the working area gets the whole viewport.
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Color.White)) {
@@ -1001,6 +1003,18 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
                     }
                 }
             }
+        }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(24.dp),
+        ) { data ->
+            Snackbar(
+                snackbarData = data,
+                containerColor = colors.statusDanger,
+                contentColor = Color.White,
+                actionColor = Color.White,
+                dismissActionContentColor = Color.White,
+            )
         }
     }
 }

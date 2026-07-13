@@ -85,4 +85,84 @@ class MarqueeSelectionTest {
             marqueeSelection(bounds, listOf(SelectableBounds("component", bounds))),
         )
     }
+
+    @Test
+    fun wholeContainerSelectionIncludesContainerAndImplementationLayers() {
+        val marquee = DocumentRect.fromCorners(12.0, 12.0, 108.0, 108.0)
+        val candidates = listOf(
+            SelectableBounds(
+                "list",
+                DocumentRect.fromCorners(10.0, 10.0, 110.0, 110.0),
+                parentId = "root",
+                container = true,
+            ),
+            SelectableBounds(
+                "row-1",
+                DocumentRect.fromCorners(12.0, 12.0, 108.0, 52.0),
+                parentId = "list",
+                container = true,
+            ),
+            SelectableBounds(
+                "row-1-label",
+                DocumentRect.fromCorners(20.0, 20.0, 50.0, 30.0),
+                parentId = "row-1",
+            ),
+            SelectableBounds(
+                "row-1-control",
+                DocumentRect.fromCorners(80.0, 20.0, 100.0, 40.0),
+                parentId = "row-1",
+            ),
+            SelectableBounds(
+                "row-2",
+                DocumentRect.fromCorners(12.0, 60.0, 108.0, 108.0),
+                parentId = "list",
+                container = true,
+            ),
+            SelectableBounds(
+                "row-2-label",
+                DocumentRect.fromCorners(20.0, 70.0, 50.0, 80.0),
+                parentId = "row-2",
+            ),
+            SelectableBounds(
+                "row-2-control",
+                DocumentRect.fromCorners(80.0, 70.0, 100.0, 90.0),
+                parentId = "row-2",
+            ),
+        )
+        val hits = marqueeSelection(marquee, candidates)
+
+        assertEquals(
+            setOf(
+                "list",
+                "row-1",
+                "row-1-label",
+                "row-1-control",
+                "row-2",
+                "row-2-label",
+                "row-2-control",
+            ),
+            includeFullyCoveredContainers(marquee, candidates, hits),
+        )
+    }
+
+    @Test
+    fun partialSiblingSelectionDoesNotAddParentContainer() {
+        val marquee = DocumentRect.fromCorners(10.0, 10.0, 90.0, 45.0)
+        val candidates = listOf(
+            SelectableBounds(
+                "list",
+                DocumentRect.fromCorners(0.0, 0.0, 100.0, 100.0),
+                container = true,
+            ),
+            SelectableBounds("first", DocumentRect.fromCorners(10.0, 10.0, 40.0, 40.0), parentId = "list"),
+            SelectableBounds("second", DocumentRect.fromCorners(60.0, 10.0, 90.0, 40.0), parentId = "list"),
+            SelectableBounds("third", DocumentRect.fromCorners(10.0, 60.0, 40.0, 90.0), parentId = "list"),
+        )
+        val hits = marqueeSelection(marquee, candidates)
+
+        assertEquals(
+            setOf("first", "second"),
+            includeFullyCoveredContainers(marquee, candidates, hits),
+        )
+    }
 }

@@ -1,7 +1,5 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.decodeEditorStateSnapshot
-import io.aequicor.visualization.editor.data.encodeEditorStateSnapshot
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
@@ -12,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNotEquals
 
-class ProjectEditorStateSnapshotTest {
+class ProjectCnlPersistenceTest {
     @Test
     fun visualEditReopensFromSlmWithoutEditorStateSnapshot() {
         val initial = createDesignEditorState(missionDemoDocuments())
@@ -25,17 +23,5 @@ class ProjectEditorStateSnapshotTest {
         val restored = assertNotNull(compileMissionDocuments(edited.sources).document)
 
         assertEquals(0.73, restored.nodeById("win_bg")?.opacity?.literalOrNull())
-    }
-
-    @Test
-    fun snapshotIsIgnoredWhenSlmSourcesChangedExternally() {
-        val state = createDesignEditorState(missionDemoDocuments())
-        val document = assertNotNull(state.document)
-        val encoded = encodeEditorStateSnapshot(state.sources, document)
-        val changed = state.sources.mapIndexed { index, source ->
-            if (index == 0) source.copy(content = source.content + "\n<!-- external -->\n") else source
-        }
-
-        assertEquals(null, decodeEditorStateSnapshot(encoded, changed))
     }
 }

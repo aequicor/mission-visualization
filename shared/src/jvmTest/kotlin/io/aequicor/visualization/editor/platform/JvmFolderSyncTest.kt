@@ -105,6 +105,19 @@ class JvmFolderSyncTest {
     }
 
     @Test
+    fun manualRefreshRepublishesAnUnchangedCachedSnapshot() {
+        val root = createTempDirectory("folder-manual-republish")
+        root.resolve("screen.layout.md").writeText("# Screen\n")
+        platformConnectFolderForTest(root)
+        val beforeRefresh = folderSyncRevision()
+
+        platformRefreshFolder()
+
+        assertTrue(folderSyncRevision() > beforeRefresh)
+        assertTrue(folderSyncSnapshotJson().orEmpty().contains("# Screen"))
+    }
+
+    @Test
     fun desktopUsesComposeLandingAndDiskOnlyProjects() {
         assertEquals(ProjectLandingMode.Compose, platformProjectLandingMode)
         assertEquals(ProjectStorageMode.DiskOnly, platformProjectStorageMode)
@@ -146,17 +159,17 @@ class JvmFolderSyncTest {
     }
 
     @Test
-    fun fullEditorStateSurvivesDisconnectAndReconnect() {
-        val root = createTempDirectory("folder-editor-state")
+    fun legacyEditorStateIsDeletedWhenCnlProjectOpens() {
+        val root = createTempDirectory("folder-editor-state-cleanup")
         root.resolve("screen.layout.md").writeText("# Screen\n")
+        val legacy = root.resolve(".mission-visualization/editor-state.json")
+        Files.createDirectories(legacy.parent)
+        legacy.writeText("{\"legacy\":true}")
+
         platformConnectFolderForTest(root)
 
-        platformWriteFolderEditorState("{\"saved\":true}")
-        platformResetFolderSyncForTest()
-        platformConnectFolderForTest(root)
-
-        val snapshot = assertNotNull(folderSyncSnapshotJson()?.let(::decodeProjectSnapshot))
-        assertEquals("{\"saved\":true}", snapshot.editorStateJson)
+        assertFalse(Files.exists(legacy))
+        assertNotNull(folderSyncSnapshotJson()?.let(::decodeProjectSnapshot))
     }
 
     @Test

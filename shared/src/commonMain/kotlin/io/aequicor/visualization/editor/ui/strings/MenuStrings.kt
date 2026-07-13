@@ -82,6 +82,8 @@ interface MenuStrings {
     val mcpCopyConnectionPrompt: String
     val mcpCopySetupPrompt: String
     val mcpClipboardBusy: String
+    val mcpAgentProject: String
+    val mcpLayoutsFolder: String
     val mcpWaitingVerification: String
     fun mcpVerified(agentName: String): String
     val mcpVerificationFailed: String
@@ -109,7 +111,8 @@ object MenuStringsEn : MenuStrings {
     override fun folderWatchingDescription(name: String) = "Changes are saved automatically to “" + name + "”."
     override val folderAccessRequired = "Folder access required"
     override fun folderAccessRequiredDescription(name: String) = "Reconnect “" + name + "” to continue automatic saving."
-    override val folderExternalError = "External file has errors — showing the last good version"
+    override val folderExternalError =
+        "The screen changed on disk but could not be compiled. The last working version is still displayed."
     override val folderConflict = "External change loaded — your unsaved edit was kept"
     override val folderRestoreEdit = "Restore my edit"
     override val folderDismiss = "Dismiss"
@@ -141,13 +144,13 @@ object MenuStringsEn : MenuStrings {
     override val downloadClaudeFile = "Download CLAUDE.md"
     override val copyAgentFile = "Copy to clipboard"
     override val mcpTitle = "MCP Server"
-    override val mcpDescription = "Connect any MCP-compatible AI agent to this project, then install the canonical Mission Visualization skills."
-    override val mcpStepServer = "1. Start the project server"
+    override val mcpDescription = "Expose the layouts folder to any MCP-compatible AI agent, while keeping project-scoped skills at the agent project root."
+    override val mcpStepServer = "1. Start the layouts server"
     override val mcpStepConnectionPrompt = "2. Connect MCP in the AI agent"
     override val mcpStepSetupPrompt = "3. After reload, install skills and validate"
     override val mcpStepVerify = "4. Check the target project"
     override val mcpPort = "Port"
-    override val mcpAllowedFolder = "Allowed folder"
+    override val mcpAllowedFolder = "Layouts folder (MCP allowed root)"
     override val mcpChooseFolder = "Choose folder"
     override val mcpStatus = "Status"
     override val mcpStopped = "Stopped"
@@ -162,6 +165,8 @@ object MenuStringsEn : MenuStrings {
     override val mcpCopyConnectionPrompt = "Copy Prompt 1 — connect MCP"
     override val mcpCopySetupPrompt = "Copy Prompt 2 — install and validate"
     override val mcpClipboardBusy = "Could not copy: the system clipboard is busy. Close the app using it and try again."
+    override val mcpAgentProject = "AI agent project"
+    override val mcpLayoutsFolder = "Layouts folder"
     override val mcpWaitingVerification = "Waiting for the target agent to finish setup and call validation."
     override fun mcpVerified(agentName: String) = "Connected and verified by $agentName"
     override val mcpVerificationFailed = "The agent reached MCP, but project validation failed."
@@ -188,7 +193,8 @@ object MenuStringsRu : MenuStrings {
     override fun folderWatchingDescription(name: String) = "Изменения автоматически сохраняются в «" + name + "»."
     override val folderAccessRequired = "Нужен доступ к папке"
     override fun folderAccessRequiredDescription(name: String) = "Переподключите «" + name + "», чтобы продолжить автосохранение."
-    override val folderExternalError = "Во внешнем файле ошибки — показана последняя рабочая версия"
+    override val folderExternalError =
+        "Экран изменён на диске, но не может быть скомпилирован. Показана последняя рабочая версия."
     override val folderConflict = "Загружено внешнее изменение — ваша несохранённая правка сохранена"
     override val folderRestoreEdit = "Вернуть мою правку"
     override val folderDismiss = "Скрыть"
@@ -220,13 +226,13 @@ object MenuStringsRu : MenuStrings {
     override val downloadClaudeFile = "Скачать CLAUDE.md"
     override val copyAgentFile = "Скопировать в буфер обмена"
     override val mcpTitle = "MCP Server"
-    override val mcpDescription = "Подключите к этому проекту любой ИИ-агент с поддержкой MCP и установите canonical skills Mission Visualization."
-    override val mcpStepServer = "1. Запустите сервер проекта"
+    override val mcpDescription = "Откройте папку макетов любому ИИ-агенту с поддержкой MCP, а project-scoped skills установите в корень проекта агента."
+    override val mcpStepServer = "1. Запустите сервер макетов"
     override val mcpStepConnectionPrompt = "2. Подключите MCP в ИИ-агенте"
     override val mcpStepSetupPrompt = "3. После reload установите скиллы и запустите проверку"
     override val mcpStepVerify = "4. Проверьте целевой проект"
     override val mcpPort = "Порт"
-    override val mcpAllowedFolder = "Разрешённая папка"
+    override val mcpAllowedFolder = "Папка макетов (MCP allowed root)"
     override val mcpChooseFolder = "Выбрать папку"
     override val mcpStatus = "Состояние"
     override val mcpStopped = "Остановлен"
@@ -241,6 +247,8 @@ object MenuStringsRu : MenuStrings {
     override val mcpCopyConnectionPrompt = "Скопировать Prompt 1 — подключить MCP"
     override val mcpCopySetupPrompt = "Скопировать Prompt 2 — установить и проверить"
     override val mcpClipboardBusy = "Не удалось скопировать: системный буфер обмена занят. Закройте использующее его приложение и повторите."
+    override val mcpAgentProject = "Проект ИИ-агента"
+    override val mcpLayoutsFolder = "Папка макетов"
     override val mcpWaitingVerification = "Ожидаем, когда целевой агент завершит настройку и вызовет проверку."
     override fun mcpVerified(agentName: String) = "Подключено и проверено: $agentName"
     override val mcpVerificationFailed = "Агент подключился к MCP, но проверка проекта не пройдена."

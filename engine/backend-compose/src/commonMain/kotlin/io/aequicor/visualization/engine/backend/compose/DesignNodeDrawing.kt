@@ -103,6 +103,7 @@ internal fun DrawScope.drawDesignBox(
     box: LayoutBox,
     context: DesignDrawContext,
     drawChild: (DrawScope.(LayoutBox) -> Unit)? = null,
+    floatingNodeIds: Set<String> = emptySet(),
 ) {
     val node = box.node
     if (node.opacity <= 0.0) return
@@ -120,10 +121,10 @@ internal fun DrawScope.drawDesignBox(
         )
         val layerPaint = Paint().apply { alpha = node.opacity.toFloat() }
         drawContext.canvas.saveLayer(bounds, layerPaint)
-        drawWithRotation(box, context, drawChild)
+        drawWithRotation(box, context, drawChild, floatingNodeIds)
         drawContext.canvas.restore()
     } else {
-        drawWithRotation(box, context, drawChild)
+        drawWithRotation(box, context, drawChild, floatingNodeIds)
     }
 }
 
@@ -131,6 +132,7 @@ private fun DrawScope.drawWithRotation(
     box: LayoutBox,
     context: DesignDrawContext,
     drawChild: (DrawScope.(LayoutBox) -> Unit)?,
+    floatingNodeIds: Set<String>,
 ) {
     val rotation = box.node.rotation
     if (rotation != 0.0) {
@@ -138,10 +140,10 @@ private fun DrawScope.drawWithRotation(
             degrees = rotation.toFloat(),
             pivot = Offset((box.x + box.width / 2).toFloat(), (box.y + box.height / 2).toFloat()),
         ) {
-            drawDesignBoxContent(box, context, drawChild)
+            drawDesignBoxContent(box, context, drawChild, floatingNodeIds)
         }
     } else {
-        drawDesignBoxContent(box, context, drawChild)
+        drawDesignBoxContent(box, context, drawChild, floatingNodeIds)
     }
 }
 
@@ -149,6 +151,7 @@ private fun DrawScope.drawDesignBoxContent(
     box: LayoutBox,
     context: DesignDrawContext,
     drawChild: (DrawScope.(LayoutBox) -> Unit)? = null,
+    floatingNodeIds: Set<String> = emptySet(),
 ) {
     val node = box.node
     node.booleanOp?.let { op ->
@@ -207,10 +210,10 @@ private fun DrawScope.drawDesignBoxContent(
     if (box.children.isNotEmpty()) {
         if (node.layout.clipsContent) {
             clipPath(outline) {
-                drawChildBoxes(box, context, drawChild)
+                drawChildBoxes(box, context, drawChild, floatingNodeIds)
             }
         } else {
-            drawChildBoxes(box, context, drawChild)
+            drawChildBoxes(box, context, drawChild, floatingNodeIds)
         }
     }
 
@@ -230,9 +233,11 @@ private fun DrawScope.drawChildBoxes(
     box: LayoutBox,
     context: DesignDrawContext,
     drawChild: (DrawScope.(LayoutBox) -> Unit)? = null,
+    floatingNodeIds: Set<String> = emptySet(),
 ) {
     fun DrawScope.paint(child: LayoutBox) {
-        if (drawChild != null) drawChild(child) else drawDesignBox(child, context)
+        if (child.node.sourceId in floatingNodeIds) return
+        if (drawChild != null) drawChild(child) else drawDesignBox(child, context, floatingNodeIds = floatingNodeIds)
     }
     val children = box.children
     val masks = children.withIndex().filter { (_, child) -> child.node.mask != null }
@@ -246,6 +251,78 @@ private fun DrawScope.drawChildBoxes(
             .filter { (maskIndex, mask) -> maskAppliesTo(mask, maskIndex, child, index) }
             .map { (_, mask) -> maskClipPath(mask, context.vectorAssets) }
         drawClippedBy(clips, 0) { paint(child) }
+    }
+}
+
+/**
+ * Keeps only the outermost requested nodes. A selected child of another selected node must be
+ * painted once as part of that ancestor's subtree, not duplicated as a second floating layer.
+ */
+internal data class FloatingDrawEntry(
+    val box: LayoutBox,
+    val ancestors: List<LayoutBox>,
+)
+
+internal fun LayoutBox.floatingDrawEntries(nodeIds: Set<String>): List<FloatingDrawEntry> {
+    if (nodeIds.isEmpty()) return emptyList()
+    val root = this
+    val ancestors = mutableListOf<LayoutBox>()
+    return buildList {
+        fun visit(box: LayoutBox, requestedAncestor: Boolean) {
+            val requested = box !== root && box.node.sourceId in nodeIds && box.node.mask == null
+            if (requested && !requestedAncestor) {
+                add(FloatingDrawEntry(box, ancestors.toList()))
+                return
+            }
+            ancestors += box
+            box.children.forEach { child -> visit(child, requestedAncestor || requested) }
+            ancestors.removeAt(ancestors.lastIndex)
+        }
+        visit(root, requestedAncestor = false)
+    }
+}
+
+/** Paints a detached drag preview while retaining rotations inherited from its old ancestors. */
+internal fun DrawScope.drawFloatingDesignBox(
+    entry: FloatingDrawEntry,
+    context: DesignDrawContext,
+) {
+    fun DrawScope.drawWithAncestorRotation(index: Int) {
+        if (index >= entry.ancestors.size) {
+            drawDesignBox(entry.box, context)
+            return
+        }
+        val ancestor = entry.ancestors[index]
+        val rotation = ancestor.node.rotation
+        if (rotation == 0.0) {
+            drawWithAncestorRotation(index + 1)
+        } else {
+            rotate(
+                degrees = rotation.toFloat(),
+                pivot = Offset(
+                    (ancestor.x + ancestor.width / 2).toFloat(),
+                    (ancestor.y + ancestor.height / 2).toFloat(),
+                ),
+            ) {
+                drawWithAncestorRotation(index + 1)
+            }
+        }
+    }
+    val inheritedOpacity = entry.ancestors.fold(1.0) { opacity, ancestor -> opacity * ancestor.node.opacity }
+    if (inheritedOpacity < 1.0) {
+        val margin = 2000f
+        val box = entry.box
+        val bounds = Rect(
+            box.x.toFloat() - margin,
+            box.y.toFloat() - margin,
+            box.right.toFloat() + margin,
+            box.bottom.toFloat() + margin,
+        )
+        drawContext.canvas.saveLayer(bounds, Paint().apply { alpha = inheritedOpacity.toFloat() })
+        drawWithAncestorRotation(0)
+        drawContext.canvas.restore()
+    } else {
+        drawWithAncestorRotation(0)
     }
 }
 

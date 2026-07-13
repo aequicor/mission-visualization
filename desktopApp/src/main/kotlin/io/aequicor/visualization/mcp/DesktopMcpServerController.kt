@@ -181,7 +181,13 @@ class DesktopMcpServerController(
         MCP server name: `mission_visualization`
         Transport: Streamable HTTP
         Endpoint: `$endpoint`
-        Expected project root: `$root`
+        Layouts folder exposed by MCP: `$root`
+
+        Important: the layouts folder is a content root and is not necessarily the root of the
+        project opened by your AI coding client. Determine the agent project root from the current
+        workspace or repository. Store project-scoped MCP configuration at that agent project root.
+        Do not create client configuration or skills inside the layouts folder unless it is also the
+        actual agent project root.
 
         Use the native project-scoped MCP configuration mechanism supported by your current AI
         coding client. Preserve every unrelated existing MCP server, setting, instruction, and skill.
@@ -195,10 +201,15 @@ class DesktopMcpServerController(
     private fun buildSetupPrompt(root: String): String = """
         Finish Mission Visualization setup in the project you are currently working in.
 
-        Expected project root: `$root`
+        Layouts folder exposed by MCP: `$root`
 
         The project-scoped `mission_visualization` MCP connection was configured in the previous
         step. Do not edit MCP configuration in this step.
+
+        Determine the root of the project currently opened by your AI coding client from its
+        workspace or repository context. Install all project-scoped skills at that agent project
+        root. The layouts folder above is only the MCP content root; do not use it as the skill scope
+        unless both roots genuinely coincide.
 
         - Confirm that the `mission_visualization` MCP tools are available. If they are not, stop and
           report that the connection is not active yet.
@@ -207,13 +218,14 @@ class DesktopMcpServerController(
         - Call `get_slm_skills` with `skill: "all"` and install every returned SLM and subsystem skill
           project-scoped. Preserve every unrelated project instruction and skill.
         - Call `validate_project_setup` with:
-          - `project_path`: `$root`
+          - `agent_project_path`: the actual root of the project opened by the AI coding client
+          - `layouts_path`: `$root`
           - `agent_name`: the name of your current AI coding client
           - `root_skill_installed`: `true` only after installation succeeds
           - `slm_skills_installed`: every skill name returned by `get_slm_skills`
 
         Report setup complete only when `validate_project_setup` returns `verified: true`.
-        If its allowed root differs from the current project, stop and report the mismatch.
+        If its allowed layouts root differs from `layouts_path`, stop and report the mismatch.
     """.trimIndent()
 
     private companion object {

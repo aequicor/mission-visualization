@@ -35,6 +35,8 @@ data class SelectableBounds(
     val bounds: DocumentRect,
     val locked: Boolean = false,
     val visible: Boolean = true,
+    val parentId: String? = null,
+    val container: Boolean = false,
 )
 
 fun marqueeSelection(
@@ -56,3 +58,42 @@ fun marqueeSelection(
         }
         .map { it.id }
         .toSet()
+
+/**
+ * Adds a container when the marquee fully covers all of its direct selectable children.
+ * The child hits stay selected: a whole-panel drag therefore returns the complete hierarchy,
+ * including the slightly larger padding/border container around the covered content.
+ */
+fun includeFullyCoveredContainers(
+    marquee: DocumentRect,
+    candidates: List<SelectableBounds>,
+    hits: Set<String>,
+    excludedIds: Set<String> = emptySet(),
+): Set<String> {
+    val byId = candidates.associateBy { it.id }
+    val childrenByParent = candidates.groupBy { it.parentId }
+    val result = hits.toMutableSet()
+
+    fun isDescendantOf(id: String, ancestorId: String): Boolean {
+        var parentId = byId[id]?.parentId
+        while (parentId != null) {
+            if (parentId == ancestorId) return true
+            parentId = byId[parentId]?.parentId
+        }
+        return false
+    }
+
+    // Candidates are produced parent-first by the layout walk; reverse order adds the deepest
+    // complete containers before considering their ancestors.
+    candidates.asReversed().forEach { candidate ->
+        if (!candidate.container || candidate.id in excludedIds || candidate.locked || !candidate.visible) return@forEach
+        val directChildren = childrenByParent[candidate.id]
+            .orEmpty()
+            .filter { it.visible && !it.locked && it.id !in excludedIds }
+        if (directChildren.size < 2 || directChildren.any { !marquee.contains(it.bounds) }) return@forEach
+        if (result.none { it == candidate.id || isDescendantOf(it, candidate.id) }) return@forEach
+
+        result += candidate.id
+    }
+    return result
+}

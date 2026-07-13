@@ -7,7 +7,8 @@ enum class McpServerStatus { Stopped, Starting, Running, Error }
 data class McpProjectVerification(
     val verified: Boolean,
     val agentName: String,
-    val projectPath: String,
+    val agentProjectPath: String,
+    val layoutsPath: String,
     val message: String,
 )
 

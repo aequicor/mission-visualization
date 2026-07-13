@@ -13,6 +13,7 @@ import io.aequicor.visualization.editor.presentation.StrokeOp
 import io.aequicor.visualization.editor.presentation.TypographyPatch
 import io.aequicor.visualization.editor.presentation.ZOrderMove
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
+import io.aequicor.visualization.editor.presentation.isCoordinatePositioned
 import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
@@ -76,7 +77,7 @@ class DesignEditorReducerCommandsTest {
     // --- Selection ---
 
     @Test
-    fun ancestorContainerDoesNotJoinDescendantMultiSelection() {
+    fun ancestorContainerJoinsDescendantMultiSelection() {
         var state = freshState()
         val root = state.rootFrameId()
         val document = assertNotNull(state.document)
@@ -89,9 +90,34 @@ class DesignEditorReducerCommandsTest {
         state = reduceDesignEditor(state, DesignEditorIntent.SelectNode(ancestor.id))
         state = reduceDesignEditor(state, DesignEditorIntent.ToggleNodeSelection(child))
 
-        assertEquals(setOf(child), state.selectedNodeIds)
-        assertEquals(child, state.selectedNodeId)
-        assertFalse(state.hasMultiSelection)
+        assertEquals(setOf(ancestor.id, child), state.selectedNodeIds)
+        assertEquals(ancestor.id, state.selectedNodeId)
+        assertTrue(state.hasMultiSelection)
+    }
+
+    @Test
+    fun selectedAncestorAndChildMoveAsOneHierarchy() {
+        var state = freshState()
+        val document = assertNotNull(state.document)
+        val ancestor = assertNotNull(
+            document.pages.flatMap { it.allNodes() }.firstOrNull { candidate ->
+                candidate.children.any { child ->
+                    document.isCoordinatePositioned(candidate.id) && document.isCoordinatePositioned(child.id)
+                }
+            },
+            "screen contains a positioned container with a positioned child",
+        )
+        val child = assertNotNull(ancestor.children.firstOrNull { document.isCoordinatePositioned(it.id) })
+        val ancestorBefore = assertNotNull(ancestor.position)
+        val childBefore = child.position
+
+        state = reduceDesignEditor(state, DesignEditorIntent.SelectNodes(setOf(ancestor.id, child.id)))
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        state = reduceDesignEditor(state, DesignEditorIntent.MoveNodes(state.selectedNodeIds, dx = 12.0, dy = -7.0))
+
+        assertEquals(ancestorBefore.x.orZero + 12.0, state.document?.nodeById(ancestor.id)?.position?.x?.orZero)
+        assertEquals(ancestorBefore.y.orZero - 7.0, state.document?.nodeById(ancestor.id)?.position?.y?.orZero)
+        assertEquals(childBefore, state.document?.nodeById(child.id)?.position, "child keeps its local position")
     }
 
     @Test

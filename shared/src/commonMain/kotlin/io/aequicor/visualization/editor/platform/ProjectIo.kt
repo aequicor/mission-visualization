@@ -141,9 +141,6 @@ internal expect fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boo
  */
 internal expect fun platformWriteFolderFile(fileName: String, content: String)
 
-/** Writes a source-fingerprinted recovery snapshot; successfully compiled SLM always wins. */
-internal expect fun platformWriteFolderEditorState(content: String)
-
 /** Id of the folder currently connected/watched, or null when none — used to record recents. */
 internal expect fun platformActiveFolderId(): String?
 

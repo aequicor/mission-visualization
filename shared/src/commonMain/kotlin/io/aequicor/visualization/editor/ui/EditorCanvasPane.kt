@@ -82,6 +82,7 @@ import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isAltPressed as isPointerAltPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -166,6 +167,7 @@ import io.aequicor.visualization.editor.presentation.EffectiveTransform
 import io.aequicor.visualization.editor.presentation.LineSegment
 import io.aequicor.visualization.editor.presentation.computeResize
 import io.aequicor.visualization.editor.presentation.canvasScrollbarsFor
+import io.aequicor.visualization.editor.presentation.includeFullyCoveredContainers
 import io.aequicor.visualization.editor.presentation.cornerRadiusFromPointer
 import io.aequicor.visualization.editor.presentation.cornerRadiusHandlePoints
 import io.aequicor.visualization.editor.presentation.toMovingEdges
@@ -536,6 +538,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var badge by remember { mutableStateOf<String?>(null) }
         var dragMoveActive by remember { mutableStateOf(false) }
         var hoverCursor by remember { mutableStateOf<PointerIcon?>(null) }
+        var groupContextMenuPosition by remember { mutableStateOf<Offset?>(null) }
+        var pendingGroupIntent by remember { mutableStateOf<DesignEditorIntent.GroupNodes?>(null) }
+        LaunchedEffect(pageId, design.selectedNodeIds) {
+            groupContextMenuPosition = null
+            pendingGroupIntent = null
+        }
         // Live insertion-line preview while dragging an Auto layout child (design-book §18
         // "Auto layout children should reorder ... during drag"); null outside such a drag.
         var reorderPreview by remember { mutableStateOf<ReorderPreview?>(null) }
@@ -613,6 +621,34 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         }
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         handleCanvasKey(state, event.key, event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
+                    }
+                    // Desktop context menu. Secondary presses are deliberately handled separately
+                    // from the primary drag state machine, so opening the menu cannot begin a move.
+                    .pointerInput(pageId, ws.tool) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+                                val change = event.changes.firstOrNull() ?: continue
+                                val liveDesign = state.designState
+                                val liveLayout = state.artboardLayout
+                                val intent = buildGroupNodesIntent(liveDesign.document, liveLayout, liveDesign.selectedNodeIds)
+                                val union = selectionHandleBounds(liveLayout, liveDesign.selectedNodeIds)
+                                val insideSelection = groupFrameContains(
+                                    union,
+                                    viewport.toDocX(change.position.x),
+                                    viewport.toDocY(change.position.y),
+                                )
+                                if (insideSelection && intent != null) {
+                                    pendingGroupIntent = intent
+                                    groupContextMenuPosition = change.position
+                                    change.consume()
+                                } else {
+                                    pendingGroupIntent = null
+                                    groupContextMenuPosition = null
+                                }
+                            }
+                        }
                     }
                     // Hover + scroll (pan / ctrl-zoom) + per-position resize cursor. `viewport`
                     // is deliberately not a key here — see the rememberUpdatedState comment
@@ -1482,6 +1518,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     viewport = viewport,
                     interactive = false,
                     showSelection = false,
+                    // Crossing into another container detaches the preview from the old parent's
+                    // clip/stacking context until drop, while document z-order stays untouched.
+                    floatingNodeIds = if (reparentTargetId != null) design.selectedNodeIds else emptySet(),
                     vectorAssets = rememberVectorAssetProvider(document),
                     imageAssets = rememberImageAssetProvider(document, resourceStore),
                     fontProvider = fontProvider,
@@ -1708,6 +1747,35 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     },
                     onMoveCancel = { annotationDrag = null },
                 )
+            }
+        }
+        groupContextMenuPosition?.let { position ->
+            Box(
+                Modifier
+                    .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
+                    .size(1.dp),
+            ) {
+                EditorDropdownMenu(
+                    expanded = true,
+                    onDismissRequest = {
+                        groupContextMenuPosition = null
+                        pendingGroupIntent = null
+                    },
+                ) {
+                    EditorDropdownMenuItem(
+                        text = strings.canvas.groupSelection,
+                        leadingContent = { DropdownMenuIcon(EditorIcon.Group) },
+                        trailingContent = {
+                            Text("Ctrl G", style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
+                        },
+                        onClick = {
+                            val intent = pendingGroupIntent
+                            groupContextMenuPosition = null
+                            pendingGroupIntent = null
+                            if (intent != null) state.dispatch(intent)
+                        },
+                    )
+                }
             }
         }
         CanvasScrollbars(state, scrollbars)
@@ -2751,6 +2819,11 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         (key == Key.Delete || key == Key.Backspace) && selection.isNotEmpty() -> {
             state.dispatch(DesignEditorIntent.DeleteNodes(selection)); true
         }
+        ctrl && key == Key.G -> {
+            val intent = buildGroupNodesIntent(design.document, state.artboardLayout, selection)
+            if (intent != null) state.dispatch(intent)
+            intent != null
+        }
         ctrl && key == Key.D && selection.isNotEmpty() -> { state.dispatch(DesignEditorIntent.DuplicateNodes(selection)); true }
         ctrl && key == Key.RightBracket -> zorder(ZOrderMove.Forward)
         ctrl && key == Key.LeftBracket -> zorder(ZOrderMove.Backward)
@@ -3464,7 +3537,7 @@ private fun DrawScope.drawRotatedOutline(box: BoundsBox, rotationDegrees: Double
 }
 
 private fun DrawScope.drawRotatedHandles(box: BoundsBox, rotationDegrees: Double, viewport: CanvasViewport, color: Color) {
-    val handle = 8f
+    val handle = 6f
     rotatedHandlePoints(box, rotationDegrees).values.forEach { point ->
         val center = viewport.toScreen(point.x, point.y)
         val topLeft = Offset(center.x - handle / 2f, center.y - handle / 2f)
@@ -4278,13 +4351,16 @@ private fun nodesIn(
                     bounds = DocumentRect.fromCorners(child.x, child.y, child.right, child.bottom),
                     locked = node?.locked == true,
                     visible = node?.visible?.literalOrNull() ?: true,
+                    parentId = document?.parentNodeOf(id)?.id,
+                    container = node?.children?.isNotEmpty() == true,
                 )
             }
             collect(child)
         }
     }
     collect(layout)
-    return marqueeSelection(docRect, candidates, excludedIds)
+    val hits = marqueeSelection(docRect, candidates, excludedIds)
+    return includeFullyCoveredContainers(docRect, candidates, hits, excludedIds)
 }
 
 internal fun isParentSizedMarqueeBackdrop(parent: LayoutBox, child: LayoutBox, index: Int): Boolean {
@@ -4299,7 +4375,9 @@ internal fun isParentSizedMarqueeBackdrop(parent: LayoutBox, child: LayoutBox, i
 private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set<String>): List<ResizeTarget> {
     layout ?: return emptyList()
     val topLevelIds = ids.filterNot { id ->
-        ids.any { candidateAncestor -> candidateAncestor != id && document.isSelfOrAncestor(id, candidateAncestor) }
+        ids.any { candidateAncestor ->
+            candidateAncestor != id && document.isSelfOrAncestor(candidateAncestor, id)
+        }
     }
     return topLevelIds.mapNotNull { id ->
         val node = document.nodeById(id) ?: return@mapNotNull null
@@ -4335,6 +4413,44 @@ internal fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): Bounds
     val maxX = boxes.maxOf { it.right }
     val maxY = boxes.maxOf { it.bottom }
     return BoundsBox(minX, minY, maxX - minX, maxY - minY)
+}
+
+/**
+ * Resolves the live layout geometry needed to turn the current sibling selection into a group
+ * without a visual jump. Grouping under a rotated ancestor is withheld for now: a plain group has
+ * no transform matrix, so flattening that coordinate space would otherwise change the artwork.
+ */
+internal fun buildGroupNodesIntent(
+    document: DesignDocument?,
+    layout: LayoutBox?,
+    ids: Set<String>,
+): DesignEditorIntent.GroupNodes? {
+    document ?: return null
+    layout ?: return null
+    if (ids.size < 2) return null
+    val firstId = ids.firstOrNull() ?: return null
+    val parent = document.parentNodeOf(firstId) ?: return null
+    if (ids.any { id ->
+            document.parentNodeOf(id)?.id != parent.id ||
+                document.nodeById(id)?.locked != false ||
+                !document.isCoordinatePositioned(id)
+        }
+    ) return null
+    val parentPath = layout.pathToSourceId(parent.id) ?: return null
+    if (parentPath.any { it.node.rotation != 0.0 }) return null
+    val parentBox = parentPath.last()
+    val bounds = selectionHandleBounds(layout, ids) ?: return null
+    if (bounds.width <= 0.0 || bounds.height <= 0.0) return null
+    val childPositions = ids.associateWith { id ->
+        val box = layout.findBySourceId(id) ?: return null
+        DesignPoint(box.x - bounds.x, box.y - bounds.y)
+    }
+    return DesignEditorIntent.GroupNodes(
+        nodeIds = ids,
+        position = DesignPoint(bounds.x - parentBox.x, bounds.y - parentBox.y),
+        size = DesignSize(bounds.width, bounds.height),
+        childPositions = childPositions,
+    )
 }
 
 /** The common multi-selection frame behaves as one temporary canvas object. */

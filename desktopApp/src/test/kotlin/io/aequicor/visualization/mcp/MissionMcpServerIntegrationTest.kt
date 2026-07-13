@@ -8,6 +8,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import java.net.ServerSocket
+import kotlin.io.path.createDirectory
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
 import kotlin.test.Test
@@ -24,7 +25,8 @@ import kotlinx.serialization.json.putJsonObject
 class MissionMcpServerIntegrationTest {
     @Test
     fun initializeListToolsAndRenderOverStreamableHttp() = runBlocking {
-        val root = createTempDirectory("mcp-http-test")
+        val agentProjectRoot = createTempDirectory("mcp-http-test")
+        val root = agentProjectRoot.resolve("design").createDirectory()
         val validSource = """
             ---
             screen: httpTest
@@ -59,6 +61,7 @@ class MissionMcpServerIntegrationTest {
             val rootSkillText = assertIs<TextContent>(rootSkill.content.single()).text
             assertContains(rootSkillText, "name: mission-visualization-mcp")
             assertContains(rootSkillText, "validate_project_setup")
+            assertContains(rootSkillText, "actual project root")
 
             val skills = client.callTool(
                 name = "get_slm_skills",
@@ -68,12 +71,14 @@ class MissionMcpServerIntegrationTest {
             val skillsText = skills.content.filterIsInstance<TextContent>().joinToString("\n") { it.text }
             assertContains(skillsText, "included_skills: slm, diagrams")
             assertContains(skillsText, "skill_name: slm-diagrams")
+            assertContains(skillsText, "actual project root")
             assertTrue("skill_name: slm-vector-graphics" !in skillsText)
 
             val validation = client.callTool(
                 name = "validate_project_setup",
                 arguments = buildJsonObject {
-                    put("project_path", root.toString())
+                    put("agent_project_path", agentProjectRoot.toString())
+                    put("layouts_path", root.toString())
                     put("agent_name", "integration-test-agent")
                     put("root_skill_installed", true)
                     put("slm_skills_installed", buildJsonArray {
@@ -92,12 +97,15 @@ class MissionMcpServerIntegrationTest {
             assertContains(assertIs<TextContent>(validation.content.single()).text, "verified: true")
             assertEquals(true, projectVerification?.verified)
             assertEquals("integration-test-agent", projectVerification?.agentName)
+            assertEquals(agentProjectRoot.toRealPath().toString(), projectVerification?.agentProjectPath)
+            assertEquals(root.toRealPath().toString(), projectVerification?.layoutsPath)
 
             val wrongRoot = createTempDirectory("mcp-wrong-project")
             val invalidValidation = client.callTool(
                 name = "validate_project_setup",
                 arguments = buildJsonObject {
-                    put("project_path", wrongRoot.toString())
+                    put("agent_project_path", agentProjectRoot.toString())
+                    put("layouts_path", wrongRoot.toString())
                     put("agent_name", "integration-test-agent")
                     put("root_skill_installed", true)
                     put("slm_skills_installed", buildJsonArray {
@@ -115,7 +123,7 @@ class MissionMcpServerIntegrationTest {
             assertTrue(invalidValidation.isError != true)
             val invalidValidationText = assertIs<TextContent>(invalidValidation.content.single()).text
             assertContains(invalidValidationText, "verified: false")
-            assertContains(invalidValidationText, "does not match")
+            assertContains(invalidValidationText, "layouts path does not match")
             assertEquals(false, projectVerification?.verified)
 
             val validCheck = client.callTool(

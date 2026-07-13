@@ -1,19 +1,16 @@
 package io.aequicor.visualization.editor
 
-import io.aequicor.visualization.editor.data.EditorStateRelativePath
 import io.aequicor.visualization.editor.data.decodeProjectSnapshot
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.platform.FolderFileWrite
 import io.aequicor.visualization.editor.platform.folderSyncSnapshotJson
 import io.aequicor.visualization.editor.platform.platformConnectFolderForTest
 import io.aequicor.visualization.editor.platform.platformResetFolderSyncForTest
-import io.aequicor.visualization.editor.platform.platformWriteFolderEditorState
 import io.aequicor.visualization.editor.platform.platformWriteFolderFiles
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.editor.presentation.semanticallyEquivalent
-import java.nio.file.Files
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
@@ -53,12 +50,10 @@ class DesktopSlmPersistenceIntegrationTest {
         assertTrue(writes.size >= 2, "the edit series must affect multiple screen files")
         assertTrue(platformWriteFolderFiles(writes))
 
-        // Prove the desktop fallback is irrelevant: create it, disconnect, then remove it.
-        platformWriteFolderEditorState("{\"ignored\":true}")
         platformResetFolderSyncForTest()
-        Files.deleteIfExists(root.resolve(EditorStateRelativePath))
 
         platformConnectFolderForTest(root)
+        assertTrue(!root.resolve(".mission-visualization/editor-state.json").toFile().exists())
         val reopenedSources = assertNotNull(folderSyncSnapshotJson()?.let(::decodeProjectSnapshot)).sources
         assertNotEquals(initialSources, reopenedSources)
         val reopenedDocument = assertNotNull(compileMissionDocuments(reopenedSources).document)

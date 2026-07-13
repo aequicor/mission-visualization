@@ -1251,8 +1251,6 @@ internal actual fun platformWriteFolderFile(fileName: String, content: String) {
     js("if (window.__mvFolderSync) window.__mvFolderSync.writeFile(fileName, content)")
 }
 
-internal actual fun platformWriteFolderEditorState(content: String) = Unit
-
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun jsEpochMillis(): Double = js("Date.now()")
 

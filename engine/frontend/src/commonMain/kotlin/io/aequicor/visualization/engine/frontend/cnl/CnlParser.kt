@@ -150,8 +150,19 @@ internal object CnlParser {
     ): HeadingSplit? {
         val tokens = tokenize(content, lineNumber, baseColumn)
         val allowedKinds = headingPrefixAllowedKinds(tokens.firstOrNull()?.text)
-        // Name must be non-empty (s >= 1); the property suffix must be non-empty and fully clean.
-        for (split in 1 until tokens.size) {
+        // An untyped semantic name can contain a component/instance property keyword. For
+        // example, `Media Library Header id media_header row` must keep "Library Header"
+        // in the visible name instead of parsing `library Header` as instance metadata.
+        // Use `id` as the boundary only for that ambiguous case; ordinary layout/style
+        // properties before `id` remain valid and retain the earliest-boundary rule.
+        val idBoundary = if (tokens.firstOrNull()?.text?.endsWith(":") != true) {
+            tokens.indexOfFirst { it.text.equals("id", ignoreCase = true) }
+                .takeIf { it >= 1 }
+        } else {
+            null
+        }
+
+        fun candidateAt(split: Int): Triple<Int, HeadingSplit, List<DirectPatchEntry>>? {
             val probe = DiagnosticCollector(diagnostics.fileName)
             val element = parseFrom(tokens, startIndex = split, noun = null, lineNumber = lineNumber, diagnostics = probe)
             val entries = if (element.properties.isNotEmpty() && probe.diagnostics.isEmpty()) {
@@ -161,10 +172,17 @@ internal object CnlParser {
             }
             if (element.properties.isNotEmpty() && probe.diagnostics.isEmpty() && entriesAllowed(entries, allowedKinds)) {
                 val name = content.substring(0, tokens[split].span.startColumn - baseColumn).trimEnd()
-                return HeadingSplit(name, element)
+                return Triple(split, HeadingSplit(name, element), entries)
             }
+            return null
         }
-        return null
+
+        // Name must be non-empty (split >= 1); the property suffix must be non-empty and fully clean.
+        val ordinary = (1 until tokens.size).firstNotNullOfOrNull(::candidateAt) ?: return null
+        val instanceMetadataKinds = setOf(TypedBlockKind.Component, TypedBlockKind.Props, TypedBlockKind.Overrides)
+        val shouldPreferId = idBoundary != null && ordinary.first < idBoundary &&
+            ordinary.third.any { entry -> entry.kind in instanceMetadataKinds }
+        return if (shouldPreferId) candidateAt(idBoundary)?.second ?: ordinary.second else ordinary.second
     }
 
     private fun entriesAllowed(entries: List<DirectPatchEntry>, allowedKinds: Set<TypedBlockKind>?): Boolean =
