@@ -14,7 +14,9 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.TableNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 /** The eight resize handles on a selected node's bounding box. */
@@ -53,8 +55,9 @@ sealed interface DiagramNodeHitPart {
 }
 
 /**
- * What the pointer hit. Ordered by pick priority: handles (resize / waypoint / label) win
- * over ports, ports over edges, edges over nodes; nodes resolve top-of-z-order first.
+ * What the pointer hit. Ordered by pick priority: handles (resize / waypoint / endpoint /
+ * label) win over ports, ports over edges, edges over nodes; nodes resolve top-of-z-order
+ * first.
  */
 sealed interface DiagramHit {
 
@@ -68,6 +71,12 @@ sealed interface DiagramHit {
     data class WaypointHandle(
         val edgeId: DiagramEdgeId,
         val waypointIndex: Int,
+    ) : DiagramHit
+
+    /** An endpoint re-attach grab (source/target ring) of a selected edge. */
+    data class EndpointHandle(
+        val edgeId: DiagramEdgeId,
+        val end: DiagramEdgeEnd,
     ) : DiagramHit
 
     /** A label grab of a selected edge. */
@@ -99,7 +108,8 @@ sealed interface DiagramHit {
  * Picks the topmost interactive element at [point].
  *
  * Priority: resize handles (selected nodes) > waypoint handles (selected edges) >
- * label handles (selected edges) > ports > edges > nodes. Within each class, elements are
+ * endpoint handles (selected edges) > label handles (ANY edge with a label) > ports >
+ * edges > nodes. Within each class, elements are
  * scanned top-of-z-order first (explicit layers top→bottom, then the implicit default
  * layer; within a layer, later list entries are on top). Locked or invisible nodes and
  * nodes/edges on locked or invisible layers are transparent to hits. Rotation is ignored
@@ -110,7 +120,8 @@ sealed interface DiagramHit {
  *   `source point → waypoints → target point`.
  * @param tolerance pick radius in document units for handles, ports, and edge lines.
  * @param selectedNodeIds nodes currently selected — only these expose resize handles.
- * @param selectedEdgeIds edges currently selected — only these expose waypoint/label handles.
+ * @param selectedEdgeIds edges currently selected — only these expose waypoint/endpoint
+ *   handles. Label handles are exposed for every edge that has a label, selected or not.
  */
 fun hitTest(
     graph: DiagramGraph,
@@ -143,9 +154,33 @@ fun hitTest(
 
     for (edge in edgesTopDown) {
         if (edge.id !in selectedEdgeIds) continue
+        // Endpoint ring grabs at the routed polyline's ends (fallback = source/target points),
+        // so the hit matches what the overlay draws. Corner grabs the user aims at precisely,
+        // hence tested before labels; the nearer end wins for a degenerate near-zero-length edge.
+        val route = edgeRoute(graph, edge, routes) ?: continue
+        val toSource = distance(point, route.first())
+        val toTarget = distance(point, route.last())
+        if (toSource <= tolerance || toTarget <= tolerance) {
+            val end = if (toSource <= toTarget) DiagramEdgeEnd.SOURCE else DiagramEdgeEnd.TARGET
+            return DiagramHit.EndpointHandle(edge.id, end)
+        }
+    }
+
+    // Edge labels are hit for EVERY edge (not only selected ones), so clicking or dragging a
+    // label works straight from hover — draw.io treats the label as part of the edge (click a
+    // label = select its edge; press+drag a label = move it, no prior selection needed). The hit
+    // area is an approximate text rect around the label anchor (width scales with the character
+    // count; height ~ one text line), kept snug so it does not steal nearby node/empty clicks.
+    // High priority (above ports/edges/nodes): a label is the deliberate topmost target, beating
+    // the thin edge line and any node body it overlaps. Only edges that actually have a label
+    // gain hit area, so empty space is unaffected.
+    for (edge in edgesTopDown) {
         val route = edgeRoute(graph, edge, routes) ?: continue
         edge.labels.forEach { label ->
-            if (distance(point, edgeLabelAnchorPoint(route, label)) <= tolerance) {
+            val anchor = edgeLabelAnchorPoint(route, label)
+            val halfWidth = maxOf(label.label.text.length * 3.5, 12.0) + 4.0
+            val halfHeight = 9.0
+            if (abs(point.x - anchor.x) <= halfWidth && abs(point.y - anchor.y) <= halfHeight) {
                 return DiagramHit.LabelHandle(edge.id, label.position)
             }
         }
