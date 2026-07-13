@@ -2251,7 +2251,13 @@ private val DefaultStrokeColor: DesignColor = DesignColor.fromHex("#1E88FF") ?: 
 private val DefaultShadowColor: DesignColor = DesignColor(0x40000000)
 
 private fun DesignNode.applyFillOp(op: FillOp): DesignNode =
-    copy(fills = applyFillOp(fills.orEmpty(), op), fillStyleId = "")
+    copy(
+        // The parser represents an absent fill phrase as null. Keep the editor model in the same
+        // canonical form when the last fill is removed; otherwise the write-back fidelity gate
+        // compares [] with null, rejects the round-trip, and the UI appears to undo the click.
+        fills = applyFillOp(fills.orEmpty(), op).takeIf { it.isNotEmpty() },
+        fillStyleId = "",
+    )
 
 /** Pure paint-list transformation shared by node fills and vector-network region fills. */
 private fun applyFillOp(current: List<DesignPaint>, op: FillOp): List<DesignPaint> {
