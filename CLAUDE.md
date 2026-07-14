@@ -23,7 +23,7 @@ Compose-превью с оверлеями (выделение, инспекто
 - `:subsystems:figures-compose` — Compose-адаптер фигур: `PathGeometry.toComposePath`, stroke
   cap/join, boolean `PathOperation`, мини-превью `FigureShapePreview`/`FigureBooleanPreview`.
   Потребители: `:engine:backend-compose`, `:shared`.
-- `:subsystems:anchoring`(+`-compose`) — снаппинг/магнит (см. `MEMORY.md`).
+- `:subsystems:anchoring`(+`-compose`) — снаппинг/магнит (см. `EDITOR.md`).
 - `:shared` — app shell: `App`, `MissionEditorScreen`, `editor.{presentation,domain,data,ui}`.
   Таргеты: Android, JVM, JS, wasmJs, iOS. Редактор: `editor.presentation` — иммутабельный
   `DesignEditorState` (документ) + `EditorWorkspaceState` (вид, **отдельно** от документа),
