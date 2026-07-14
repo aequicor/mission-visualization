@@ -1,6 +1,8 @@
 # Mission Visualization
 
+[![CI](https://github.com/aequicor/mission-visualization/actions/workflows/ci.yml/badge.svg)](https://github.com/aequicor/mission-visualization/actions/workflows/ci.yml)
 [![Latest published web version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Faequicor.github.io%2Fmission-visualization%2Fversion.json&query=%24.version&label=latest%20published%20web%20version&prefix=v&cacheSeconds=300)](https://aequicor.github.io/mission-visualization/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 Mission Visualization is a Kotlin Multiplatform + Compose Multiplatform library and
 demo: an agent authors **Semantic Layout Markdown** (`*.layout.md`, RU/EN + i18n),
@@ -53,3 +55,15 @@ See **[EDITOR.md](EDITOR.md)** for the implemented scope, wiring, and known gaps
 - Editor / shared (JVM): `./gradlew :shared:jvmTest`
 - Engine: `./gradlew :engine:ir:jvmTest` · `./gradlew :engine:frontend:jvmTest`
 - Desktop compile check: `./gradlew :desktopApp:compileKotlin`
+
+## Contributing
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to build, run, and test each target, and the
+architecture/code-style rules new code must follow. All participation is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md); security issues go through the
+[Security Policy](SECURITY.md).
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Copyright 2026 Aequicor.
