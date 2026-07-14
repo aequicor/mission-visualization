@@ -3,6 +3,7 @@ package io.aequicor.visualization.engine.ir.validate
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
+import io.aequicor.visualization.engine.ir.model.DesignConstraints
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
@@ -32,6 +33,9 @@ import io.aequicor.visualization.engine.ir.model.literalOrNull
  *   so the noisy inverse combination is not flagged).
  * - IR-LAYOUT-008 (error): `scroll.fixedChildren` id that is not a direct child.
  * - IR-LAYOUT-009/010 (error): containerKind and flow properties disagree.
+ * - IR-LAYOUT-011 (warning): a non-default resize constraint has no authored
+ *   position/anchors, or is attached to an in-flow Auto Layout child where constraints
+ *   do not place the node.
  */
 internal object LayoutChecks {
 
@@ -43,6 +47,7 @@ internal object LayoutChecks {
             checkWrap(this, ctx, node)
             checkGridPlacement(this, ctx, node)
             checkSizingConflicts(this, ctx, node)
+            checkConstraintPlacement(this, ctx, entry)
             checkAbsoluteChildren(this, ctx, node)
             checkScroll(this, ctx, node)
         }
@@ -181,6 +186,34 @@ internal object LayoutChecks {
             sink += validationWarning(
                 "IR-LAYOUT-005",
                 "Hug-height '${node.id}' only has fill-height children; sizes are circular",
+                ctx.location(node),
+            )
+        }
+    }
+
+    /** Constraints preserve authored geometry during resize; they never create that geometry. */
+    private fun checkConstraintPlacement(
+        sink: MutableList<DesignDiagnostic>,
+        ctx: ValidationContext,
+        entry: NodeEntry,
+    ) {
+        val node = entry.node
+        if (node.constraints == DesignConstraints()) return
+        val parent = entry.parent ?: return
+        if (parent.layout.mode != LayoutMode.None && !node.layoutChild.absolute) {
+            sink += validationWarning(
+                "IR-LAYOUT-011",
+                "Resize constraints on in-flow child '${node.id}' do not align it inside " +
+                    "AutoLayout '${parent.id}'; use the parent's align/distribute settings",
+                ctx.location(node),
+            )
+            return
+        }
+        if (node.position == null && node.anchors == null) {
+            sink += validationWarning(
+                "IR-LAYOUT-011",
+                "Resize constraints on '${node.id}' preserve an authored position but do not " +
+                    "create one; add position/anchors before using align center|bottom|right",
                 ctx.location(node),
             )
         }

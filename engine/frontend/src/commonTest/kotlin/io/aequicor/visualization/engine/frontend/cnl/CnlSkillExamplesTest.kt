@@ -100,4 +100,24 @@ class CnlSkillExamplesTest {
             """,
         )
     }
+
+    @Test
+    fun editableFrameCenteringRecipeCompiles() {
+        assertCompilesClean(
+            """
+            ---
+            screen: frameAlignment
+            sourceLocale: en-US
+            targetLocales: [en-US]
+            frame: { width: 960, height: 360 }
+            ---
+
+            # Frame Alignment id frame_alignment 960 by 360 color #FFFFFF
+
+            ## Frame: Summary Card id summary_card 480 by 200 position 240 80 align center color #F8FAFC radius 16
+
+            Text id summary_title «Mission Control» key summary.title 480 by 200 position 0 0 font «Inter» size 32 bold line-height 40 text-align center text-valign center maxLines 2
+            """,
+        )
+    }
 }

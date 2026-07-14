@@ -117,4 +117,54 @@ class LayoutChecksTest {
             """.trimIndent(),
         ).assertHas("IR-LAYOUT-001", DesignSeverity.Error, messagePart = "gap")
     }
+
+    @Test
+    fun centerConstraintWithoutInitialPositionWarns() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "root", "type": "frame", "size": { "width": 200, "height": 100 },
+                "children": [
+                  { "id": "card", "type": "frame", "size": { "width": 80, "height": 40 },
+                    "constraints": { "horizontal": "center", "vertical": "center" } }
+                ]
+              }
+            ] } ] }
+            """.trimIndent(),
+        ).assertHas("IR-LAYOUT-011", DesignSeverity.Warning, messagePart = "do not create one")
+    }
+
+    @Test
+    fun centerConstraintWithCalculatedPositionIsClean() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "root", "type": "frame", "size": { "width": 200, "height": 100 },
+                "children": [
+                  { "id": "card", "type": "frame", "size": { "width": 80, "height": 40 },
+                    "position": { "x": 60, "y": 30 },
+                    "constraints": { "horizontal": "center", "vertical": "center" } }
+                ]
+              }
+            ] } ] }
+            """.trimIndent(),
+        ).assertNone("IR-LAYOUT-011")
+    }
+
+    @Test
+    fun constraintsOnInFlowChildWarn() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "root", "type": "frame", "containerKind": "autoLayout",
+                "size": { "width": 200, "height": 100 }, "layout": { "mode": "vertical" },
+                "children": [
+                  { "id": "card", "type": "frame", "size": { "width": 80, "height": 40 },
+                    "constraints": { "horizontal": "center", "vertical": "center" } }
+                ]
+              }
+            ] } ] }
+            """.trimIndent(),
+        ).assertHas("IR-LAYOUT-011", DesignSeverity.Warning, messagePart = "in-flow child")
+    }
 }

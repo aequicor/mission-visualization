@@ -99,6 +99,32 @@ class LayoutPngRendererTest {
         )
     }
 
+    @Test
+    fun checkSurfacesFrameAndTextAlignmentTraps() = runBlocking {
+        val root = createTempDirectory("mcp-alignment-check")
+        root.resolve("alignment.layout.md").writeText(
+            """
+            ---
+            screen: alignmentCheck
+            sourceLocale: en-US
+            frame: { width: 320, height: 200 }
+            ---
+
+            # Alignment Check id alignment_check 320 by 200 color #FFFFFF
+
+            ## Frame: Card id card 160 by 80 align center
+
+            Text id label «Centered?» key label.centered width (hug) height (hug) text-align center text-valign center maxLines 1
+            """.trimIndent() + "\n",
+        )
+
+        val check = LayoutPngRenderer(root, root.resolve("renders")).check("alignment.layout.md")
+
+        assertTrue(check.valid, "alignment traps are warnings, not syntax errors: ${check.diagnostics}")
+        assertTrue(check.diagnostics.any { it.code == "IR-LAYOUT-011" })
+        assertTrue(check.diagnostics.count { it.code == "IR-I18N-011" } == 2)
+    }
+
     private fun testLayout(color: String): String = """
         ---
         screen: renderTest

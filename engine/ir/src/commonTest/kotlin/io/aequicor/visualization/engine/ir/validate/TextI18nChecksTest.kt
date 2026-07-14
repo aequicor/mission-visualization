@@ -121,4 +121,35 @@ class TextI18nChecksTest {
             """.trimIndent(),
         ).assertNone("IR-I18N-008")
     }
+
+    @Test
+    fun centeredTextWithoutARealBoxWarns() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "label", "type": "text", "characters": "Centered?",
+                "sizing": { "horizontal": "hug", "vertical": "hug" },
+                "textStyle": { "textAlignHorizontal": "center", "textAlignVertical": "center" },
+                "autoResize": "widthAndHeight" }
+            ] } ] }
+            """.trimIndent(),
+        ).apply {
+            assertHas("IR-I18N-011", DesignSeverity.Warning, messagePart = "horizontal center")
+            assertHas("IR-I18N-011", DesignSeverity.Warning, messagePart = "vertical center")
+        }
+    }
+
+    @Test
+    fun centeredTextInsideFixedBoxIsClean() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "label", "type": "text", "characters": "Centered",
+                "size": { "width": 160, "height": 48 },
+                "textStyle": { "textAlignHorizontal": "center", "textAlignVertical": "center" },
+                "truncate": { "maxLines": 1 } }
+            ] } ] }
+            """.trimIndent(),
+        ).assertNone("IR-I18N-011")
+    }
 }

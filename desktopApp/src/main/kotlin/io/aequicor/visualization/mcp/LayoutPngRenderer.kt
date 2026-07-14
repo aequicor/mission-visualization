@@ -22,6 +22,7 @@ import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.engine.ir.validate.validateDesignDocument
 import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
 import java.net.URI
 import java.nio.charset.StandardCharsets
@@ -85,11 +86,14 @@ internal class LayoutPngRenderer(
         val sourcePath = resolveLayoutPath(layoutPath)
         val source = Files.readString(sourcePath, StandardCharsets.UTF_8)
         val result = compileSlm(source, editorSlmCompileOptions(sourcePath.fileName.toString()))
+        val diagnostics = result.document
+            ?.let { document -> (result.diagnostics + validateDesignDocument(document)).distinct() }
+            ?: result.diagnostics
         CheckLayoutResult(
             source = sourcePath,
-            valid = result.document != null && result.diagnostics.none { it.severity == DesignSeverity.Error },
+            valid = result.document != null && diagnostics.none { it.severity == DesignSeverity.Error },
             fingerprint = result.sourceFingerprint,
-            diagnostics = result.diagnostics,
+            diagnostics = diagnostics,
         )
     }
 
@@ -99,11 +103,15 @@ internal class LayoutPngRenderer(
             val sourcePath = resolveLayoutPath(request.layoutPath)
             val source = Files.readString(sourcePath, StandardCharsets.UTF_8)
             val result = compileSlm(source, editorSlmCompileOptions(sourcePath.fileName.toString()))
-            val errors = result.diagnostics.filter { it.severity == DesignSeverity.Error }
-            if (result.document == null || errors.isNotEmpty()) {
-                throw RenderLayoutException(formatCompileFailure(errors.ifEmpty { result.diagnostics }))
+            if (result.document == null) {
+                throw RenderLayoutException(formatCompileFailure(result.diagnostics))
             }
             val document = requireNotNull(result.document)
+            val diagnostics = (result.diagnostics + validateDesignDocument(document)).distinct()
+            val errors = diagnostics.filter { it.severity == DesignSeverity.Error }
+            if (errors.isNotEmpty()) {
+                throw RenderLayoutException(formatCompileFailure(errors))
+            }
             val page = document.pages.firstOrNull()
                 ?: throw RenderLayoutException("The compiled layout contains no page")
             val rootNode = page.children.firstOrNull()
@@ -115,7 +123,7 @@ internal class LayoutPngRenderer(
                 pageId = page.id,
                 rootNode = rootNode,
                 fingerprint = result.sourceFingerprint,
-                diagnostics = result.diagnostics,
+                diagnostics = diagnostics,
                 imageAssets = loadLocalImages(document, sourcePath),
             )
         }

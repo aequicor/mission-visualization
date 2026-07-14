@@ -35,6 +35,18 @@ class SlmSkillBundleTest {
     }
 
     @Test
+    fun baseSkillKeepsEditableFramesAndExplainsRealCentering() {
+        val base = getSlmSkillBundle("slm").files.single().markdown
+
+        assertTrue("Use a free `Frame` by default" in base)
+        assertTrue("## Frame-first geometry and alignment" in base)
+        assertTrue("do **not** calculate the" in base)
+        assertTrue("initial position and do **not** move" in base)
+        assertTrue("`text-align` and `text-valign` align glyphs inside" in base)
+        assertTrue("render the full screen, inspect the PNG at 100%" in base)
+    }
+
+    @Test
     fun rejectsUnknownSkill() {
         assertFailsWith<IllegalArgumentException> { getSlmSkillBundle("unknown") }
     }

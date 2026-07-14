@@ -5,8 +5,11 @@ import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.PropValue
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
+import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.literalOrNull
@@ -32,6 +35,8 @@ import io.aequicor.visualization.engine.ir.resolve.IcuLiteFormatter
  *   error; fontWeight outside 1..1000 a warning).
  * - IR-I18N-010 (warning): negative decorationThickness on the node style or any
  *   inline style range.
+ * - IR-I18N-011 (warning): non-default glyph alignment has no bounded text-box space
+ *   on that axis, so the requested alignment is visually inert.
  */
 internal object TextI18nChecks {
 
@@ -46,6 +51,7 @@ internal object TextI18nChecks {
                 checkRanges(this, ctx, entry.node, text)
                 checkTruncation(this, ctx, entry.node, text)
                 checkTypography(this, ctx, entry.node, text)
+                checkAlignmentBox(this, ctx, entry.node, text)
             }
         }
     }
@@ -261,6 +267,40 @@ internal object TextI18nChecks {
                     )
                 }
             }
+        }
+    }
+
+    private fun checkAlignmentBox(
+        sink: MutableList<DesignDiagnostic>,
+        ctx: ValidationContext,
+        node: DesignNode,
+        text: DesignNodeKind.Text,
+    ) {
+        val inherited = (ctx.document.styles[text.textStyleId] as? DesignStyle.Text)?.value
+        val style = inherited?.mergedWith(text.textStyle) ?: text.textStyle ?: return
+        val sizing = node.sizing ?: DesignSizing()
+        val hasHorizontalBox = sizing.horizontal == SizingMode.Fill ||
+            (text.autoResize != TextAutoResize.WidthAndHeight && node.size.width != null)
+        val hasVerticalBox = sizing.vertical == SizingMode.Fill ||
+            (text.autoResize == TextAutoResize.None && node.size.height != null)
+
+        val horizontal = style.textAlignHorizontal
+        if (horizontal != null && horizontal != TextAlignHorizontal.Left && !hasHorizontalBox) {
+            sink += validationWarning(
+                "IR-I18N-011",
+                "Text '${node.id}' uses horizontal ${horizontal.name.lowercase()} alignment " +
+                    "without a fixed/fill-width box; alignment inside a content-width box is invisible",
+                ctx.location(node),
+            )
+        }
+        val vertical = style.textAlignVertical
+        if (vertical != null && vertical != TextAlignVertical.Top && !hasVerticalBox) {
+            sink += validationWarning(
+                "IR-I18N-011",
+                "Text '${node.id}' uses vertical ${vertical.name.lowercase()} alignment " +
+                    "without a fixed/fill-height box; alignment inside a content-height box is invisible",
+                ctx.location(node),
+            )
         }
     }
 }
