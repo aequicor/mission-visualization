@@ -363,13 +363,14 @@ internal fun SelectField(
     modifier: Modifier = Modifier,
     leadingContent: (@Composable () -> Unit)? = null,
     optionLeadingContent: (@Composable (String) -> Unit)? = null,
+    enabled: Boolean = true,
 ) {
     val colors = LocalEditorColors.current
     var expanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(6.dp)
     Box(modifier) {
         Surface(
-            modifier = Modifier.fillMaxWidth().height(36.dp).clip(shape).clickable { expanded = true },
+            modifier = Modifier.fillMaxWidth().height(36.dp).clip(shape).clickable(enabled = enabled) { expanded = true },
             shape = shape,
             color = colors.controlSurface,
             border = BorderStroke(1.dp, colors.controlStroke),
@@ -382,11 +383,11 @@ internal fun SelectField(
                 DropdownLeadingBox(size = 18.dp) {
                     if (leadingContent != null) leadingContent() else DefaultDropdownLeadingContent(value, modifier = Modifier.size(16.dp))
                 }
-                Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = LocalStrings.current.common.openOptions, modifier = Modifier.size(13.dp), tint = colors.controlInk)
+                Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = if (enabled) colors.ink else colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = LocalStrings.current.common.openOptions, modifier = Modifier.size(13.dp), tint = if (enabled) colors.controlInk else colors.mutedInk)
             }
         }
-        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        EditorDropdownMenu(expanded = enabled && expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
                 EditorDropdownMenuItem(
                     text = option,

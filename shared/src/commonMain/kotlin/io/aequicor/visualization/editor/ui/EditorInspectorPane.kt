@@ -1467,7 +1467,10 @@ private fun BooleanOperationPreview(operation: BooleanOperationKind, modifier: M
 private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
     val strings = LocalStrings.current
     val nodeId = node.id
-    SectionHeaderAdd(strings.inspector.effects) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.Add(EffectType.DropShadow))) }
+    val enabled = !state.designState.isNodeLocked(nodeId)
+    SectionHeaderAdd(strings.inspector.effects, enabled = enabled) {
+        state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.Add(EffectType.DropShadow)))
+    }
     if (node.effects.isEmpty()) {
         MutedNote(strings.inspector.noEffects)
         return
@@ -1475,27 +1478,28 @@ private fun EffectsSection(state: MissionEditorStateHolder, node: DesignNode) {
     node.effects.forEachIndexed { index, effect ->
         val visible = effect.visible.literalOrNull() ?: true
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            LayerToggle(visible) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.ToggleAt(index))) }
+            LayerToggle(visible, enabled = enabled) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.ToggleAt(index))) }
             val type = effect.effectType()
             SmallSelect(
                 value = type?.let { strings.inspector.effectType(it) } ?: strings.inspector.effectUnknown,
                 options = EffectType.entries.map { strings.inspector.effectType(it) },
                 modifier = Modifier.weight(1f),
+                enabled = enabled,
                 leadingContent = { EffectTypeIcon(type) },
                 optionLeadingContent = { label -> EffectType.entries.firstOrNull { strings.inspector.effectType(it) == label }?.let { EffectTypeIcon(it) } },
             ) { label ->
                 EffectType.entries.firstOrNull { strings.inspector.effectType(it) == label }?.let { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.SetType(index, it))) }
             }
-            RemoveButton { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.RemoveAt(index))) }
+            RemoveButton(enabled = enabled) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.RemoveAt(index))) }
         }
         if (effect is DesignEffect.DropShadow || effect is DesignEffect.InnerShadow) {
             val dx = (effect as? DesignEffect.DropShadow)?.offset?.x?.orZero ?: (effect as? DesignEffect.InnerShadow)?.offset?.x?.orZero ?: 0.0
             val dy = (effect as? DesignEffect.DropShadow)?.offset?.y?.orZero ?: (effect as? DesignEffect.InnerShadow)?.offset?.y?.orZero ?: 0.0
             val blur = (effect as? DesignEffect.DropShadow)?.blur?.literalOrNull() ?: (effect as? DesignEffect.InnerShadow)?.blur?.literalOrNull() ?: 0.0
             Row(Modifier.padding(start = 26.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                InspectorNumberField("X", dx.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dx = it))) }
-                InspectorNumberField("Y", dy.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dy = it))) }
-                InspectorNumberField(strings.inspector.blur, blur.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f)) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, blur = it))) }
+                InspectorNumberField("X", dx.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f), enabled = enabled) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dx = it))) }
+                InspectorNumberField("Y", dy.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f), enabled = enabled) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, dy = it))) }
+                InspectorNumberField(strings.inspector.blur, blur.formatPx(), "", "$nodeId-fx-$index", Modifier.weight(1f), enabled = enabled) { state.dispatch(DesignEditorIntent.EffectCommand(nodeId, EffectOp.UpdateShadow(index, blur = it))) }
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -2845,12 +2849,12 @@ private fun RotationControls(
 // --- Small shared bits -------------------------------------------------------
 
 @Composable
-internal fun SectionHeaderAdd(label: String, onAdd: () -> Unit) {
+internal fun SectionHeaderAdd(label: String, enabled: Boolean = true, onAdd: () -> Unit) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-        TinyIconButton(EditorIcon.Plus, contentDescription = "${strings.common.add} $label", onClick = onAdd)
+        TinyIconButton(EditorIcon.Plus, contentDescription = "${strings.common.add} $label", enabled = enabled, onClick = onAdd)
     }
 }
 
@@ -2869,15 +2873,15 @@ internal fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun LayerToggle(visible: Boolean, onClick: () -> Unit) {
+private fun LayerToggle(visible: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
-    Box(Modifier.size(20.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(20.dp).clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
         EditorSvgIcon(
             icon = if (visible) EditorIcon.Visibility else EditorIcon.VisibilityOff,
             contentDescription = if (visible) strings.common.hide else strings.common.show,
             modifier = Modifier.size(16.dp),
-            tint = if (visible) colors.controlInk else colors.mutedInk,
+            tint = if (enabled && visible) colors.controlInk else colors.mutedInk,
         )
     }
 }
@@ -2902,26 +2906,26 @@ internal fun inspectorSectionIcon(section: InspectorSection): EditorIcon = when 
 }
 
 @Composable
-internal fun RemoveButton(onClick: () -> Unit) {
+internal fun RemoveButton(enabled: Boolean = true, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
-    Box(Modifier.size(22.dp).clip(RoundedCornerShape(11.dp)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        EditorSvgIcon(EditorIcon.Close, contentDescription = strings.common.remove, modifier = Modifier.size(14.dp), tint = colors.statusDanger)
+    Box(Modifier.size(22.dp).clip(RoundedCornerShape(11.dp)).clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
+        EditorSvgIcon(EditorIcon.Close, contentDescription = strings.common.remove, modifier = Modifier.size(14.dp), tint = if (enabled) colors.statusDanger else colors.mutedInk)
     }
 }
 
 @Composable
-private fun TinyIconButton(icon: EditorIcon, contentDescription: String, onClick: () -> Unit) {
+private fun TinyIconButton(icon: EditorIcon, contentDescription: String, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = LocalEditorColors.current
     val shape = RoundedCornerShape(5.dp)
     Surface(
-        modifier = Modifier.size(24.dp).clip(shape).clickable(onClick = onClick),
+        modifier = Modifier.size(24.dp).clip(shape).clickable(enabled = enabled, onClick = onClick),
         shape = shape,
         color = colors.controlSurface,
         border = BorderStroke(1.dp, colors.controlStroke),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            EditorSvgIcon(icon, contentDescription = contentDescription, modifier = Modifier.size(14.dp), tint = colors.ink)
+            EditorSvgIcon(icon, contentDescription = contentDescription, modifier = Modifier.size(14.dp), tint = if (enabled) colors.ink else colors.mutedInk)
         }
     }
 }
@@ -2949,6 +2953,7 @@ internal fun SmallSelect(
     modifier: Modifier = Modifier,
     leadingContent: (@Composable () -> Unit)? = null,
     optionLeadingContent: (@Composable (String) -> Unit)? = null,
+    enabled: Boolean = true,
     onSelect: (String) -> Unit,
 ) {
     SelectField(
@@ -2958,6 +2963,7 @@ internal fun SmallSelect(
         modifier = modifier.width(108.dp),
         leadingContent = leadingContent,
         optionLeadingContent = optionLeadingContent,
+        enabled = enabled,
     )
 }
 
