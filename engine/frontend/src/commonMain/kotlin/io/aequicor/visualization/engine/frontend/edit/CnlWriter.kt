@@ -37,12 +37,13 @@ internal object CnlWriter {
         edit: SlmEdit,
         lineIndex: LineIndex,
         patchedNode: DesignNode? = null,
+        headingTitleOverride: String? = null,
     ): WritePlan {
         val surgical = surgicalPlan(sentenceSpan, edit, lineIndex)
         if (surgical is WritePlan.Ops) return surgical
         // Tier-3: regenerate the sentence from the patched node. Only reached when the edit
         // is not surgically expressible; the caller's recompile-success gate vetoes a bad re-emit.
-        patchedNode?.let { return reemitPlan(sentenceSpan, it, lineIndex) }
+        patchedNode?.let { return reemitPlan(sentenceSpan, it, lineIndex, headingTitleOverride) }
         return surgical
     }
 
@@ -73,12 +74,32 @@ internal object CnlWriter {
     }
 
     /** Tier-3: replace the whole sentence line with [CnlEmitter]'s regeneration of [node]. */
-    private fun reemitPlan(sentenceSpan: SlmSourceSpan, node: DesignNode, lineIndex: LineIndex): WritePlan {
+    private fun reemitPlan(
+        sentenceSpan: SlmSourceSpan,
+        node: DesignNode,
+        lineIndex: LineIndex,
+        headingTitleOverride: String?,
+    ): WritePlan {
         val line = sentenceSpan.startLine
         val text = lineIndex.lineText(line)
         val heading = headingMatch(text)
         val sentence = if (heading != null) {
-            CnlEmitter.emitStableHeadingLine(node, level = heading.first, includeId = true)
+            if (headingTitleOverride == null) {
+                CnlEmitter.emitStableHeadingLine(node, level = heading.first, includeId = true)
+            } else {
+                // A legacy screen root is a plain Markdown H1 whose text is the user-facing
+                // document title, while the root DesignNode name is normally the screen id.
+                // Preserve that authored title when upgrading the H1 to an editable CNL heading.
+                CnlEmitter.emitHeadingLine(
+                    node = node,
+                    level = heading.first,
+                    includeId = true,
+                    titleOverride = headingTitleOverride,
+                    textAsCharacters = true,
+                    preserveEmptyTitle = true,
+                    forceNamePhrase = true,
+                )
+            }
         } else {
             CnlEmitter.emitSentence(node, includeId = true)
         }
