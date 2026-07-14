@@ -21,12 +21,16 @@ private const val HIT_TOLERANCE = 2.0
 /**
  * The device-independent outline of a node for path-accurate hit-testing, in the given
  * laid-out [rect]. Returns:
- * - the resolve-lowered [ResolvedNode.geometry] (vector/network/inline `d`, view-box space); else
+ * - null for vector/SVG nodes, whose whole laid-out box is intentionally selectable; else
+ * - the resolve-lowered [ResolvedNode.geometry] (boolean/network geometry, view-box space); else
  * - a primitive outline built from [rect] (ellipse/polygon/star/line/arrow/rounded-rect); else
  * - null when the axis-aligned box already IS the outline (frame/group/text/plain rectangle/empty
  *   vector), so the caller keeps the cheap bounding-box test.
  */
 internal fun ResolvedNode.outlineGeometry(rect: RectD): PathGeometry? {
+    // An SVG's transparent padding is still part of the editor object. Using its parsed paths
+    // here made hover/selection work only while the pointer was directly over painted pixels.
+    if (shape?.shape == ShapeType.Vector) return null
     geometry?.let { return it }
     val shape = shape ?: return null
     return when (shape.shape) {
@@ -43,7 +47,7 @@ internal fun ResolvedNode.outlineGeometry(rect: RectD): PathGeometry? {
         ShapeType.Star -> starGeometry(rect, shape.pointCount ?: 5, shape.innerRadius ?: 0.4)
         ShapeType.Line -> lineGeometry(rect)
         ShapeType.Arrow -> arrowGeometry(rect, strokes?.weight ?: 1.0)
-        ShapeType.Vector -> null // no lowered geometry => empty vector renders as its box
+        ShapeType.Vector -> null
         ShapeType.Rectangle -> if (cornerRadius.isZero) {
             null
         } else {

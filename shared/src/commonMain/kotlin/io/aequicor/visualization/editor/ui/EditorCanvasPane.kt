@@ -203,6 +203,7 @@ import io.aequicor.visualization.editor.presentation.resizableEdges
 import io.aequicor.visualization.editor.presentation.isSelfOrAncestor
 import io.aequicor.visualization.editor.presentation.marqueeSelection
 import io.aequicor.visualization.editor.presentation.measureGaps
+import io.aequicor.visualization.editor.presentation.nestedSelectionTargetForTap
 import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.parentNodeOf
 import io.aequicor.visualization.editor.presentation.pressHitBelongsToSelection
@@ -1463,9 +1464,19 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         } else if (hitId.isNotBlank()) {
                                             val now = TimeSource.Monotonic.markNow()
                                             val doubleClick = lastTapId == hitId &&
-                                                (lastTapMark?.let { (now - it).inWholeMilliseconds < 320 } ?: false)
+                                                (lastTapMark?.let { previous ->
+                                                    (now - previous).inWholeMilliseconds in
+                                                        viewConfiguration.doubleTapMinTimeMillis..
+                                                        viewConfiguration.doubleTapTimeoutMillis
+                                                } ?: false)
+                                            val nestedTarget = pressDocument.nestedSelectionTargetForTap(
+                                                selectedIds = pressDesign.selectedNodeIds,
+                                                hitId = hitId,
+                                                doubleTap = doubleClick,
+                                            )
                                             when {
                                                 additiveSelectionPressed -> state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
+                                                nestedTarget != null -> state.dispatch(DesignEditorIntent.SelectNode(nestedTarget))
                                                 doubleClick -> {
                                                     textEditEntryPress = hitId to start
                                                     enterEditMode(state, hitId)

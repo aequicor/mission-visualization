@@ -9,6 +9,7 @@ import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 
 /**
  * Structural tree editing over a [DesignDocument], used by the in-memory editor
@@ -74,6 +75,35 @@ internal fun DesignDocument.pressHitBelongsToSelection(selectedIds: Set<String>,
         if (selectedId == hitId) return@any true
         isSelfOrAncestor(selectedId, hitId) && topLevelOwnerPage(selectedId) == null
     }
+}
+
+/**
+ * Resolves the Figma-style tap result while a nested container is the sole selection.
+ *
+ * A plain tap on one of that container's descendants keeps the container selected, so the
+ * same press can drag it without unexpectedly grabbing an inner layer. A double-tap drills
+ * exactly one hierarchy level toward the deepest hit — it never skips straight to a grandchild.
+ * Returning null means the hit is not guarded by a nested selection and the normal canvas
+ * selection/edit-mode behavior should run instead. Top-level screen frames are deliberately
+ * excluded, matching [pressHitBelongsToSelection]: their children remain directly selectable.
+ */
+internal fun DesignDocument.nestedSelectionTargetForTap(
+    selectedIds: Set<String>,
+    hitId: String,
+    doubleTap: Boolean,
+): String? {
+    val selectedId = selectedIds.singleOrNull() ?: return null
+    if (hitId.isBlank() || selectedId == hitId || topLevelOwnerPage(selectedId) != null) return null
+    val selected = nodeById(selectedId) ?: return null
+    val childTowardHit = selected.children.firstOrNull { child -> child.findById(hitId) != null } ?: return null
+    // A single tap keeps the container selected (so the same press drags it). A double-tap drills into
+    // the child toward the hit — but only if that child could itself be selected directly on canvas.
+    // The single-click hit-test refuses locked/hidden nodes (see hitNode); drilling must honor the same
+    // rule, or it would select a locked container the user can never pick directly, leaving a dead,
+    // handle-suppressed selection. Fall through to normal behavior instead.
+    if (!doubleTap) return selectedId
+    if (childTowardHit.locked || childTowardHit.visible.literalOrNull() == false) return null
+    return childTowardHit.id
 }
 
 /**

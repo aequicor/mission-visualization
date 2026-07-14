@@ -9,6 +9,7 @@ import io.aequicor.visualization.engine.frontend.fnv1a64
 import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.SizingMode
 
 /**
  * Applies one surgical [SlmEdit] to the SLM source text (design section J). SLM
@@ -116,7 +117,38 @@ private fun applyResolved(
     // or a CNL edit even tier-3 cannot express — fails cleanly to an in-memory fallback (the
     // reducer's fidelity veto keeps it in-memory, source byte-identical, non-corrupting).
     val cnlSpan = if (edit !is StructuralSlmEdit) editIndex.cnlOwners[edit.nodeId] else null
-    val plan = if (cnlSpan != null) {
+    val plan = if (edit is SetScreenFrame) {
+        // FrontmatterWriter writes `frame:` into whatever source it is handed — it never consults
+        // edit.nodeId. Guard so a source that does not author this screen root cannot absorb the edit:
+        // otherwise writeBackEdits' candidate-source fallback would rewrite a *different* screen's
+        // frame when the owning source fails, and the fidelity veto can't catch it (the node is absent
+        // from the foreign source, so both fingerprints are null and match vacuously). Every other edit
+        // fails cleanly via cnl/anchor addressing; only this unconditional writer needs an explicit check.
+        val frontmatter = if (edit.nodeId in editIndex.anchorOwners || cnlSpan != null) {
+            FrontmatterWriter.setScreenFrame(source, lineIndex, edit)
+        } else {
+            WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
+        }
+        if (frontmatter is WritePlan.Failed) {
+            frontmatter
+        } else if (cnlSpan != null) {
+            // Freshly-created screens carry the root size both in frontmatter and in their CNL H1.
+            // Keep both representations synchronized; legacy plain-H1 roots have no CNL span and
+            // are fully represented by the frontmatter operation alone.
+            anchorLine = cnlSpan.startLine
+            val sizing = SetSizing(
+                nodeId = edit.nodeId,
+                width = edit.width?.let { SizingSpec(SizingMode.Fixed, it) },
+                height = edit.height?.let { SizingSpec(SizingMode.Fixed, it) },
+            )
+            when (val sentence = CnlWriter.plan(source, cnlSpan, sizing, lineIndex, patchedNode)) {
+                is WritePlan.Failed -> sentence
+                is WritePlan.Ops -> WritePlan.Ops((frontmatter as WritePlan.Ops).ops + sentence.ops)
+            }
+        } else {
+            frontmatter
+        }
+    } else if (cnlSpan != null) {
         anchorLine = cnlSpan.startLine
         CnlWriter.plan(source, cnlSpan, edit, lineIndex, patchedNode)
     } else if (edit is StructuralSlmEdit) {
