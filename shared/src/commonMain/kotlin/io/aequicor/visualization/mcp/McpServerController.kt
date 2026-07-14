@@ -22,6 +22,7 @@ interface McpServerController {
     val endpoint: String
     val connectionPrompt: String
     val setupPrompt: String
+    val updatePrompt: String
     val projectVerification: McpProjectVerification?
     val errorMessage: String?
 
@@ -40,6 +41,7 @@ object NoMcpServerController : McpServerController {
     override val endpoint: String = ""
     override val connectionPrompt: String = ""
     override val setupPrompt: String = ""
+    override val updatePrompt: String = ""
     override val projectVerification: McpProjectVerification? = null
     override val errorMessage: String? = null
     override fun useProjectFolder(path: String?) = Unit

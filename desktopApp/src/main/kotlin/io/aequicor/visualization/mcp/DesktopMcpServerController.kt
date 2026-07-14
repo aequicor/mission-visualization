@@ -47,6 +47,9 @@ class DesktopMcpServerController(
     override val setupPrompt: String
         get() = buildSetupPrompt(allowedFolder)
 
+    override val updatePrompt: String
+        get() = buildUpdatePrompt(allowedFolder)
+
     override fun useProjectFolder(path: String?) {
         val normalized = path?.takeIf(String::isNotBlank)?.let { raw ->
             runCatching { Path.of(raw).toRealPath().toString() }
@@ -226,6 +229,38 @@ class DesktopMcpServerController(
 
         Report setup complete only when `validate_project_setup` returns `verified: true`.
         If its allowed layouts root differs from `layouts_path`, stop and report the mismatch.
+    """.trimIndent()
+
+    private fun buildUpdatePrompt(root: String): String = """
+        Refresh Mission Visualization skills in the project you are currently working in.
+
+        Layouts folder exposed by MCP: `$root`
+
+        The project-scoped `mission_visualization` MCP connection and skills were installed earlier.
+        Do not edit MCP configuration in this step and do not touch unrelated skills.
+
+        Determine the root of the project currently opened by your AI coding client. Installed skills
+        live there, project-scoped. Never write skills into the layouts folder above unless both
+        roots genuinely coincide.
+
+        - Confirm that the `mission_visualization` MCP tools are available. If they are not, stop and
+          report that the connection is not active yet.
+        - Call `get_mcp_skill`. Compare its `skill_version` and `sha256` with the installed
+          `mission-visualization-mcp` skill. If it is missing or differs, overwrite the installed copy
+          with the returned Markdown.
+        - Call `get_slm_skills` with `skill: "all"`. For every returned skill file, compare its
+          `sha256` with the installed copy and overwrite each one that is missing or differs.
+        - Change only the Mission Visualization skills. Preserve every unrelated project skill,
+          instruction, and MCP server.
+        - Call `validate_project_setup` with:
+          - `agent_project_path`: the actual root of the project opened by the AI coding client
+          - `layouts_path`: `$root`
+          - `agent_name`: the name of your current AI coding client
+          - `root_skill_installed`: `true`
+          - `slm_skills_installed`: every skill name returned by `get_slm_skills`
+
+        Report which skills were updated, which were already current, and the final
+        `validate_project_setup` result. Report done only when it returns `verified: true`.
     """.trimIndent()
 
     private companion object {

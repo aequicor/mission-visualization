@@ -66,6 +66,7 @@ interface MenuStrings {
     val mcpStepConnectionPrompt: String
     val mcpStepSetupPrompt: String
     val mcpStepVerify: String
+    val mcpStepUpdatePrompt: String
     val mcpPort: String
     val mcpAllowedFolder: String
     val mcpChooseFolder: String
@@ -79,8 +80,10 @@ interface MenuStrings {
     val mcpEndpoint: String
     val mcpConnectionPromptHelp: String
     val mcpSetupPromptHelp: String
+    val mcpUpdatePromptHelp: String
     val mcpCopyConnectionPrompt: String
     val mcpCopySetupPrompt: String
+    val mcpCopyUpdatePrompt: String
     val mcpClipboardBusy: String
     val mcpAgentProject: String
     val mcpLayoutsFolder: String
@@ -149,6 +152,7 @@ object MenuStringsEn : MenuStrings {
     override val mcpStepConnectionPrompt = "2. Connect MCP in the AI agent"
     override val mcpStepSetupPrompt = "3. After reload, install skills and validate"
     override val mcpStepVerify = "4. Check the target project"
+    override val mcpStepUpdatePrompt = "Later — refresh installed skills"
     override val mcpPort = "Port"
     override val mcpAllowedFolder = "Layouts folder (MCP allowed root)"
     override val mcpChooseFolder = "Choose folder"
@@ -162,8 +166,10 @@ object MenuStringsEn : MenuStrings {
     override val mcpEndpoint = "Endpoint"
     override val mcpConnectionPromptHelp = "Paste Prompt 1 first. It configures the project MCP connection and tells you whether the agent needs a reload."
     override val mcpSetupPromptHelp = "After the connection is active, paste Prompt 2. It installs the skills and runs validation."
+    override val mcpUpdatePromptHelp = "When the MCP server or its skills change, paste this prompt to re-install any skill whose version drifted."
     override val mcpCopyConnectionPrompt = "Copy Prompt 1 — connect MCP"
     override val mcpCopySetupPrompt = "Copy Prompt 2 — install and validate"
+    override val mcpCopyUpdatePrompt = "Copy update prompt — refresh skills"
     override val mcpClipboardBusy = "Could not copy: the system clipboard is busy. Close the app using it and try again."
     override val mcpAgentProject = "AI agent project"
     override val mcpLayoutsFolder = "Layouts folder"
@@ -231,6 +237,7 @@ object MenuStringsRu : MenuStrings {
     override val mcpStepConnectionPrompt = "2. Подключите MCP в ИИ-агенте"
     override val mcpStepSetupPrompt = "3. После reload установите скиллы и запустите проверку"
     override val mcpStepVerify = "4. Проверьте целевой проект"
+    override val mcpStepUpdatePrompt = "Позже — обновите установленные скиллы"
     override val mcpPort = "Порт"
     override val mcpAllowedFolder = "Папка макетов (MCP allowed root)"
     override val mcpChooseFolder = "Выбрать папку"
@@ -244,8 +251,10 @@ object MenuStringsRu : MenuStrings {
     override val mcpEndpoint = "Endpoint"
     override val mcpConnectionPromptHelp = "Сначала вставьте Prompt 1. Он настроит MCP для проекта и подскажет, нужен ли reload агента."
     override val mcpSetupPromptHelp = "Когда подключение станет активно, вставьте Prompt 2. Он установит скиллы и запустит валидацию."
+    override val mcpUpdatePromptHelp = "Когда MCP-сервер или его скиллы изменятся, вставьте этот промпт, чтобы переустановить скиллы с устаревшей версией."
     override val mcpCopyConnectionPrompt = "Скопировать Prompt 1 — подключить MCP"
     override val mcpCopySetupPrompt = "Скопировать Prompt 2 — установить и проверить"
+    override val mcpCopyUpdatePrompt = "Скопировать промпт обновления — обновить скиллы"
     override val mcpClipboardBusy = "Не удалось скопировать: системный буфер обмена занят. Закройте использующее его приложение и повторите."
     override val mcpAgentProject = "Проект ИИ-агента"
     override val mcpLayoutsFolder = "Папка макетов"
