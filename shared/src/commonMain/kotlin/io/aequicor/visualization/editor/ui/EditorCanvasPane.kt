@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.geometry.Rect
@@ -62,6 +63,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isMetaPressed
@@ -72,6 +75,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -109,6 +113,7 @@ import io.aequicor.visualization.editor.presentation.TextSelection
 import io.aequicor.visualization.subsystems.typography.FontDescriptor
 import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
 import io.aequicor.visualization.subsystems.typography.compose.FontProvider
+import io.aequicor.visualization.subsystems.typography.compose.drawRichText
 import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
 import io.aequicor.visualization.engine.backend.compose.textEditGeometry
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
@@ -208,6 +213,7 @@ import io.aequicor.visualization.editor.presentation.rotatePointAroundCenter
 import io.aequicor.visualization.editor.presentation.rotateVector
 import io.aequicor.visualization.editor.presentation.rotatedCorners
 import io.aequicor.visualization.editor.presentation.rotatedHandlePoints
+import io.aequicor.visualization.editor.presentation.shouldShowSelectionGuides
 import io.aequicor.visualization.editor.presentation.snapAngleToIncrement
 import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
@@ -252,6 +258,7 @@ import io.aequicor.visualization.engine.ir.model.orZero
 import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.bindable
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.subsystems.figures.ShapeType
@@ -523,6 +530,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         val primarySelectionLocked = primarySelectionId?.let { document?.nodeById(it)?.locked == true } ?: false
         val primarySelectionInVectorEdit = primarySelectionId != null && primarySelectionId == ws.vectorEditNodeId
         val primarySelectionInDiagramEdit = primarySelectionId != null && primarySelectionId == ws.diagramEditNodeId
+        val primarySelectionInTextEdit = primarySelectionId != null && primarySelectionId == design.editingTextNodeId
         val primaryRectangleRadii = primarySelectionId
             ?.let { document?.nodeById(it) }
             ?.takeIf { it.isRectangleShape() }
@@ -537,6 +545,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var createRect by remember { mutableStateOf<Rect?>(null) }
         var badge by remember { mutableStateOf<String?>(null) }
         var dragMoveActive by remember { mutableStateOf(false) }
+        var resizeDragActive by remember { mutableStateOf(false) }
         var hoverCursor by remember { mutableStateOf<PointerIcon?>(null) }
         var groupContextMenuPosition by remember { mutableStateOf<Offset?>(null) }
         var pendingGroupIntent by remember { mutableStateOf<DesignEditorIntent.GroupNodes?>(null) }
@@ -562,6 +571,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var rotateIndicator by remember { mutableStateOf<RotateIndicator?>(null) }
         var rotateDragActive by remember { mutableStateOf(false) }
         var radiusIndicator by remember { mutableStateOf<RadiusIndicator?>(null) }
+        // The double-click completes before the text field is mounted. Retain that press so the
+        // field can place its initial caret through the real rich-text layout on the next frame.
+        var textEditEntryPress by remember { mutableStateOf<Pair<String, Offset>?>(null) }
+        LaunchedEffect(design.editingTextNodeId) {
+            if (design.editingTextNodeId.isBlank()) textEditEntryPress = null
+        }
 
         // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Space
         // for pan, Alt for the read-only measurement overlay). Ctrl/Cmd is also tracked here:
@@ -749,7 +764,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // semantics separate prevents a selected container from remaining
                             // selected together with every child caught by a Ctrl/Cmd marquee.
                             val additiveMarqueePressed = gestureStart.shiftPressed
-                            runCatching { focusRequester.requestFocus() }
+                            // The transparent BasicTextField owns focus and drag selection while
+                            // inline text editing is active. Stealing focus here on every canvas
+                            // press collapses native range selection before the inspector can use it.
+                            if (state.designState.editingTextNodeId.isBlank()) {
+                                runCatching { focusRequester.requestFocus() }
+                            }
                             val start = down.position
                             // The pointerInput coroutine can outlive document/layout recompositions
                             // during resize. Read a fresh press-time snapshot so the next press hit-tests
@@ -798,6 +818,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val isSingleSelection = pressDesign.selectedNodeIds.size == 1
                             val inVectorEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.vectorEditNodeId
                             val inDiagramEdit = isSingleSelection && pressDesign.selectedNodeId == pressWorkspace.diagramEditNodeId
+                            val inTextEdit = isSingleSelection && pressDesign.selectedNodeId == pressDesign.editingTextNodeId
                             val multiSelectionUnion = if (pressDesign.selectedNodeIds.size > 1) {
                                 selectionHandleBounds(pressLayout, pressDesign.selectedNodeIds)
                             } else {
@@ -813,7 +834,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
                             val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && !modifierMarquee && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
+                            val handlesActive = !forcePan && !modifierMarquee && pressWorkspace.tool == EditorTool.Select &&
+                                !selectionLocked && !inVectorEdit && !inDiagramEdit && !inTextEdit
                             // Arc/donut ellipse: grabbing a rim (start/end) or inner-ratio handle is
                             // resolved here — not in a separate full-canvas overlay — so a selected
                             // arc/donut ellipse never swallows presses meant to select or move other
@@ -859,6 +881,27 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
                             val hitId = hitNode(pressLayout, pressDocument, viewport, start)
+                            val textEditFrameHit = inTextEdit && textEditorHitBoxContains(
+                                box = primaryTransform?.box,
+                                rotationDegrees = primaryTransform?.rotation ?: 0.0,
+                                docX = viewport.toDocX(start.x),
+                                docY = viewport.toDocY(start.y),
+                                hitSlopDoc = (TextEditHitSlopPx / zoomPx).toDouble(),
+                            )
+                            // A press on the text currently being edited belongs to BasicTextField.
+                            // Include a small frame slop beyond the last glyph/caret: an auto-width
+                            // text node otherwise ends on the exact pixel where a backwards selection
+                            // drag begins. Leave the event unconsumed for the expanded field overlay.
+                            if (textEditorOwnsCanvasPress(
+                                    editingNodeId = pressDesign.editingTextNodeId,
+                                    selectedNodeIds = pressDesign.selectedNodeIds,
+                                    hitNodeId = hitId,
+                                    editingBoundsHit = textEditFrameHit,
+                                    forcePan = forcePan,
+                                )
+                            ) {
+                                return@awaitEachGesture
+                            }
                             // A multi-selection is one temporary canvas object. Its common frame
                             // claims a drag from anywhere inside the union, including transparent
                             // gaps between the selected nodes; a click without movement still falls
@@ -1215,6 +1258,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         badge = null
                                     }
                                     is CanvasOperation.Resize -> if (resizeBaseline != null) {
+                                        resizeDragActive = true
                                         // Shift forces aspect-preserving corner resize.
                                         if (resizeTargets.size > 1) {
                                             applyGroupResize(
@@ -1422,7 +1466,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 (lastTapMark?.let { (now - it).inWholeMilliseconds < 320 } ?: false)
                                             when {
                                                 additiveSelectionPressed -> state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
-                                                doubleClick -> enterEditMode(state, hitId)
+                                                doubleClick -> {
+                                                    textEditEntryPress = hitId to start
+                                                    enterEditMode(state, hitId)
+                                                }
                                                 else -> state.dispatch(DesignEditorIntent.SelectNode(hitId))
                                             }
                                             lastTapMark = now
@@ -1502,6 +1549,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             createRect = null
                             badge = null
                             dragMoveActive = false
+                            resizeDragActive = false
                             reorderPreview = null
                             reparentTargetId = null
                             snapGuides = emptyList()
@@ -1598,10 +1646,15 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
 
             if (primarySelectionBox != null) {
-                // Center anchor lines are the baseline crosshair, so they stay dashed during drag.
-                // Actual magnetic catches are drawn separately by snapGuides; if a guide coincides
-                // with the center line, that guide provides the solid visual.
-                if (parentOfPrimarySelection != null) {
+                // Figma-like guides appear as manipulation feedback, not as a permanent
+                // crosshair. Actual magnetic catches remain the separately-drawn snap guides.
+                if (parentOfPrimarySelection != null && shouldShowSelectionGuides(
+                        moveActive = dragMoveActive,
+                        resizeActive = resizeDragActive,
+                        hasSnapFeedback = snapGuides.isNotEmpty() || spacingBars.isNotEmpty(),
+                        altMeasurementActive = altHeld,
+                    )
+                ) {
                     val lines = centerAnchorLines(primarySelectionBox.toSnapBox(), parentOfPrimarySelection.toSnapBox())
                     drawCenterAnchorLines(
                         lines,
@@ -1616,7 +1669,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 // Point-edit mode replaces object handles with path anchors (VectorEditOverlay);
                 // diagram edit mode replaces them with the diagram element overlays — both
                 // suppress handles and the rotate affordance but keep the rest of the overlay.
-                if (!primarySelectionLocked && !primarySelectionInVectorEdit && !primarySelectionInDiagramEdit) {
+                if (!primarySelectionLocked && !primarySelectionInVectorEdit && !primarySelectionInDiagramEdit && !primarySelectionInTextEdit) {
                     drawRotatedHandles(primarySelectionBox, primarySelectionRotation, viewport, colors.accent)
                     if (ws.tool == EditorTool.Select && primaryRectangleRadii != null) {
                         drawCornerRadiusHandles(
@@ -1633,10 +1686,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     }
                 }
                 // Green badge while a resize snap matches a neighbour's width/height (design-book §18).
-                drawSizeBadge(
-                    primarySelectionBox, primarySelectionRotation, viewport, textMeasurer, colors,
-                    background = if (resizeMatched) colors.statusPositive else colors.accent,
-                )
+                if (!primarySelectionInTextEdit) {
+                    drawSizeBadge(
+                        primarySelectionBox, primarySelectionRotation, viewport, textMeasurer, colors,
+                        background = if (resizeMatched) colors.statusPositive else colors.accent,
+                    )
+                }
                 // Rotation magnet feedback: the live angle, green when it magnetically caught (design-book §18).
                 rotateIndicator?.let { ind ->
                     val offsetDoc = (RotateHandleScreenOffsetPx / zoomPx).toDouble()
@@ -1705,7 +1760,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             }
 
             // Inline text editing overlay for a double-clicked text node.
-            TextEditOverlay(state, layout, viewport, fontProvider)
+            TextEditOverlay(
+                state = state,
+                layout = layout,
+                viewport = viewport,
+                fontProvider = fontProvider,
+                entryPress = textEditEntryPress?.takeIf { (nodeId, _) -> nodeId == design.editingTextNodeId }?.second,
+            )
 
             // Annotation review layer: collapsed droplet badges + expanded cards over the
             // artboard, positioned from the resolved layout through the live viewport.
@@ -1930,6 +1991,7 @@ private fun TextEditOverlay(
     layout: LayoutBox?,
     viewport: CanvasViewport,
     fontProvider: FontProvider,
+    entryPress: Offset?,
 ) {
     val colors = LocalEditorColors.current
     val editingId = state.designState.editingTextNodeId
@@ -1946,17 +2008,6 @@ private fun TextEditOverlay(
     val density = densityObj.density
     val tl = viewport.toScreen(box.x, box.y)
     val initial = kind.characters.literalOrNull()?.takeIf { it.isNotBlank() } ?: kind.content?.defaultText.orEmpty()
-    var field by remember(editingId) {
-        mutableStateOf(TextFieldValue(initial, selection = TextRange(0, initial.length)))
-    }
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(editingId) {
-        runCatching { focus.requestFocus() }
-        // Whole-string selection to start, so an immediate inspector edit restyles everything.
-        state.updateWorkspace { it.copy(textSelection = TextSelection(editingId, 0, initial.length)) }
-    }
-    val wDp = (box.width * viewport.zoom / density).coerceAtLeast(40.0)
-    val hDp = (box.height * viewport.zoom / density).coerceAtLeast(20.0)
 
     // Native caret + selection are drawn from the node's REAL text layout (the same geometry
     // the artboard paints), so they follow wrapping, mixed sizes, alignment and per-range
@@ -1968,6 +2019,63 @@ private fun TextEditOverlay(
         ComposeTypographyMeasurer(textMeasurer, densityObj, fontProvider)
     }
     val geometry = remember(box, measurer) { textEditGeometry(box, measurer) }
+    val initialFieldSelection = remember(editingId) {
+        val clickedOffset = entryPress?.let { press ->
+            geometry?.let { geo ->
+                val localX = viewport.toDocX(press.x) - box.x
+                val localY = viewport.toDocY(press.y) - box.y - geo.yOffset
+                geo.laid.transformed.toSource(geo.laid.offsetAt(localX, localY))
+            }
+        }
+        initialTextFieldSelection(
+            textLength = initial.length,
+            nodeId = editingId,
+            explicitSelection = state.workspace.textSelection,
+            clickedOffset = clickedOffset,
+        )
+    }
+    var field by remember(editingId) {
+        mutableStateOf(TextFieldValue(initial, selection = initialFieldSelection))
+    }
+    var fieldFocused by remember(editingId) { mutableStateOf(false) }
+    var fieldPointerPressActive by remember(editingId) { mutableStateOf(false) }
+    var retainedSelection by remember(editingId) {
+        mutableStateOf(initialFieldSelection.takeUnless { it.collapsed })
+    }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(editingId) {
+        runCatching { focus.requestFocus() }
+    }
+    LaunchedEffect(editingId, field.selection, fieldFocused, fieldPointerPressActive) {
+        // Compose can report a collapsed TextFieldValue immediately before its focus-loss
+        // callback. Give that callback one frame to arrive before deciding that the user
+        // intentionally placed a caret inside the still-focused text field.
+        if (fieldFocused && !fieldPointerPressActive && field.selection.collapsed && retainedSelection != null) {
+            withFrameNanos { }
+        }
+        val resolved = retainTextSelectionAcrossInspectorFocus(
+            selection = field.selection,
+            fieldFocused = fieldFocused,
+            fieldPointerPressActive = fieldPointerPressActive,
+            retainedSelection = retainedSelection,
+        )
+        retainedSelection = resolved.retainedSelection
+        if (field.selection != resolved.selection) {
+            field = field.copy(selection = resolved.selection)
+        }
+        state.updateWorkspace {
+            it.copy(
+                textSelection = TextSelection(
+                    editingId,
+                    resolved.selection.start,
+                    resolved.selection.end,
+                ),
+            )
+        }
+    }
+    val wDp = (box.width * viewport.zoom / density).coerceAtLeast(40.0)
+    val hDp = (box.height * viewport.zoom / density).coerceAtLeast(20.0)
+    val textEditHitSlopDp = (TextEditHitSlopPx / density).toDouble()
     var caretVisible by remember(editingId) { mutableStateOf(true) }
     LaunchedEffect(editingId, field.selection) {
         caretVisible = true
@@ -1986,10 +2094,25 @@ private fun TextEditOverlay(
         val selMin = field.selection.min.coerceIn(0, len)
         val selMax = field.selection.max.coerceIn(0, len)
         if (selMax > selMin) {
-            laid.selectionRects(transformed.toTransformed(selMin), transformed.toTransformed(selMax)).forEach { r ->
+            val transformedMin = transformed.toTransformed(selMin)
+            val transformedMax = transformed.toTransformed(selMax)
+            laid.selectionRects(transformedMin, transformedMax).forEach { r ->
                 val a = screen(r.left, r.top)
                 val b = screen(r.right, r.bottom)
                 drawRect(color = colors.selectionFill, topLeft = a, size = Size(b.x - a.x, b.y - a.y))
+            }
+            // The selection is an overlay above DesignArtboard, so paint the exact rich-text
+            // glyphs again inside the selected path. This preserves mixed fills/styles and keeps
+            // characters readable over an opaque theme selection color, as if the background had
+            // been inserted underneath the original text.
+            val origin = viewport.toScreen(box.x, box.y + geo.yOffset)
+            withTransform({
+                translate(left = origin.x, top = origin.y)
+                scale(scaleX = viewport.zoom, scaleY = viewport.zoom, pivot = Offset.Zero)
+            }) {
+                clipPath(laid.selectionPath(transformedMin, transformedMax)) {
+                    drawRichText(laid)
+                }
             }
         }
         if (caretVisible) {
@@ -2021,10 +2144,44 @@ private fun TextEditOverlay(
     )
     Box(
         modifier = Modifier
-            .offset { androidx.compose.ui.unit.IntOffset(tl.x.roundToInt(), tl.y.roundToInt()) }
-            .size(wDp.dp, hDp.dp)
-            .border(1.dp, colors.accent.copy(alpha = 0.6f)),
+            .offset {
+                androidx.compose.ui.unit.IntOffset(
+                    (tl.x - TextEditHitSlopPx).roundToInt(),
+                    (tl.y - TextEditHitSlopPx).roundToInt(),
+                )
+            }
+            .size(
+                (wDp + 2.0 * textEditHitSlopDp).dp,
+                (hDp + 2.0 * textEditHitSlopDp).dp,
+            )
+            .pointerInput(editingId) {
+                // Observe without consuming so BasicTextField keeps the native selection drag.
+                // The flag distinguishes a new pointer selection from a focus-loss collapse.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    fieldPointerPressActive = true
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Final)
+                            if (event.changes.none { it.pressed }) break
+                        }
+                    } finally {
+                        fieldPointerPressActive = false
+                    }
+                }
+            },
     ) {
+        Box(
+            Modifier
+                .offset {
+                    androidx.compose.ui.unit.IntOffset(
+                        TextEditHitSlopPx.roundToInt(),
+                        TextEditHitSlopPx.roundToInt(),
+                    )
+                }
+                .size(wDp.dp, hDp.dp)
+                .border(1.dp, colors.accent.copy(alpha = 0.6f)),
+        )
         CompositionLocalProvider(
             LocalTextSelectionColors provides TextSelectionColors(
                 handleColor = Color.Transparent,
@@ -2037,15 +2194,12 @@ private fun TextEditOverlay(
                     val textChanged = next.text != field.text
                     field = next
                     if (textChanged) state.dispatch(DesignEditorIntent.SetTextCharacters(editingId, next.text))
-                    // Report the caret/selection so the inspector styles the selected range.
-                    state.updateWorkspace {
-                        it.copy(textSelection = TextSelection(editingId, next.selection.start, next.selection.end))
-                    }
                 },
                 // Our geometry-accurate caret is drawn above; hide the field's own.
                 cursorBrush = SolidColor(Color.Transparent),
                 modifier = Modifier.fillMaxSize()
                     .focusRequester(focus)
+                    .onFocusChanged { fieldFocused = it.isFocused }
                     .onPreviewKeyEvent { e ->
                         if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
                             state.dispatch(DesignEditorIntent.SetEditingText("")); true
@@ -2054,10 +2208,96 @@ private fun TextEditOverlay(
                         }
                     },
                 textStyle = editStyle,
+                decorationBox = { innerTextField ->
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(textEditHitSlopDp.dp),
+                        propagateMinConstraints = true,
+                    ) {
+                        innerTextField()
+                    }
+                },
             )
         }
     }
 }
+
+/**
+ * Initial selection for an inline text field. A real entry click takes precedence, an explicitly
+ * supplied range for the same node is retained, and non-pointer entry falls back to an end caret
+ * rather than the old select-all behaviour.
+ */
+internal fun initialTextFieldSelection(
+    textLength: Int,
+    nodeId: String,
+    explicitSelection: TextSelection?,
+    clickedOffset: Int?,
+): TextRange {
+    val length = textLength.coerceAtLeast(0)
+    clickedOffset?.let { offset -> return TextRange(offset.coerceIn(0, length)) }
+    if (explicitSelection?.nodeId == nodeId) {
+        return TextRange(
+            start = explicitSelection.start.coerceIn(0, length),
+            end = explicitSelection.end.coerceIn(0, length),
+        )
+    }
+    return TextRange(length)
+}
+
+internal data class RetainedTextSelection(
+    val selection: TextRange,
+    val retainedSelection: TextRange?,
+)
+
+/**
+ * Keeps a real range active while focus temporarily moves from the inline field to inspector
+ * controls. A collapsed selection is accepted while the field remains focused or a real pointer
+ * press is selecting in it, preserving caret clicks without letting an inspector click discard
+ * range formatting.
+ */
+internal fun retainTextSelectionAcrossInspectorFocus(
+    selection: TextRange,
+    fieldFocused: Boolean,
+    fieldPointerPressActive: Boolean = false,
+    retainedSelection: TextRange?,
+): RetainedTextSelection = when {
+    !selection.collapsed -> RetainedTextSelection(selection, selection)
+    fieldPointerPressActive -> RetainedTextSelection(selection, null)
+    !fieldFocused && retainedSelection != null -> RetainedTextSelection(retainedSelection, retainedSelection)
+    else -> RetainedTextSelection(selection, null)
+}
+
+private const val TextEditHitSlopPx = 6f
+
+/** Point-in-expanded text edit frame, including rotation and the end-caret hit slop. */
+internal fun textEditorHitBoxContains(
+    box: BoundsBox?,
+    rotationDegrees: Double,
+    docX: Double,
+    docY: Double,
+    hitSlopDoc: Double,
+): Boolean {
+    box ?: return false
+    val point = GeoPoint(docX, docY)
+    val local = if (rotationDegrees == 0.0) {
+        point
+    } else {
+        rotatePointAroundCenter(point, GeoPoint(box.centerX, box.centerY), -rotationDegrees)
+    }
+    val slop = hitSlopDoc.coerceAtLeast(0.0)
+    return local.x >= box.x - slop && local.x <= box.right + slop &&
+        local.y >= box.y - slop && local.y <= box.bottom + slop
+}
+
+/** True when an in-node press must stay with the inline field instead of canvas transforms. */
+internal fun textEditorOwnsCanvasPress(
+    editingNodeId: String,
+    selectedNodeIds: Set<String>,
+    hitNodeId: String,
+    editingBoundsHit: Boolean,
+    forcePan: Boolean,
+): Boolean =
+    !forcePan && editingNodeId.isNotBlank() && selectedNodeIds.singleOrNull() == editingNodeId &&
+        (hitNodeId == editingNodeId || editingBoundsHit)
 
 // --- Vector edit overlay -----------------------------------------------------
 
@@ -2947,6 +3187,7 @@ private data class ResizeTarget(
     val nodeId: String,
     val baseline: BoundsBox,
     val originPosition: DesignPoint?,
+    val textAutoResize: TextAutoResize? = null,
     val rotation: Double = 0.0,
     val edges: ResizableEdges = ResizableEdges.All,
     val minWidth: Double = 1.0,
@@ -3881,16 +4122,18 @@ private fun applyResize(
     if (originPos != null && (result.dx != 0.0 || result.dy != 0.0)) {
         state.dispatch(DesignEditorIntent.UpdatePosition(target.nodeId, x = originPos.x.orZero + result.dx, y = originPos.y.orZero + result.dy))
     }
-    // Dispatch size only on an axis that actually changed, so a blocked-direction drag is a true
-    // no-op and an edge-only drag doesn't pin the untouched axis' sizing to Fixed (the reducer
-    // pins only the non-null axis).
+    // Dispatch size only on an axis that actually changed. The one exception is a vertical drag
+    // of auto-width text: switching to a fixed-height box must also capture its measured width,
+    // because the text model has no auto-width/fixed-height mode.
     val widthChanged = result.width != baseline.width
     val heightChanged = result.height != baseline.height
+    val pinMeasuredTextWidth = !widthChanged && heightChanged &&
+        target.textAutoResize == TextAutoResize.WidthAndHeight
     if (widthChanged || heightChanged) {
         state.dispatch(
             DesignEditorIntent.UpdateSize(
                 target.nodeId,
-                width = result.width.takeIf { widthChanged },
+                width = result.width.takeIf { widthChanged || pinMeasuredTextWidth },
                 height = result.height.takeIf { heightChanged },
             ),
         )
@@ -3946,11 +4189,13 @@ private fun commitResizeWriteBack(
     }
     val widthChanged = result.width != baseline.width
     val heightChanged = result.height != baseline.height
+    val pinMeasuredTextWidth = !widthChanged && heightChanged &&
+        target.textAutoResize == TextAutoResize.WidthAndHeight
     if (widthChanged || heightChanged) {
         state.dispatch(
             DesignEditorIntent.ResizeNode(
                 target.nodeId,
-                width = result.width.takeIf { widthChanged },
+                width = result.width.takeIf { widthChanged || pinMeasuredTextWidth },
                 height = result.height.takeIf { heightChanged },
             ),
         )
@@ -4399,6 +4644,7 @@ private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set
             nodeId = id,
             baseline = box.toBoundsBox(),
             originPosition = originPosition,
+            textAutoResize = (node.kind as? DesignNodeKind.Text)?.autoResize,
             rotation = box.node.rotation,
             edges = document.resizableEdges(id),
             minWidth = node.minSize?.width ?: 1.0,

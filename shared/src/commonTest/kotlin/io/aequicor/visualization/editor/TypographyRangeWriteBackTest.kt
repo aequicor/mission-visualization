@@ -1,12 +1,12 @@
 package io.aequicor.visualization.editor
 
+import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
 import io.aequicor.visualization.editor.presentation.TypographyPatch
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
-import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -39,7 +39,7 @@ class TypographyRangeWriteBackTest {
         assertNotNull(sources.firstOrNull { it.fileName == fileName }, "missing source $fileName").content
 
     @Test
-    fun inlineRangeEditIsExplicitlyRejected() {
+    fun inlineRangeEditPersistsInOwningSource() {
         val before = freshState()
         val length = before.textKind().let { kind ->
             (kind.content?.defaultText?.takeIf { it.isNotEmpty() }
@@ -50,16 +50,29 @@ class TypographyRangeWriteBackTest {
 
         val next = reduceDesignEditor(
             before,
-            DesignEditorIntent.UpdateTypographyRange(nodeId, 0, end, TypographyPatch(fontWeight = 700.0, italic = true)),
+            DesignEditorIntent.UpdateTypographyRange(
+                nodeId,
+                0,
+                end,
+                TypographyPatch(fontFamily = "Source Sans 3", fontSize = 24.0),
+            ),
         )
 
-        assertEquals(before.document, next.document)
-        assertEquals(before.sources, next.sources)
-        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
+        assertNotEquals(before.document, next.document)
+        assertNotEquals(before.sourceOf(owningFile), next.sourceOf(owningFile))
+        before.sources.filterNot { it.fileName == owningFile }.forEach { source ->
+            assertEquals(source.content, next.sourceOf(source.fileName), "unrelated source ${source.fileName}")
+        }
+        val range = assertNotNull(next.textKind().styleRanges.singleOrNull())
+        assertEquals(0, range.start)
+        assertEquals(end, range.end)
+        assertEquals("Source Sans 3", range.style.fontFamily)
+        assertEquals(24.0, range.style.fontSize?.literalOrNull())
+        assertTrue("span (range (0 $end)" in next.sourceOf(owningFile))
     }
 
     @Test
-    fun repeatedInlineRangeEditsRemainRejectedWithoutDivergence() {
+    fun repeatedInlineRangeEditsAccumulateWithoutDivergence() {
         val before = freshState()
         val length = before.textKind().let { kind ->
             (kind.content?.defaultText?.takeIf { it.isNotEmpty() }
@@ -75,10 +88,18 @@ class TypographyRangeWriteBackTest {
             afterFirst,
             DesignEditorIntent.UpdateTypographyRange(nodeId, mid, length, TypographyPatch(italic = true)),
         )
-        assertEquals(before.document, afterFirst.document)
-        assertEquals(before.sources, afterFirst.sources)
-        assertEquals(before.document, afterSecond.document)
-        assertEquals(before.sources, afterSecond.sources)
-        assertTrue(afterSecond.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
+        assertNotEquals(before.document, afterFirst.document)
+        assertNotEquals(afterFirst.document, afterSecond.document)
+        assertNotEquals(before.sources, afterSecond.sources)
+        val ranges = afterSecond.textKind().styleRanges
+        val bold = assertNotNull(ranges.firstOrNull { it.start == 0 && it.end == mid })
+        val italic = assertNotNull(ranges.firstOrNull { it.start == mid && it.end == length })
+        assertEquals(700.0, bold.style.fontWeight?.literalOrNull())
+        assertEquals(true, italic.style.italic)
+        assertEquals(afterSecond.document, freshStateFrom(afterSecond).document)
     }
+
+    /** Recompile the emitted sources independently to prove the source is authoritative. */
+    private fun freshStateFrom(state: DesignEditorState): DesignEditorState =
+        createDesignEditorState(compileMissionDocuments(state.sources))
 }

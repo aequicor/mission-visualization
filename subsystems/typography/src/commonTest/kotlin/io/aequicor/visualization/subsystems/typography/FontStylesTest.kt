@@ -25,7 +25,9 @@ class FontStylesTest {
         assertEquals("Thin", FontStyles.nameFor(100, italic = false))
         assertEquals("Black Italic", FontStyles.nameFor(900, italic = true))
         // Off-scale weights snap to the nearest named weight.
-        assertEquals("SemiBold", FontStyles.nameFor(620, italic = false))
+        assertEquals("Semi Bold", FontStyles.nameFor(620, italic = false))
+        assertEquals("Extra Light Italic", FontStyles.nameFor(200, italic = true))
+        assertEquals("Extra Bold", FontStyles.nameFor(800, italic = false))
     }
 
     @Test
@@ -40,6 +42,13 @@ class FontStylesTest {
         assertEquals(NamedFontStyle("Bold Italic", 700, italic = true), FontStyles.parse(" bold italic "))
         assertEquals(NamedFontStyle("Bold Italic", 700, italic = true), FontStyles.parse("BOLD ITALIC"))
         assertEquals(NamedFontStyle("Medium", 500, italic = false), FontStyles.parse("medium"))
+    }
+
+    @Test
+    fun parseAcceptsLegacyUnspacedWeightNames() {
+        assertEquals(NamedFontStyle("Extra Light", 200, italic = false), FontStyles.parse("ExtraLight"))
+        assertEquals(NamedFontStyle("Semi Bold Italic", 600, italic = true), FontStyles.parse("SemiBold Italic"))
+        assertEquals(NamedFontStyle("Extra Bold Italic", 800, italic = true), FontStyles.parse("extra-bold italic"))
     }
 
     @Test

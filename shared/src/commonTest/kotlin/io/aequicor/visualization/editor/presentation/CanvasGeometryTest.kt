@@ -3,6 +3,7 @@ package io.aequicor.visualization.editor.presentation
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -15,6 +16,15 @@ class CanvasGeometryTest {
 
     private fun assertClose(expected: Double, actual: Double, epsilon: Double = 0.0001) {
         assertTrue(abs(expected - actual) <= epsilon, "expected <$expected>, actual <$actual>")
+    }
+
+    @Test
+    fun selectionGuidesOnlyAppearForManipulationAndNeverOverAltMeasurement() {
+        assertFalse(shouldShowSelectionGuides(false, false, false, false))
+        assertTrue(shouldShowSelectionGuides(moveActive = true, resizeActive = false, hasSnapFeedback = false, altMeasurementActive = false))
+        assertTrue(shouldShowSelectionGuides(moveActive = false, resizeActive = true, hasSnapFeedback = false, altMeasurementActive = false))
+        assertTrue(shouldShowSelectionGuides(moveActive = false, resizeActive = false, hasSnapFeedback = true, altMeasurementActive = false))
+        assertFalse(shouldShowSelectionGuides(moveActive = true, resizeActive = true, hasSnapFeedback = true, altMeasurementActive = true))
     }
 
     // --- Rectangle corner radius -------------------------------------------------

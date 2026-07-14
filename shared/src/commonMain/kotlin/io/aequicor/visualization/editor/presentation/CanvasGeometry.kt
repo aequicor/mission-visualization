@@ -31,6 +31,17 @@ data class BoundsBox(
 /** A point in document coordinates. */
 data class GeoPoint(val x: Double, val y: Double)
 
+/**
+ * Figma-like selection guides are contextual feedback, not permanent canvas decoration.
+ * Alt measurement owns the overlay while it is held, so it suppresses the normal blue guides.
+ */
+fun shouldShowSelectionGuides(
+    moveActive: Boolean,
+    resizeActive: Boolean,
+    hasSnapFeedback: Boolean,
+    altMeasurementActive: Boolean,
+): Boolean = !altMeasurementActive && (moveActive || resizeActive || hasSnapFeedback)
+
 /** The four Figma-like corner-radius controls exposed by a selected rectangle. */
 enum class CornerRadiusHandle { TopLeft, TopRight, BottomRight, BottomLeft }
 

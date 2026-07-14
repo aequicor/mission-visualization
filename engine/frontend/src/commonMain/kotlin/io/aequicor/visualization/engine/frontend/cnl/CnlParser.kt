@@ -1378,8 +1378,9 @@ internal object CnlParser {
     }
 
     /**
-     * `span (range (s e) style <ref>)` → one `text.spans[]` item carrying a shared text-style ref.
-     * Range form only; each `span` phrase is its own [CnlPropertyKind.Span] property.
+     * A rich-text range. Besides the legacy `style <ref>` form, editor-authored spans may carry
+     * inline `font` / `weight` / `italic` / `size` and a `fills ( … )` paint list. Keeping these
+     * values in CNL lets range formatting survive the reducer's source round-trip contract.
      */
     private fun consumeSpan(
         tokens: List<Token>,
@@ -1396,7 +1397,12 @@ internal object CnlParser {
         val (group, after) = parseGroup(tokens, valueStart)
         val typed = styleSpanOf(group)
         if (typed == null) {
-            CnlDiagnostics.warn(diagnostics, CnlRule.MissingValue, lineNumber, "\"span\" needs range (s e) and style <ref>")
+            CnlDiagnostics.warn(
+                diagnostics,
+                CnlRule.MissingValue,
+                lineNumber,
+                "\"span\" needs range (s e) and a style, inline typography or fills",
+            )
             return after
         }
         val span = joinSpan(keywordSpan, tokens[after - 1].span)
@@ -1410,12 +1416,17 @@ internal object CnlParser {
         return after
     }
 
-    /** A `span ( … )` style-ref span (mirrors `TextBlockReader.readSpan`'s style-ref form). */
+    /** Parses a `span ( … )` rich-text range, including editor-authored inline overrides. */
     private fun styleSpanOf(group: GGroup): TextSpanPatch? {
         val children = group.children
         var range: Pair<Int, Int>? = null
-        var style: String? = null
-        var hasStyle = false
+        var styleRef: String? = null
+        var fontFamily: String? = null
+        var fontWeight: Bindable<Double>? = null
+        var italic: Boolean? = null
+        var fontSize: Bindable<Double>? = null
+        var fills: List<DesignPaint>? = null
+        var hasPayload = false
         var i = 0
         while (i < children.size) {
             when (children[i].leafText()?.lowercase()) {
@@ -1426,15 +1437,104 @@ internal object CnlParser {
                     i += 2
                 }
                 "style" -> {
-                    children.getOrNull(i + 1)?.leafText()?.let { style = CnlScalars.stringOf(it); hasStyle = true }
+                    children.getOrNull(i + 1)?.leafText()?.let {
+                        styleRef = CnlScalars.stringOf(it)
+                        hasPayload = true
+                    }
+                    i += 2
+                }
+                "font" -> {
+                    children.getOrNull(i + 1)?.leafText()?.let {
+                        fontFamily = it
+                        hasPayload = true
+                    }
+                    i += 2
+                }
+                "weight" -> {
+                    children.getOrNull(i + 1)?.leafText()?.let {
+                        fontWeight = CnlScalars.bindableDoubleOf(it)
+                        hasPayload = fontWeight != null || hasPayload
+                    }
+                    i += 2
+                }
+                "italic" -> {
+                    children.getOrNull(i + 1)?.leafText()?.let {
+                        italic = CnlVocabulary.booleans[it.lowercase()]
+                        hasPayload = italic != null || hasPayload
+                    }
+                    i += 2
+                }
+                "size" -> {
+                    children.getOrNull(i + 1)?.leafText()?.let {
+                        fontSize = CnlScalars.bindableDoubleOf(it)
+                        hasPayload = fontSize != null || hasPayload
+                    }
+                    i += 2
+                }
+                "fills" -> {
+                    val value = children.getOrNull(i + 1)
+                    fills = when {
+                        value?.asGroup() != null -> spanFillsOf(value.asGroup()!!)
+                        value?.leafText()?.lowercase() == "none" -> emptyList()
+                        else -> null
+                    }
+                    hasPayload = fills != null || hasPayload
                     i += 2
                 }
                 else -> i += 1
             }
         }
         val bounds = range ?: return null
-        if (!hasStyle) return null
-        return TextSpanPatch(start = bounds.first, end = bounds.second, styleRef = style)
+        if (!hasPayload) return null
+        val inlineStyle = DesignTextStyle(
+            fontFamily = fontFamily,
+            fontWeight = fontWeight,
+            italic = italic,
+            fontSize = fontSize,
+        ).takeIf { it != DesignTextStyle() }
+        return TextSpanPatch(
+            start = bounds.first,
+            end = bounds.second,
+            styleRef = styleRef,
+            style = inlineStyle,
+            fills = fills,
+        )
+    }
+
+    /** Paint phrases inside `fills ( … )`; syntax matches the node-level fill grammar. */
+    private fun spanFillsOf(group: GGroup): List<DesignPaint> {
+        val children = group.children
+        val paints = mutableListOf<DesignPaint>()
+        var i = 0
+        while (i < children.size) {
+            val word = children[i].leafText()?.lowercase()
+            val value = children.getOrNull(i + 1)
+            val paintGroup = value?.asGroup()
+            when {
+                (word == "color" || word == "fill") && paintGroup != null -> {
+                    solidPaintOf(paintGroup)?.let { paints += it }
+                    i += 2
+                }
+                word == "color" || word == "fill" -> {
+                    value?.leafText()?.let { token -> solidPaintOfToken(token)?.let { paints += it } }
+                    i += 2
+                }
+                word == "gradient" && paintGroup != null -> {
+                    paints += gradientPaintOf(paintGroup)
+                    i += 2
+                }
+                word == "image" && paintGroup != null -> {
+                    paints += mediaPaintOf(paintGroup, video = false)
+                    i += 2
+                }
+                word == "video" && paintGroup != null -> {
+                    paints += mediaPaintOf(paintGroup, video = true)
+                    i += 2
+                }
+                else -> i += 1
+            }
+        }
+        return paints
     }
 
     // --- layout-deep P4b: overflow / scroll / grid tracks / placement / guides / grids ---

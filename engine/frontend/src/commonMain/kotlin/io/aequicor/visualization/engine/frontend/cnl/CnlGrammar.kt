@@ -31,6 +31,7 @@ import io.aequicor.visualization.engine.ir.model.appliedTo
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
+import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.subsystems.figures.HandleMirror
@@ -999,10 +1000,36 @@ internal object CnlGrammar {
         // Emit in IR list order (a faithful inverse of the parser/merger, which preserve authored
         // order). Sorting here would reorder unsorted authored spans on round-trip and flip overlap
         // precedence — the IR list order is load-bearing for both fidelity and write-back veto.
-        val ranges = asText(node)?.styleRanges?.filter { it.styleRef.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: return null
-        return ranges.joinToString(" ") { range ->
-            "span (range (${range.start} ${range.end}) style ${range.styleRef})"
+        val ranges = asText(node)?.styleRanges?.takeIf { it.isNotEmpty() } ?: return null
+        val rendered = ranges.map { range ->
+            val style = range.style
+            // CNL currently exposes the inline properties the canvas inspector edits directly.
+            // Refuse a lossy sentence for deeper range properties; the write-back fidelity gate
+            // will keep the source/document transaction atomic until their grammar lands too.
+            if (
+                style.copy(fontFamily = null, fontWeight = null, italic = null, fontSize = null) !=
+                DesignTextStyle()
+            ) return null
+            val parts = buildList {
+                add("range (${range.start} ${range.end})")
+                range.styleRef.takeIf { it.isNotEmpty() }?.let { add("style $it") }
+                style.fontFamily?.let { add("font ${quoteText(it)}") }
+                style.fontWeight?.let { add("weight ${numberToken(it) ?: return null}") }
+                style.italic?.let { add("italic ${if (it) "yes" else "no"}") }
+                style.fontSize?.let { add("size ${numberToken(it) ?: return null}") }
+                range.fills?.let { fills ->
+                    if (fills.isEmpty()) {
+                        add("fills none")
+                    } else {
+                        val paints = fills.map { renderPaint(it) ?: return null }
+                        add("fills (${paints.joinToString(" ")})")
+                    }
+                }
+            }
+            if (parts.size == 1) return null
+            "span (${parts.joinToString(" ")})"
         }
+        return rendered.joinToString(" ")
     }
 
     private fun renderListSettings(node: DesignNode): String? {

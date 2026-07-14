@@ -26,7 +26,12 @@ fun textEditGeometry(
     typography: ComposeTypographyMeasurer,
 ): TextEditGeometry? {
     val text = box.node.text ?: return null
-    val laid = typography.layout(text.toRichText(), maxWidth = box.width, exactWidth = true)
+    val laid = typography.layout(
+        rich = text.toRichText(),
+        maxWidth = box.width,
+        fill = box.node.fills.toRichTextFill(),
+        exactWidth = true,
+    )
     val yOffset = when (text.style.textAlignVertical) {
         TextAlignVertical.Top -> 0.0
         TextAlignVertical.Center -> (box.height - laid.measured.height) / 2.0

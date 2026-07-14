@@ -19,13 +19,13 @@ object FontStyles {
 
     private val weightNames = listOf(
         100 to "Thin",
-        200 to "ExtraLight",
+        200 to "Extra Light",
         300 to "Light",
         400 to "Regular",
         500 to "Medium",
-        600 to "SemiBold",
+        600 to "Semi Bold",
         700 to "Bold",
-        800 to "ExtraBold",
+        800 to "Extra Bold",
         900 to "Black",
     )
 
@@ -52,7 +52,10 @@ object FontStyles {
         val italic = normalized.endsWith("Italic", ignoreCase = true)
         // Strip by length: the suffix was matched case-insensitively above.
         val weightPart = if (italic) normalized.dropLast("Italic".length).trim() else normalized
-        val weight = weightNames.firstOrNull { (_, n) -> n.equals(weightPart, ignoreCase = true) }?.first
+        val normalizedWeightPart = weightPart.filterNot { it.isWhitespace() || it == '-' || it == '_' }
+        val weight = weightNames.firstOrNull { (_, n) ->
+            n.filterNot(Char::isWhitespace).equals(normalizedWeightPart, ignoreCase = true)
+        }?.first
             ?: if (weightPart.isEmpty() && italic) 400 else 400
         return NamedFontStyle(nameFor(weight, italic), weight, italic)
     }

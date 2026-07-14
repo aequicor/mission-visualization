@@ -9,12 +9,12 @@ import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignPaint
-import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.TextListSettings
 import io.aequicor.visualization.engine.ir.model.TextListType
 import io.aequicor.visualization.engine.ir.model.bindable
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -57,9 +57,11 @@ class TextRangeIntentsReducerTest {
         if (before.length() < 4) return
         val red = listOf<DesignPaint>(DesignPaint.Solid(DesignColor.fromHex("#FF0000")!!.bindable()))
         val next = reduceDesignEditor(before, DesignEditorIntent.SetTextRangeFills(nodeId, 0, 4, red))
-        assertEquals(before.document, next.document)
-        assertEquals(before.sources, next.sources)
-        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
+        assertNotEquals(before.document, next.document)
+        assertNotEquals(before.sources, next.sources)
+        val range = assertNotNull(next.textKind().styleRanges.firstOrNull { it.start == 0 && it.end == 4 })
+        val solid = assertNotNull(range.fills?.singleOrNull() as? DesignPaint.Solid)
+        assertEquals(DesignColor.fromHex("#FF0000"), (solid.color as? Bindable.Value)?.value)
     }
 
     @Test
