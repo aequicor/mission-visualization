@@ -55,6 +55,8 @@ import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramSelection
 import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
+import io.aequicor.visualization.editor.platform.platformCanvasWheelPanPixels
+import io.aequicor.visualization.editor.platform.platformCanvasWheelZoomUnits
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
@@ -73,6 +75,7 @@ import io.aequicor.visualization.subsystems.diagrams.compose.DiagramSelectionOve
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramWaypointOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.rememberDiagramRoutes
 import io.aequicor.visualization.subsystems.diagrams.hittest.ConnectTarget
+import io.aequicor.visualization.subsystems.diagrams.hittest.connectionPorts
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramNodeHitPart
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramResizeHandle
@@ -89,6 +92,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
@@ -266,7 +270,7 @@ private sealed interface DiagramTextEditTarget {
 /**
  * Diagram edit mode overlay: while [io.aequicor.visualization.editor.presentation.EditorWorkspaceState.diagramEditNodeId]
  * targets a diagram IR node, this layer owns every gesture inside the node's box —
- * click/shift-click element selection via the core hit-test, node drag-move and
+ * click/Ctrl-Cmd-Shift-click element selection via the core hit-test, node drag-move and
  * handle-resize, hover directional arrows that drag out new floating edges (Alt pins the
  * end to the nearest declared port), edge-segment drags that mint waypoints, waypoint and
  * edge-label drags, and double-click inline text editing of labels/cells. Every mutation
@@ -300,6 +304,7 @@ internal fun DiagramEditOverlay(
     val selectedEdgeIds = selection.edgeIds.map(::DiagramEdgeId).toSet()
 
     var hoveredElementId by remember(editId) { mutableStateOf<String?>(null) }
+    var hoveredPort by remember(editId) { mutableStateOf<DiagramHit.Port?>(null) }
     var edgePreview by remember(editId) { mutableStateOf<DiagramEdgePreview?>(null) }
     var connectTarget by remember(editId) { mutableStateOf<ConnectTarget?>(null) }
     var marquee by remember(editId) { mutableStateOf<DiagramRect?>(null) }
@@ -351,7 +356,14 @@ internal fun DiagramEditOverlay(
             handleSize = (7f / zoomPx).coerceIn(2f, 24f),
         )
         val portNodeIds = selectedNodeIds + setOfNotNull(hoveredElementId?.let(::DiagramNodeId))
-        DiagramPortsOverlay(graph, portNodeIds, Modifier.fillMaxSize(), overlayStyle)
+        DiagramPortsOverlay(
+            graph = graph,
+            nodeIds = portNodeIds,
+            modifier = Modifier.fillMaxSize(),
+            style = overlayStyle,
+            highlightedNodeId = hoveredPort?.nodeId,
+            highlightedPortId = hoveredPort?.portId,
+        )
         DiagramWaypointOverlay(graph, selectedEdgeIds, routes, Modifier.fillMaxSize(), overlayStyle)
         DiagramDirectionalArrowsOverlay(
             graph = graph,
@@ -410,7 +422,9 @@ internal fun DiagramEditOverlay(
                                     state.updateWorkspace { it.copy(pendingZoomTo = null) }
                                 }
                                 if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
-                                    val factor = zoomFactorForScroll(-change.scrollDelta.y)
+                                    val factor = zoomFactorForScroll(
+                                        platformCanvasWheelZoomUnits(-change.scrollDelta.y),
+                                    )
                                     if (factor != 1f) {
                                         state.updateWorkspace {
                                             it.copy(
@@ -426,8 +440,10 @@ internal fun DiagramEditOverlay(
                                 } else {
                                     val scrollX = if (modifiers.isShiftPressed) change.scrollDelta.y else change.scrollDelta.x
                                     val scrollY = if (modifiers.isShiftPressed) 0f else change.scrollDelta.y
+                                    val panX = platformCanvasWheelPanPixels(-scrollX, density)
+                                    val panY = platformCanvasWheelPanPixels(-scrollY, density)
                                     state.updateWorkspace {
-                                        it.copy(viewport = it.viewport.panByScreenDelta(-scrollX, -scrollY, density))
+                                        it.copy(viewport = it.viewport.panByScreenDelta(panX, panY, density))
                                     }
                                 }
                                 change.consume()
@@ -437,18 +453,28 @@ internal fun DiagramEditOverlay(
                                 if (!change.pressed) {
                                     val liveBox = state.artboardLayout?.findBySourceId(editId)
                                     val live = liveGraph()
-                                    hoveredElementId = if (liveBox != null && live != null) {
+                                    if (liveBox != null && live != null) {
                                         val point = DiagramPoint(
                                             latestViewport.toDocX(change.position.x) - liveBox.x,
                                             latestViewport.toDocY(change.position.y) - liveBox.y,
                                         )
-                                        hoverDiagramNodeAt(live, point)?.value
+                                        val tolerance = (DiagramHitRadiusPx / latestZoomPx.coerceAtLeast(0.01f))
+                                            .toDouble()
+                                            .coerceAtLeast(2.0)
+                                        hoveredPort = hoverDiagramPortAt(live, point, tolerance)
+                                        hoveredElementId = (
+                                            hoveredPort?.nodeId ?: hoverDiagramNodeAt(live, point)
+                                        )?.value
                                     } else {
-                                        null
+                                        hoveredPort = null
+                                        hoveredElementId = null
                                     }
                                 }
                             }
-                            PointerEventType.Exit -> hoveredElementId = null
+                            PointerEventType.Exit -> {
+                                hoveredPort = null
+                                hoveredElementId = null
+                            }
                             else -> Unit
                         }
                     }
@@ -489,7 +515,9 @@ internal fun DiagramEditOverlay(
                     val docX = latestViewport.toDocX(press.x)
                     val docY = latestViewport.toDocY(press.y)
                     val point = DiagramPoint(docX - liveBox.x, docY - liveBox.y)
-                    val shiftHeld = currentEvent.keyboardModifiers.isShiftPressed
+                    val modifiers = currentEvent.keyboardModifiers
+                    val shiftHeld = modifiers.isShiftPressed
+                    val additiveSelectionHeld = shiftHeld || modifiers.isCtrlPressed || modifiers.isMetaPressed
 
                     fun graphPointOf(position: Offset): DiagramPoint = DiagramPoint(
                         latestViewport.toDocX(position.x) - liveBox.x,
@@ -506,9 +534,13 @@ internal fun DiagramEditOverlay(
                         docY >= liveBox.y - margin && docY <= liveBox.bottom + margin
                     if (!insideBox) {
                         textEdit = null
-                        val switch = resolveDiagramElementSelection(
-                            state.artboardLayout, state.designState.document, docX, docY, zoom,
-                        )?.takeIf { it.diagramId != editId }
+                        val switch = if (additiveSelectionHeld) {
+                            null
+                        } else {
+                            resolveDiagramElementSelection(
+                                state.artboardLayout, state.designState.document, docX, docY, zoom,
+                            )?.takeIf { it.diagramId != editId }
+                        }
                         if (switch != null) {
                             state.dispatch(DesignEditorIntent.SelectNode(switch.diagramId))
                             state.updateWorkspace {
@@ -657,7 +689,7 @@ internal fun DiagramEditOverlay(
                             // a plain click selects the owning edge.
                             val edge = live.edgeById(hit.edgeId) ?: return@awaitEachGesture
                             val label = edge.labels.firstOrNull { it.position == hit.position } ?: return@awaitEachGesture
-                            if (doubleClick) {
+                            if (doubleClick && !additiveSelectionHeld) {
                                 textEdit = DiagramTextEditTarget.EdgeLabel(hit.edgeId.value, hit.position)
                                 return@awaitEachGesture
                             }
@@ -673,15 +705,15 @@ internal fun DiagramEditOverlay(
                                 )
                             }
                             if (!moved) {
-                                // A click (no drag) selects the label's edge, honoring shift like the
+                                // A click (no drag) selects the label's edge, honoring the additive modifier like the
                                 // Edge branch, so you can pick an edge straight from its label.
                                 state.updateWorkspace {
                                     val current = it.diagramSelection
                                     val edgeId = hit.edgeId.value
                                     val next = when {
-                                        shiftHeld && edgeId in current.edgeIds ->
+                                        additiveSelectionHeld && edgeId in current.edgeIds ->
                                             current.copy(edgeIds = current.edgeIds - edgeId)
-                                        shiftHeld -> current.copy(edgeIds = current.edgeIds + edgeId)
+                                        additiveSelectionHeld -> current.copy(edgeIds = current.edgeIds + edgeId)
                                         else -> DiagramSelection(edgeIds = setOf(edgeId))
                                     }
                                     it.copy(diagramSelection = next)
@@ -690,12 +722,18 @@ internal fun DiagramEditOverlay(
                         }
 
                         is DiagramHit.Port -> {
-                            // Dragging from a declared port draws a new edge pinned to it.
+                            // Both persisted ports and the virtual draw.io connection grid are
+                            // draggable. A virtual source point is persisted only after a
+                            // successful drop, together with the edge in one undo transaction.
+                            val sourceNode = live.nodeById(hit.nodeId) ?: return@awaitEachGesture
+                            val sourcePort = sourceNode.connectionPorts()
+                                .firstOrNull { it.id == hit.portId } ?: return@awaitEachGesture
                             dragNewDiagramEdge(
                                 state = state,
                                 editId = editId,
                                 source = DiagramEndpoint.FixedPort(hit.nodeId, hit.portId),
                                 sourceNodeId = hit.nodeId,
+                                sourcePortToAdd = sourcePort.takeIf { sourceNode.portById(it.id) == null },
                                 down = down,
                                 start = point,
                                 relation = DiagramRelation.Plain,
@@ -708,7 +746,7 @@ internal fun DiagramEditOverlay(
 
                         is DiagramHit.Edge -> {
                             // Double-click opens (or creates) the edge's mid-line label for editing.
-                            if (doubleClick) {
+                            if (doubleClick && !additiveSelectionHeld) {
                                 textEdit = DiagramTextEditTarget.EdgeLabel(hit.edgeId.value, DiagramEdgeLabelPosition.MIDDLE)
                                 return@awaitEachGesture
                             }
@@ -737,9 +775,9 @@ internal fun DiagramEditOverlay(
                                 val edgeId = hit.edgeId.value
                                 val next = when {
                                     moved -> DiagramSelection(edgeIds = setOf(edgeId))
-                                    shiftHeld && edgeId in current.edgeIds ->
+                                    additiveSelectionHeld && edgeId in current.edgeIds ->
                                         current.copy(edgeIds = current.edgeIds - edgeId)
-                                    shiftHeld -> current.copy(edgeIds = current.edgeIds + edgeId)
+                                    additiveSelectionHeld -> current.copy(edgeIds = current.edgeIds + edgeId)
                                     else -> DiagramSelection(edgeIds = setOf(edgeId))
                                 }
                                 it.copy(diagramSelection = next)
@@ -748,7 +786,7 @@ internal fun DiagramEditOverlay(
 
                         is DiagramHit.Node -> {
                             val elementId = hit.nodeId.value
-                            if (doubleClick) {
+                            if (doubleClick && !additiveSelectionHeld) {
                                 textEdit = when (val part = hit.part) {
                                     is DiagramNodeHitPart.TableCellPart ->
                                         DiagramTextEditTarget.TableCell(elementId, part.row, part.column)
@@ -759,7 +797,7 @@ internal fun DiagramEditOverlay(
 
                             // Pre-press selection so the drag moves the pressed element.
                             val current = state.workspace.diagramSelection
-                            if (!shiftHeld && elementId !in current.elementIds) {
+                            if (!additiveSelectionHeld && elementId !in current.elementIds) {
                                 state.updateWorkspace {
                                     it.copy(diagramSelection = DiagramSelection(elementIds = setOf(elementId)))
                                 }
@@ -810,7 +848,7 @@ internal fun DiagramEditOverlay(
                             }
                             snapGuides = emptyList()
                             snapSpacing = emptyList()
-                            if (!moved && shiftHeld) {
+                            if (!moved && additiveSelectionHeld) {
                                 state.updateWorkspace {
                                     val sel = it.diagramSelection
                                     val next = if (elementId in sel.elementIds) {
@@ -825,7 +863,7 @@ internal fun DiagramEditOverlay(
 
                         null -> {
                             // Double-click empty canvas → drop a default shape with the caret already live.
-                            if (doubleClick) {
+                            if (doubleClick && !additiveSelectionHeld) {
                                 val width = 120.0
                                 val height = 60.0
                                 val newId = mintDiagramId(live, "node")
@@ -847,7 +885,7 @@ internal fun DiagramEditOverlay(
                             // Empty diagram area: a plain click selects the whole diagram (the container
                             // of that space) and leaves the block-edit layer — Figma's "click empty space
                             // = select container". A drag rubber-bands a marquee that selects every node it
-                            // intersects (Shift adds to the selection). Pure selection — no document edit —
+                            // intersects (Ctrl/Cmd/Shift adds to the selection). Pure selection — no document edit —
                             // so it never touches undo/redo.
                             var selectionBox: DiagramRect? = null
                             var marqueeMoved = false
@@ -871,10 +909,10 @@ internal fun DiagramEditOverlay(
                                     .map { it.id.value }
                                     .toSet()
                                 state.updateWorkspace {
-                                    val base = if (shiftHeld) it.diagramSelection.elementIds else emptySet()
+                                    val base = if (additiveSelectionHeld) it.diagramSelection.elementIds else emptySet()
                                     it.copy(diagramSelection = DiagramSelection(elementIds = base + hitIds))
                                 }
-                            } else if (!marqueeMoved && !shiftHeld) {
+                            } else if (!marqueeMoved && !additiveSelectionHeld) {
                                 state.updateWorkspace {
                                     it.copy(
                                         diagramEditNodeId = "",
@@ -1107,11 +1145,16 @@ private suspend fun AwaitPointerEventScope.dragDiagramResize(
 private fun previewRouteFor(
     graph: DiagramGraph?,
     source: DiagramEndpoint,
+    sourcePortToAdd: DiagramPort?,
     target: ConnectTarget,
     fromPoint: DiagramPoint,
 ): DiagramEdgePreview {
     if (graph == null) return DiagramEdgePreview(listOf(fromPoint, target.snapPoint))
     var provisional = graph
+    val sourceNodeId = source.attachedNodeId
+    if (sourceNodeId != null && sourcePortToAdd != null) {
+        provisional = provisional.addCustomPort(sourceNodeId, sourcePortToAdd)
+    }
     val endpoint: DiagramEndpoint = when (target) {
         is ConnectTarget.Port -> {
             val node = graph.nodeById(target.nodeId)
@@ -1153,6 +1196,7 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
     editId: String,
     source: DiagramEndpoint,
     sourceNodeId: DiagramNodeId?,
+    sourcePortToAdd: DiagramPort? = null,
     down: PointerInputChange,
     start: DiagramPoint,
     relation: DiagramRelation,
@@ -1163,8 +1207,15 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
     onClickWithoutMove: (() -> Unit)? = null,
     reconnect: Pair<String, DiagramEdgeEnd>? = null,
 ) {
-    // The source anchor is fixed for the whole drag; it picks the floating perimeter crossing.
-    val fromPoint = liveGraph()?.let { resolveEndpointPoint(it, source) } ?: start
+    // The source anchor is fixed for the whole drag. Virtual grid ports are not in the graph
+    // yet, so resolve their exact geometry directly instead of falling back to the node center.
+    val fromPoint = liveGraph()?.let { graph ->
+        if (sourceNodeId != null && sourcePortToAdd != null) {
+            graph.nodeById(sourceNodeId)?.portPosition(sourcePortToAdd)
+        } else {
+            resolveEndpointPoint(graph, source)
+        }
+    } ?: start
     var target: ConnectTarget = ConnectTarget.Free(start)
     var moved = false
     val slop = viewConfiguration.touchSlop
@@ -1181,7 +1232,7 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
                 pointer = current,
                 excludeNodeId = sourceNodeId,
             ) ?: ConnectTarget.Free(current)
-            setPreview(previewRouteFor(g, source, target, fromPoint))
+            setPreview(previewRouteFor(g, source, sourcePortToAdd, target, fromPoint))
             setConnectTarget(target)
         }
         change.consume()
@@ -1213,13 +1264,20 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
         }
     }
 
+    val portsToAdd = buildList {
+        if (sourceNodeId != null && sourcePortToAdd != null) {
+            add(sourceNodeId.value to sourcePortToAdd)
+        }
+        if (portToAdd != null) add(portToAdd)
+    }.distinctBy { (nodeId, port) -> nodeId to port.id }
+
     if (reconnect != null) {
         // Re-pin the dragged end of an existing edge. The optional port materialization and the
         // reconnect coalesce into one undo entry (the interacting gate suppresses the middle push).
         val (reconnectEdgeId, end) = reconnect
         state.dispatch(DesignEditorIntent.BeginInteraction)
-        if (portToAdd != null) {
-            state.dispatch(DiagramEditorIntent.AddDiagramPort(editId, portToAdd.first, portToAdd.second))
+        portsToAdd.forEach { (nodeId, port) ->
+            state.dispatch(DiagramEditorIntent.AddDiagramPort(editId, nodeId, port))
         }
         state.dispatch(DiagramEditorIntent.ReconnectDiagramEdge(editId, reconnectEdgeId, end, endpoint))
         state.dispatch(DesignEditorIntent.EndInteraction)
@@ -1227,12 +1285,14 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
         return
     }
 
-    if (portToAdd != null) {
-        // Standard point: materialize it as a real port, then connect — both coalesce into a
-        // single undo entry (interacting gate suppresses the intermediate push).
+    if (portsToAdd.isNotEmpty()) {
+        // Materialize virtual connection points at either end, then connect. All writes
+        // coalesce into one undo entry; cancelled drags never leave unused ports behind.
         val edgeId = mintDiagramId(graph, "edge")
         state.dispatch(DesignEditorIntent.BeginInteraction)
-        state.dispatch(DiagramEditorIntent.AddDiagramPort(editId, portToAdd.first, portToAdd.second))
+        portsToAdd.forEach { (nodeId, port) ->
+            state.dispatch(DiagramEditorIntent.AddDiagramPort(editId, nodeId, port))
+        }
         state.dispatch(
             DiagramEditorIntent.ConnectDiagramNodes(
                 nodeId = editId,
@@ -1296,6 +1356,34 @@ private fun hoverDiagramNodeAt(graph: DiagramGraph, point: DiagramPoint): Diagra
                 point.y >= node.bounds.top - margin && point.y <= node.bounds.bottom + margin
         }
         ?.id
+}
+
+/** Nearest visible connection point within the screen-normalized hover radius. */
+private fun hoverDiagramPortAt(
+    graph: DiagramGraph,
+    point: DiagramPoint,
+    tolerance: Double,
+): DiagramHit.Port? {
+    val toleranceSquared = tolerance * tolerance
+    graph.nodes.asReversed().forEach { node ->
+        if (!node.visible || node.locked) return@forEach
+        var nearestPort: DiagramPort? = null
+        var nearestDistanceSquared = Double.MAX_VALUE
+        node.connectionPorts().forEach { port ->
+            val position = node.portPosition(port)
+            val dx = position.x - point.x
+            val dy = position.y - point.y
+            val distanceSquared = dx * dx + dy * dy
+            if (distanceSquared < nearestDistanceSquared) {
+                nearestPort = port
+                nearestDistanceSquared = distanceSquared
+            }
+        }
+        if (nearestDistanceSquared <= toleranceSquared) {
+            return DiagramHit.Port(node.id, nearestPort!!.id)
+        }
+    }
+    return null
 }
 
 /** Normalized rect (non-negative width/height) spanning two graph points, for the marquee. */

@@ -19,10 +19,9 @@ internal const val MaxDocumentHistory: Int = 100
  * Immutable editor state over the compiled mission design. Selection is tracked by
  * page id and authored node ids: [selectedNodeIds] is the full multi-selection set,
  * [selectedNodeId] the primary node (shown in single-value inspector fields). Document
- * edits go through [reduceDesignEditor]. The per-document SLM [sources] and
- * [compiledResults] (fingerprint + edit index) feed the resize write-back path
- * ([DesignEditorIntent.ResizeNode]); [undoStack]/[redoStack] track the in-memory
- * document for structural and property edits that do not write back.
+ * edits go through [reduceDesignEditor]. SLM [sources] are the authored source of truth and
+ * [compiledResults] provide their edit indices. Document/source undo and redo snapshots advance
+ * together; a committed mutation is never represented by the document alone.
  */
 data class DesignEditorState(
     val document: DesignDocument? = null,
@@ -45,12 +44,21 @@ data class DesignEditorState(
     val undoStack: List<DesignDocument> = emptyList(),
     /** Documents undone and available to redo (most-recently-undone last). */
     val redoStack: List<DesignDocument> = emptyList(),
+    /** SLM source snapshots aligned one-for-one with [undoStack]. */
+    val undoSourcesStack: List<List<MissionDocumentSource>> = emptyList(),
+    /** SLM source snapshots aligned one-for-one with [redoStack]. */
+    val redoSourcesStack: List<List<MissionDocumentSource>> = emptyList(),
     /**
      * True between `BeginInteraction` and `EndInteraction` (a canvas drag). While set,
      * mutating edits skip the per-edit undo push, so a whole drag is one undo entry;
      * the checkpoint is taken once at `BeginInteraction`.
      */
     val interacting: Boolean = false,
+    /** Sources/compiles captured at BeginInteraction for atomic commit or exact cancel. */
+    val interactionSourcesCheckpoint: List<MissionDocumentSource>? = null,
+    val interactionCompiledCheckpoint: List<SlmCompileResult>? = null,
+    /** Final write-back commands staged during an interaction; previews are never staged. */
+    val interactionPendingIntents: List<DesignEditorIntent> = emptyList(),
     /**
      * Review layer per screen, keyed by screen file name (`*.layout.md`): a screen
      * without a sidecar has an empty layer. Annotation edits write back to the owning

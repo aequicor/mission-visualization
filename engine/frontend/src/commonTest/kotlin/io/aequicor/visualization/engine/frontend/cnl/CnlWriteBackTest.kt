@@ -21,6 +21,7 @@ import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.StrokeAlign
 import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
 import io.aequicor.visualization.engine.ir.model.UnitValue
 import io.aequicor.visualization.engine.ir.model.bindable
@@ -107,6 +108,31 @@ class CnlWriteBackTest {
     }
 
     @Test
+    fun editResizeCanReplaceOneDimensionSurgically() {
+        val source = screen("Rectangle 120 by 15 color #00B843")
+        val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
+        val edit = SetSizing(id, width = SizingSpec(SizingMode.Fixed, 200.0))
+
+        val next = assertNotNull(applySlmEdit(source, edit, compiled).newSource)
+
+        assertTrue("200 by 15" in next, next)
+        assertEquals(15.0, assertNotNull(compileSlm(next).document?.nodeById(id)).size.height)
+    }
+
+    @Test
+    fun canonicalStrokeKeepsDefaultWeightBeforeCenterAlignment() {
+        val source = screen("Rectangle 120 by 15 color #00B843 stroke #37414B 1 center")
+        val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
+        val node = assertNotNull(compiled.document?.nodeById(id))
+
+        val emitted = CnlEmitter.emitSentence(node, includeId = true)
+
+        assertTrue("stroke #37414B 1 center" in emitted, emitted)
+        val roundTrip = compileSlm(screen(emitted)).document?.nodeById(id)
+        assertEquals(StrokeAlign.Center, assertNotNull(roundTrip).strokes?.align)
+    }
+
+    @Test
     fun missingPropertyIsAppendedAsPhrase() {
         val source = screen("Rectangle 120 by 15 color #00B843")
         val (compiled, id) = compiledAndId(source) { it is DesignNodeKind.Shape }
@@ -163,7 +189,7 @@ class CnlWriteBackTest {
     fun nonSurgicalEditReemitsSentenceInsteadOfYamlFallback() {
         // RenameNode is not surgically expressible in a CNL sentence → tier-3 re-emit from the
         // patched node. It must regenerate the sentence in CNL, never append a YAML typed block.
-        val source = screen("## Frame: Card id card column gap 12 color #FFFFFF")
+        val source = screen("## AutoLayout: Card id card column gap 12 color #FFFFFF")
         val compiled = compileSlm(source)
         val node = assertNotNull(compiled.document).pages.single().children.single()
             .allDescendants().first { it.id == "card" }
@@ -184,7 +210,7 @@ class CnlWriteBackTest {
     fun cnlNodeEditWithoutPatchedNodeFailsInsteadOfYaml() {
         // Without a patched node, tier-3 is unavailable; a non-surgical edit must fail (→ in-memory
         // fallback in the reducer), NOT silently append a YAML typed block to the CNL sentence.
-        val source = screen("## Frame: Card id card column gap 12 color #FFFFFF")
+        val source = screen("## AutoLayout: Card id card column gap 12 color #FFFFFF")
         val compiled = compileSlm(source)
         val result = applySlmEdit(source, RenameNode("card", "Panel"), compiled)
         assertNull(result.newSource, "no patched node → no write-back, no YAML leak")

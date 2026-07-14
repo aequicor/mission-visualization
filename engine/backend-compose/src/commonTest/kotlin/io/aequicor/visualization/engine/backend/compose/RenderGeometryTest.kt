@@ -124,6 +124,22 @@ class RenderGeometryTest {
     }
 
     @Test
+    fun fillModeToleratesRoundoffWhenScaledContentExactlyCoversBox() {
+        val box = RenderRect(50.0, 50.0, 609.3, 609.3)
+
+        // On IEEE-754 doubles, 273 * (609.3 / 273) rounds to 609.2999999999998.
+        // The old far-edge clamp then produced an empty 50.0000000000001..50.0 range.
+        val content = mediaContentRect(
+            box = box,
+            intrinsicWidth = 273.0,
+            intrinsicHeight = 273.0,
+            fillMode = ImageScaleMode.Fill,
+        )
+
+        assertEquals(box, content)
+    }
+
+    @Test
     fun fitModeLetterboxesCentered() {
         val content = mediaContentRect(
             box = RenderRect(0.0, 0.0, 100.0, 100.0),
@@ -286,6 +302,20 @@ class RenderGeometryTest {
         assertEquals(32.0, shifted.y)
         assertEquals(82.0, shifted.children.single().x)
         assertEquals(52.0, shifted.children.single().y)
+    }
+
+    @Test
+    fun floatingDrawEntriesKeepOnlyOutermostMovableSelections() {
+        val child = box(node("child"))
+        val group = box(node("group"), children = listOf(child))
+        val mask = box(node("mask", mask = ResolvedMask(MaskType.Alpha)))
+        val root = box(node("root"), children = listOf(group, mask))
+
+        val childEntry = root.floatingDrawEntries(setOf("child")).single()
+        assertEquals("child", childEntry.box.node.sourceId)
+        assertEquals(listOf("root", "group"), childEntry.ancestors.map { it.node.sourceId })
+        assertEquals(listOf("group"), root.floatingDrawEntries(setOf("group", "child")).map { it.box.node.sourceId })
+        assertTrue(root.floatingDrawEntries(setOf("root", "mask", "missing")).isEmpty())
     }
 
     // --- Helpers -----------------------------------------------------------------------

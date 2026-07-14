@@ -49,7 +49,7 @@ ownership to route edits to `CnlWriter`; do not search by visible text.
 Stable explicit ids are the durable identity anchor:
 
 ```md
-## Frame: Mission Card id mission_card column gap 12 padding 16
+## AutoLayout: Mission Card id mission_card column gap 12 padding 16
 
 Text id mission_title «Mission Control» key mission.title size 20 bold maxLines 1
 ```
@@ -89,8 +89,8 @@ When the node owns a CNL sentence but the property has no authored span, append 
 phrase to the sentence.
 
 ```diff
-- ## Frame: Mission Card id mission_card column gap 12 padding 16
-+ ## Frame: Mission Card id mission_card column gap 12 padding 16 radius 12
+- ## AutoLayout: Mission Card id mission_card column gap 12 padding 16
++ ## AutoLayout: Mission Card id mission_card column gap 12 padding 16 radius 12
 ```
 
 Parser phrase order is flexible. The deterministic emitter has canonical descriptor order,
@@ -148,7 +148,7 @@ Persist emitted sections with explicit ids and preserve unaffected bytes.
 Valid inserted subtree:
 
 ```md
-### Frame: Status Row id status_row row width (fill) height (hug) gap 8
+### AutoLayout: Status Row id status_row row width (fill) height (hug) gap 8
 
 Ellipse id status_dot 8 by 8 color #22C55E
 Text id status_label «Nominal» key status.nominal size 12 semibold maxLines 1

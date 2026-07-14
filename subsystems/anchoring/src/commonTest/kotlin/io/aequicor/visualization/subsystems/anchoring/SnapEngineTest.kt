@@ -77,14 +77,15 @@ class SnapEngineTest {
     }
 
     @Test
-    fun snapTieBreakPrefersCenterOverEdge() {
+    fun snapTieBreakPrefersCenterButDrawsEveryCoincidentEdge() {
         // Equal-width target: left/center/right all 3px away → center alignment wins the tie.
         val moved = SnapBox(x = 103.0, y = 0.0, width = 40.0, height = 40.0)
         val target = SnapBox(x = 100.0, y = 500.0, width = 40.0, height = 40.0)
         val snap = computeSnap(moved, listOf(target), threshold = 6.0)
         assertClose(-3.0, snap.dx)
-        // The guide is on the center line (x = 120), not an edge (100 or 140).
-        assertClose(120.0, snap.guides.single().x1)
+        // The center remains the deterministic magnetic winner, while the overlay also exposes the
+        // simultaneously aligned left/right edges instead of silently hiding those relationships.
+        assertEquals(setOf(100.0, 120.0, 140.0), snap.guides.map { it.x1 }.toSet())
     }
 
     @Test
@@ -123,7 +124,10 @@ class SnapEngineTest {
         val snap = computeSnap(moved, listOf(target), threshold = 6.0)
         // Vertical guide at the aligned center x, spanning from the top of the snapped box
         // (0) to the bottom of the lower target (340).
-        assertEquals(SnapLine(120.0, 0.0, 120.0, 340.0), snap.guides.single())
+        assertEquals(
+            SnapLine(120.0, 0.0, 120.0, 340.0),
+            snap.guides.single { it.x1 == 120.0 },
+        )
     }
 
     @Test

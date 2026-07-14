@@ -73,7 +73,7 @@ class CnlCompileTest {
 
             # Demo
 
-            ## Mission Panel column gap 16 padding 24
+            ## AutoLayout: Mission Panel column gap 16 padding 24
 
             Rectangle 120 by 15 color #00B843
             """,

@@ -39,7 +39,7 @@ class TypographyRangeWriteBackTest {
         assertNotNull(sources.firstOrNull { it.fileName == fileName }, "missing source $fileName").content
 
     @Test
-    fun rangeEditCreatesStyleRangeInMemory() {
+    fun inlineRangeEditIsExplicitlyRejected() {
         val before = freshState()
         val length = before.textKind().let { kind ->
             (kind.content?.defaultText?.takeIf { it.isNotEmpty() }
@@ -53,26 +53,13 @@ class TypographyRangeWriteBackTest {
             DesignEditorIntent.UpdateTypographyRange(nodeId, 0, end, TypographyPatch(fontWeight = 700.0, italic = true)),
         )
 
-        val ranges = next.textKind().styleRanges
-        assertTrue(ranges.isNotEmpty(), "a style range was created")
-        val first = ranges.first { it.start == 0 }
-        assertEquals(end, first.end)
-        assertEquals(700.0, first.style.fontWeight?.literalOrNull())
-        assertEquals(true, first.style.italic)
-
-        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error }, "no write-back errors")
-        // NOTE: an *inline*-styled range (fontWeight/italic with no shared style ref) is not
-        // expressible by the CNL `span (range … style <ref>)` phrase — only a styleRef span round-
-        // trips. So this edit lands in-memory only (anti-corruption veto) and every SLM source,
-        // including the owning one, stays byte-identical. Inline per-range styling in CNL is a
-        // tracked grammar gap.
-        before.sources.forEach {
-            assertEquals(it.content, next.sourceOf(it.fileName), "${it.fileName} byte-identical")
-        }
+        assertEquals(before.document, next.document)
+        assertEquals(before.sources, next.sources)
+        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 
     @Test
-    fun secondRangeEditCoexistsWithFirst() {
+    fun repeatedInlineRangeEditsRemainRejectedWithoutDivergence() {
         val before = freshState()
         val length = before.textKind().let { kind ->
             (kind.content?.defaultText?.takeIf { it.isNotEmpty() }
@@ -88,8 +75,10 @@ class TypographyRangeWriteBackTest {
             afterFirst,
             DesignEditorIntent.UpdateTypographyRange(nodeId, mid, length, TypographyPatch(italic = true)),
         )
-        val ranges = afterSecond.textKind().styleRanges
-        assertTrue(ranges.any { it.style.fontWeight?.literalOrNull() == 700.0 }, "first range kept")
-        assertTrue(ranges.any { it.style.italic == true }, "second range applied")
+        assertEquals(before.document, afterFirst.document)
+        assertEquals(before.sources, afterFirst.sources)
+        assertEquals(before.document, afterSecond.document)
+        assertEquals(before.sources, afterSecond.sources)
+        assertTrue(afterSecond.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 }

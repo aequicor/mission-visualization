@@ -96,8 +96,9 @@ import io.aequicor.visualization.editor.platform.platformOpenProjectFolder
 import io.aequicor.visualization.editor.platform.platformOpenProjectZipArchive
 import io.aequicor.visualization.editor.platform.platformSaveProjectFolder
 import io.aequicor.visualization.editor.platform.platformSetActiveProjectId
+import io.aequicor.visualization.editor.platform.ProjectLandingMode
+import io.aequicor.visualization.editor.platform.platformProjectLandingMode
 import io.aequicor.visualization.editor.platform.platformSupportsAgentFileExport
-import io.aequicor.visualization.editor.platform.platformSupportsLanding
 import io.aequicor.visualization.editor.platform.platformSupportsProjectDiskIo
 import io.aequicor.visualization.editor.platform.platformToggleFullscreen
 import io.aequicor.visualization.editor.presentation.CompactLabel
@@ -114,11 +115,14 @@ import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.strings.MenuStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.DesignPage
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.literalOrNull
+import io.aequicor.visualization.mcp.McpServerStatus
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -155,6 +159,7 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
     var menuExpanded by remember { mutableStateOf(false) }
     var menuPane by remember { mutableStateOf(ProjectMenuPane.Root) }
     var selectedAgentSkills by remember { mutableStateOf(emptySet<AgentSkillId>()) }
+    var mcpDialogVisible by remember { mutableStateOf(false) }
 
     fun openRootMenu() {
         menuPane = ProjectMenuPane.Root
@@ -191,25 +196,29 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 when (menuPane) {
                     ProjectMenuPane.Root -> {
                         FolderSyncMenuStatus(state)
-                        if (platformSupportsLanding) {
+                        if (platformProjectLandingMode != ProjectLandingMode.None) {
                             EditorDropdownMenuItem(
                                 strings.menu.projects,
                                 leadingContent = { DropdownMenuIcon(EditorIcon.Home) },
                             ) {
                                 closeMenu()
-                                scope.launch {
-                                    if (state.folderSync != FolderSyncPresence.Idle) state.disconnectFolder()
-                                    platformSetActiveProjectId("")
-                                    platformInstallLanding(
-                                        buildLandingConfigJson(
-                                            colors = colors,
-                                            recents = state.recentProjectsList(),
-                                            supportsFolders = state.supportsFolderSync,
-                                            hasRecovery = state.hasRecoveryDraft(),
-                                            browserProjectId = state.storedBrowserProjectId(),
-                                            language = state.language,
-                                        ),
-                                    )
+                                if (platformProjectLandingMode == ProjectLandingMode.Compose) {
+                                    state.showProjectLanding()
+                                } else {
+                                    scope.launch {
+                                        state.leaveProjectForLanding()
+                                        platformSetActiveProjectId("")
+                                        platformInstallLanding(
+                                            buildLandingConfigJson(
+                                                colors = colors,
+                                                recents = state.recentProjectsList(),
+                                                supportsFolders = state.supportsFolderSync,
+                                                hasRecovery = state.hasRecoveryDraft(),
+                                                browserProjectId = state.storedBrowserProjectId(),
+                                                language = state.language,
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -220,6 +229,16 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                             EditorDropdownMenuItem(strings.menu.agentFile, leadingContent = { DropdownMenuIcon(EditorIcon.Markdown) }) {
                                 selectedAgentSkills = emptySet()
                                 menuPane = ProjectMenuPane.AgentSkills
+                            }
+                        }
+                        if (state.mcpServer.available) {
+                            EditorDropdownMenuItem(
+                                strings.menu.mcpServer,
+                                leadingContent = { DropdownMenuIcon(EditorIcon.Code) },
+                                trailingContent = { McpMenuStatusLight(state.mcpServer.status) },
+                            ) {
+                                closeMenu()
+                                mcpDialogVisible = true
                             }
                         }
                         EditorDropdownMenuItem(
@@ -276,11 +295,21 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                     }
                     ProjectMenuPane.Save -> {
                         EditorDropdownMenuItem(strings.common.back, leadingContent = { DropdownMenuIcon(EditorIcon.ArrowBack) }) { menuPane = ProjectMenuPane.Root }
-                        EditorDropdownMenuItem(strings.menu.saveInBrowser, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
-                            closeMenu()
-                            state.saveDraftNow()
+                        if (!state.usesEmbeddedDraftProjects) {
+                            EditorDropdownMenuItem(
+                                if (state.folderSync == FolderSyncPresence.Watching) strings.menu.saveNow else strings.menu.createProjectOnDisk,
+                                leadingContent = { DropdownMenuIcon(EditorIcon.Save) },
+                            ) {
+                                closeMenu()
+                                state.saveProjectNow()
+                            }
+                        } else {
+                            EditorDropdownMenuItem(strings.menu.saveInBrowser, leadingContent = { DropdownMenuIcon(EditorIcon.Save) }) {
+                                closeMenu()
+                                state.saveDraftNow()
+                            }
                         }
-                        if (platformSupportsProjectDiskIo) {
+                        if (state.usesEmbeddedDraftProjects && platformSupportsProjectDiskIo) {
                             EditorDropdownMenuItem(strings.menu.saveToFolder, leadingContent = { DropdownMenuIcon(EditorIcon.Folder) }) {
                                 closeMenu()
                                 // A completed disk save makes the working set persistent: keep the
@@ -397,6 +426,34 @@ private fun SourcePaneHeader(state: MissionEditorStateHolder) {
                 onSelect = { tab -> state.updateWorkspace { it.copy(sourceTab = tab) } },
             )
         }
+    }
+    if (mcpDialogVisible) {
+        McpServerDialog(state.mcpServer) { mcpDialogVisible = false }
+    }
+}
+
+@Composable
+private fun McpMenuStatusLight(status: McpServerStatus) {
+    val colors = LocalEditorColors.current
+    val lightColor = when (status) {
+        McpServerStatus.Stopped -> colors.mutedInk
+        McpServerStatus.Starting -> colors.statusWarning
+        McpServerStatus.Running -> colors.statusPositive
+        McpServerStatus.Error -> colors.statusDanger
+    }
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .clip(CircleShape)
+            .background(lightColor.copy(alpha = 0.18f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(lightColor),
+        )
     }
 }
 
@@ -535,10 +592,10 @@ private fun FolderSyncBanner(state: MissionEditorStateHolder) {
 /** Prompts for a storage mode after the first edit to the in-memory Welcome tour. */
 @Composable
 fun EditorBrowserSaveBanner(state: MissionEditorStateHolder) {
-    if (!state.browserSaveNoticeVisible) return
+    if (!state.projectCreationPromptVisible) return
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
-    Dialog(onDismissRequest = state::dismissBrowserSaveNotice) {
+    Dialog(onDismissRequest = state::dismissProjectCreationPrompt) {
         Surface(
             modifier = Modifier.width(420.dp),
             shape = RoundedCornerShape(14.dp),
@@ -560,21 +617,23 @@ fun EditorBrowserSaveBanner(state: MissionEditorStateHolder) {
                     color = colors.mutedInk,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                ProjectCreationChoice(
-                    text = strings.menu.createProjectInBrowser,
-                    accent = true,
-                    onClick = state::createBrowserProject,
-                )
+                if (state.usesEmbeddedDraftProjects) {
+                    ProjectCreationChoice(
+                        text = strings.menu.createProjectInBrowser,
+                        accent = true,
+                        onClick = state::createBrowserProject,
+                    )
+                }
                 if (state.supportsFolderSync) {
                     ProjectCreationChoice(
                         text = strings.menu.createProjectOnDisk,
-                        accent = false,
+                        accent = !state.usesEmbeddedDraftProjects,
                         onClick = state::createFolderProject,
                     )
                 }
                 Text(
                     text = strings.menu.cancel,
-                    modifier = Modifier.align(Alignment.End).clickable { state.dismissBrowserSaveNotice() }.padding(8.dp),
+                    modifier = Modifier.align(Alignment.End).clickable { state.dismissProjectCreationPrompt() }.padding(8.dp),
                     color = colors.mutedInk,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
@@ -879,13 +938,28 @@ private data class LayerRow(val node: DesignNode, val depth: Int)
 @Composable
 private fun LayersTree(state: MissionEditorStateHolder) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
     val design = state.designState
     val ws = state.workspace
     val page = design.document?.pageById(design.selectedPageId)
     val focusRequester = remember { FocusRequester() }
+    val scrollState = rememberScrollState()
     val rows = remember(page, ws.collapsedLayers) {
         page?.let { flattenLayers(it, ws.collapsedLayers) } ?: emptyList()
     }
+    val collapsibleLayerIds = remember(page) { page?.let(::collapsibleLayerIds).orEmpty() }
+    val collapsedOnPage = remember(collapsibleLayerIds, ws.collapsedLayers) {
+        ws.collapsedLayers intersect collapsibleLayerIds
+    }
+    val nextCollapseIds = remember(page, collapsedOnPage) {
+        page?.let { collapseLayerFrontier(it, collapsedOnPage) }.orEmpty()
+    }
+    val selectedLayerId = remember(page, design.selectedNodeId, design.selectedNodeIds) {
+        sequenceOf(design.selectedNodeId, design.selectedNodeIds.firstOrNull().orEmpty())
+            .firstOrNull { id -> id.isNotBlank() && page?.let { layerPathToNode(it, id) } != null }
+            .orEmpty()
+    }
+    var pendingRevealId by remember(design.selectedPageId) { mutableStateOf("") }
     val rowHeightPx = with(LocalDensity.current) { LayerRowHeight.toPx() }
     // One indent level in px (matches LayerRowView's `depth * 16.dp` start padding). Horizontal drag
     // distance / this = how many levels the pointer wants to nest in or pop out of at a trailing gap.
@@ -927,47 +1001,110 @@ private fun LayersTree(state: MissionEditorStateHolder) {
                 } else {
                     false
                 }
-            }
-            .verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
+            },
     ) {
-        val gap = dropTarget as? LayerDropTarget.InsertGap
-        rows.forEachIndexed { index, row ->
-            LayerRowView(
-                state = state,
-                row = row,
-                isDropTarget = dragId.isNotEmpty() &&
-                    (dropTarget as? LayerDropTarget.IntoContainer)?.rowIndex == index,
-                dropLineAbove = dragId.isNotEmpty() && gap?.gapIndex == index,
-                dropLineBelow = dragId.isNotEmpty() && index == rows.lastIndex && gap?.gapIndex == rows.size,
-                dropLineIndent = (8 + (gap?.depth ?: 0) * 16).dp,
-                onRequestFocus = { runCatching { focusRequester.requestFocus() } },
-                onDragStart = { localY ->
-                    dragId = row.node.id
-                    dragBaseDepth = row.depth
-                    dragDx = 0f
-                    dragPointerY = index * rowHeightPx + localY
-                    dropTarget = null
-                },
-                onDrag = { dx, dy ->
-                    if (dragId.isNotEmpty()) {
-                        dragDx += dx
-                        dragPointerY += dy
-                        val pointerDepth = (dragBaseDepth + (dragDx / indentStepPx).roundToInt()).coerceAtLeast(0)
-                        dropTarget = state.designState.document?.let { doc ->
-                            resolveLayerDropTarget(doc, rowModels, dragId, (dragPointerY / rowHeightPx).toDouble(), pointerDepth)
-                        }
+        Row(
+            modifier = Modifier.fillMaxWidth().height(38.dp).background(colors.raisedSurface).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(1f))
+            SmallIconButton(
+                icon = EditorIcon.ExpandAll,
+                contentDescription = strings.source.expandAllLayers,
+                enabled = collapsedOnPage.isNotEmpty(),
+                onClick = {
+                    state.updateWorkspace { current ->
+                        current.copy(collapsedLayers = current.collapsedLayers - collapsibleLayerIds)
                     }
                 },
-                onDrop = {
-                    val target = dropTarget
-                    if (dragId.isNotEmpty() && target != null) applyLayerDrop(state, target, dragId)
-                    clearDrag()
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            SmallIconButton(
+                icon = EditorIcon.CollapseAll,
+                contentDescription = strings.source.collapseLayerLevel,
+                enabled = nextCollapseIds.isNotEmpty(),
+                onClick = {
+                    pendingRevealId = ""
+                    state.updateWorkspace { current ->
+                        current.copy(collapsedLayers = current.collapsedLayers + nextCollapseIds)
+                    }
                 },
-                onDragCancel = { clearDrag() },
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            SmallIconButton(
+                icon = EditorIcon.LocateSelection,
+                contentDescription = strings.source.locateSelectedLayer,
+                enabled = selectedLayerId.isNotEmpty(),
+                onClick = {
+                    val targetId = selectedLayerId
+                    val path = page?.let { layerPathToNode(it, targetId) }.orEmpty()
+                    if (targetId.isNotEmpty() && path.isNotEmpty()) {
+                        val ancestors = path.dropLast(1).toSet()
+                        state.updateWorkspace { current ->
+                            current.copy(collapsedLayers = current.collapsedLayers - ancestors)
+                        }
+                        pendingRevealId = targetId
+                    }
+                },
+                modifier = Modifier.size(28.dp),
             )
         }
-        if (rows.isEmpty()) {
-            Text(LocalStrings.current.source.emptyScreen, color = colors.mutedInk, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            val viewportHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+            LaunchedEffect(pendingRevealId, rows, viewportHeightPx) {
+                val index = rows.indexOfFirst { it.node.id == pendingRevealId }
+                if (pendingRevealId.isNotEmpty() && index >= 0) {
+                    // Let the newly expanded rows reach layout before scrolling, then keep the
+                    // selected row near the middle of the Layers viewport (IDEA-style locate).
+                    withFrameNanos { }
+                    val centeredOffset = index * rowHeightPx - (viewportHeightPx - rowHeightPx) / 2f
+                    scrollState.animateScrollTo(centeredOffset.roundToInt().coerceAtLeast(0))
+                    pendingRevealId = ""
+                }
+            }
+            Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(vertical = 6.dp)) {
+                val gap = dropTarget as? LayerDropTarget.InsertGap
+                rows.forEachIndexed { index, row ->
+                    LayerRowView(
+                        state = state,
+                        row = row,
+                        isDropTarget = dragId.isNotEmpty() &&
+                            (dropTarget as? LayerDropTarget.IntoContainer)?.rowIndex == index,
+                        dropLineAbove = dragId.isNotEmpty() && gap?.gapIndex == index,
+                        dropLineBelow = dragId.isNotEmpty() && index == rows.lastIndex && gap?.gapIndex == rows.size,
+                        dropLineIndent = (8 + (gap?.depth ?: 0) * 16).dp,
+                        onRequestFocus = { runCatching { focusRequester.requestFocus() } },
+                        onDragStart = { localY ->
+                            dragId = row.node.id
+                            dragBaseDepth = row.depth
+                            dragDx = 0f
+                            dragPointerY = index * rowHeightPx + localY
+                            dropTarget = null
+                        },
+                        onDrag = { dx, dy ->
+                            if (dragId.isNotEmpty()) {
+                                dragDx += dx
+                                dragPointerY += dy
+                                val pointerDepth = (dragBaseDepth + (dragDx / indentStepPx).roundToInt()).coerceAtLeast(0)
+                                dropTarget = state.designState.document?.let { doc ->
+                                    resolveLayerDropTarget(doc, rowModels, dragId, (dragPointerY / rowHeightPx).toDouble(), pointerDepth)
+                                }
+                            }
+                        },
+                        onDrop = {
+                            val target = dropTarget
+                            if (dragId.isNotEmpty() && target != null) applyLayerDrop(state, target, dragId)
+                            clearDrag()
+                        },
+                        onDragCancel = { clearDrag() },
+                    )
+                }
+                if (rows.isEmpty()) {
+                    Text(strings.source.emptyScreen, color = colors.mutedInk, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+                }
+            }
         }
     }
 }
@@ -1103,7 +1240,7 @@ private fun LayerRowView(
             }
         }
         EditorSvgIcon(
-            icon = layerIcon(node.type),
+            icon = layerIcon(node),
             contentDescription = node.type,
             modifier = Modifier.size(16.dp),
             tint = if (selected) colors.accent else colors.mutedInk,
@@ -1163,6 +1300,47 @@ private fun flattenLayers(page: DesignPage, collapsed: Set<String>): List<LayerR
     return rows
 }
 
+/** IDs of containers that expose a disclosure control in the Layers tree. */
+private fun collapsibleLayerIds(page: DesignPage): Set<String> = buildSet {
+    fun visit(node: DesignNode) {
+        if (node.children.isNotEmpty()) add(node.id)
+        node.children.forEach(::visit)
+    }
+    page.children.forEach(::visit)
+}
+
+/**
+ * Deepest currently expanded container in every visible branch. Repeating this operation
+ * walks bottom-up until only the page's root rows remain visible.
+ */
+private fun collapseLayerFrontier(page: DesignPage, collapsed: Set<String>): Set<String> = buildSet {
+    fun visit(node: DesignNode) {
+        if (node.children.isEmpty() || node.id in collapsed) return
+        val expandedChildContainers = node.children.filter { child ->
+            child.children.isNotEmpty() && child.id !in collapsed
+        }
+        if (expandedChildContainers.isEmpty()) {
+            add(node.id)
+        } else {
+            expandedChildContainers.forEach(::visit)
+        }
+    }
+    page.children.forEach(::visit)
+}
+
+/** Node path in document order, including [nodeId]; null when it is not on [page]. */
+private fun layerPathToNode(page: DesignPage, nodeId: String): List<String>? {
+    fun find(nodes: List<DesignNode>, path: List<String>): List<String>? {
+        nodes.forEach { node ->
+            val nodePath = path + node.id
+            if (node.id == nodeId) return nodePath
+            find(node.children, nodePath)?.let { return it }
+        }
+        return null
+    }
+    return find(page.children, emptyList())
+}
+
 @Composable
 private fun LayerIconAction(
     icon: EditorIcon,
@@ -1199,12 +1377,17 @@ private fun sourceTabIcon(tab: SourceTab): EditorIcon = when (tab) {
     SourceTab.Layers -> EditorIcon.Layers
 }
 
-private fun layerIcon(type: String): EditorIcon = when (type) {
+private fun layerIcon(node: DesignNode): EditorIcon = when {
+    node.containerKind == ContainerKind.AutoLayout && node.layout.mode == LayoutMode.Vertical -> EditorIcon.AutoLayoutVertical
+    node.containerKind == ContainerKind.AutoLayout && node.layout.mode == LayoutMode.Horizontal -> EditorIcon.AutoLayoutHorizontal
+    node.containerKind == ContainerKind.AutoLayout && node.layout.mode == LayoutMode.Grid -> EditorIcon.AutoLayoutGrid
+    else -> when (node.type) {
     "frame", "group", "section", "screen" -> EditorIcon.Frame
     "text" -> EditorIcon.Text
     "instance" -> EditorIcon.Component
     "shape" -> EditorIcon.Rectangle
     else -> EditorIcon.Layers
+    }
 }
 
 // --- Screens panel -----------------------------------------------------------
@@ -1215,7 +1398,6 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
     val strings = LocalStrings.current
     val design = state.designState
     val document = design.document
-    val statusColors = listOf(colors.statusPositive, colors.statusWarning, colors.statusDanger)
     var presetMenu by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier,
@@ -1234,31 +1416,47 @@ private fun ScreensPanel(state: MissionEditorStateHolder, modifier: Modifier = M
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
-                Box {
-                    SmallIconButton(EditorIcon.Plus, contentDescription = strings.source.createScreen, onClick = { presetMenu = true })
-                    EditorDropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
-                        ScreenPreset.entries.forEach { preset ->
-                            EditorDropdownMenuItem(
-                                text = "${strings.source.screenPreset(preset)}  ${preset.width.toInt()}x${preset.height.toInt()}",
-                                onClick = {
-                                    presetMenu = false
-                                    val count = (document?.pages?.size ?: 0) + 1
-                                    state.dispatch(DesignEditorIntent.CreateScreen(preset, "Screen $count"))
-                                },
-                                leadingContent = { ScreenPresetPreview(preset) },
-                            )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SmallIconButton(
+                        icon = EditorIcon.Refresh,
+                        contentDescription = strings.source.refreshScreens,
+                        enabled = state.folderSync == FolderSyncPresence.Watching,
+                        onClick = state::refreshScreensFromDisk,
+                    )
+                    Box {
+                        SmallIconButton(EditorIcon.Plus, contentDescription = strings.source.createScreen, onClick = { presetMenu = true })
+                        EditorDropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
+                            ScreenPreset.entries.forEach { preset ->
+                                EditorDropdownMenuItem(
+                                    text = "${strings.source.screenPreset(preset)}  ${preset.width.toInt()}x${preset.height.toInt()}",
+                                    onClick = {
+                                        presetMenu = false
+                                        val count = (document?.pages?.size ?: 0) + 1
+                                        state.dispatch(DesignEditorIntent.CreateScreen(preset, "Screen $count"))
+                                    },
+                                    leadingContent = { ScreenPresetPreview(preset) },
+                                )
+                            }
                         }
                     }
                 }
             }
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                document?.pages?.forEachIndexed { index, page ->
+                document?.pages?.forEach { page ->
                     ScreenRow(
                         title = page.name.ifBlank { page.id },
                         subtitle = "${page.children.firstOrNull()?.size?.width?.toInt() ?: 0} x ${page.children.firstOrNull()?.size?.height?.toInt() ?: 0}",
-                        status = statusColors[index % statusColors.size],
                         selected = page.id == design.selectedPageId,
                         onClick = { state.dispatch(DesignEditorIntent.SelectPage(page.id)) },
+                        onDuplicate = {
+                            state.dispatch(
+                                DesignEditorIntent.DuplicateScreen(
+                                    pageId = page.id,
+                                    title = strings.source.screenCopyName(page.name.ifBlank { page.id }),
+                                ),
+                            )
+                        },
+                        onDelete = { state.dispatch(DesignEditorIntent.DeleteScreen(page.id)) },
                     )
                 }
             }
@@ -1296,8 +1494,17 @@ private fun ScreenPresetPreview(preset: ScreenPreset, modifier: Modifier = Modif
 }
 
 @Composable
-private fun ScreenRow(title: String, subtitle: String, status: Color, selected: Boolean, onClick: () -> Unit) {
+private fun ScreenRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onDuplicate: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    var actionsExpanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().height(64.dp)
             .background(if (selected) colors.selectionFill else Color.White)
@@ -1312,6 +1519,31 @@ private fun ScreenRow(title: String, subtitle: String, status: Color, selected: 
             Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.ink, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.subtleInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
-        Box(Modifier.size(12.dp).background(status, CircleShape))
+        Box {
+            SmallIconButton(
+                icon = EditorIcon.MoreHorizontal,
+                contentDescription = strings.source.screenActions,
+                active = actionsExpanded,
+                onClick = { actionsExpanded = true },
+            )
+            EditorDropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                EditorDropdownMenuItem(
+                    text = strings.source.duplicateScreen,
+                    leadingContent = { DropdownMenuIcon(EditorIcon.Duplicate) },
+                    onClick = {
+                        actionsExpanded = false
+                        onDuplicate()
+                    },
+                )
+                EditorDropdownMenuItem(
+                    text = strings.source.deleteScreen,
+                    leadingContent = { DropdownMenuIcon(EditorIcon.Trash) },
+                    onClick = {
+                        actionsExpanded = false
+                        onDelete()
+                    },
+                )
+            }
+        }
     }
 }

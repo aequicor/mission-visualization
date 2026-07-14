@@ -20,7 +20,7 @@ class SectionMoveTest {
         sourceLocale: en-US
         ---
 
-        # Screen id root name «Screen» column
+        # Screen id root name «Screen» column auto-layout
 
         ## Frame: Panel id panel
 

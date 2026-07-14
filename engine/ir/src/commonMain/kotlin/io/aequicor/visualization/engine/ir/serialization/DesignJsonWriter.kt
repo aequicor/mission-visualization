@@ -10,6 +10,7 @@ import io.aequicor.visualization.subsystems.figures.VectorNetwork
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyDefinition
 import io.aequicor.visualization.engine.ir.model.ComponentPropertyType
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignAction
 import io.aequicor.visualization.engine.ir.model.DesignAnchors
 import io.aequicor.visualization.engine.ir.model.DesignAnnotation
@@ -206,6 +207,9 @@ fun writeDesignDocument(document: DesignDocument): JsonObject = buildJsonObject 
 fun writeDesignNode(node: DesignNode): JsonObject = buildJsonObject {
     put("id", node.id)
     put("type", nodeTypeString(node))
+    if (node.kind is DesignNodeKind.Frame) {
+        put("containerKind", if (node.containerKind == ContainerKind.AutoLayout) "autoLayout" else "frame")
+    }
     if (node.name.isNotEmpty()) put("name", node.name)
     if (node.role.isNotEmpty()) put("role", node.role)
     putKindFields(node.kind)

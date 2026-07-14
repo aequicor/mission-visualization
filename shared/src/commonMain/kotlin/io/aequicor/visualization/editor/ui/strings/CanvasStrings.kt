@@ -27,6 +27,9 @@ interface CanvasStrings {
     val fitScreen: String
     val fitSelection: String
 
+    // Selection context menu.
+    val groupSelection: String
+
     // Export-issues action (toolbar) + its confirmation popup.
     val exportIssues: String
     val scopeSelectedAnnotation: String
@@ -63,6 +66,7 @@ object CanvasStringsEn : CanvasStrings {
 
     override val fitScreen = "Fit screen"
     override val fitSelection = "Fit selection"
+    override val groupSelection = "Group selection"
 
     override val exportIssues = "Export issues"
     override val scopeSelectedAnnotation = "Selected annotation"
@@ -99,6 +103,7 @@ object CanvasStringsRu : CanvasStrings {
 
     override val fitScreen = "Вписать экран"
     override val fitSelection = "Вписать выделение"
+    override val groupSelection = "Объединить в группу"
 
     override val exportIssues = "Выгрузить замечания"
     override val scopeSelectedAnnotation = "Выбранная аннотация"

@@ -15,6 +15,16 @@ data class CanvasExportCrop(
     val height: Double,
 )
 
+/** How this platform presents the project picker at application startup. */
+internal enum class ProjectLandingMode { None, WebDom, Compose }
+
+/** Whether a project may live in app-private draft storage without a folder. */
+internal enum class ProjectStorageMode { EmbeddedDraft, DiskOnly }
+
+internal expect val platformProjectLandingMode: ProjectLandingMode
+
+internal expect val platformProjectStorageMode: ProjectStorageMode
+
 /** Wall-clock time in epoch milliseconds; used to stamp recent-project recency. */
 internal expect fun platformEpochMillis(): Long
 
@@ -73,6 +83,9 @@ internal expect fun platformInitFolderSync()
 /** Picks a folder (readwrite), persists its handle, enumerates sources and starts the watcher. */
 internal expect fun platformConnectFolderLive()
 
+/** Opens a previously recorded folder by its stable id (an absolute path on desktop). */
+internal expect fun platformConnectFolderById(id: String)
+
 /** Creates a live folder project from the current in-memory sources. */
 internal expect fun platformCreateFolderProject(sourcesJson: String)
 
@@ -84,6 +97,9 @@ internal expect fun platformReconnectSavedFolder()
 
 /** Stops the watcher and forgets the live connection. */
 internal expect fun platformDisconnectFolder()
+
+/** Re-reads every supported source file from the currently watched folder. No-op when disconnected. */
+internal expect fun platformRefreshFolder()
 
 /** Name of the saved/connected folder, or null when none is remembered. */
 internal expect fun platformSavedFolderName(): String?
@@ -99,6 +115,28 @@ internal expect fun folderSyncSnapshotJson(): String?
  * `error`. Null is treated as `idle`.
  */
 internal expect fun folderSyncStatus(): String?
+
+/** Last human-readable folder error, cleared when a new operation starts or succeeds. */
+internal expect fun folderSyncError(): String?
+
+/** One compare-and-swap entry in an outbound folder transaction. */
+internal data class FolderFileWrite(
+    val fileName: String,
+    /** Content observed at the last successful sync; null means the file must not exist. */
+    val baseContent: String?,
+    /** New content, or null to delete the file. */
+    val content: String?,
+)
+
+/**
+ * Commits all [writes] as one optimistic transaction (a null [FolderFileWrite.content] deletes the
+ * file). Implementations must verify every base before changing any target. Returns false when the
+ * commit could not be initiated (e.g. no folder is connected/watching), in which case the caller
+ * must keep its previous sync base; true when the batch was accepted for writing. The browser bridge
+ * writes/deletes asynchronously, so a `true` there means "accepted", with drift/IO conflicts caught
+ * afterwards by the disk watcher.
+ */
+internal expect fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean
 
 /**
  * Writes [content] to [fileName] in the connected folder, recording the write so the watcher does

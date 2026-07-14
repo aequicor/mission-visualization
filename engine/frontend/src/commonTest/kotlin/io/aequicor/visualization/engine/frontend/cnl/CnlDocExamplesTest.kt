@@ -39,7 +39,7 @@ class CnlDocExamplesTest {
     fun layoutSchemaExamples() {
         assertCompilesClean(
             """
-            ## Frame: Mission Detail Panel column padding (20 24) gap (row 16 column 8) align (inline stretch) width (fill min 320 max 520) height (hug) clip overflow (x hidden y auto) scroll (direction vertical fixedChildren (missionPanelHeader))
+            ## AutoLayout: Mission Detail Panel column padding 20 24 gap (row 16 column 8) align (inline stretch) width (fill min 320 max 520) height (hug) clip overflow (x hidden y auto) scroll (direction vertical fixedChildren (missionPanelHeader))
 
             Ellipse 8 by 8 absolute anchor (inlineEnd 4 blockStart 4) constraints (horizontal right vertical top)
             """.trimIndent(),
@@ -50,7 +50,7 @@ class CnlDocExamplesTest {
     fun responsiveAndGridOverlayExamples() {
         assertCompilesClean(
             """
-            ## Frame: Card row gap 16 when (breakpoint mobile) column padding (16) gap 12 radius 0 when (breakpoint desktop density compact) row gap 8
+            ## AutoLayout: Card row gap 16 when (breakpoint mobile) column padding 16 gap 12 radius 0 when (breakpoint desktop density compact) row gap 8
             """.trimIndent(),
         )
         assertCompilesClean(
@@ -64,7 +64,7 @@ class CnlDocExamplesTest {
     fun componentAndInstanceExamples() {
         assertCompilesClean(
             """
-            ## Panel column gap 12
+            ## AutoLayout: Panel column gap 12
 
             Instance of ds/Button library ds variant (size md state default type primary) props (label «Create mission» iconLeading (swap ds/Icon/Plus) loading false) onClick navigate (missions/new)
             Instance of ds/Card override header/title (color #111111 bold) slot actions (Button «Open» color #2563EB) nested statusBadge (variant (tone warning))
@@ -90,10 +90,10 @@ class CnlDocExamplesTest {
 
             Number space.4 compact 12 comfortable 16
 
-            ## Panel column
+            ## AutoLayout: Panel column
 
             Frame styles (fill color.surface.default text typography.heading.lg effect shadow.card grid grid.desktop.12)
-            Frame color ${'$'}color.surface radius ${'$'}radius.card gap ${'$'}space.4
+            AutoLayout color ${'$'}color.surface radius ${'$'}radius.card gap ${'$'}space.4
             """.trimIndent(),
         )
     }
@@ -102,7 +102,7 @@ class CnlDocExamplesTest {
     fun textAndRichTextExamples() {
         assertCompilesClean(
             """
-            ## Header column gap 8
+            ## AutoLayout: Header column gap 8
 
             Text «Mission Control» key missionDashboard.title size 24 bold font «Inter» line-height 32 text-align left text-valign center autosize both truncate 1 text-style ${'$'}typography.heading.lg
             Text «Read the mission brief» key header.brief size 14 span (range (5 12) style typography.link) link (range (5 12) url «https://example.com/brief»)
@@ -138,7 +138,7 @@ class CnlDocExamplesTest {
             String selectedMissionId default «»
             Boolean isCreateDialogOpen default false
 
-            ## Actions column gap 8
+            ## AutoLayout: Actions column gap 8
 
             Button «Create» onClick openOverlay (createMissionDialog) overlay (position center closeOnOutside true background #00000052) animate (type smartAnimate easing easeOut duration 220)
             Button «Select» onClick setVariable (selectedMissionId) to ({{mission.id}})
@@ -156,7 +156,7 @@ class CnlDocExamplesTest {
     fun handoffAndExportExamples() {
         assertCompilesClean(
             """
-            ## Panel column gap 8 export (png at 2 «@2x») (svg at 1 «»)
+            ## AutoLayout: Panel column gap 8 export (png at 2 «@2x») (svg at 1 «»)
 
             Rectangle 320 by 4 color #E2E8F0 radius 2
             """.trimIndent(),

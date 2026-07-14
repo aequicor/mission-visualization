@@ -1,5 +1,9 @@
 package io.aequicor.visualization.editor.platform
 
+internal actual val platformProjectLandingMode: ProjectLandingMode = ProjectLandingMode.None
+
+internal actual val platformProjectStorageMode: ProjectStorageMode = ProjectStorageMode.EmbeddedDraft
+
 internal actual val platformSupportsProjectDiskIo: Boolean = false
 
 internal actual fun platformOpenProjectZipArchive() = Unit
@@ -35,11 +39,15 @@ internal actual fun platformInitFolderSync() = Unit
 
 internal actual fun platformConnectFolderLive() = Unit
 
+internal actual fun platformConnectFolderById(id: String) = Unit
+
 internal actual fun platformCreateFolderProject(sourcesJson: String) = Unit
 
 internal actual fun platformReconnectSavedFolder() = Unit
 
 internal actual fun platformDisconnectFolder() = Unit
+
+internal actual fun platformRefreshFolder() = Unit
 
 internal actual fun platformSavedFolderName(): String? = null
 
@@ -48,6 +56,10 @@ internal actual fun folderSyncRevision(): Int = 0
 internal actual fun folderSyncSnapshotJson(): String? = null
 
 internal actual fun folderSyncStatus(): String? = null
+
+internal actual fun folderSyncError(): String? = null
+
+internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean = false
 
 internal actual fun platformWriteFolderFile(fileName: String, content: String) = Unit
 

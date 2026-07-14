@@ -29,19 +29,39 @@ internal class SectionWriter(
     private val document = SlmMarkdownParser(DiagnosticCollector(fileName)).parse(source)
     private val headings: List<HeadingBlock> = document.blocks.filterIsInstance<HeadingBlock>()
 
-    /** Deletes the heading section owning [anchorSpan]. */
-    fun delete(anchorSpan: SlmSourceSpan): WritePlan {
+    /** Deletes a heading-owned subtree or, when explicitly identified, one CNL sentence line. */
+    fun delete(anchorSpan: SlmSourceSpan, isCnlSentence: Boolean = false): WritePlan {
         val heading = headingAt(anchorSpan.startLine)
-            ?: return WritePlan.Failed(
-                "Node has no heading section to delete; only heading-anchored nodes are structurally editable",
-                anchorSpan.startLine,
-            )
+            ?: if (isCnlSentence) {
+                return deleteSentence(anchorSpan)
+            } else {
+                return WritePlan.Failed(
+                    "Node has no heading section to delete; only heading-anchored nodes and CNL sentences are structurally editable",
+                    anchorSpan.startLine,
+                )
+            }
         if (heading.level <= 1) {
             return WritePlan.Failed("The screen root section cannot be deleted from the source", heading.span.startLine)
         }
         val start = lineIndex.lineStartOffset(heading.span.startLine)
         val end = lineIndex.lineStartOffset(footprintEndLine(heading))
         return WritePlan.Ops(listOf(TextOp(start, end, "")))
+    }
+
+    /** Re-emits a subtree at the exact heading level and byte footprint of its current section. */
+    fun replace(anchorSpan: SlmSourceSpan, subtree: DesignNode): WritePlan {
+        val heading = headingAt(anchorSpan.startLine)
+            ?: return WritePlan.Failed(
+                "Node has no heading section to replace; only heading-anchored nodes are structurally editable",
+                anchorSpan.startLine,
+            )
+        if (heading.level <= 1) {
+            return WritePlan.Failed("The screen root section cannot be replaced", heading.span.startLine)
+        }
+        val start = lineIndex.lineStartOffset(heading.span.startLine)
+        val end = lineIndex.lineStartOffset(footprintEndLine(heading))
+        val text = frameInsert(NodeSectionWriter.emitSubtree(subtree, heading.level, extensions), start)
+        return WritePlan.Ops(listOf(TextOp(start, end, text)))
     }
 
     /**
@@ -87,12 +107,21 @@ internal class SectionWriter(
      * a non-heading anchor at either end, a re-level past ATX depth 6, or an insert that would land
      * inside the moved footprint (moving a section into itself).
      */
-    fun move(subtreeSpan: SlmSourceSpan, newParentSpan: SlmSourceSpan, afterSiblingSpan: SlmSourceSpan?): WritePlan {
+    fun move(
+        subtreeSpan: SlmSourceSpan,
+        newParentSpan: SlmSourceSpan,
+        afterSiblingSpan: SlmSourceSpan?,
+        isCnlSentence: Boolean = false,
+    ): WritePlan {
         val heading = headingAt(subtreeSpan.startLine)
-            ?: return WritePlan.Failed(
-                "Node has no heading section to move; only heading-anchored nodes are structurally movable",
-                subtreeSpan.startLine,
-            )
+            ?: if (isCnlSentence) {
+                return moveSentence(subtreeSpan, newParentSpan, afterSiblingSpan)
+            } else {
+                return WritePlan.Failed(
+                    "Node has no heading section to move; only heading-anchored nodes and CNL sentences are structurally movable",
+                    subtreeSpan.startLine,
+                )
+            }
         if (heading.level <= 1) {
             return WritePlan.Failed("The screen root section cannot be moved from the source", heading.span.startLine)
         }
@@ -115,11 +144,16 @@ internal class SectionWriter(
         val insertBeforeLine = when {
             afterSiblingSpan != null -> {
                 val sibling = headingAt(afterSiblingSpan.startLine)
-                    ?: return WritePlan.Failed(
-                        "The sibling to move after is not a heading section",
-                        afterSiblingSpan.startLine,
-                    )
-                footprintEndLine(sibling)
+                if (sibling != null) {
+                    footprintEndLine(sibling)
+                } else {
+                    // afterSibling is a leaf CNL sentence. Splicing a heading between body sentences
+                    // would make it capture every following body sentence as its own child on
+                    // recompile (silent structural corruption the id-set/parent vetoes do not
+                    // catch), so land it after the new parent's entire leaf body — before its first
+                    // child heading — the only heading-safe position next to a sentence sibling.
+                    if (newParentHeading != null) bodyEndLine(newParentHeading) else newParentSpan.endLine + 1
+                }
             }
             newParentHeading != null -> footprintEndLine(newParentHeading)
             else -> newParentSpan.endLine + 1
@@ -128,7 +162,7 @@ internal class SectionWriter(
         val deleteStart = lineIndex.lineStartOffset(startLine)
         val deleteEnd = lineIndex.lineStartOffset(endLine)
         val insertOffset = lineIndex.lineStartOffset(insertBeforeLine)
-        if (insertOffset in deleteStart until deleteEnd) {
+        if (insertOffset > deleteStart && insertOffset < deleteEnd) {
             return WritePlan.Failed("A section cannot be moved inside itself", newParentSpan.startLine)
         }
 
@@ -137,6 +171,56 @@ internal class SectionWriter(
             .map { line -> lineIndex.lineText(line).let { if (line in headingStartLines) relevelHeading(it, delta) else it } }
             .dropLastWhile { it.isBlank() }
         val text = frameInsert(sectionLines, insertOffset)
+        // Reparenting a node under its immediately preceding sibling appends at exactly the
+        // moved section's current start. Represent that adjacent delete+insert as one replacement;
+        // two ops at the same offset would otherwise look overlapping even though the transform is
+        // perfectly well-defined (the bytes stay in place, only heading depth changes).
+        if (insertOffset == deleteStart) {
+            return WritePlan.Ops(listOf(TextOp(deleteStart, deleteEnd, text)))
+        }
+        return WritePlan.Ops(listOf(TextOp(deleteStart, deleteEnd, ""), TextOp(insertOffset, insertOffset, text)))
+    }
+
+    /** Deletes exactly the authored CNL sentence span, including its terminating newline. */
+    private fun deleteSentence(span: SlmSourceSpan): WritePlan {
+        val start = lineIndex.lineStartOffset(span.startLine)
+        val end = lineIndex.lineStartOffset(span.endLine + 1)
+        if (start >= end) return WritePlan.Failed("CNL sentence has an empty source span", span.startLine)
+        return WritePlan.Ops(listOf(TextOp(start, end, "")))
+    }
+
+    /**
+     * Moves a leaf CNL sentence between heading-owned containers. Unlike a heading subtree it needs
+     * no re-leveling; placing it before the target's first child heading keeps it in the target's
+     * body instead of accidentally nesting it under that child.
+     */
+    private fun moveSentence(
+        sentenceSpan: SlmSourceSpan,
+        newParentSpan: SlmSourceSpan,
+        afterSiblingSpan: SlmSourceSpan?,
+    ): WritePlan {
+        val newParentHeading = headingAt(newParentSpan.startLine)
+        val insertBeforeLine = when {
+            afterSiblingSpan != null -> {
+                if (headingAt(afterSiblingSpan.startLine) != null) {
+                    return WritePlan.Failed(
+                        "A CNL sentence cannot be placed after a heading sibling without changing its parent",
+                        afterSiblingSpan.startLine,
+                    )
+                }
+                afterSiblingSpan.endLine + 1
+            }
+            newParentHeading != null -> bodyEndLine(newParentHeading)
+            else -> newParentSpan.endLine + 1
+        }
+        val deleteStart = lineIndex.lineStartOffset(sentenceSpan.startLine)
+        val deleteEnd = lineIndex.lineStartOffset(sentenceSpan.endLine + 1)
+        val insertOffset = lineIndex.lineStartOffset(insertBeforeLine)
+        if (insertOffset > deleteStart && insertOffset < deleteEnd) {
+            return WritePlan.Failed("A CNL sentence cannot be moved inside itself", newParentSpan.startLine)
+        }
+        val text = source.substring(deleteStart, deleteEnd).let { if (it.endsWith('\n')) it else "$it\n" }
+        if (insertOffset == deleteStart) return WritePlan.Ops(emptyList())
         return WritePlan.Ops(listOf(TextOp(deleteStart, deleteEnd, ""), TextOp(insertOffset, insertOffset, text)))
     }
 
@@ -161,6 +245,18 @@ internal class SectionWriter(
         headings.firstOrNull { it.span.startLine > heading.span.startLine && it.level <= heading.level }
             ?.span?.startLine
             ?: ((document.blocks.lastOrNull()?.span?.endLine ?: lineIndex.lineCount) + 1)
+
+    /** First direct child heading, or the end of the whole section when it has none. */
+    private fun bodyEndLine(heading: HeadingBlock): Int {
+        val sectionEndLine = footprintEndLine(heading)
+        return headings.firstOrNull {
+            it.span.startLine > heading.span.startLine &&
+                it.span.startLine < sectionEndLine &&
+                it.level > heading.level
+        }
+            ?.span?.startLine
+            ?: sectionEndLine
+    }
 
     /**
      * Frames [sectionLines] with exactly one blank line before (unless already present or at the

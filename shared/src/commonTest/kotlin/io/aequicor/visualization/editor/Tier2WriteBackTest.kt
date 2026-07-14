@@ -89,4 +89,36 @@ class Tier2WriteBackTest {
         assertTrue("dropShadow" in source, "effect type written")
         next.assertWroteBack(before)
     }
+
+    @Test
+    fun removeOnlyFillClearsFillsFromSource() {
+        val before = freshState()
+
+        val removed = reduceDesignEditor(before, DesignEditorIntent.FillCommand(nodeId, FillOp.RemoveAt(0)))
+
+        assertTrue(
+            removed.document?.nodeById(nodeId)?.fills.isNullOrEmpty(),
+            "the last fill is removed; fills=${removed.document?.nodeById(nodeId)?.fills}, diagnostics=${removed.diagnostics}",
+        )
+        assertTrue("color " !in removed.sourceOf(owningFile).lineSequence().first { "id $nodeId" in it }, "the fill phrase is removed from source")
+        assertTrue(
+            removed.diagnostics.none { it.severity == DesignSeverity.Error },
+            "write-back errors: ${removed.diagnostics.filter { it.severity == DesignSeverity.Error }}",
+        )
+    }
+
+    @Test
+    fun removeOnlyEffectClearsEffectsFromSource() {
+        val before = freshState()
+        val added = reduceDesignEditor(before, DesignEditorIntent.EffectCommand(nodeId, EffectOp.Add(EffectType.DropShadow)))
+
+        val removed = reduceDesignEditor(added, DesignEditorIntent.EffectCommand(nodeId, EffectOp.RemoveAt(0)))
+
+        assertTrue(removed.document?.nodeById(nodeId)?.effects?.isEmpty() == true, "the last effect is removed")
+        assertTrue("effect (" !in removed.sourceOf(owningFile), "the effect phrase is removed from source")
+        assertTrue(
+            removed.diagnostics.none { it.severity == DesignSeverity.Error },
+            "write-back errors: ${removed.diagnostics.filter { it.severity == DesignSeverity.Error }}",
+        )
+    }
 }

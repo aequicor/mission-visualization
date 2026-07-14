@@ -64,6 +64,8 @@ interface InspectorStrings {
     val lockAspectRatio: String
     val resizing: String
     val autoLayout: String
+    val convertToAutoLayout: String
+    val convertToFrame: String
     val gap: String
     val padding: String
     val align: String
@@ -300,6 +302,8 @@ object InspectorStringsEn : InspectorStrings {
     override val lockAspectRatio = "Lock aspect ratio"
     override val resizing = "Resizing"
     override val autoLayout = "Auto layout"
+    override val convertToAutoLayout = "Convert to Auto Layout"
+    override val convertToFrame = "Convert to Frame"
     override val gap = "Gap"
     override val padding = "Padding"
     override val align = "Align"
@@ -696,6 +700,8 @@ object InspectorStringsRu : InspectorStrings {
     override val lockAspectRatio = "Сохранять пропорции"
     override val resizing = "Изменение размера"
     override val autoLayout = "Авто-раскладка"
+    override val convertToAutoLayout = "Преобразовать в Auto Layout"
+    override val convertToFrame = "Преобразовать во фрейм"
     override val gap = "Зазор"
     override val padding = "Внутренние отступы"
     override val align = "Выравнивание"

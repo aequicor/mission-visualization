@@ -17,8 +17,16 @@ interface SourceStrings {
     val showLayer: String
     val bringForward: String
     val sendBackward: String
+    val expandAllLayers: String
+    val collapseLayerLevel: String
+    val locateSelectedLayer: String
     val screens: CompactLabel
+    val refreshScreens: String
     val createScreen: String
+    val screenActions: String
+    val duplicateScreen: String
+    val deleteScreen: String
+    fun screenCopyName(original: String): String
     fun screenPreset(preset: ScreenPreset): String
     val resourcesEmptyTitle: String
     val resourcesEmptyHint: String
@@ -39,8 +47,16 @@ object SourceStringsEn : SourceStrings {
     override val showLayer = "Show layer"
     override val bringForward = "Bring forward"
     override val sendBackward = "Send backward"
+    override val expandAllLayers = "Expand all layers"
+    override val collapseLayerLevel = "Collapse next layer level"
+    override val locateSelectedLayer = "Locate selected layer"
     override val screens = CompactLabel("Screens", "Scr", "Scr")
+    override val refreshScreens = "Refresh screens from disk"
     override val createScreen = "Create screen"
+    override val screenActions = "Screen actions"
+    override val duplicateScreen = "Make a copy"
+    override val deleteScreen = "Delete"
+    override fun screenCopyName(original: String) = "$original copy"
     override fun screenPreset(preset: ScreenPreset): String = when (preset) {
         ScreenPreset.Desktop -> "Desktop"
         ScreenPreset.Tablet -> "Tablet"
@@ -66,8 +82,16 @@ object SourceStringsRu : SourceStrings {
     override val showLayer = "Показать слой"
     override val bringForward = "На передний план"
     override val sendBackward = "На задний план"
+    override val expandAllLayers = "Развернуть все слои"
+    override val collapseLayerLevel = "Свернуть следующий уровень слоёв"
+    override val locateSelectedLayer = "Перейти к выбранному слою"
     override val screens = CompactLabel("Экраны", "Экр", "Экр")
+    override val refreshScreens = "Обновить экраны с диска"
     override val createScreen = "Создать экран"
+    override val screenActions = "Действия с экраном"
+    override val duplicateScreen = "Сделать копию"
+    override val deleteScreen = "Удалить"
+    override fun screenCopyName(original: String) = "$original — копия"
     override fun screenPreset(preset: ScreenPreset): String = when (preset) {
         ScreenPreset.Desktop -> "Десктоп"
         ScreenPreset.Tablet -> "Планшет"

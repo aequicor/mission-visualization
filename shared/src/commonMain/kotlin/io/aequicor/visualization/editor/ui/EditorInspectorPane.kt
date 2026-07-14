@@ -74,6 +74,7 @@ import io.aequicor.visualization.editor.presentation.DiagramTextFormat
 import io.aequicor.visualization.editor.presentation.DiagramPaletteDrag
 import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.EditorLayoutMode
+import io.aequicor.visualization.editor.presentation.EditorTool
 import io.aequicor.visualization.editor.presentation.EffectOp
 import io.aequicor.visualization.editor.presentation.EffectType
 import io.aequicor.visualization.editor.presentation.FillKind
@@ -101,6 +102,7 @@ import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
@@ -494,6 +496,55 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
 
     Spacer(Modifier.height(12.dp))
     val nodeId = node.id
+    fun convert(target: ContainerKind, mode: LayoutMode = LayoutMode.None) {
+        val containerBox = box ?: return
+        val childGeometry = node.children.mapNotNull { child ->
+            containerBox.children.firstOrNull { it.node.sourceId == child.id }?.let { childBox ->
+                DesignEditorIntent.BakedChildGeometry(
+                    nodeId = child.id,
+                    x = childBox.x - containerBox.x,
+                    y = childBox.y - containerBox.y,
+                    width = childBox.width,
+                    height = childBox.height,
+                )
+            }
+        }
+        state.dispatch(
+            DesignEditorIntent.ConvertContainer(
+                nodeId = nodeId,
+                target = target,
+                targetMode = mode,
+                width = containerBox.width,
+                height = containerBox.height,
+                children = childGeometry,
+            ),
+        )
+    }
+
+    if (node.containerKind == ContainerKind.Frame) {
+        InspectorSubLabel(strings.inspector.autoLayout)
+        ContainerConversionMenu(
+            label = strings.inspector.convertToAutoLayout,
+            enabled = box != null && !state.designState.isNodeLocked(nodeId),
+            modeLabel = { mode ->
+                strings.labels.editorTool(
+                    when (mode) {
+                        LayoutMode.Vertical -> EditorTool.AutoLayoutVertical
+                        LayoutMode.Horizontal -> EditorTool.AutoLayoutHorizontal
+                        LayoutMode.Grid -> EditorTool.AutoLayoutGrid
+                        LayoutMode.None -> EditorTool.Frame
+                    },
+                )
+            },
+            onSelect = { convert(ContainerKind.AutoLayout, it) },
+        )
+        Spacer(Modifier.height(8.dp))
+        CheckRow(strings.inspector.clipContent, node.layout.clipsContent) {
+            state.dispatch(DesignEditorIntent.SetClipsContent(nodeId, it))
+        }
+        return
+    }
+
     val current = when (node.layout.mode) {
         LayoutMode.Horizontal -> EditorLayoutMode.Horizontal
         LayoutMode.Vertical -> EditorLayoutMode.Vertical
@@ -502,7 +553,7 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
     }
     InspectorSubLabel(strings.inspector.autoLayout)
     SegmentedControl(
-        options = listOf(EditorLayoutMode.Free, EditorLayoutMode.Vertical, EditorLayoutMode.Horizontal, EditorLayoutMode.Grid),
+        options = listOf(EditorLayoutMode.Vertical, EditorLayoutMode.Horizontal, EditorLayoutMode.Grid),
         selected = current,
         label = { strings.inspector.layoutMode(it) },
         onSelect = { state.dispatch(DesignEditorIntent.SetLayoutMode(nodeId, it)) },
@@ -547,7 +598,40 @@ private fun LayoutSection(state: MissionEditorStateHolder, node: DesignNode, box
         }
     }
     Spacer(Modifier.height(8.dp))
+    TinyButton(strings.inspector.convertToFrame, enabled = box != null && !state.designState.isNodeLocked(nodeId)) {
+        convert(ContainerKind.Frame)
+    }
+    Spacer(Modifier.height(8.dp))
     CheckRow(strings.inspector.clipContent, node.layout.clipsContent) { state.dispatch(DesignEditorIntent.SetClipsContent(nodeId, it)) }
+}
+
+@Composable
+private fun ContainerConversionMenu(
+    label: String,
+    enabled: Boolean,
+    modeLabel: (LayoutMode) -> String,
+    onSelect: (LayoutMode) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TinyButton(label, enabled = enabled) { expanded = true }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            listOf(
+                LayoutMode.Vertical to EditorIcon.AutoLayoutVertical,
+                LayoutMode.Horizontal to EditorIcon.AutoLayoutHorizontal,
+                LayoutMode.Grid to EditorIcon.AutoLayoutGrid,
+            ).forEach { (mode, icon) ->
+                EditorDropdownMenuItem(
+                    text = modeLabel(mode),
+                    leadingContent = { DropdownMenuIcon(icon) },
+                    onClick = {
+                        expanded = false
+                        onSelect(mode)
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable

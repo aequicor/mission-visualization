@@ -139,8 +139,8 @@ class DesignJsonWriterTest {
     @Test
     fun writerOmitsDefaultFields() {
         val minimalFrame = writeDesignNode(DesignNode(id = "n", type = "frame", kind = DesignNodeKind.Frame))
-        assertEquals(setOf("id", "type"), minimalFrame.keys)
-        assertEquals("""{"id":"n","type":"frame"}""", minimalFrame.toJsonString())
+        assertEquals(setOf("id", "type", "containerKind"), minimalFrame.keys)
+        assertEquals("""{"id":"n","type":"frame","containerKind":"frame"}""", minimalFrame.toJsonString())
 
         val minimalText = writeDesignNode(DesignNode(id = "t", type = "text", kind = DesignNodeKind.Text()))
         assertEquals(setOf("id", "type"), minimalText.keys)

@@ -27,6 +27,9 @@ interface LandingStrings {
     val recoverTitle: String
     val recoverSubtitle: String
     val language: String
+    val folderUnavailableError: String
+    val folderContainsProjectError: String
+    val projectCreateError: String
 }
 
 object LandingStringsEn : LandingStrings {
@@ -53,6 +56,9 @@ object LandingStringsEn : LandingStrings {
     override val recoverTitle = "Browser project"
     override val recoverSubtitle = "Saved only in this browser"
     override val language = "Language"
+    override val folderUnavailableError = "The project folder is unavailable."
+    override val folderContainsProjectError = "This folder already contains a project. Open it instead or choose another folder."
+    override val projectCreateError = "The project could not be created in this folder."
 }
 
 object LandingStringsRu : LandingStrings {
@@ -81,4 +87,7 @@ object LandingStringsRu : LandingStrings {
     override val recoverTitle = "Проект в браузере"
     override val recoverSubtitle = "Хранится только в этом браузере"
     override val language = "Язык"
+    override val folderUnavailableError = "Папка проекта недоступна."
+    override val folderContainsProjectError = "В этой папке уже есть проект. Откройте его или выберите другую папку."
+    override val projectCreateError = "Не удалось создать проект в этой папке."
 }

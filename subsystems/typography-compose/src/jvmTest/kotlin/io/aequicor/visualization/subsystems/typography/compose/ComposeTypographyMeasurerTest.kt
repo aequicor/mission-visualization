@@ -5,6 +5,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.createFontFamilyResolver
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import io.aequicor.visualization.subsystems.typography.AlignHorizontal
 import io.aequicor.visualization.subsystems.typography.FontDescriptor
 import io.aequicor.visualization.subsystems.typography.ListLayout
 import io.aequicor.visualization.subsystems.typography.ListType
@@ -119,6 +120,22 @@ class ComposeTypographyMeasurerTest {
         measured.lines.forEach { line ->
             assertTrue(line.width <= maxWidth + EPSILON, "line width ${line.width} exceeds max $maxWidth")
         }
+    }
+
+    @Test
+    fun exactWidthCentersGlyphsInsideTheTextBox() {
+        val boxWidth = 200.0
+        val laidOut = measurer().layout(
+            rich = RichText(
+                text = "Mission Control",
+                base = TypographyStyle(fontSize = 14.0, alignHorizontal = AlignHorizontal.Center),
+            ),
+            maxWidth = boxWidth,
+            exactWidth = true,
+        )
+
+        val line = laidOut.measured.lines.single()
+        assertEquals(boxWidth / 2.0, line.left + line.width / 2.0, EPSILON)
     }
 
     @Test

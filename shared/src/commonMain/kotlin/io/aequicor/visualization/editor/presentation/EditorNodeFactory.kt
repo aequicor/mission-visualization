@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.engine.ir.model.DesignLayoutChild
@@ -16,6 +17,7 @@ import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.DesignStrokes
 import io.aequicor.visualization.engine.ir.model.LayoutMode
+import io.aequicor.visualization.engine.ir.model.GridTrack
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
@@ -30,7 +32,10 @@ import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.bindable
 
 /** The object kinds the toolbar can create on the canvas. */
-enum class NewObjectKind { Frame, Rectangle, Ellipse, Polygon, Star, Line, Arrow, Vector, Text }
+enum class NewObjectKind {
+    Frame, AutoLayoutVertical, AutoLayoutHorizontal, AutoLayoutGrid,
+    Rectangle, Ellipse, Polygon, Star, Line, Arrow, Vector, Text,
+}
 
 /** A device/frame preset offered by the "new screen" flow. */
 enum class ScreenPreset(val displayName: String, val width: Double, val height: Double) {
@@ -85,6 +90,7 @@ object EditorNodeFactory {
             id = id,
             type = typeFor(kind),
             kind = kindFor(kind, fixedWidthText),
+            containerKind = containerKindFor(kind),
             name = defaultNameFor(kind),
             position = DesignPoint(x, y),
             size = DesignSize(width, height),
@@ -192,6 +198,22 @@ object EditorNodeFactory {
             fills = listOf(DesignPaint.Solid(frameWhite.bindable())),
             layout = DesignAutoLayout(mode = LayoutMode.None),
         )
+        NewObjectKind.AutoLayoutVertical -> node.copy(
+            fills = listOf(DesignPaint.Solid(frameWhite.bindable())),
+            layout = DesignAutoLayout(mode = LayoutMode.Vertical),
+        )
+        NewObjectKind.AutoLayoutHorizontal -> node.copy(
+            fills = listOf(DesignPaint.Solid(frameWhite.bindable())),
+            layout = DesignAutoLayout(mode = LayoutMode.Horizontal),
+        )
+        NewObjectKind.AutoLayoutGrid -> node.copy(
+            fills = listOf(DesignPaint.Solid(frameWhite.bindable())),
+            layout = DesignAutoLayout(
+                mode = LayoutMode.Grid,
+                columns = listOf(GridTrack.Flex(1.0.bindable()), GridTrack.Flex(1.0.bindable())),
+                implicitRows = GridTrack.Hug,
+            ),
+        )
         NewObjectKind.Rectangle, NewObjectKind.Ellipse, NewObjectKind.Polygon, NewObjectKind.Star -> node.copy(
             fills = listOf(DesignPaint.Solid(fillGrey.bindable())),
         )
@@ -216,7 +238,8 @@ object EditorNodeFactory {
     }
 
     private fun kindFor(kind: NewObjectKind, fixedWidthText: Boolean): DesignNodeKind = when (kind) {
-        NewObjectKind.Frame -> DesignNodeKind.Frame
+        NewObjectKind.Frame, NewObjectKind.AutoLayoutVertical,
+        NewObjectKind.AutoLayoutHorizontal, NewObjectKind.AutoLayoutGrid -> DesignNodeKind.Frame
         NewObjectKind.Rectangle -> DesignNodeKind.Shape(ShapeType.Rectangle)
         NewObjectKind.Ellipse -> DesignNodeKind.Shape(ShapeType.Ellipse)
         NewObjectKind.Polygon -> DesignNodeKind.Shape(ShapeType.Polygon, pointCount = 3)
@@ -249,14 +272,22 @@ object EditorNodeFactory {
         else -> DesignSizing(SizingMode.Fixed, SizingMode.Fixed)
     }
 
+    private fun containerKindFor(kind: NewObjectKind): ContainerKind = when (kind) {
+        NewObjectKind.AutoLayoutVertical, NewObjectKind.AutoLayoutHorizontal, NewObjectKind.AutoLayoutGrid ->
+            ContainerKind.AutoLayout
+        else -> ContainerKind.Frame
+    }
+
     private fun typeFor(kind: NewObjectKind): String = when (kind) {
-        NewObjectKind.Frame -> "frame"
+        NewObjectKind.Frame, NewObjectKind.AutoLayoutVertical,
+        NewObjectKind.AutoLayoutHorizontal, NewObjectKind.AutoLayoutGrid -> "frame"
         NewObjectKind.Text -> "text"
         else -> "shape"
     }
 
     private fun idPrefixFor(kind: NewObjectKind): String = when (kind) {
         NewObjectKind.Frame -> "frame"
+        NewObjectKind.AutoLayoutVertical, NewObjectKind.AutoLayoutHorizontal, NewObjectKind.AutoLayoutGrid -> "auto_layout"
         NewObjectKind.Rectangle -> "rect"
         NewObjectKind.Ellipse -> "ellipse"
         NewObjectKind.Polygon -> "poly"
@@ -269,6 +300,9 @@ object EditorNodeFactory {
 
     private fun defaultNameFor(kind: NewObjectKind): String = when (kind) {
         NewObjectKind.Frame -> "Frame"
+        NewObjectKind.AutoLayoutVertical -> "Auto Layout Vertical"
+        NewObjectKind.AutoLayoutHorizontal -> "Auto Layout Horizontal"
+        NewObjectKind.AutoLayoutGrid -> "Auto Layout Grid"
         NewObjectKind.Rectangle -> "Rectangle"
         NewObjectKind.Ellipse -> "Ellipse"
         NewObjectKind.Polygon -> "Polygon"
@@ -281,7 +315,8 @@ object EditorNodeFactory {
 
     /** Default creation size for a click (no drag) with the given tool. */
     fun defaultSizeFor(kind: NewObjectKind): DesignSize = when (kind) {
-        NewObjectKind.Frame -> DesignSize(240.0, 160.0)
+        NewObjectKind.Frame, NewObjectKind.AutoLayoutVertical,
+        NewObjectKind.AutoLayoutHorizontal, NewObjectKind.AutoLayoutGrid -> DesignSize(240.0, 160.0)
         NewObjectKind.Rectangle, NewObjectKind.Ellipse, NewObjectKind.Polygon, NewObjectKind.Star ->
             DesignSize(120.0, 120.0)
         NewObjectKind.Line, NewObjectKind.Arrow -> DesignSize(160.0, 0.0)

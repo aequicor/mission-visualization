@@ -43,7 +43,7 @@ class CnlSkillExamplesTest {
 
             # Sample Screen
 
-            ## App Shell id app_shell column width (fill) height (fill) padding 24 gap 16 clip overflow (y auto) color #FFFFFF
+            ## AutoLayout: App Shell id app_shell column width (fill) height (fill) padding 24 gap 16 clip overflow (y auto) color #FFFFFF
 
             Text id page_title «Sample Screen» key sample.title font «Inter» bold size 24 line-height 32 width (fill) height (hug) maxLines 1
             """,
@@ -60,7 +60,7 @@ class CnlSkillExamplesTest {
 
             # Vector Sample
 
-            ## Frame: Figures id figures column gap 16
+            ## AutoLayout: Figures id figures column gap 16
 
             Vector id editable_glyph 160 by 160 color #2F9E44 viewbox (0 0 24 24) network (vertex (12 2 in (-7 -3) out (7 3) mirror angleAndLength) vertex (22 20 corner radius 2) vertex (2 20 corner radius 2) segment (0 1) segment (1 2) segment (2 0) region loops (0 1 2) fill #2F9E44)
 
@@ -91,12 +91,32 @@ class CnlSkillExamplesTest {
 
             # Typography Sample
 
-            ## Content id content column width (fill) height (hug) padding 24 gap 12
+            ## AutoLayout: Content id content column width (fill) height (hug) padding 24 gap 12
 
             Text id title «Mission Control» key sample.title text-style ${'$'}typography.heading width (fill) height (hug) maxLines 1
             Text id body «Read the mission brief» key sample.body text-style ${'$'}typography.body span (range (5 12) style typography.emphasis) link (range (5 12) to brief_screen) width (fill) height (hug) maxLines 2
             Text id status characters {{mission.status}} text-style ${'$'}typography.body width (fill) height (hug) maxLines 1
             Frame id brief_screen visible no
+            """,
+        )
+    }
+
+    @Test
+    fun editableFrameCenteringRecipeCompiles() {
+        assertCompilesClean(
+            """
+            ---
+            screen: frameAlignment
+            sourceLocale: en-US
+            targetLocales: [en-US]
+            frame: { width: 960, height: 360 }
+            ---
+
+            # Frame Alignment id frame_alignment 960 by 360 color #FFFFFF
+
+            ## Frame: Summary Card id summary_card 480 by 200 position 240 80 align center color #F8FAFC radius 16
+
+            Text id summary_title «Mission Control» key summary.title 480 by 200 position 0 0 font «Inter» size 32 bold line-height 40 text-align center text-valign center maxLines 2
             """,
         )
     }

@@ -27,11 +27,11 @@ internal val AnnotationMissionOverviewSlm: String = missionSlm(
       height: 1024
     ---
 
-    # Mission Overview id frame_overview name «Mission Overview» 1440 by 1024 position 72 72 column gap 40 padding 88 56 color #FFFFFF radius 8
+    # Mission Overview id frame_overview name «Mission Overview» 1440 by 1024 position 72 72 column gap 40 padding 88 56 color #FFFFFF radius 8 auto-layout
 
     ## Rectangle: id overview_hero name «Hero» width fill height 140 color #E9EEF4 radius 8
 
-    ## Frame: id overview_tiles name «Tiles» width fill height hug row gap 40
+    ## AutoLayout: id overview_tiles name «Tiles» width fill height hug row gap 40
 
     ### Rectangle: id tile_1 name «Tile 1» width (fill 416) height 150 color #E9EEF4 radius 8
 

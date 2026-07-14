@@ -33,7 +33,7 @@ val MissionTelemetrySlm: String = missionSlm(
     Number padH light 56 dark 56
     Number padV light 88 dark 88
     
-    # Telemetry id frame_telemetry name «Telemetry» 1440 by 1024 position 72 72 grid padding §padV §padH gap (row 40 column 40) color §color.surface stroke §color.stroke radius §radius clip columns (count 3 track 1fr) rows (auto track hug)
+    # Telemetry id frame_telemetry name «Telemetry» 1440 by 1024 position 72 72 grid padding §padV §padH gap (row 40 column 40) color §color.surface stroke §color.stroke radius §radius clip columns (count 3 track 1fr) rows (auto track hug) auto-layout
     
     ## Rectangle: id telemetry_header name «Header» width fill height 140 gradient (linear to (1 0) stops (#DCEBFD at 0) (#E9EEF4 at 1)) radius §radius place (column 1 row 1 columnSpan 3)
     
@@ -49,7 +49,7 @@ val MissionTelemetrySlm: String = missionSlm(
     
     ## Instance: id t_tile_6 of cmp_wire_tile_default name «Tile 6»
     
-    ## Frame: id telemetry_badge name «Live badge» width (hug 88) height (hug 28) position 1296 36 absolute row gap 6 padding 5 12 color §color.accent radius 999 align right align (block center)
+    ## AutoLayout: id telemetry_badge name «Live badge» width (hug 88) height (hug 28) position 1296 36 absolute row gap 6 padding 5 12 color §color.accent radius 999 align right align (block center)
     
     ### Ellipse: id badge_dot name «Dot» 8 by 8 color #FFFFFF motion duration 900 loop frames (0 opacity 0.4) (0.5 opacity 1) (1 opacity 0.4)
     

@@ -2,6 +2,7 @@ package io.aequicor.visualization.editor
 
 import io.aequicor.visualization.editor.data.DefaultDesignDocumentRepository
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
+import io.aequicor.visualization.editor.domain.annotationSidecarFileName
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
@@ -10,8 +11,11 @@ import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
+import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -125,5 +129,60 @@ class CreateScreenSourceTest {
         assertEquals(rootFrameId, recompiledRoot.id, "root frame id round-trips")
         assertEquals(375.0, recompiledRoot.size.width, "mobile preset width round-trips")
         assertEquals(812.0, recompiledRoot.size.height, "mobile preset height round-trips")
+    }
+
+    @Test
+    fun duplicateAndDeleteScreenRoundTripWithFreshIdsAndHistory() {
+        var state = createDesignEditorState(compileMissionDocuments(emptyList()))
+        state = reduceDesignEditor(state, DesignEditorIntent.CreateScreen(ScreenPreset.Mobile, "First Screen"))
+        val originalPageId = state.selectedPageId
+        val originalRootId = state.selectedNodeId
+        val originalScreenFile = "$originalPageId.layout.md"
+        val originalSidecarFile = annotationSidecarFileName(originalScreenFile)
+        state = reduceDesignEditor(
+            state,
+            DesignEditorIntent.AddAnnotation(
+                originalScreenFile,
+                AnnotationAnchor.NodeAnchor(originalRootId),
+                AnnotationKind.Note,
+            ),
+        )
+        assertTrue(state.sources.any { it.fileName == originalSidecarFile }, "fixture has an annotation sidecar")
+
+        state = reduceDesignEditor(
+            state,
+            DesignEditorIntent.DuplicateScreen(originalPageId, "First Screen copy"),
+        )
+        val copyPageId = state.selectedPageId
+        val copyRootId = state.selectedNodeId
+        assertEquals(2, state.document?.pages?.size, "screen copied")
+        assertEquals("First Screen copy", state.document?.pages?.lastOrNull()?.name)
+        assertFalse(copyPageId == originalPageId, "copy receives a fresh page id")
+        assertFalse(copyRootId == originalRootId, "copy receives fresh node ids")
+        assertTrue(state.sources.any { it.fileName == "$copyPageId.layout.md" }, "copy has its own SLM source")
+        assertFalse(
+            state.sources.any { it.fileName == annotationSidecarFileName("$copyPageId.layout.md") },
+            "review annotations are not silently duplicated",
+        )
+
+        state = reduceDesignEditor(state, DesignEditorIntent.DeleteScreen(originalPageId))
+        assertEquals(listOf(copyPageId), state.document?.pages?.map { it.id }, "nearest remaining screen stays selected")
+        assertEquals(copyPageId, state.selectedPageId)
+        assertFalse(state.sources.any { it.fileName == originalScreenFile }, "deleted screen source removed")
+        assertFalse(state.sources.any { it.fileName == originalSidecarFile }, "deleted screen sidecar removed")
+
+        state = reduceDesignEditor(state, DesignEditorIntent.DeleteScreen(copyPageId))
+        assertTrue(state.document?.pages?.isEmpty() == true, "the final screen can be deleted")
+        assertTrue(state.sources.isEmpty(), "empty project has no screen sources")
+        assertEquals("", state.selectedPageId)
+
+        state = reduceDesignEditor(state, DesignEditorIntent.Undo)
+        assertEquals(listOf(copyPageId), state.document?.pages?.map { it.id }, "undo restores the final screen")
+        assertTrue(state.sources.any { it.fileName == "$copyPageId.layout.md" })
+
+        state = reduceDesignEditor(state, DesignEditorIntent.Redo)
+        assertTrue(state.document?.pages?.isEmpty() == true, "redo deletes the final screen again")
+        assertTrue(state.sources.isEmpty())
+        assertEquals("", state.selectedPageId)
     }
 }

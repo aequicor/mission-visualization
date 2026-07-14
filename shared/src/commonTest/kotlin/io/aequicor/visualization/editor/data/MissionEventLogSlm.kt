@@ -38,11 +38,11 @@ val MissionEventLogSlm: String = missionSlm(
     Number padH light 56 dark 56
     Number padV light 88 dark 88
 
-    # Event Log id frame_eventlog name «Event Log» 1440 by 1024 position 72 72 column gap 32 padding §padV §padH color §color.surface stroke §color.stroke radius §radius clip align (inline stretch)
+    # Event Log id frame_eventlog name «Event Log» 1440 by 1024 position 72 72 column gap 32 padding §padV §padH color §color.surface stroke §color.stroke radius §radius clip align (inline stretch) auto-layout
 
     ## Rectangle: id eventlog_header name «Header» width fill height 120 color §color.placeholder radius §radius
 
-    ## Frame: id eventlog_list name «Rows» width fill height hug column stroke §color.line radius §radius clip align (inline stretch)
+    ## AutoLayout: id eventlog_list name «Rows» width fill height hug column stroke §color.line radius §radius clip align (inline stretch)
 
     ### Instance: id row_1 of cmp_log_row props (label «Telemetry sync completed» time «12:04») name «Row 1»
 
@@ -56,15 +56,15 @@ val MissionEventLogSlm: String = missionSlm(
 
     ### Instance: id row_6 of cmp_log_row props (label «Uplink window opened» time «09:52») name «Row 6»
 
-    ## Frame: id eventlog_footer name «Footer» width fill height hug row gap auto padding 16 20 color §color.surface radius §radius align (block center) modes (theme dark)
+    ## AutoLayout: id eventlog_footer name «Footer» width fill height hug row gap auto padding 16 20 color §color.surface radius §radius align (block center) modes (theme dark)
 
     ### Text: id footer_label characters «6 events captured in the last orbit» name «Summary» width hug height hug color §color.text size 14 weight 500 font «Inter» line-height 143% autosize both
 
     ### Text: id footer_time characters «updated 12:04» name «Updated» width hug height hug color §color.muted size 12 weight 400 font «Inter» line-height 133% autosize both
 
-    ## Component: Log Row id cmp_log_row component-name «Log Row» prop label (text default «Event») prop time (text default «00:00») width (fill 1328) height 56 row gap auto padding 0 20 color §color.surface align (block center)
+    ## Component: Log Row id cmp_log_row component-name «Log Row» prop label (text default «Event») prop time (text default «00:00») width (fill 1328) height 56 row gap auto padding 0 20 color §color.surface align (block center) auto-layout
 
-    ### Frame: id log_left name «Left» width hug height hug row gap 12 align (block center)
+    ### AutoLayout: id log_left name «Left» width hug height hug row gap 12 align (block center)
 
     #### Ellipse: id log_dot name «Status» 12 by 12 color #17C46B
 

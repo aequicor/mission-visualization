@@ -19,6 +19,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 import kotlin.math.hypot
 
@@ -78,9 +79,9 @@ internal fun DrawScope.drawSelectionFrame(
 }
 
 /**
- * Connection-point indicators for the given nodes (usually the hovered one):
- * `×` markers on declared (fixed) ports, `·` dots at the side midpoints as floating hints
- * when a side carries no port.
+ * Connection-point indicators for the given nodes (usually the selected or hovered one).
+ * Every available arrow-start point is a blue `×`; only the point directly under the
+ * pointer receives the green hover marker.
  */
 @Composable
 fun DiagramPortsOverlay(
@@ -88,21 +89,37 @@ fun DiagramPortsOverlay(
     nodeIds: Set<DiagramNodeId>,
     modifier: Modifier = Modifier,
     style: DiagramOverlayStyle = DiagramOverlayStyle(),
+    highlightedNodeId: DiagramNodeId? = null,
+    highlightedPortId: DiagramPortId? = null,
 ) {
     Canvas(modifier) {
         nodeIds.forEach { id ->
             val node = graph.nodeById(id) ?: return@forEach
-            drawPortIndicators(node, style)
+            drawPortIndicators(
+                node = node,
+                style = style,
+                highlightedPortId = highlightedPortId.takeIf { id == highlightedNodeId },
+            )
         }
     }
 }
 
-internal fun DrawScope.drawPortIndicators(node: DiagramNode, style: DiagramOverlayStyle) {
-    // Every connection point (declared ports + the standard side midpoints) drawn as a green ×
-    // — the draw.io "you can connect here" affordance shown while hovering a node.
+internal fun DrawScope.drawPortIndicators(
+    node: DiagramNode,
+    style: DiagramOverlayStyle,
+    highlightedPortId: DiagramPortId? = null,
+) {
+    // Draw the passive grid first so the active marker can sit on top without shifting geometry.
     node.connectionPorts().forEach { port ->
         val point = node.portPosition(port)
-        drawFixedPortMarker(Offset(point.x.toFloat(), point.y.toFloat()), style.fixedIndicator)
+        val center = Offset(point.x.toFloat(), point.y.toFloat())
+        if (port.id == highlightedPortId) {
+            drawCircle(style.fixedIndicator.copy(alpha = 0.20f), radius = 7f, center = center)
+            drawCircle(style.fixedIndicator, radius = 7f, center = center, style = Stroke(1.2f))
+            drawFixedPortMarker(center, style.fixedIndicator)
+        } else {
+            drawFixedPortMarker(center, style.floatingIndicator)
+        }
     }
 }
 

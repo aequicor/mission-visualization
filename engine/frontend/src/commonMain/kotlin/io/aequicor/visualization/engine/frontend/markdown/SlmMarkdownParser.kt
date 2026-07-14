@@ -2,12 +2,30 @@ package io.aequicor.visualization.engine.frontend.markdown
 
 import io.aequicor.visualization.engine.frontend.blocks.CnlContainerExtension
 import io.aequicor.visualization.engine.frontend.blocks.CnlContainerLine
+import io.aequicor.visualization.engine.frontend.blocks.LayoutPatch
+import io.aequicor.visualization.engine.frontend.blocks.NodePatch
 import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.blocks.aggregateErased
 import io.aequicor.visualization.engine.frontend.blocks.parseSentenceErased
 import io.aequicor.visualization.engine.frontend.cnl.CnlParser
+import io.aequicor.visualization.engine.frontend.cnl.CnlPropertyKind
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.LayoutMode
+
+/**
+ * Container spacing/flow properties whose presence on a semantic heading implies
+ * Auto Layout (`gap`/`padding`/`distribute`/`wrap`/`row`/`column`/`grid`). Mirrors the
+ * flow keywords that the container-kind validator rejects on a plain Frame.
+ */
+private val FLOW_SETTING_KINDS = setOf(
+    CnlPropertyKind.Direction,
+    CnlPropertyKind.Gap,
+    CnlPropertyKind.Padding,
+    CnlPropertyKind.Distribute,
+    CnlPropertyKind.Wrap,
+)
 
 /**
  * Hand-rolled block-level SLM markdown parser: frontmatter split, ATX headings 1–6,
@@ -295,7 +313,53 @@ class SlmMarkdownParser(
             span = SlmSourceSpan(line.number, line.number),
         )
         val typed = split?.let {
-            val entries = CnlParser.desugar(it.element, line.number, diagnostics)
+            val entries = CnlParser.desugar(it.element, line.number, diagnostics).toMutableList()
+            val hasFlowDirection = it.element.properties.any { property ->
+                property.kind == CnlPropertyKind.Direction
+            }
+            val hasFlowSettings = it.element.properties.any { property ->
+                property.kind in FLOW_SETTING_KINDS
+            }
+            val explicitContainerKind = it.name.substringBefore(':', missingDelimiterValue = "")
+                .trim()
+                .lowercase()
+            if (hasFlowSettings && explicitContainerKind !in setOf("frame", "autolayout")) {
+                // Before Frame and AutoLayout became distinct authoring kinds, semantic
+                // headings expressed flow directly (`## Card row gap 8`). Preserve that
+                // syntax as an inferred AutoLayout while keeping `Frame: ... row` invalid.
+                val nodeIndex = entries.indexOfFirst { entry -> entry.kind == TypedBlockKind.Node }
+                if (nodeIndex >= 0) {
+                    val entry = entries[nodeIndex]
+                    entries[nodeIndex] = entry.copy(
+                        patch = (entry.patch as NodePatch).copy(containerKind = ContainerKind.AutoLayout),
+                    )
+                } else {
+                    entries += DirectPatchEntry(
+                        key = TypedBlockKind.Node.key,
+                        patch = NodePatch(containerKind = ContainerKind.AutoLayout),
+                        span = SlmSourceSpan(line.number, line.number),
+                    )
+                }
+                // Auto Layout requires a flow direction; a semantic container that sets only
+                // spacing (`gap`/`padding`/`distribute`/`wrap`) without `row`/`column`/`grid`
+                // defaults to a vertical stack (Figma's default) so it stays valid.
+                if (!hasFlowDirection) {
+                    val layoutIndex = entries.indexOfFirst { entry -> entry.kind == TypedBlockKind.Layout }
+                    if (layoutIndex >= 0) {
+                        val entry = entries[layoutIndex]
+                        val patch = entry.patch as LayoutPatch
+                        if (patch.mode == null) {
+                            entries[layoutIndex] = entry.copy(patch = patch.copy(mode = LayoutMode.Vertical))
+                        }
+                    } else {
+                        entries += DirectPatchEntry(
+                            key = TypedBlockKind.Layout.key,
+                            patch = LayoutPatch(mode = LayoutMode.Vertical),
+                            span = SlmSourceSpan(line.number, line.number),
+                        )
+                    }
+                }
+            }
             entries.takeIf { list -> list.isNotEmpty() }
                 ?.let { list -> TypedAttributeBlock(list, SlmSourceSpan(line.number, line.number)) }
         }

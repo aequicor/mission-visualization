@@ -118,28 +118,27 @@ class Tier1WriteBackTest {
     }
 
     @Test
-    fun layoutModeWritesLayoutMode() {
+    fun layoutModeDoesNotImplicitlyConvertAFrame() {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutMode(nodeId, EditorLayoutMode.Horizontal))
-        assertEquals(LayoutMode.Horizontal, next.document?.nodeById(nodeId)?.layout?.mode)
-        assertTrue("row" in next.sourceOf(owningFile))
-        next.assertWroteBack(before)
+        assertEquals(LayoutMode.None, next.document?.nodeById(nodeId)?.layout?.mode)
+        assertEquals(before.sources, next.sources)
+        assertEquals(before.document, next.document)
     }
 
     @Test
-    fun layoutGapWritesLayoutGap() {
+    fun layoutGapDoesNotApplyToFrame() {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutGap(nodeId, 40.0))
-        assertTrue("gap 40" in next.sourceOf(owningFile))
-        next.assertWroteBack(before)
+        assertEquals(before.sources, next.sources)
+        assertEquals(before.document, next.document)
     }
 
     @Test
-    fun paddingAllWritesEveryLogicalSide() {
+    fun paddingDoesNotApplyToFrame() {
         val before = freshState()
         val next = reduceDesignEditor(before, DesignEditorIntent.SetLayoutPadding(nodeId, PaddingSide.All, 32.0))
-        val source = next.sourceOf(owningFile)
-        assertTrue("padding 32" in source, "uniform padding written")
-        next.assertWroteBack(before)
+        assertEquals(before.sources, next.sources)
+        assertEquals(before.document, next.document)
     }
 }

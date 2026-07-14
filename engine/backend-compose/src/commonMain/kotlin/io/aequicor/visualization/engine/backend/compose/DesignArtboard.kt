@@ -88,6 +88,8 @@ fun DesignArtboard(
     vectorEditNodeId: String = "",
     viewport: CanvasViewport? = null,
     showSelection: Boolean = true,
+    /** Nodes temporarily painted above the artboard tree (for cross-container drag previews). */
+    floatingNodeIds: Set<String> = emptySet(),
     /** When false the artboard installs no tap handler; the caller owns all gestures. */
     interactive: Boolean = true,
     overlayOptions: DesignOverlayOptions = DesignOverlayOptions(),
@@ -142,6 +144,12 @@ fun DesignArtboard(
     }
 
     val allSelected = if (selectedNodeId.isNotBlank()) selectedNodeIds + selectedNodeId else selectedNodeIds
+    val floatingEntries = remember(layoutBox, floatingNodeIds) {
+        layoutBox.floatingDrawEntries(floatingNodeIds)
+    }
+    val floatingRootIds = remember(floatingEntries) {
+        floatingEntries.mapTo(mutableSetOf()) { it.box.node.sourceId }
+    }
 
     val tapModifier = if (interactive) {
         modifier.pointerInput(layoutBox, viewport) {
@@ -181,7 +189,10 @@ fun DesignArtboard(
         val panY = viewport?.panY ?: fallbackPanY(layoutBox, zoom)
         translate(panX, panY) {
             scale(zoom, zoom, pivot = Offset.Zero) {
-                drawDesignBox(layoutBox, drawDesignContext)
+                drawDesignBox(layoutBox, drawDesignContext, floatingNodeIds = floatingRootIds)
+                floatingEntries.forEach { floating ->
+                    drawFloatingDesignBox(floating, drawDesignContext)
+                }
                 if (overlayOptions.anyEnabled) {
                     drawDesignOverlays(layoutBox, overlayOptions, drawDesignContext, hairline = 1f / zoom)
                 }

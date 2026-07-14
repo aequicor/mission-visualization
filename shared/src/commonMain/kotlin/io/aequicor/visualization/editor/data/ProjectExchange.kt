@@ -19,8 +19,15 @@ internal data class ProjectFileDto(
 
 private val ProjectExchangeJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
-internal fun encodeProjectSourcesJson(projectName: String, sources: List<MissionDocumentSource>): String =
-    ProjectExchangeJson.encodeToString(ProjectFilesEnvelopeDto(projectName, sources.map { ProjectFileDto(it.fileName, it.content) }))
+internal fun encodeProjectSourcesJson(
+    projectName: String,
+    sources: List<MissionDocumentSource>,
+): String = ProjectExchangeJson.encodeToString(
+    ProjectFilesEnvelopeDto(
+        projectName = projectName,
+        files = sources.map { ProjectFileDto(it.fileName, it.content) },
+    ),
+)
 
 /** Decoded live-folder snapshot: the folder name plus the per-file SLM sources it currently holds. */
 internal data class ProjectSnapshot(
@@ -35,6 +42,9 @@ internal data class ProjectSnapshot(
  */
 internal fun decodeProjectSnapshot(json: String): ProjectSnapshot? = runCatching {
     val dto = ProjectExchangeJson.decodeFromString(ProjectFilesEnvelopeDto.serializer(), json)
-    ProjectSnapshot(dto.projectName, dto.files.map { MissionDocumentSource(it.fileName, it.content) })
+    ProjectSnapshot(
+        projectName = dto.projectName,
+        sources = dto.files.map { MissionDocumentSource(it.fileName, it.content) },
+    )
 }.getOrNull()
 

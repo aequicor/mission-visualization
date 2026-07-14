@@ -61,13 +61,11 @@ class CnlWriteBackVetoTest {
         val bezier = DesignTransition(TransitionType.Push, easing = DesignEasing.CubicBezier(0.25, 0.1, 0.25, 1.0), durationMs = 300.0)
         val next = reduceDesignEditor(before, DesignEditorIntent.InteractionCommand(nodeId, InteractionOp.SetActionTransition(0, 0, bezier)))
 
-        // The working document reflects the edit (canvas authority)...
-        assertEquals(bezier, (next.node().interactions.single().actions.single() as DesignAction.Navigate).transition)
-        // ...but a cubic-bezier transition is inexpressible in CNL, so tier-3 re-emit would drop the
-        // whole interaction. The fidelity veto rejects that lossy rewrite: the source is byte-identical
-        // and STILL carries the original interaction — no silent data loss.
+        // A cubic-bezier transition is inexpressible in CNL. The atomic contract rejects the whole
+        // operation instead of leaving a document-only value that disappears after reopen.
+        assertEquals(before.document, next.document)
         assertEquals(before.sourceText(), next.sourceText(), "inexpressible edit → source untouched")
         assertTrue("onClick navigate (details)" in next.sourceText(), "original interaction preserved")
-        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error })
+        assertTrue(next.diagnostics.any { it.severity == DesignSeverity.Error && "does not support SLM write-back" in it.message })
     }
 }

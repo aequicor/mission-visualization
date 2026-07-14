@@ -3,6 +3,7 @@ package io.aequicor.visualization.engine.frontend.cnl
 import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.BaselineAlign
 import io.aequicor.visualization.engine.ir.model.Bindable
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.engine.ir.model.DesignInsets
 import io.aequicor.visualization.engine.ir.model.InstanceOverride
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
@@ -170,7 +171,7 @@ internal object CnlGrammar {
         }
         is DesignNodeKind.Text -> if (node.role == "button") "Button" else "Text"
         is DesignNodeKind.Media -> "Image"
-        DesignNodeKind.Frame -> "Frame"
+        DesignNodeKind.Frame -> if (node.containerKind == ContainerKind.AutoLayout) "AutoLayout" else "Frame"
         is DesignNodeKind.Instance -> "Instance"
         is DesignNodeKind.Diagram -> "Diagram"
         else -> null
@@ -216,6 +217,7 @@ internal object CnlGrammar {
         Descriptor(CnlPropertyKind.Rotation, "rotation", 24, ::renderRotation),
         Descriptor(CnlPropertyKind.Absolute, "absolute", 26, ::renderAbsolute),
         Descriptor(CnlPropertyKind.Anchor, "anchor", 27, ::renderAnchor),
+        Descriptor(CnlPropertyKind.AutoLayout, "auto-layout", 29, ::renderAutoLayoutMarker),
         Descriptor(CnlPropertyKind.Direction, "", 30, ::renderDirection),
         Descriptor(CnlPropertyKind.Wrap, "wrap", 31, ::renderWrap),
         Descriptor(CnlPropertyKind.Gap, "gap", 32, ::renderGap),
@@ -579,6 +581,16 @@ internal object CnlGrammar {
         LayoutMode.None -> null
     }
 
+    private fun renderAutoLayoutMarker(node: DesignNode): String? =
+        // Fixed-noun containers (screen/component/section/group) cannot encode container kind in
+        // their heading noun the way a plain `Frame`/`AutoLayout` heading does, so an Auto Layout
+        // one carries an explicit `auto-layout` marker that round-trips back to containerKind.
+        if (node.containerKind == ContainerKind.AutoLayout && node.type in setOf("screen", "component", "section", "group")) {
+            "auto-layout"
+        } else {
+            null
+        }
+
     private fun renderGap(node: DesignNode): String? {
         if (node.layout.rowGap != null || node.layout.columnGap != null) return null // → renderGapAxes
         return when (val gap = node.layout.gap) {
@@ -704,7 +716,12 @@ internal object CnlGrammar {
             val paint = strokes.paints[0] as DesignPaint.Solid
             val token = colorToken(paint.color) ?: return renderStrokeRecord(strokes)
             val parts = mutableListOf("stroke", token)
-            strokes.weight.literalOrNull()?.takeIf { it != 1.0 }?.let { parts += num(it) }
+            // Flat stroke alignment follows the optional numeric weight. Keep the default `1`
+            // when an alignment token follows, otherwise `stroke #hex center` is parsed as a bad
+            // numeric weight and silently falls back to Inside on round-trip.
+            strokes.weight.literalOrNull()
+                ?.takeIf { it != 1.0 || strokes.align != StrokeAlign.Inside }
+                ?.let { parts += num(it) }
             when (strokes.align) {
                 StrokeAlign.Inside -> {}
                 StrokeAlign.Outside -> parts += "outside"

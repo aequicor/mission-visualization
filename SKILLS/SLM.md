@@ -51,9 +51,9 @@ frame: { preset: desktop-1440, width: 1440, height: 1024 }
 
 # Sample Screen
 
-## App Shell id app_shell column width (fill) height (fill) padding 24 gap 16 clip overflow (y auto) color #FFFFFF
+## Frame: App Shell id app_shell 1392 by 976 position 24 24 clip overflow (y auto) color #FFFFFF
 
-Text id page_title «Sample Screen» key sample.title font «Inter» bold size 24 line-height 32 width (fill) height (hug) maxLines 1
+Text id page_title «Sample Screen» key sample.title font «Inter» bold size 24 line-height 32 width 400 height 32 position 24 24 maxLines 1
 ```
 
 The `App Shell` heading represents a container. Its following text sentence is a child.
@@ -71,13 +71,18 @@ the generated keys and makes strict document validation fail on missing messages
    theme, density, inputs, states, primary actions, and navigation.
 2. Build information architecture: root shell, navigation, main regions, repeated rows,
    dialogs, overlays, loading/empty/error states.
-3. Prefer auto layout (`column`, `row`, `grid`) with padding, gap, fill/hug/fixed sizing,
-   min/max bounds, and clipping. Use `absolute` only for intentionally freeform content.
-4. Name container headings before their properties: `## Results Panel column gap 12`,
-   not `## column gap 12`.
-5. Use primitives when a component library is not known. Never invent widget nouns such
+3. Use a free `Frame` by default. Give every direct child an explicit `position`, `width`,
+   and `height`, so the user can drag and reshape it freely after generation. Use
+   `AutoLayout` only when the user explicitly asks for auto layout, flow, stacks, rows,
+   columns, or a grid; do not introduce it merely to make centering easier.
+4. Before writing nodes, make a parent-local rectangle ledger for every `Frame`: record
+   each direct child's `(x, y, width, height)`, the intended gaps, and the alignment line.
+   Calculate repeated positions and centered positions numerically; do not estimate them.
+5. Name container headings before their properties: `## Frame: Results Panel 720 by 480`,
+   or, only when requested, `## AutoLayout: Results Panel column gap 12`.
+6. Use primitives when a component library is not known. Never invent widget nouns such
    as `dataGrid`, `codeViewer`, `chartWidget`, or `treeView`.
-6. Perform the autonomous source self-check at the end of this guide. Trace the heading
+7. Perform the autonomous source self-check at the end of this guide. Trace the heading
    tree, inventory ids and references, and inspect every phrase against the tables. Assume
    a malformed property or extension element may be dropped rather than repaired for you.
 
@@ -107,7 +112,8 @@ Known nouns are fixed:
 | `Line`, `Star`, `Polygon`, `Arrow` | corresponding shape |
 | `Text` / `label` | text node |
 | `Button` | text node with button role |
-| `Frame` / `container` | frame |
+| `Frame` / `container` | free-positioned frame |
+| `AutoLayout` | auto-layout frame; requires `row`, `column`, or `grid` |
 | `group` | group |
 | `section`, `screen` | semantic section/root node |
 | `Image` | media node |
@@ -139,18 +145,26 @@ Anchor values are literal; bound anchor insets do not round-trip.
 
 ## Layout and grid
 
+`Frame` and `AutoLayout` are persisted container kinds, independent from semantic node
+type. A `Frame` is always free: it cannot carry `row`, `column`, `grid`, gap, padding,
+distribution, wrap, or grid tracks. An `AutoLayout` always carries exactly one of `row`,
+`column`, or `grid`; `free` is invalid. For semantic containers keep their noun and add
+the modifier: `## Component: Card auto-layout row`, `## Section: Filters auto-layout column`,
+or `## Screen: Dashboard auto-layout grid`. `clip`, scroll, sizing, constraints, guides,
+layout-grid overlays, and visual properties remain available on either kind.
+
 | Meaning | CNL phrase | Example |
 | --- | --- | --- |
-| layout mode | `column`, `row`, `grid`, `free` | `column` |
+| Auto Layout direction | `column`, `row`, `grid` | `column` |
 | wrapping | `wrap` | `row wrap` |
 | gap | `gap N`, `gap auto`, `gap (row N column N)` | `gap (row 16 column 8)` |
 | distribution | `distribute center\|end\|space-between` | `distribute space-between` |
 | padding | `padding N`, `padding V H`, `padding T R B L` | `padding 12 24` |
-| child alignment | `align (block\|inline start\|center\|end\|baseline\|stretch)` | `align (inline stretch)` |
+| Auto Layout cross-axis child alignment | `align (block\|inline start\|center\|end\|baseline\|stretch)` | `align (inline stretch)` |
 | clipping | `clip` | `clip` |
 | overflow | `overflow (x hidden\|auto y hidden\|auto)` | `overflow (y auto)` |
 | scroll | `scroll (direction horizontal\|vertical\|both [fixedChildren (ids)] [sticky])` | `scroll (direction vertical)` |
-| align in parent | `align center\|bottom\|right` | `align center` |
+| resize-constraint shorthand | `align center\|bottom\|right` | `align center` |
 | constraints | `constraints (horizontal H vertical V)` | `constraints (horizontal left-right vertical top)` |
 | grid columns | `columns (count N track T)` or `columns (tracks (T ...))` | `columns (count 3 track 1fr)` |
 | implicit rows | `rows (auto track T [min N])` | `rows (auto track 80)` |
@@ -162,6 +176,66 @@ Anchor values are literal; bound anchor insets do not round-trip.
 A track is a fixed number, `Nfr`, or `hug`. Bindings are allowed. A bound flex weight
 must use `${id}fr`, `${prop.name}fr`, or `{{expr}}fr`; a bare `$id` is always a fixed
 track even if the id ends in `fr`.
+
+## Frame-first geometry and alignment
+
+For generated application screens, a `Frame` is the editable layout surface. Its children
+do not flow, distribute, or center themselves. Every child rectangle is parent-local:
+`position 0 0` means the top-left of its immediate parent, not the artboard. Establish the
+parent size before calculating children, and keep a small geometry ledger while authoring.
+
+For a parent `W by H` and child `w by h`, exact geometric centering is:
+
+```text
+x = (W - w) / 2
+y = (H - h) / 2
+```
+
+Write the calculated `position x y`. The shorthand `align center` and the full
+`constraints (...)` phrase are responsive resize constraints: they preserve an already
+authored relationship when the parent later changes size. They do **not** calculate the
+initial position and do **not** move a node to the center. A centered free-layout child
+therefore needs both the calculated position and, when resize behavior matters, a center
+constraint:
+
+```md
+## Frame: Hero id hero 960 by 360 position 48 120
+
+### Frame: Summary Card id summary_card 480 by 200 position 240 80 align center
+```
+
+Text alignment is a separate operation. `text-align` and `text-valign` align glyphs inside
+the text node's own rectangle; they never position the text node inside its parent. A
+horizontal `text-align center` is visually meaningful only when the text box has spare
+width, and `text-valign center` only when it has spare height. A `hug` box normally has no
+such space. Give centered copy an intentional fixed/fill box, then center inside that box:
+
+```md
+Text id hero_title «Mission Control» key hero.title 864 by 64 position 48 44 font «Inter» size 32 bold line-height 40 text-align center text-valign center maxLines 2
+```
+
+For a button built from editable primitives, the label box should match the button frame.
+This avoids font-metric guesses and keeps both axes centered:
+
+```md
+## Frame: Primary Button id primary_button 160 by 48 position 400 280 color #2563EB radius 12
+
+Text id primary_button_label «Continue» key actions.continue 160 by 48 position 0 0 font «Inter» size 14 semibold color #FFFFFF text-align center text-valign center maxLines 1
+```
+
+For centered copy across a region, make the text box span the intended region rather than
+centering a hug-width box. In a `1440`-wide parent with `72` margins, use `position 72 y`,
+`width 1296`, and `text-align center`. Add
+`constraints (horizontal left-right vertical top)` if the box should keep both margins on
+resize. For repeated rows or columns, derive every coordinate from one origin, one item
+size, and one gap (`nextX = x + width + gap`, `nextY = y + height + gap`) instead of
+eyeballing each child.
+
+Do not simulate alignment with spaces, Unicode padding, guessed glyph widths, or slightly
+different coordinates for visually similar siblings. Compile success proves syntax, not
+composition. When `check_layout` and `render_layout` are available, check until valid,
+render the full screen, inspect the PNG at 100%, and iterate on overflow, collisions,
+unequal margins, baselines, and optical centering before finishing.
 
 ## Paint, stroke, effects, and shared styles
 
@@ -213,7 +287,7 @@ Define a reusable component with a `Component:` heading; its nested subtree is t
 definition. Give the definition an explicit id and component name.
 
 ```md
-## Component: Mission Card id component_mission_card component-name ds/MissionCard axis status (nominal warning critical) prop title (text default «Mission name») prop showBadge (boolean default true) column gap 12
+## Component: Mission Card id component_mission_card component-name ds/MissionCard axis status (nominal warning critical) prop title (text default «Mission name») prop showBadge (boolean default true) auto-layout column gap 12
 ```
 
 Instance phrases:
@@ -344,11 +418,20 @@ Before finishing, inspect the source text yourself and verify all of these:
 - no outer fence, body typed YAML block, or `ir` fence exists;
 - every UI line starts with a known noun and stays on one physical line;
 - every heading has a name before properties and nesting never exceeds level 6;
+- every generated container is a free `Frame` unless the user explicitly requested Auto
+  Layout; every direct child of a `Frame` has explicit `position`, `width`, and `height`;
+- every `Frame` child rectangle is calculated in parent-local coordinates; repeated gaps
+  are equal, unintended overlaps are absent, and centered rectangles have equal opposite
+  margins;
+- every `AutoLayout` has `row`, `column`, or `grid`, and every semantic auto-layout
+  container has the explicit `auto-layout` modifier;
 - ids are unique; every component, node, action, span link, mask, and diagram reference resolves;
 - every runtime/Prototype Variable read uses `{{name}}`; `$name` is reserved for a
   Collection/design-token reference;
 - text literals close; every visible bounded text has an intentional sizing and
   `maxLines` or `truncate` policy;
+- every non-default `text-align`/`text-valign` has a box with spare space on that axis;
+  every `align center|bottom|right` constraint also has an explicit initial `position`;
 - fill/hug/fixed sizing, layout, clipping, and overflow do not conflict;
 - tokens, styles, assets, and component libraries exist;
 - every phrase can be explained by one row or production in this guide; no unknown token

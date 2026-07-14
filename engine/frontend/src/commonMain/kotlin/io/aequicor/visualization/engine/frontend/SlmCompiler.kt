@@ -15,6 +15,11 @@ import io.aequicor.visualization.engine.frontend.semantics.detectSourceLocale
 import io.aequicor.visualization.engine.frontend.semantics.extractSemantics
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
+import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 
 /**
  * Compiles Semantic Layout Markdown into the design IR.
@@ -79,6 +84,7 @@ fun compileSlm(source: String, options: SlmCompileOptions = SlmCompileOptions())
             resources = i18n.resources.entries.associate { (locale, bundle) -> locale.tag to bundle },
         ),
     )
+    validateContainerKinds(document, source, diagnostics)
 
     return SlmCompileResult(
         document = document,
@@ -87,6 +93,48 @@ fun compileSlm(source: String, options: SlmCompileOptions = SlmCompileOptions())
         sourceFingerprint = fingerprint,
         editIndex = normalized.editIndex,
     )
+}
+
+private fun validateContainerKinds(
+    document: DesignDocument,
+    source: String,
+    diagnostics: DiagnosticCollector,
+) {
+    val sourceLines = source.lines()
+    val flowKeyword = Regex("""\b(row|column|grid|gap|padding|distribute|wrap|columns|rows)\b""")
+    val visited = mutableSetOf<String>()
+    fun visit(node: DesignNode) {
+        if (!visited.add(node.id)) return
+        if (node.kind is DesignNodeKind.Frame) {
+            val lineNumber = node.sourceMap?.line ?: 0
+            val authoredLine = sourceLines.getOrNull(lineNumber - 1).orEmpty()
+            val flowSettings = node.layout.copy(mode = LayoutMode.None, clipsContent = false)
+            when (node.containerKind) {
+                ContainerKind.Frame -> if (
+                    (node.layout.mode != LayoutMode.None || flowSettings != DesignAutoLayout()) &&
+                    flowKeyword.containsMatchIn(authoredLine)
+                ) {
+                    diagnostics.error(
+                        "Frame '${node.name}' cannot use row, column, grid, gap, padding, distribution, wrap, " +
+                            "or grid tracks; use AutoLayout (or 'auto-layout' on a semantic container)",
+                        lineNumber,
+                    )
+                }
+                ContainerKind.AutoLayout -> if (
+                    node.layout.mode == LayoutMode.None &&
+                    ("AutoLayout:" in authoredLine || "auto-layout" in authoredLine)
+                ) {
+                    diagnostics.error(
+                        "AutoLayout '${node.name}' requires row, column, or grid and cannot use free",
+                        lineNumber,
+                    )
+                }
+            }
+        }
+        node.children.forEach(::visit)
+    }
+    document.pages.forEach { page -> page.children.forEach(::visit) }
+    document.components.values.forEach { component -> visit(component.root) }
 }
 
 data class SlmCompileOptions(

@@ -56,8 +56,10 @@ sealed interface DiagramNodeHitPart {
 
 /**
  * What the pointer hit. Ordered by pick priority: handles (resize / waypoint / endpoint /
- * label) win over ports, ports over edges, edges over nodes; nodes resolve top-of-z-order
- * first.
+ * label) win over declared ports, declared ports over edges, edges over node bodies, node
+ * bodies over the virtual connection grid; nodes resolve top-of-z-order first. The virtual
+ * grid is offered only in empty space (no body under the pointer), so it never shadows a
+ * foreground body nor swallows a plain click on a node.
  */
 sealed interface DiagramHit {
 
@@ -108,10 +110,13 @@ sealed interface DiagramHit {
  * Picks the topmost interactive element at [point].
  *
  * Priority: resize handles (selected nodes) > waypoint handles (selected edges) >
- * endpoint handles (selected edges) > label handles (ANY edge with a label) > ports >
- * edges > nodes. Within each class, elements are
+ * endpoint handles (selected edges) > label handles (ANY edge with a label) > declared ports
+ * > edges > node bodies > virtual connection grid. Within each class, elements are
  * scanned top-of-z-order first (explicit layers top→bottom, then the implicit default
- * layer; within a layer, later list entries are on top). Locked or invisible nodes and
+ * layer; within a layer, later list entries are on top). The virtual draw.io connection grid
+ * (auto mid-sides / quarter-points / corners on every node) is offered only when no node body
+ * is under the pointer — a click on a node body selects/moves that node, and a lower node's
+ * virtual point never wins over a foreground body. Locked or invisible nodes and
  * nodes/edges on locked or invisible layers are transparent to hits. Rotation is ignored
  * (hit boxes are the axis-aligned bounds).
  *
@@ -186,6 +191,12 @@ fun hitTest(
         }
     }
 
+    // DECLARED ports only: these are intentional, author-placed connection handles (draw.io's
+    // fixed green crosses), so they outrank edges and node bodies — top-of-z-order first. The
+    // virtual auto-grid (connectionPorts()) is deliberately NOT tested here: unlike a declared
+    // port it exists on every node and would let a lower node's perimeter point shadow a
+    // foreground body or swallow a plain node click. It is resolved far lower, after node bodies,
+    // and only in empty space (see the two node passes below).
     for (node in nodesTopDown) {
         node.ports.forEach { port ->
             if (distance(point, node.portPosition(port)) <= tolerance) {
@@ -210,9 +221,27 @@ fun hitTest(
         }
     }
 
+    // Node body: the top-most node whose bounds contain the point wins. Resolving bodies BEFORE
+    // any virtual connection point is what makes a plain click select/move the node under the
+    // cursor, and it guarantees a virtual port belonging to an occluded (lower) node can never be
+    // returned in front of the body that covers it.
     for (node in nodesTopDown) {
         if (node.bounds.contains(point)) {
             return DiagramHit.Node(node.id, nodeHitPart(node, point))
+        }
+    }
+
+    // With no node body under the pointer, offer the draw.io virtual connection grid so an edge
+    // can be started from a node's perimeter: the top-most node with a connection point within
+    // tolerance (the pointer is in the perimeter band just outside that node). Reached only in
+    // empty space, so it never shadows a body or a node's own selection. Declared ports were
+    // already resolved above; the grid is a pure hit-test convenience, materialized on the node
+    // only when a drag actually pins an edge to it.
+    for (node in nodesTopDown) {
+        node.connectionPorts().forEach { port ->
+            if (distance(point, node.portPosition(port)) <= tolerance) {
+                return DiagramHit.Port(node.id, port.id)
+            }
         }
     }
 

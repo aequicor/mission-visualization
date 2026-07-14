@@ -92,4 +92,22 @@ class MoveStickyTest {
         assertEquals(0.0, out.state.latchX)
         assertEquals(0.0, out.state.latchY)
     }
+
+    @Test
+    fun equalWidthAlignmentKeepsLeftAndRightGuidesVisible() {
+        val target = SnapBox(x = 100.0, y = 500.0, width = 40.0, height = 40.0)
+        val out = solveMoveSnap(
+            moved = SnapBox(x = 103.0, y = 0.0, width = 40.0, height = 40.0),
+            containers = emptyList(),
+            siblings = listOf(target),
+            catch = catch,
+            release = release,
+            allowX = true,
+            allowY = true,
+            prior = MoveSnapState.None,
+        )
+
+        assertClose(-3.0, out.dx)
+        assertEquals(setOf(100.0, 120.0, 140.0), out.guides.map { it.line.x1 }.toSet())
+    }
 }

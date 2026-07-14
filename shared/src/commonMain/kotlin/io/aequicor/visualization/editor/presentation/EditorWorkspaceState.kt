@@ -26,6 +26,8 @@ data class EditorWorkspaceState(
     val tool: EditorTool = EditorTool.Select,
     /** The most recently used shape tool, shown in the toolbar's shape-flyout slot. */
     val lastShapeTool: EditorTool = EditorTool.Rectangle,
+    /** The most recently used Frame/Auto Layout preset shown in the container flyout. */
+    val lastContainerTool: EditorTool = EditorTool.Frame,
     val deviceMode: DeviceMode = DeviceMode.Pc,
     val sourceTab: SourceTab = SourceTab.Layers,
     val inspectorTab: InspectorTab = InspectorTab.Design,
@@ -179,6 +181,9 @@ enum class PendingFit { None, Screen, Selection }
 enum class EditorTool(val label: String, val creates: NewObjectKind?) {
     Select("Move", null),
     Frame("Frame", NewObjectKind.Frame),
+    AutoLayoutVertical("Auto Layout Vertical", NewObjectKind.AutoLayoutVertical),
+    AutoLayoutHorizontal("Auto Layout Horizontal", NewObjectKind.AutoLayoutHorizontal),
+    AutoLayoutGrid("Auto Layout Grid", NewObjectKind.AutoLayoutGrid),
     Rectangle("Rectangle", NewObjectKind.Rectangle),
     Ellipse("Ellipse", NewObjectKind.Ellipse),
     Polygon("Polygon", NewObjectKind.Polygon),
@@ -196,6 +201,10 @@ enum class EditorTool(val label: String, val creates: NewObjectKind?) {
     val isShapeTool: Boolean
         get() = this == Rectangle || this == Ellipse || this == Polygon ||
             this == Star || this == Line || this == Arrow
+
+    val isContainerTool: Boolean
+        get() = this == Frame || this == AutoLayoutVertical ||
+            this == AutoLayoutHorizontal || this == AutoLayoutGrid
 }
 
 /**

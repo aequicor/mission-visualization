@@ -1,8 +1,12 @@
 package io.aequicor.visualization.engine.ir.validate
 
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+import io.aequicor.visualization.engine.ir.model.DesignAutoLayout
+import io.aequicor.visualization.engine.ir.model.DesignConstraints
 import io.aequicor.visualization.engine.ir.model.DesignGap
 import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignScroll
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.LayoutMode
@@ -28,18 +32,50 @@ import io.aequicor.visualization.engine.ir.model.literalOrNull
  *   authored-default `overflow: visible` is indistinguishable from an omitted field,
  *   so the noisy inverse combination is not flagged).
  * - IR-LAYOUT-008 (error): `scroll.fixedChildren` id that is not a direct child.
+ * - IR-LAYOUT-009/010 (error): containerKind and flow properties disagree.
+ * - IR-LAYOUT-011 (warning): a non-default resize constraint has no authored
+ *   position/anchors to preserve, so it cannot place the node. In-flow Auto Layout
+ *   children that do carry a position/anchors are left alone (Figma keeps the
+ *   constraint for when the child is later detached).
  */
 internal object LayoutChecks {
 
     fun check(ctx: ValidationContext): List<DesignDiagnostic> = buildList {
         ctx.entries.forEach { entry ->
             val node = entry.node
+            checkContainerKind(this, ctx, node)
             checkNegativeScalars(this, ctx, node)
             checkWrap(this, ctx, node)
             checkGridPlacement(this, ctx, node)
             checkSizingConflicts(this, ctx, node)
+            checkConstraintPlacement(this, ctx, entry)
             checkAbsoluteChildren(this, ctx, node)
             checkScroll(this, ctx, node)
+        }
+    }
+
+    private fun checkContainerKind(
+        sink: MutableList<DesignDiagnostic>,
+        ctx: ValidationContext,
+        node: DesignNode,
+    ) {
+        if (node.kind !is DesignNodeKind.Frame) return
+        val flowSettings = node.layout.copy(mode = LayoutMode.None, clipsContent = false)
+        when (node.containerKind) {
+            ContainerKind.Frame -> if (node.layout.mode != LayoutMode.None || flowSettings != DesignAutoLayout()) {
+                sink += validationError(
+                    "IR-LAYOUT-009",
+                    "Frame '${node.id}' cannot use Auto Layout properties; use containerKind autoLayout",
+                    ctx.location(node),
+                )
+            }
+            ContainerKind.AutoLayout -> if (node.layout.mode == LayoutMode.None) {
+                sink += validationError(
+                    "IR-LAYOUT-010",
+                    "AutoLayout '${node.id}' requires row, column, or grid",
+                    ctx.location(node),
+                )
+            }
         }
     }
 
@@ -151,6 +187,28 @@ internal object LayoutChecks {
             sink += validationWarning(
                 "IR-LAYOUT-005",
                 "Hug-height '${node.id}' only has fill-height children; sizes are circular",
+                ctx.location(node),
+            )
+        }
+    }
+
+    /** Constraints preserve authored geometry during resize; they never create that geometry. */
+    private fun checkConstraintPlacement(
+        sink: MutableList<DesignDiagnostic>,
+        ctx: ValidationContext,
+        entry: NodeEntry,
+    ) {
+        val node = entry.node
+        if (node.constraints == DesignConstraints()) return
+        // In-flow Auto Layout children legitimately carry resize constraints in Figma: the
+        // constraint takes effect only if the child is later detached/absolutized. Flagging
+        // every such child was noise, so we only warn when the constraint truly cannot place
+        // the node — i.e. there is no authored position or anchors to preserve.
+        if (node.position == null && node.anchors == null) {
+            sink += validationWarning(
+                "IR-LAYOUT-011",
+                "Resize constraints on '${node.id}' preserve an authored position but do not " +
+                    "create one; add position/anchors before using align center|bottom|right",
                 ctx.location(node),
             )
         }

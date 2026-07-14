@@ -36,7 +36,7 @@ class AdversarialRoundTripTest {
         <!-- authored comment: do not touch -->
         Some authored prose between sections.
 
-        ## Frame: Panel id panel column
+        ## AutoLayout: Panel id panel column
 
         ## Frame: Sidebar id sidebar
     """.trimIndent() + "\n"
@@ -207,7 +207,7 @@ class AdversarialRoundTripTest {
 
         # Screen id root name «Screen»
 
-        ## Frame: Panel id panel column
+        ## AutoLayout: Panel id panel column
 
         ### Shape: A id child_a
 

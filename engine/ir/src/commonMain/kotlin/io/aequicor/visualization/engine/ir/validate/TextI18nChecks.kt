@@ -5,8 +5,11 @@ import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSizing
+import io.aequicor.visualization.engine.ir.model.DesignStyle
 import io.aequicor.visualization.engine.ir.model.PropValue
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.TextAlignHorizontal
+import io.aequicor.visualization.engine.ir.model.TextAlignVertical
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextContent
 import io.aequicor.visualization.engine.ir.model.literalOrNull
@@ -15,12 +18,14 @@ import io.aequicor.visualization.engine.ir.resolve.IcuLiteFormatter
 /**
  * IR-I18N — text content, resources, ICU, typography, truncation.
  *
- * - IR-I18N-001 (error): a used `TextContent.key` missing from a target locale bundle.
+ * - IR-I18N-001 (warning): a used `TextContent.key` missing from a target locale bundle
+ *   (an expected soft-fallback state — the resolver falls back to defaultText).
  * - IR-I18N-002 (warning): the same content key authored with different defaultText
  *   (the duplicate-key hazard that survives JSON parsing — a literal duplicate inside
  *   one bundle is collapsed by the JSON object semantics before validation can see it).
  * - IR-I18N-003 (warning, info-level): orphan resource key no text content references.
- * - IR-I18N-004 (error): resource message with invalid ICU syntax.
+ * - IR-I18N-004 (warning): resource message with invalid ICU syntax (renders literally,
+ *   so this is advice rather than a hard failure).
  * - IR-I18N-005 (warning): plural argument missing the locale's required categories
  *   (en: one/other; ru: one/few/many/other; others fall back to the English set,
  *   mirroring IcuLiteFormatter's plural rules).
@@ -32,6 +37,8 @@ import io.aequicor.visualization.engine.ir.resolve.IcuLiteFormatter
  *   error; fontWeight outside 1..1000 a warning).
  * - IR-I18N-010 (warning): negative decorationThickness on the node style or any
  *   inline style range.
+ * - IR-I18N-011 (warning): non-default glyph alignment has no bounded text-box space
+ *   on that axis, so the requested alignment is visually inert.
  */
 internal object TextI18nChecks {
 
@@ -46,6 +53,7 @@ internal object TextI18nChecks {
                 checkRanges(this, ctx, entry.node, text)
                 checkTruncation(this, ctx, entry.node, text)
                 checkTypography(this, ctx, entry.node, text)
+                checkAlignmentBox(this, ctx, entry.node, text)
             }
         }
     }
@@ -78,7 +86,7 @@ internal object TextI18nChecks {
             val bundle = ctx.mergedResources[locale].orEmpty()
             contents.forEach { (content, node) ->
                 if (content.key.isNotEmpty() && content.key !in bundle) {
-                    sink += validationError(
+                    sink += validationWarning(
                         "IR-I18N-001",
                         "i18n key '${content.key}' (used by '${node.id}') is missing from locale '$locale'",
                         ctx.location(node),
@@ -130,7 +138,7 @@ internal object TextI18nChecks {
             bundle.forEach { (key, message) ->
                 val inspection = IcuLiteFormatter.inspect(message)
                 if (inspection.syntaxError != null) {
-                    sink += validationError(
+                    sink += validationWarning(
                         "IR-I18N-004",
                         "Malformed ICU message '$key' in locale '$locale': ${inspection.syntaxError}",
                     )
@@ -261,6 +269,40 @@ internal object TextI18nChecks {
                     )
                 }
             }
+        }
+    }
+
+    private fun checkAlignmentBox(
+        sink: MutableList<DesignDiagnostic>,
+        ctx: ValidationContext,
+        node: DesignNode,
+        text: DesignNodeKind.Text,
+    ) {
+        val inherited = (ctx.document.styles[text.textStyleId] as? DesignStyle.Text)?.value
+        val style = inherited?.mergedWith(text.textStyle) ?: text.textStyle ?: return
+        val sizing = node.sizing ?: DesignSizing()
+        val hasHorizontalBox = sizing.horizontal == SizingMode.Fill ||
+            (text.autoResize != TextAutoResize.WidthAndHeight && node.size.width != null)
+        val hasVerticalBox = sizing.vertical == SizingMode.Fill ||
+            (text.autoResize == TextAutoResize.None && node.size.height != null)
+
+        val horizontal = style.textAlignHorizontal
+        if (horizontal != null && horizontal != TextAlignHorizontal.Left && !hasHorizontalBox) {
+            sink += validationWarning(
+                "IR-I18N-011",
+                "Text '${node.id}' uses horizontal ${horizontal.name.lowercase()} alignment " +
+                    "without a fixed/fill-width box; alignment inside a content-width box is invisible",
+                ctx.location(node),
+            )
+        }
+        val vertical = style.textAlignVertical
+        if (vertical != null && vertical != TextAlignVertical.Top && !hasVerticalBox) {
+            sink += validationWarning(
+                "IR-I18N-011",
+                "Text '${node.id}' uses vertical ${vertical.name.lowercase()} alignment " +
+                    "without a fixed/fill-height box; alignment inside a content-height box is invisible",
+                ctx.location(node),
+            )
         }
     }
 }

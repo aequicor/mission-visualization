@@ -11,7 +11,15 @@ class SlmEditIndex internal constructor(
     internal val anchorOwners: Map<String, SlmSourceSpan>,
     /** Nodes authored as a CNL element sentence; their edits route through [CnlWriter]. */
     internal val cnlOwners: Map<String, SlmSourceSpan> = emptyMap(),
+    /** Anchor owners that were authored as Markdown heading sections. */
+    internal val headingOwners: Set<String> = emptySet(),
 ) {
+    /** Whether [nodeId] is authored as a parent-owned CNL sentence rather than a heading section. */
+    fun isCnlSentence(nodeId: String): Boolean = nodeId in cnlOwners && nodeId !in headingOwners
+
+    /** Whether [nodeId] owns a structural Markdown heading. */
+    fun isHeading(nodeId: String): Boolean = nodeId in headingOwners
+
     companion object {
         val Empty: SlmEditIndex = SlmEditIndex(emptyMap())
     }

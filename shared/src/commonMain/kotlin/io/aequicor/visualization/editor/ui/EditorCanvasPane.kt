@@ -82,6 +82,7 @@ import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isAltPressed as isPointerAltPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -166,6 +167,7 @@ import io.aequicor.visualization.editor.presentation.EffectiveTransform
 import io.aequicor.visualization.editor.presentation.LineSegment
 import io.aequicor.visualization.editor.presentation.computeResize
 import io.aequicor.visualization.editor.presentation.canvasScrollbarsFor
+import io.aequicor.visualization.editor.presentation.includeFullyCoveredContainers
 import io.aequicor.visualization.editor.presentation.cornerRadiusFromPointer
 import io.aequicor.visualization.editor.presentation.cornerRadiusHandlePoints
 import io.aequicor.visualization.editor.presentation.toMovingEdges
@@ -213,6 +215,8 @@ import io.aequicor.visualization.editor.platform.ProjectResourceStore
 import io.aequicor.visualization.editor.platform.createProjectResourceStore
 import io.aequicor.visualization.editor.platform.IngestionError
 import io.aequicor.visualization.editor.platform.installResourceIngestion
+import io.aequicor.visualization.editor.platform.platformCanvasWheelPanPixels
+import io.aequicor.visualization.editor.platform.platformCanvasWheelZoomUnits
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -269,7 +273,7 @@ import kotlinx.coroutines.channels.Channel
 
 /**
  * Center canvas: viewport (zoom/pan/fit), the rendered artboard, and all direct
- * manipulation — hover, click / shift-click / marquee selection, drag-move, handle
+ * manipulation — hover, click / Ctrl/Cmd/Shift-click / marquee selection, drag-move, handle
  * resize, canvas rotation and tool-driven object creation — plus keyboard
  * nudge/duplicate/delete/undo. Every gesture maps into a [DesignEditorIntent]; the
  * workspace owns zoom/pan. The artboard renders content only ([DesignArtboard] is called
@@ -300,11 +304,12 @@ fun EditorCanvasPane(state: MissionEditorStateHolder, modifier: Modifier = Modif
             DeviceControl(ws.deviceMode) { mode -> state.updateWorkspace { it.copy(deviceMode = mode) } }
             SceneModeToggle(ws.mode) { mode -> state.updateWorkspace { it.copy(mode = mode) } }
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                FloatingToolbar(state, ws.tool, ws.lastShapeTool) { tool ->
+                FloatingToolbar(state, ws.tool, ws.lastShapeTool, ws.lastContainerTool) { tool ->
                     state.updateWorkspace {
                         it.copy(
                             tool = tool,
                             lastShapeTool = if (tool.isShapeTool) tool else it.lastShapeTool,
+                            lastContainerTool = if (tool.isContainerTool) tool else it.lastContainerTool,
                             // Picking a canvas tool leaves annotation mode (one axis active at a time).
                             annotationTool = AnnotationTool.None,
                         )
@@ -333,11 +338,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
     // system fonts on wasm); shared with the inline text-edit overlay for aligned metrics.
     val fontProvider = rememberBundledFontProvider()
 
-    // Project resource store (IndexedDB on web) shared by the render provider and drag/paste
-    // ingestion, so dropped bytes are visible to the image provider under the same path.
+    // Project resource store (IndexedDB on web, active res/ folder on desktop) shared by the render
+    // provider and drag/paste ingestion, so dropped bytes are visible under the same path.
     val resourceStore = remember { createProjectResourceStore() }
     val ingestScope = rememberCoroutineScope()
-    // Drag-over affordance + transient ingestion-error state, driven by the DOM listeners.
+    // Drag-over affordance + transient ingestion-error state, driven by platform listeners.
     val dragActive = remember { mutableStateOf(false) }
     val ingestError = remember { mutableStateOf<IngestionError?>(null) }
     LaunchedEffect(ingestError.value) {
@@ -501,7 +506,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                 minThumbLengthPx = CanvasScrollbarMinThumbDp * density,
             )
         } ?: CanvasScrollbarsMetrics()
-        val multiSelectionBox = if (design.selectedNodeIds.size > 1) selectionHandleBounds(layout, design.selectedNodeIds) else null
+        val multiSelectionBox = if (design.selectedNodeIds.size > 1) {
+            selectionHandleBounds(layout, design.selectedNodeIds)
+        } else {
+            null
+        }
 
         // Primary (single) selection geometry — the only case that gets rotated handles,
         // a rotate affordance and center lines; multi-selection keeps its plain bbox. Every
@@ -529,6 +538,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var badge by remember { mutableStateOf<String?>(null) }
         var dragMoveActive by remember { mutableStateOf(false) }
         var hoverCursor by remember { mutableStateOf<PointerIcon?>(null) }
+        var groupContextMenuPosition by remember { mutableStateOf<Offset?>(null) }
+        var pendingGroupIntent by remember { mutableStateOf<DesignEditorIntent.GroupNodes?>(null) }
+        LaunchedEffect(pageId, design.selectedNodeIds) {
+            groupContextMenuPosition = null
+            pendingGroupIntent = null
+        }
         // Live insertion-line preview while dragging an Auto layout child (design-book §18
         // "Auto layout children should reorder ... during drag"); null outside such a drag.
         var reorderPreview by remember { mutableStateOf<ReorderPreview?>(null) }
@@ -549,10 +564,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var radiusIndicator by remember { mutableStateOf<RadiusIndicator?>(null) }
 
         // Keyboard focus + modifier tracking (Shift for additive select / big nudge, Space
-        // for pan, Alt for the read-only measurement overlay).
+        // for pan, Alt for the read-only measurement overlay). Ctrl/Cmd is also tracked here:
+        // some pointer backends report it only after the initial mouse-down event.
         val focusRequester = remember { FocusRequester() }
         var shiftHeld by remember { mutableStateOf(false) }
         var altHeld by remember { mutableStateOf(false) }
+        var ctrlOrMetaHeld by remember { mutableStateOf(false) }
         var spaceHeld by remember { mutableStateOf(false) }
         val latestSpaceHeld by rememberUpdatedState(spaceHeld)
         val windowFocused = LocalWindowInfo.current.isWindowFocused
@@ -561,6 +578,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         fun resetHeldModifiers() {
             shiftHeld = false
             altHeld = false
+            ctrlOrMetaHeld = false
             spaceHeld = false
         }
         LaunchedEffect(pageId) { runCatching { focusRequester.requestFocus() } }
@@ -596,12 +614,41 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     .onPreviewKeyEvent { event ->
                         shiftHeld = event.isShiftPressed
                         altHeld = event.isAltPressed
+                        ctrlOrMetaHeld = event.isCtrlPressed || event.isMetaPressed
                         if (event.key == Key.Spacebar && state.designState.editingTextNodeId.isBlank()) {
                             spaceHeld = event.type == KeyEventType.KeyDown
                             return@onPreviewKeyEvent true
                         }
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         handleCanvasKey(state, event.key, event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
+                    }
+                    // Desktop context menu. Secondary presses are deliberately handled separately
+                    // from the primary drag state machine, so opening the menu cannot begin a move.
+                    .pointerInput(pageId, ws.tool) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+                                val change = event.changes.firstOrNull() ?: continue
+                                val liveDesign = state.designState
+                                val liveLayout = state.artboardLayout
+                                val intent = buildGroupNodesIntent(liveDesign.document, liveLayout, liveDesign.selectedNodeIds)
+                                val union = selectionHandleBounds(liveLayout, liveDesign.selectedNodeIds)
+                                val insideSelection = groupFrameContains(
+                                    union,
+                                    viewport.toDocX(change.position.x),
+                                    viewport.toDocY(change.position.y),
+                                )
+                                if (insideSelection && intent != null) {
+                                    pendingGroupIntent = intent
+                                    groupContextMenuPosition = change.position
+                                    change.consume()
+                                } else {
+                                    pendingGroupIntent = null
+                                    groupContextMenuPosition = null
+                                }
+                            }
+                        }
                     }
                     // Hover + scroll (pan / ctrl-zoom) + per-position resize cursor. `viewport`
                     // is deliberately not a key here — see the rememberUpdatedState comment
@@ -622,7 +669,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             state.updateWorkspace { it.copy(pendingZoomTo = null) }
                                         }
                                         if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
-                                            val factor = zoomFactorForScroll(-change.scrollDelta.y)
+                                            val factor = zoomFactorForScroll(
+                                                platformCanvasWheelZoomUnits(-change.scrollDelta.y),
+                                            )
                                             if (factor != 1f) {
                                                 // Anchor to the live *visible* zoom, not the pending
                                                 // target: a direction reversal (notably at the min/max
@@ -638,8 +687,10 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         } else {
                                             val scrollX = if (modifiers.isShiftPressed) change.scrollDelta.y else change.scrollDelta.x
                                             val scrollY = if (modifiers.isShiftPressed) 0f else change.scrollDelta.y
+                                            val panX = platformCanvasWheelPanPixels(-scrollX, density)
+                                            val panY = platformCanvasWheelPanPixels(-scrollY, density)
                                             state.updateWorkspace {
-                                                it.copy(viewport = it.viewport.panByScreenDelta(-scrollX, -scrollY, density))
+                                                it.copy(viewport = it.viewport.panByScreenDelta(panX, panY, density))
                                             }
                                         }
                                         change.consume()
@@ -680,6 +731,24 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val down = gestureStart.change
                             shiftHeld = gestureStart.shiftPressed
                             altHeld = gestureStart.altPressed
+                            // Reconcile the sticky keyboard-tracked Ctrl/Cmd flag with the live pointer
+                            // modifiers at press. The flag exists because some backends attach Ctrl/Cmd
+                            // only to the first move, not the down event; but a Ctrl/Cmd *release* that
+                            // lands on a sibling pane (focus leaves the canvas without a window blur, so
+                            // neither the key handler nor resetHeldModifiers fires) leaves the flag stuck
+                            // true. The pointer event is authoritative for what is physically down now:
+                            // when it reports Ctrl/Cmd up, clear the stale flag so a plain press-drag on a
+                            // node is not forced into a marquee. A genuinely-held Ctrl/Cmd is still promoted
+                            // mid-drag from the live modifiers (resolveCanvasDragOperation), covering the
+                            // late-report backend the flag was added for.
+                            if (!gestureStart.ctrlOrMetaPressed) ctrlOrMetaHeld = false
+                            val ctrlOrMetaPressedAtStart = gestureStart.ctrlOrMetaPressed || ctrlOrMetaHeld
+                            val additiveSelectionPressed = gestureStart.shiftPressed || ctrlOrMetaPressedAtStart
+                            // Ctrl/Cmd changes where a marquee may start; Shift changes how
+                            // its result combines with the previous selection. Keeping these
+                            // semantics separate prevents a selected container from remaining
+                            // selected together with every child caught by a Ctrl/Cmd marquee.
+                            val additiveMarqueePressed = gestureStart.shiftPressed
                             runCatching { focusRequester.requestFocus() }
                             val start = down.position
                             // The pointerInput coroutine can outlive document/layout recompositions
@@ -696,6 +765,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 .orEmpty()
                             val panFromTertiaryButton = gestureStart.tertiaryButton || currentEvent.buttons.isTertiaryPressed
                             val forcePan = panFromTertiaryButton || spaceHeld
+                            // Figma-style modifier marquee: Ctrl/Cmd + primary drag starts a
+                            // rubber-band even when the press lands on a node/container body or
+                            // one of the current selection's handles. A click without crossing
+                            // slop still keeps the existing Ctrl/Cmd-click toggle behaviour.
+                            var modifierMarquee = pressWorkspace.tool == EditorTool.Select &&
+                                ctrlOrMetaPressedAtStart && !forcePan
                             if (forcePan) down.consume()
                             // Annotation tool: a click drops a note/issue on the review layer
                             // instead of running any canvas operation (select/move/create).
@@ -738,7 +813,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // *effective* box + rotation, so a rotated ancestor is followed on screen.
                             val handleGeometryBox = multiSelectionUnion ?: primaryTransform?.box
                             val handleRotation = if (isSingleSelection) primaryTransform?.rotation ?: 0.0 else 0.0
-                            val handlesActive = !forcePan && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
+                            val handlesActive = !forcePan && !modifierMarquee && pressWorkspace.tool == EditorTool.Select && !selectionLocked && !inVectorEdit && !inDiagramEdit
                             // Arc/donut ellipse: grabbing a rim (start/end) or inner-ratio handle is
                             // resolved here — not in a separate full-canvas overlay — so a selected
                             // arc/donut ellipse never swallows presses meant to select or move other
@@ -784,7 +859,29 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                     (viewport.toScreen(point.x, point.y) - start).getDistance() <= HandleHitRadiusPx
                                 } == true
                             val hitId = hitNode(pressLayout, pressDocument, viewport, start)
-                            val mode = resolveCanvasOperation(pressWorkspace.tool, forcePan, radiusHandle, handle, rotateHit, hitId)
+                            // A multi-selection is one temporary canvas object. Its common frame
+                            // claims a drag from anywhere inside the union, including transparent
+                            // gaps between the selected nodes; a click without movement still falls
+                            // through to the actual node under the pointer on release.
+                            val multiSelectionFrameHit = groupFrameContains(
+                                multiSelectionUnion,
+                                viewport.toDocX(start.x),
+                                viewport.toDocY(start.y),
+                            )
+                            val operationHitId = if (multiSelectionFrameHit) {
+                                pressDesign.selectedNodeIds.firstOrNull().orEmpty()
+                            } else {
+                                hitId
+                            }
+                            var mode = resolveCanvasOperation(
+                                pressWorkspace.tool,
+                                forcePan,
+                                modifierMarquee,
+                                radiusHandle,
+                                handle,
+                                rotateHit,
+                                operationHitId,
+                            )
 
                             // Unified selection: a plain click over a diagram BLOCK/edge selects that
                             // element directly — the same way a click selects a rectangle or text —
@@ -792,7 +889,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // area falls through and selects the whole diagram (its container). This runs
                             // when entering from the root/plain selection; the diagram overlay handles the
                             // twin case of switching straight from another diagram's edit mode.
-                            if (mode == CanvasOperation.Move && !shiftHeld && pressWorkspace.diagramEditNodeId != hitId) {
+                            if (mode == CanvasOperation.Move && !multiSelectionFrameHit && !additiveSelectionPressed && pressWorkspace.diagramEditNodeId != hitId) {
                                 val diagramTarget = resolveDiagramElementSelection(
                                     pressLayout, pressDocument, viewport.toDocX(start.x), viewport.toDocY(start.y), zoomPx,
                                 )
@@ -816,12 +913,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             // "drag moves object"; a nested object is reached by double-click). An
                             // unrelated object stacked on top is not part of the selection, so it still
                             // wins the press (§10 "topmost selectable layer gets priority").
-                            val pressOnSelection = pressDocument.pressHitBelongsToSelection(pressDesign.selectedNodeIds, hitId)
+                            val pressOnSelection = multiSelectionFrameHit ||
+                                pressDocument.pressHitBelongsToSelection(pressDesign.selectedNodeIds, hitId)
 
                             // Pre-press selection so a drag moves the pressed node — but never when the
                             // press already lands on the current selection (reselecting there would grab
-                            // the nested element) nor on a shift-add.
-                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !shiftHeld) {
+                            // the nested element) nor while an additive-selection modifier is held.
+                            if (mode == CanvasOperation.Move && !pressOnSelection && hitId !in pressDesign.selectedNodeIds && !additiveSelectionPressed) {
                                 state.dispatch(DesignEditorIntent.SelectNode(hitId))
                             }
                             // Selection may have changed on this very down event. Resolve the move frame
@@ -928,6 +1026,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             var documentBegan = false
                             var canceled = false
                             var last = start
+                            var releasePosition = start
                             val resizeBaseline = (mode as? CanvasOperation.Resize)?.let { selectedResizeBox }
                             val resizeTargets = (mode as? CanvasOperation.Resize)?.let {
                                 resizeTargets(pressDocument, pressLayout, state.designState.selectedNodeIds)
@@ -985,7 +1084,17 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 val modifiers = event.keyboardModifiers
                                 shiftHeld = modifiers.isShiftPressed
                                 altHeld = modifiers.isPointerAltPressed
+                                val ctrlOrMetaPressed = modifiers.isCtrlPressed || modifiers.isMetaPressed || ctrlOrMetaHeld
+                                mode = resolveCanvasDragOperation(
+                                    current = mode,
+                                    tool = pressWorkspace.tool,
+                                    forcePan = forcePan,
+                                    ctrlOrMetaPressed = ctrlOrMetaPressed,
+                                    moved = moved,
+                                )
+                                if (mode == CanvasOperation.Marquee && ctrlOrMetaPressed) modifierMarquee = true
                                 val change = event.changes.firstOrNull() ?: break
+                                releasePosition = change.position
                                 if (mode == CanvasOperation.Pan && panFromTertiaryButton && !event.buttons.isTertiaryPressed) break
                                 // Escape (routed through the key handler) aborts a live drag; check
                                 // before the up-test so an Escape-then-release still cancels.
@@ -1208,13 +1317,39 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 when (mode) {
                                     CanvasOperation.Marquee -> {
                                         if (moved) {
-                                            val rect = marquee
-                                            if (rect != null) {
-                                                val ids = nodesIn(pressLayout, pressDocument, viewport, rect)
-                                                val next = if (shiftHeld) pressDesign.selectedNodeIds + ids else ids
-                                                state.dispatch(DesignEditorIntent.SelectNodes(next))
+                                            // Commit from gesture-local coordinates rather than
+                                            // reading the transient Compose drawing state. This also
+                                            // covers an up event whose final position was not followed
+                                            // by another rendered frame.
+                                            val finalRect = Rect(
+                                                min(start.x, releasePosition.x),
+                                                min(start.y, releasePosition.y),
+                                                max(start.x, releasePosition.x),
+                                                max(start.y, releasePosition.y),
+                                            )
+                                            val ids = nodesIn(
+                                                pressLayout,
+                                                pressDocument,
+                                                viewport,
+                                                finalRect,
+                                                excludedIds = setOf(pressRootId),
+                                            )
+                                            val next = marqueeSelectionResult(
+                                                existing = pressDesign.selectedNodeIds - pressRootId,
+                                                hits = ids,
+                                                additive = additiveMarqueePressed,
+                                            )
+                                            state.dispatch(DesignEditorIntent.SelectNodes(next))
+                                        } else if (modifierMarquee && hitId.isNotBlank()) {
+                                            // The modifier changes only a drag into marquee; preserve
+                                            // Ctrl/Cmd-click as an additive selection toggle.
+                                            val next = if (hitId in pressDesign.selectedNodeIds) {
+                                                pressDesign.selectedNodeIds - hitId
+                                            } else {
+                                                pressDesign.selectedNodeIds + hitId
                                             }
-                                        } else if (hitId.isBlank()) {
+                                            state.dispatch(DesignEditorIntent.SelectNodes(next))
+                                        } else if (hitId.isBlank() && !additiveSelectionPressed) {
                                             // Clicking inside the root frame's body selects the root
                                             // (Figma: clicking a frame's empty area selects the frame);
                                             // clicking the canvas outside all frames clears the selection.
@@ -1286,8 +1421,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                             val doubleClick = lastTapId == hitId &&
                                                 (lastTapMark?.let { (now - it).inWholeMilliseconds < 320 } ?: false)
                                             when {
+                                                additiveSelectionPressed -> state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
                                                 doubleClick -> enterEditMode(state, hitId)
-                                                shiftHeld -> state.dispatch(DesignEditorIntent.ToggleNodeSelection(hitId))
                                                 else -> state.dispatch(DesignEditorIntent.SelectNode(hitId))
                                             }
                                             lastTapMark = now
@@ -1394,6 +1529,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     viewport = viewport,
                     interactive = false,
                     showSelection = false,
+                    // Crossing into another container detaches the preview from the old parent's
+                    // clip/stacking context until drop, while document z-order stays untouched.
+                    floatingNodeIds = if (reparentTargetId != null) design.selectedNodeIds else emptySet(),
                     vectorAssets = rememberVectorAssetProvider(document),
                     imageAssets = rememberImageAssetProvider(document, resourceStore),
                     fontProvider = fontProvider,
@@ -1451,7 +1589,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             snapGuides.forEach { guide -> drawAnchorGuide(guide, project, guideStyle, textMeasurer) }
             spacingBars.forEach { bar -> drawSpacingBar(bar, project, guideStyle, textMeasurer) }
 
-            if (multiSelectionBox != null && ws.vectorEditNodeId.isBlank()) {
+            if (design.selectedNodeIds.size > 1 && multiSelectionBox != null) {
+                // Multi-selection is represented by one interactive group frame. The pointer
+                // handler uses this same box for move and proportional group resize.
                 drawRotatedOutline(multiSelectionBox, 0.0, viewport, colors.accent, width = 1.5f)
                 drawRotatedHandles(multiSelectionBox, 0.0, viewport, colors.accent)
                 drawSizeBadge(multiSelectionBox, 0.0, viewport, textMeasurer, colors)
@@ -1618,6 +1758,35 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     },
                     onMoveCancel = { annotationDrag = null },
                 )
+            }
+        }
+        groupContextMenuPosition?.let { position ->
+            Box(
+                Modifier
+                    .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
+                    .size(1.dp),
+            ) {
+                EditorDropdownMenu(
+                    expanded = true,
+                    onDismissRequest = {
+                        groupContextMenuPosition = null
+                        pendingGroupIntent = null
+                    },
+                ) {
+                    EditorDropdownMenuItem(
+                        text = strings.canvas.groupSelection,
+                        leadingContent = { DropdownMenuIcon(EditorIcon.Group) },
+                        trailingContent = {
+                            Text("Ctrl G", style = MaterialTheme.typography.labelSmall, color = colors.mutedInk)
+                        },
+                        onClick = {
+                            val intent = pendingGroupIntent
+                            groupContextMenuPosition = null
+                            pendingGroupIntent = null
+                            if (intent != null) state.dispatch(intent)
+                        },
+                    )
+                }
             }
         }
         CanvasScrollbars(state, scrollbars)
@@ -1918,6 +2087,9 @@ private fun VectorEditOverlay(state: MissionEditorStateHolder, layout: LayoutBox
     val colors = LocalEditorColors.current
     val editId = state.workspace.vectorEditNodeId
     if (editId.isBlank()) return
+    // A marquee or Select All may replace the vector selection while the workspace still carries
+    // its old edit id. Do not let that stale edit layer cover the multi-selection overlay/input.
+    if (state.designState.selectedNodeIds != setOf(editId)) return
     val node = state.designState.document?.nodeById(editId) ?: return
     val kind = node.kind as? DesignNodeKind.Shape ?: return
     val box = layout?.findBySourceId(editId) ?: return
@@ -2658,6 +2830,11 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         (key == Key.Delete || key == Key.Backspace) && selection.isNotEmpty() -> {
             state.dispatch(DesignEditorIntent.DeleteNodes(selection)); true
         }
+        ctrl && key == Key.G -> {
+            val intent = buildGroupNodesIntent(design.document, state.artboardLayout, selection)
+            if (intent != null) state.dispatch(intent)
+            intent != null
+        }
         ctrl && key == Key.D && selection.isNotEmpty() -> { state.dispatch(DesignEditorIntent.DuplicateNodes(selection)); true }
         ctrl && key == Key.RightBracket -> zorder(ZOrderMove.Forward)
         ctrl && key == Key.LeftBracket -> zorder(ZOrderMove.Backward)
@@ -2723,9 +2900,10 @@ private fun cycleDiagramSelection(state: MissionEditorStateHolder, forward: Bool
 
 // --- Gesture model -----------------------------------------------------------
 
-private fun resolveCanvasOperation(
+internal fun resolveCanvasOperation(
     tool: EditorTool,
     forcePan: Boolean,
+    forceMarquee: Boolean,
     radiusHandle: CornerRadiusHandle?,
     handle: ResizeHandle?,
     rotateHit: Boolean,
@@ -2733,12 +2911,37 @@ private fun resolveCanvasOperation(
 ): CanvasOperation = when {
     forcePan -> CanvasOperation.Pan
     tool.creates != null -> CanvasOperation.Create(tool.creates)
+    forceMarquee && tool == EditorTool.Select -> CanvasOperation.Marquee
     radiusHandle != null -> CanvasOperation.AdjustCornerRadius(radiusHandle)
     handle != null -> CanvasOperation.Resize(handle)
     rotateHit -> CanvasOperation.Rotate
     hitId.isNotBlank() -> CanvasOperation.Move
     else -> CanvasOperation.Marquee
 }
+
+/**
+ * Pointer backends may attach Ctrl/Cmd to the first move rather than the down event. Until the
+ * gesture crosses drag slop it is still safe to promote any select-tool operation to marquee.
+ */
+internal fun resolveCanvasDragOperation(
+    current: CanvasOperation,
+    tool: EditorTool,
+    forcePan: Boolean,
+    ctrlOrMetaPressed: Boolean,
+    moved: Boolean,
+): CanvasOperation = if (
+    !moved && !forcePan && ctrlOrMetaPressed && tool == EditorTool.Select
+) {
+    CanvasOperation.Marquee
+} else {
+    current
+}
+
+internal fun marqueeSelectionResult(
+    existing: Set<String>,
+    hits: Set<String>,
+    additive: Boolean,
+): Set<String> = if (additive) existing + hits else hits
 
 private data class ResizeTarget(
     val nodeId: String,
@@ -3220,6 +3423,7 @@ private data class CanvasGestureStart(
     val change: PointerInputChange,
     val tertiaryButton: Boolean,
     val shiftPressed: Boolean,
+    val ctrlOrMetaPressed: Boolean,
     val altPressed: Boolean,
 )
 
@@ -3238,6 +3442,7 @@ private suspend fun AwaitPointerEventScope.awaitCanvasGestureStart(): CanvasGest
                 change = change,
                 tertiaryButton = true,
                 shiftPressed = modifiers.isShiftPressed,
+                ctrlOrMetaPressed = modifiers.isCtrlPressed || modifiers.isMetaPressed,
                 altPressed = modifiers.isPointerAltPressed,
             )
         }
@@ -3248,6 +3453,7 @@ private suspend fun AwaitPointerEventScope.awaitCanvasGestureStart(): CanvasGest
                 change = change,
                 tertiaryButton = false,
                 shiftPressed = modifiers.isShiftPressed,
+                ctrlOrMetaPressed = modifiers.isCtrlPressed || modifiers.isMetaPressed,
                 altPressed = modifiers.isPointerAltPressed,
             )
         }
@@ -3342,7 +3548,7 @@ private fun DrawScope.drawRotatedOutline(box: BoundsBox, rotationDegrees: Double
 }
 
 private fun DrawScope.drawRotatedHandles(box: BoundsBox, rotationDegrees: Double, viewport: CanvasViewport, color: Color) {
-    val handle = 8f
+    val handle = 6f
     rotatedHandlePoints(box, rotationDegrees).values.forEach { point ->
         val center = viewport.toScreen(point.x, point.y)
         val topLeft = Offset(center.x - handle / 2f, center.y - handle / 2f)
@@ -3886,8 +4092,8 @@ private fun commitCreate(
 // --- External resource ingestion (drag-drop / paste) ------------------------
 
 /**
- * Maps an OS file drop (CSS-pixel client coords) into the canvas and places the image there. The
- * drop point outside the canvas surface is ignored (drops onto other panes do nothing).
+ * Maps an OS file drop (platform logical-pixel window coords) into the canvas and places the image
+ * there. The drop point outside the canvas surface is ignored (drops onto other panes do nothing).
  */
 internal suspend fun ingestDroppedResource(
     state: MissionEditorStateHolder,
@@ -3900,7 +4106,7 @@ internal suspend fun ingestDroppedResource(
     clientY: Double,
 ) {
     val bounds = state.canvasExportBounds ?: return
-    // DOM clientX/Y are CSS px; the canvas (and boundsInWindow) are backing px = css * density.
+    // DOM CSS and desktop AWT coordinates are logical px; Compose bounds are backing px.
     val localX = (clientX * bounds.density - bounds.left).toFloat()
     val localY = (clientY * bounds.density - bounds.top).toFloat()
     if (localX < 0f || localY < 0f || localX > bounds.width.toFloat() || localY > bounds.height.toFloat()) return
@@ -4126,7 +4332,13 @@ internal fun resolveDiagramElementSelection(
     return DiagramElementTarget(id, selection)
 }
 
-private fun nodesIn(layout: LayoutBox?, document: DesignDocument?, viewport: CanvasViewport, screenRect: Rect): Set<String> {
+private fun nodesIn(
+    layout: LayoutBox?,
+    document: DesignDocument?,
+    viewport: CanvasViewport,
+    screenRect: Rect,
+    excludedIds: Set<String> = emptySet(),
+): Set<String> {
     layout ?: return emptySet()
     val docRect = DocumentRect.fromCorners(
         viewport.toDocX(screenRect.left),
@@ -4136,28 +4348,47 @@ private fun nodesIn(layout: LayoutBox?, document: DesignDocument?, viewport: Can
     )
     val candidates = mutableListOf<SelectableBounds>()
     fun collect(box: LayoutBox) {
-        box.children.forEach { child ->
+        box.children.forEachIndexed { index, child ->
             val id = child.node.selectableId
             val node = document?.nodeById(id)
-            if (id.isNotBlank()) {
+            // Authored frames commonly use their first child as a full-size painted backdrop
+            // (for example preview_background inside Video Preview). A marquee over the actual
+            // controls intersects that layer too, and its bounds then make the group look exactly
+            // like the parent/root was selected. Keep the backdrop selectable by click/Layers,
+            // but don't let it dominate a marquee multi-selection.
+            if (id.isNotBlank() && !isParentSizedMarqueeBackdrop(box, child, index)) {
                 candidates += SelectableBounds(
                     id = id,
                     bounds = DocumentRect.fromCorners(child.x, child.y, child.right, child.bottom),
                     locked = node?.locked == true,
                     visible = node?.visible?.literalOrNull() ?: true,
+                    parentId = document?.parentNodeOf(id)?.id,
+                    container = node?.children?.isNotEmpty() == true,
                 )
             }
             collect(child)
         }
     }
     collect(layout)
-    return marqueeSelection(docRect, candidates)
+    val hits = marqueeSelection(docRect, candidates, excludedIds)
+    return includeFullyCoveredContainers(docRect, candidates, hits, excludedIds)
+}
+
+internal fun isParentSizedMarqueeBackdrop(parent: LayoutBox, child: LayoutBox, index: Int): Boolean {
+    if (index != 0 || child.children.isNotEmpty()) return false
+    val epsilon = 0.001
+    return abs(child.x - parent.x) <= epsilon &&
+        abs(child.y - parent.y) <= epsilon &&
+        abs(child.width - parent.width) <= epsilon &&
+        abs(child.height - parent.height) <= epsilon
 }
 
 private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set<String>): List<ResizeTarget> {
     layout ?: return emptyList()
     val topLevelIds = ids.filterNot { id ->
-        ids.any { candidateAncestor -> candidateAncestor != id && document.isSelfOrAncestor(id, candidateAncestor) }
+        ids.any { candidateAncestor ->
+            candidateAncestor != id && document.isSelfOrAncestor(candidateAncestor, id)
+        }
     }
     return topLevelIds.mapNotNull { id ->
         val node = document.nodeById(id) ?: return@mapNotNull null
@@ -4182,11 +4413,11 @@ private fun resizeTargets(document: DesignDocument, layout: LayoutBox?, ids: Set
 
 private data class FitRect(val x: Double, val y: Double, val w: Double, val h: Double)
 
-private fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): BoundsBox? {
+internal fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): BoundsBox? {
     layout ?: return null
     // Union each node's *visual* bounds (own rotation + inherited ancestor rotation), so the
     // multi-selection bbox covers the real on-screen extent under a rotated ancestor too.
-    val boxes = ids.mapNotNull { id -> layout.effectiveTransformFor(id)?.let { it.box.visualBounds(it.rotation) } }
+    val boxes = ids.mapNotNull(layout::effectiveTransformFor).map { it.box.visualBounds(it.rotation) }
     if (boxes.isEmpty()) return null
     val minX = boxes.minOf { it.x }
     val minY = boxes.minOf { it.y }
@@ -4194,6 +4425,48 @@ private fun selectionHandleBounds(layout: LayoutBox?, ids: Set<String>): BoundsB
     val maxY = boxes.maxOf { it.bottom }
     return BoundsBox(minX, minY, maxX - minX, maxY - minY)
 }
+
+/**
+ * Resolves the live layout geometry needed to turn the current sibling selection into a group
+ * without a visual jump. Grouping under a rotated ancestor is withheld for now: a plain group has
+ * no transform matrix, so flattening that coordinate space would otherwise change the artwork.
+ */
+internal fun buildGroupNodesIntent(
+    document: DesignDocument?,
+    layout: LayoutBox?,
+    ids: Set<String>,
+): DesignEditorIntent.GroupNodes? {
+    document ?: return null
+    layout ?: return null
+    if (ids.size < 2) return null
+    val firstId = ids.firstOrNull() ?: return null
+    val parent = document.parentNodeOf(firstId) ?: return null
+    if (ids.any { id ->
+            document.parentNodeOf(id)?.id != parent.id ||
+                document.nodeById(id)?.locked != false ||
+                !document.isCoordinatePositioned(id)
+        }
+    ) return null
+    val parentPath = layout.pathToSourceId(parent.id) ?: return null
+    if (parentPath.any { it.node.rotation != 0.0 }) return null
+    val parentBox = parentPath.last()
+    val bounds = selectionHandleBounds(layout, ids) ?: return null
+    if (bounds.width <= 0.0 || bounds.height <= 0.0) return null
+    val childPositions = ids.associateWith { id ->
+        val box = layout.findBySourceId(id) ?: return null
+        DesignPoint(box.x - bounds.x, box.y - bounds.y)
+    }
+    return DesignEditorIntent.GroupNodes(
+        nodeIds = ids,
+        position = DesignPoint(bounds.x - parentBox.x, bounds.y - parentBox.y),
+        size = DesignSize(bounds.width, bounds.height),
+        childPositions = childPositions,
+    )
+}
+
+/** The common multi-selection frame behaves as one temporary canvas object. */
+internal fun groupFrameContains(box: BoundsBox?, docX: Double, docY: Double): Boolean =
+    box != null && docX >= box.x && docX <= box.right && docY >= box.y && docY <= box.bottom
 
 /** Union of the selected nodes' boxes in document coordinates, or null when empty. */
 private fun selectionBounds(layout: LayoutBox, ids: Set<String>): FitRect? {
@@ -4353,6 +4626,7 @@ private fun FloatingToolbar(
     state: MissionEditorStateHolder,
     selected: EditorTool,
     lastShapeTool: EditorTool,
+    lastContainerTool: EditorTool,
     onSelect: (EditorTool) -> Unit,
 ) {
     val colors = LocalEditorColors.current
@@ -4372,7 +4646,7 @@ private fun FloatingToolbar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             ToolbarButton(EditorTool.Select, selected, onSelect)
-            ToolbarButton(EditorTool.Frame, selected, onSelect)
+            ContainerToolFlyout(selected, lastContainerTool, onSelect)
             ShapeToolFlyout(selected, lastShapeTool, onSelect)
             ToolbarButton(EditorTool.Pen, selected, onSelect)
             ToolbarButton(EditorTool.Text, selected, onSelect)
@@ -4383,6 +4657,67 @@ private fun FloatingToolbar(
             ExportIssuesAction(state)
             // Referenced so an unused-`slots` warning never appears if the explicit list drifts.
             check(slots.isNotEmpty())
+        }
+    }
+}
+
+private val ContainerTools = listOf(
+    EditorTool.Frame,
+    EditorTool.AutoLayoutVertical,
+    EditorTool.AutoLayoutHorizontal,
+    EditorTool.AutoLayoutGrid,
+)
+
+/** Figma-style container slot: a fast-path main button plus a fully visual preset menu. */
+@Composable
+private fun ContainerToolFlyout(
+    selected: EditorTool,
+    lastContainerTool: EditorTool,
+    onSelect: (EditorTool) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    val active = selected.isContainerTool
+    val shape = RoundedCornerShape(8.dp)
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            modifier = Modifier.size(36.dp)
+                .background(if (active) colors.accent else colors.controlSurface, shape)
+                .border(1.dp, if (active) colors.accent else colors.controlStroke, shape)
+                .clip(shape)
+                .clickable { onSelect(lastContainerTool) },
+            contentAlignment = Alignment.Center,
+        ) {
+            EditorSvgIcon(
+                icon = toolIcon(lastContainerTool),
+                contentDescription = strings.labels.editorTool(lastContainerTool),
+                modifier = Modifier.size(24.dp),
+                tint = if (active) Color.White else colors.ink,
+            )
+            Box(
+                modifier = Modifier.align(Alignment.BottomEnd).size(12.dp).clip(shape).clickable { expanded = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                EditorSvgIcon(
+                    EditorIcon.ChevronDown,
+                    contentDescription = strings.common.openOptions,
+                    modifier = Modifier.size(10.dp),
+                    tint = if (active) Color.White else colors.mutedInk,
+                )
+            }
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ContainerTools.forEach { tool ->
+                EditorDropdownMenuItem(
+                    text = strings.labels.editorTool(tool),
+                    leadingContent = { DropdownMenuIcon(toolIcon(tool)) },
+                    onClick = {
+                        expanded = false
+                        onSelect(tool)
+                    },
+                )
+            }
         }
     }
 }
@@ -4945,6 +5280,9 @@ private fun deviceIcon(mode: DeviceMode): EditorIcon = when (mode) {
 private fun toolIcon(tool: EditorTool): EditorIcon = when (tool) {
     EditorTool.Select -> EditorIcon.Select
     EditorTool.Frame -> EditorIcon.Frame
+    EditorTool.AutoLayoutVertical -> EditorIcon.AutoLayoutVertical
+    EditorTool.AutoLayoutHorizontal -> EditorIcon.AutoLayoutHorizontal
+    EditorTool.AutoLayoutGrid -> EditorIcon.AutoLayoutGrid
     EditorTool.Rectangle -> EditorIcon.Rectangle
     EditorTool.Ellipse -> EditorIcon.Ellipse
     EditorTool.Polygon -> EditorIcon.Polygon

@@ -184,13 +184,11 @@ internal object CnlWriter {
         val width = edit.width?.takeIf { it.mode == SizingMode.Fixed }?.value
         val height = edit.height?.takeIf { it.mode == SizingMode.Fixed }?.value
         val size = element.property(CnlPropertyKind.Size)
-        if (size == null || size.values.size != 2 || width == null || height == null) return failed(line)
-        return WritePlan.Ops(
-            listOf(
-                op(size.values[0].span, formatNumber(width), lineIndex),
-                op(size.values[1].span, formatNumber(height), lineIndex),
-            ),
-        )
+        if (size == null || size.values.size != 2 || (width == null && height == null)) return failed(line)
+        return WritePlan.Ops(buildList {
+            width?.let { add(op(size.values[0].span, formatNumber(it), lineIndex)) }
+            height?.let { add(op(size.values[1].span, formatNumber(it), lineIndex)) }
+        })
     }
 
     private fun positionPlan(element: CnlElement, edit: SetNodePosition, lineIndex: LineIndex, line: Int): WritePlan {

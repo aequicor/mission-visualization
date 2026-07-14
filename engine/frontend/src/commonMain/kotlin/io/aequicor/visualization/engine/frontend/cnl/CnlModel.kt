@@ -1,5 +1,7 @@
 package io.aequicor.visualization.engine.frontend.cnl
 
+import io.aequicor.visualization.engine.ir.model.ContainerKind
+
 /**
  * Controlled-natural-language (CNL) model. A CNL element is one sentence describing a UI
  * node — a leading noun plus a sequence of `keyword value…` property phrases — e.g.
@@ -15,14 +17,19 @@ data class CnlSpan(val line: Int, val startColumn: Int, val endColumn: Int)
 data class CnlValue(val raw: String, val span: CnlSpan)
 
 /** Element noun → node identity. [shapeKind] set for shapes; [role] e.g. "button". */
-data class CnlNoun(val nodeType: String, val shapeKind: String? = null, val role: String? = null)
+data class CnlNoun(
+    val nodeType: String,
+    val shapeKind: String? = null,
+    val role: String? = null,
+    val containerKind: ContainerKind? = null,
+)
 
 /** The property kinds the CNL grammar recognizes. */
 enum class CnlPropertyKind {
     Size, Width, Height,
     Visible, Locked, VariableModes,
     Fill, Stroke, Radius, Opacity, Rotation,
-    Padding, Gap, Direction, AlignParent, Position,
+    Padding, Gap, Direction, AutoLayout, AlignParent, Position,
     FontSize, FontWeight,
     /** Explicit node id — authored only by the structural writer for id-stable inserts. */
     Id,

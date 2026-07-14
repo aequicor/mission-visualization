@@ -7,8 +7,9 @@ package io.aequicor.visualization.editor.platform
  * them back to decode.
  *
  * On web this is backed by IndexedDB, so bytes survive reloads without re-prompting for a folder;
- * on other platforms it is an in-memory session store ([InMemoryProjectResourceStore]) until
- * native project folders land. All operations are suspend: the web backend is asynchronous.
+ * desktop writes through to the active project's `res/` directory (with an in-memory fallback
+ * before a folder is connected). Other native platforms use [InMemoryProjectResourceStore]. All
+ * operations are suspend because the persistent backends perform asynchronous/file I/O.
  */
 interface ProjectResourceStore {
     /** Stores [bytes] under [path], overwriting any existing resource at that path. */
@@ -25,8 +26,8 @@ interface ProjectResourceStore {
 }
 
 /**
- * In-memory [ProjectResourceStore] for platforms without a persistent binary store yet
- * (desktop/Android/iOS in v1) and for tests. Session-scoped: contents are lost on restart.
+ * In-memory [ProjectResourceStore] for platforms without a persistent binary store and for tests.
+ * Session-scoped: contents are lost on restart.
  */
 class InMemoryProjectResourceStore : ProjectResourceStore {
     private val entries = mutableMapOf<String, ByteArray>()
@@ -45,5 +46,5 @@ class InMemoryProjectResourceStore : ProjectResourceStore {
     }
 }
 
-/** The platform resource store: IndexedDB on web, in-memory elsewhere. */
+/** The platform resource store: IndexedDB on web, project-folder-backed on desktop. */
 expect fun createProjectResourceStore(): ProjectResourceStore

@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.AlignItems
+import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignPaint
@@ -44,7 +45,7 @@ sealed interface DesignEditorIntent {
     /** Replaces the whole selection set; primary is the last id. */
     data class SelectNodes(val nodeIds: Set<String>) : DesignEditorIntent
 
-    /** Shift+click semantics: add when absent, remove when present. */
+    /** Ctrl/Cmd/Shift+click semantics: add when absent, remove when present. */
     data class ToggleNodeSelection(val nodeId: String) : DesignEditorIntent
 
     data object ClearSelection : DesignEditorIntent
@@ -122,6 +123,18 @@ sealed interface DesignEditorIntent {
 
     data class DuplicateNodes(val nodeIds: Set<String>) : DesignEditorIntent
 
+    /**
+     * Wraps sibling objects in a transparent free-positioned group. Canvas callers may provide
+     * resolved geometry so grouping hug/fill-sized objects keeps their exact visual bounds;
+     * keyboard and reducer tests can omit it and use the authored positions/sizes.
+     */
+    data class GroupNodes(
+        val nodeIds: Set<String>,
+        val position: DesignPoint? = null,
+        val size: DesignSize? = null,
+        val childPositions: Map<String, DesignPoint> = emptyMap(),
+    ) : DesignEditorIntent
+
     /** Steps a node within its sibling list; z-order = paint order (later = front). */
     data class ReorderNode(val nodeId: String, val move: ZOrderMove) : DesignEditorIntent
 
@@ -157,6 +170,12 @@ sealed interface DesignEditorIntent {
 
     /** Creates a new screen (top-level frame + its own page). */
     data class CreateScreen(val preset: ScreenPreset, val title: String) : DesignEditorIntent
+
+    /** Duplicates a complete screen into a new standalone SLM source and selects the copy. */
+    data class DuplicateScreen(val pageId: String, val title: String) : DesignEditorIntent
+
+    /** Deletes a screen and its optional annotation sidecar source. */
+    data class DeleteScreen(val pageId: String) : DesignEditorIntent
 
     /**
      * Creates a new diagram canvas node under [parentId] at parent-relative (x,y) with (w,h),
@@ -201,6 +220,25 @@ sealed interface DesignEditorIntent {
     // --- Layout container --------------------------------------------------
 
     data class SetLayoutMode(val nodeId: String, val mode: EditorLayoutMode) : DesignEditorIntent
+
+    /** Resolved geometry captured immediately before a container-kind conversion. */
+    data class BakedChildGeometry(
+        val nodeId: String,
+        val x: Double,
+        val y: Double,
+        val width: Double,
+        val height: Double,
+    )
+
+    /** Atomically converts a free Frame and an Auto Layout container. */
+    data class ConvertContainer(
+        val nodeId: String,
+        val target: ContainerKind,
+        val targetMode: LayoutMode = LayoutMode.None,
+        val width: Double,
+        val height: Double,
+        val children: List<BakedChildGeometry>,
+    ) : DesignEditorIntent
 
     data class SetLayoutGap(val nodeId: String, val gap: Double) : DesignEditorIntent
 
@@ -453,7 +491,7 @@ sealed interface DesignEditorIntent {
 
     /**
      * Mutates the node's interaction list via [op] and writes the node's whole `interaction:`
-     * block set back to SLM (in-memory fallback when inexpressible). The op-command idiom keeps
+     * block set back to SLM (the atomic contract rejects inexpressible results). The op-command idiom keeps
      * the working document and the whole-set write-back payload in lockstep (like [FillCommand]).
      */
     data class InteractionCommand(val nodeId: String, val op: InteractionOp) : DesignEditorIntent

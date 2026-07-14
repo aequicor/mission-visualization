@@ -103,6 +103,7 @@ private class Normalization(
     private val textEntries = mutableListOf<TextEntry>()
     private val anchorOwners = mutableMapOf<String, SlmSourceSpan>()
     private val cnlOwners = mutableMapOf<String, SlmSourceSpan>()
+    private val headingOwners = mutableSetOf<String>()
     private val variableCollections = LinkedHashMap<String, VariableCollection>()
     private val prototypeVariables = LinkedHashMap<String, PrototypeVariable>()
     private val documentStyles = LinkedHashMap<String, DesignStyle>()
@@ -172,7 +173,7 @@ private class Normalization(
         return NormalizedScreen(
             document = document,
             textEntries = textEntries.toList(),
-            editIndex = SlmEditIndex(anchorOwners.toMap(), cnlOwners.toMap()),
+            editIndex = SlmEditIndex(anchorOwners.toMap(), cnlOwners.toMap(), headingOwners.toSet()),
         )
     }
 
@@ -229,6 +230,7 @@ private class Normalization(
         )
 
         if (node.isAnchor) anchorOwners[id] = node.span
+        if (node.kind == SemanticKind.Section) headingOwners += id
         // The CNL owner is the sentence/heading LINE; for the screen root that is the H1 line
         // ([SemanticNode.cnlSpan]), not its whole-document [span].
         if (node.isCnlElement) cnlOwners[id] = node.cnlSpan ?: node.span

@@ -6,7 +6,9 @@ import kotlin.test.Test
 class TextI18nChecksTest {
 
     @Test
-    fun keyMissingFromTargetLocaleIsAnError() {
+    fun keyMissingFromTargetLocaleWarns() {
+        // Missing translations are an expected soft-fallback state (resolver falls back to
+        // defaultText), so this is a warning and must never block render.
         validate(
             """
             {
@@ -18,7 +20,7 @@ class TextI18nChecksTest {
               ] } ]
             }
             """.trimIndent(),
-        ).assertHas("IR-I18N-001", DesignSeverity.Error, messagePart = "title")
+        ).assertHas("IR-I18N-001", DesignSeverity.Warning, messagePart = "title")
     }
 
     @Test
@@ -50,7 +52,9 @@ class TextI18nChecksTest {
     }
 
     @Test
-    fun malformedIcuMessageIsAnError() {
+    fun malformedIcuMessageWarns() {
+        // ICU that IcuLiteFormatter can't parse renders literally, so this is advice
+        // (warning), not a hard failure that blocks render.
         validate(
             """
             {
@@ -61,7 +65,7 @@ class TextI18nChecksTest {
               ] } ]
             }
             """.trimIndent(),
-        ).assertHas("IR-I18N-004", DesignSeverity.Error, messagePart = "broken")
+        ).assertHas("IR-I18N-004", DesignSeverity.Warning, messagePart = "broken")
     }
 
     @Test
@@ -120,5 +124,36 @@ class TextI18nChecksTest {
             ] } ] }
             """.trimIndent(),
         ).assertNone("IR-I18N-008")
+    }
+
+    @Test
+    fun centeredTextWithoutARealBoxWarns() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "label", "type": "text", "characters": "Centered?",
+                "sizing": { "horizontal": "hug", "vertical": "hug" },
+                "textStyle": { "textAlignHorizontal": "center", "textAlignVertical": "center" },
+                "autoResize": "widthAndHeight" }
+            ] } ] }
+            """.trimIndent(),
+        ).apply {
+            assertHas("IR-I18N-011", DesignSeverity.Warning, messagePart = "horizontal center")
+            assertHas("IR-I18N-011", DesignSeverity.Warning, messagePart = "vertical center")
+        }
+    }
+
+    @Test
+    fun centeredTextInsideFixedBoxIsClean() {
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "label", "type": "text", "characters": "Centered",
+                "size": { "width": 160, "height": 48 },
+                "textStyle": { "textAlignHorizontal": "center", "textAlignVertical": "center" },
+                "truncate": { "maxLines": 1 } }
+            ] } ] }
+            """.trimIndent(),
+        ).assertNone("IR-I18N-011")
     }
 }
