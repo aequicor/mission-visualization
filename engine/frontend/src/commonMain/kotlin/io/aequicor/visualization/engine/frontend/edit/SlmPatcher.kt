@@ -6,6 +6,8 @@ import io.aequicor.visualization.engine.frontend.blocks.SlmExtensionRegistry
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.diagnostics.DiagnosticCollector
 import io.aequicor.visualization.engine.frontend.fnv1a64
+import io.aequicor.visualization.engine.frontend.markdown.HeadingBlock
+import io.aequicor.visualization.engine.frontend.markdown.SlmMarkdownParser
 import io.aequicor.visualization.engine.frontend.markdown.SlmSourceSpan
 import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignNode
@@ -117,6 +119,21 @@ private fun applyResolved(
     // or a CNL edit even tier-3 cannot express — fails cleanly to an in-memory fallback (the
     // reducer's fidelity veto keeps it in-memory, source byte-identical, non-corrupting).
     val cnlSpan = if (edit !is StructuralSlmEdit) editIndex.cnlOwners[edit.nodeId] else null
+    // Legacy screens commonly use a plain `# Title` H1. The root still owns an anchor, but it has
+    // no CNL owner, which used to make every inspector appearance `+` command look inert. Attribute
+    // edits may safely upgrade that one H1 to CNL; SetScreenFrame deliberately keeps its existing
+    // frontmatter-only behavior so a resize does not rewrite an otherwise untouched legacy title.
+    val legacyRootHeading = if (
+        edit !is StructuralSlmEdit &&
+        edit !is SetScreenFrame &&
+        cnlSpan == null &&
+        patchedNode?.type == "screen" &&
+        edit.nodeId in editIndex.anchorOwners
+    ) {
+        legacyScreenRootHeading(source, fileName, extensions, lineIndex)
+    } else {
+        null
+    }
     val plan = if (edit is SetScreenFrame) {
         // FrontmatterWriter writes `frame:` into whatever source it is handed — it never consults
         // edit.nodeId. Guard so a source that does not author this screen root cannot absorb the edit:
@@ -151,6 +168,16 @@ private fun applyResolved(
     } else if (cnlSpan != null) {
         anchorLine = cnlSpan.startLine
         CnlWriter.plan(source, cnlSpan, edit, lineIndex, patchedNode)
+    } else if (legacyRootHeading != null) {
+        anchorLine = legacyRootHeading.span.startLine
+        CnlWriter.plan(
+            source = source,
+            sentenceSpan = legacyRootHeading.span,
+            edit = edit,
+            lineIndex = lineIndex,
+            patchedNode = patchedNode,
+            headingTitleOverride = legacyRootHeading.title,
+        )
     } else if (edit is StructuralSlmEdit) {
         structuralPlan(edit, editIndex, source, lineIndex, fileName, extensions)
     } else {
@@ -175,6 +202,28 @@ private fun applyResolved(
     }
     val (newSource, range) = applyOps(source, ordered)
     return SlmEditResult(newSource = newSource, appliedRange = range, diagnostics = diagnostics.diagnostics)
+}
+
+private data class LegacyScreenRootHeading(
+    val span: SlmSourceSpan,
+    val title: String,
+)
+
+/** Finds the authored plain H1 that names a legacy screen root without treating other anchors as it. */
+private fun legacyScreenRootHeading(
+    source: String,
+    fileName: String,
+    extensions: SlmExtensionRegistry,
+    lineIndex: LineIndex,
+): LegacyScreenRootHeading? {
+    val heading = SlmMarkdownParser(DiagnosticCollector(fileName), extensions)
+        .parse(source)
+        .blocks
+        .filterIsInstance<HeadingBlock>()
+        .firstOrNull { it.level == 1 }
+        ?: return null
+    val title = lineIndex.lineText(heading.span.startLine).drop(heading.level).trim()
+    return LegacyScreenRootHeading(heading.span, title)
 }
 
 /**
