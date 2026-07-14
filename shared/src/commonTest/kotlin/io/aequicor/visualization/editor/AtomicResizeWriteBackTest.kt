@@ -133,6 +133,46 @@ class AtomicResizeWriteBackTest {
     }
 
     @Test
+    fun resizingSecondScreenRootNeverRewritesTheFirstScreensSource() {
+        // Regression: a SetScreenFrame edit for screen B whose own source cannot accept the frame
+        // write (its `frame:` is an inline scalar, not a writable mapping) must NOT be absorbed by
+        // screen A's source through the write-back's candidate-source fallback. document.screen is
+        // always the FIRST screen's metadata, so resizeScreenRootWriteBack's mirror is skipped for
+        // screen B and nothing else catches the cross-screen corruption — the patcher's ownership
+        // guard is the only defense. Uses the inspector's direct (non-interacting) ResizeNode path,
+        // which the atomic round-trip gate does not cover.
+        val screenA = MissionDocumentSource(
+            "screen-a.layout.md",
+            """
+                ---
+                screen: screenA
+                frame: { width: 100, height: 200 }
+                ---
+
+                # Screen A
+            """.trimIndent() + "\n",
+        )
+        val screenB = MissionDocumentSource(
+            "screen-b.layout.md",
+            """
+                ---
+                screen: screenB
+                frame: mobile
+                ---
+
+                # Screen B
+            """.trimIndent() + "\n",
+        )
+        var state = createDesignEditorState(compileMissionDocuments(listOf(screenA, screenB)))
+        assertNotNull(state.document?.nodeById("screenB"))
+
+        state = reduceDesignEditor(state, DesignEditorIntent.ResizeNode("screenB", width = 111.0, height = 222.0))
+
+        val screenAAfter = state.sources.first { it.fileName == "screen-a.layout.md" }
+        assertEquals(screenA.content, screenAAfter.content, "resizing screen B must never rewrite screen A's frame")
+    }
+
+    @Test
     fun cornerResizePinsBothAxesOfAutoSizeText() {
         var state = createDesignEditorState(
             compileMissionDocuments(listOf(MissionDocumentSource("text-resize.layout.md", autoSizeTextSource))),

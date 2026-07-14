@@ -46,6 +46,26 @@ class NestedCanvasSelectionTest {
     }
 
     @Test
+    fun doubleTapDoesNotDrillIntoALockedIntermediateContainer() {
+        // The single-click hit-test refuses locked nodes, so drilling must not reach one either —
+        // otherwise a double-tap selects a container the user can never pick directly on canvas,
+        // leaving a dead, handle-suppressed selection.
+        val lockedInner = inner.copy(locked = true)
+        val nestedLock = frame("nestedLock", lockedInner)
+        val lockRoot = frame("lockRoot", nestedLock)
+        val lockDocument = DesignDocument(pages = listOf(DesignPage(id = "page", children = listOf(lockRoot))))
+
+        assertNull(
+            lockDocument.nestedSelectionTargetForTap(setOf("nestedLock"), hitId = "leaf", doubleTap = true),
+        )
+        // A single tap still keeps the container selected regardless of the locked intermediate.
+        assertEquals(
+            "nestedLock",
+            lockDocument.nestedSelectionTargetForTap(setOf("nestedLock"), hitId = "leaf", doubleTap = false),
+        )
+    }
+
+    @Test
     fun rootMultiSelectionAndUnrelatedHitsUseNormalCanvasSelection() {
         assertNull(document.nestedSelectionTargetForTap(setOf("root"), hitId = "leaf", doubleTap = false))
         assertNull(document.nestedSelectionTargetForTap(setOf("nested", "sibling"), hitId = "leaf", doubleTap = false))

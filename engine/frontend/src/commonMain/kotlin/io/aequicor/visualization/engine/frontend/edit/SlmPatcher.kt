@@ -118,7 +118,17 @@ private fun applyResolved(
     // reducer's fidelity veto keeps it in-memory, source byte-identical, non-corrupting).
     val cnlSpan = if (edit !is StructuralSlmEdit) editIndex.cnlOwners[edit.nodeId] else null
     val plan = if (edit is SetScreenFrame) {
-        val frontmatter = FrontmatterWriter.setScreenFrame(source, lineIndex, edit)
+        // FrontmatterWriter writes `frame:` into whatever source it is handed — it never consults
+        // edit.nodeId. Guard so a source that does not author this screen root cannot absorb the edit:
+        // otherwise writeBackEdits' candidate-source fallback would rewrite a *different* screen's
+        // frame when the owning source fails, and the fidelity veto can't catch it (the node is absent
+        // from the foreign source, so both fingerprints are null and match vacuously). Every other edit
+        // fails cleanly via cnl/anchor addressing; only this unconditional writer needs an explicit check.
+        val frontmatter = if (edit.nodeId in editIndex.anchorOwners || cnlSpan != null) {
+            FrontmatterWriter.setScreenFrame(source, lineIndex, edit)
+        } else {
+            WritePlan.Failed(unaddressableMessage(edit.nodeId, editIndex), 0)
+        }
         if (frontmatter is WritePlan.Failed) {
             frontmatter
         } else if (cnlSpan != null) {

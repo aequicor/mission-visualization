@@ -4,6 +4,7 @@ import io.aequicor.visualization.engine.frontend.compileSlm
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ScreenFrameWriteBackTest {
@@ -136,5 +137,55 @@ class ScreenFrameWriteBackTest {
         assertEquals(childBefore.position, childAfter.position, "resizing the frame must not move its child")
         assertEquals(childBefore.size, childAfter.size, "resizing the frame must not scale its child")
         assertEquals(childBefore.constraints, childAfter.constraints, "resizing the frame must not rewrite child constraints")
+    }
+
+    @Test
+    fun foreignScreenRootIsNotWritableIntoAnotherScreensSource() {
+        // The frontmatter writer applies to whatever source it is handed. If a node that this source
+        // does NOT author could absorb the edit, the write-back's candidate-source fallback would
+        // silently resize the wrong screen's artboard. The patcher must refuse the foreign node.
+        val source = """
+            ---
+            screen: screenB
+            frame: { width: 200, height: 400 }
+            ---
+
+            # Screen B
+        """.trimIndent() + "\n"
+        val compiled = compileSlm(source)
+
+        val result = applySlmEdit(
+            source = source,
+            edit = SetScreenFrame("screenA", width = 111.0, height = 222.0),
+            compiled = compiled,
+        )
+
+        assertNull(result.newSource, "a foreign screen root must not be writable into this source")
+        assertTrue("width: 200, height: 400" in source, "sanity: screenB frame is untouched in the input")
+    }
+
+    @Test
+    fun resizesInlineFrameWhenOpeningFenceHasSurroundingWhitespace() {
+        // The markdown parser trims the fence line, so `--- ` still opens valid frontmatter; the
+        // writer must accept the same tolerance or a legitimate screen loses its frame write-back.
+        val source = "--- \n" +
+            "screen: recorderPip\n" +
+            "frame: { width: 128, height: 296 }\n" +
+            "---\n\n" +
+            "# Recorder PiP\n"
+        val compiled = compileSlm(source)
+
+        val result = applySlmEdit(
+            source = source,
+            edit = SetScreenFrame("recorderPip", width = 78.7, height = 223.3),
+            compiled = compiled,
+        )
+
+        val patched = assertNotNull(result.newSource, result.diagnostics.joinToString("\n") { it.message })
+        assertTrue("frame: { width: 78.7, height: 223.3 }" in patched, patched)
+        val recompiled = compileSlm(patched)
+        val root = assertNotNull(recompiled.document?.nodeById("recorderPip"))
+        assertEquals(78.7, root.size.width)
+        assertEquals(223.3, root.size.height)
     }
 }

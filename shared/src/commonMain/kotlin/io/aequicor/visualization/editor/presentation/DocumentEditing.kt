@@ -9,6 +9,7 @@ import io.aequicor.visualization.engine.ir.model.DesignSize
 import io.aequicor.visualization.engine.ir.model.DesignSizing
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.SizingMode
+import io.aequicor.visualization.engine.ir.model.literalOrNull
 
 /**
  * Structural tree editing over a [DesignDocument], used by the in-memory editor
@@ -95,7 +96,14 @@ internal fun DesignDocument.nestedSelectionTargetForTap(
     if (hitId.isBlank() || selectedId == hitId || topLevelOwnerPage(selectedId) != null) return null
     val selected = nodeById(selectedId) ?: return null
     val childTowardHit = selected.children.firstOrNull { child -> child.findById(hitId) != null } ?: return null
-    return if (doubleTap) childTowardHit.id else selectedId
+    // A single tap keeps the container selected (so the same press drags it). A double-tap drills into
+    // the child toward the hit — but only if that child could itself be selected directly on canvas.
+    // The single-click hit-test refuses locked/hidden nodes (see hitNode); drilling must honor the same
+    // rule, or it would select a locked container the user can never pick directly, leaving a dead,
+    // handle-suppressed selection. Fall through to normal behavior instead.
+    if (!doubleTap) return selectedId
+    if (childTowardHit.locked || childTowardHit.visible.literalOrNull() == false) return null
+    return childTowardHit.id
 }
 
 /**

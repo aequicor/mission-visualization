@@ -4,7 +4,10 @@ package io.aequicor.visualization.engine.frontend.edit
 internal object FrontmatterWriter {
     fun setScreenFrame(source: String, lineIndex: LineIndex, edit: SetScreenFrame): WritePlan {
         if (edit.width == null && edit.height == null) return WritePlan.Ops(emptyList())
-        if (lineIndex.lineText(1).trimEnd('\r') != "---") {
+        // Match the parser's fence tolerance (SlmMarkdownParser trims the line): a fence decorated
+        // with surrounding whitespace still opens valid frontmatter, so the writer must accept it too
+        // — otherwise a legitimate screen silently loses its frame write-back.
+        if (lineIndex.lineText(1).trimEnd('\r').trim() != "---") {
             return WritePlan.Failed("Screen frame write-back requires YAML frontmatter", 1)
         }
         val closingLine = (2..lineIndex.lineCount).firstOrNull { line ->
