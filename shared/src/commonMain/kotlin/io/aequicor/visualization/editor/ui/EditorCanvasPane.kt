@@ -564,6 +564,11 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         // Beautiful-anchor guides drawn while free-moving a node (design-book §18 + "beautiful
         // positions": center, golden ratio, simple proportions); empty outside a move drag.
         var snapGuides by remember { mutableStateOf<List<AnchorGuide>>(emptyList()) }
+        // Per-axis magnetic catch feedback for the center cross-hair. The snap engine already
+        // exposes these flags; retaining them here lets the renderer turn the caught axis solid
+        // and paint the Figma-like center beacon instead of leaving both axes permanently dashed.
+        var moveSnappedX by remember { mutableStateOf(false) }
+        var moveSnappedY by remember { mutableStateOf(false) }
         // Equal-spacing distribution bars for the same drag; empty otherwise.
         var spacingBars by remember { mutableStateOf<List<SpacingBar>>(emptyList()) }
         // True while a resize drag snaps the box's width/height to equal a neighbour's — tints the size badge.
@@ -1242,6 +1247,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         appliedVisualDx = totalDx
                                         appliedVisualDy = totalDy
                                         snapGuides = snap?.guides ?: emptyList()
+                                        moveSnappedX = snap?.snappedX == true
+                                        moveSnappedY = snap?.snappedY == true
                                         spacingBars = snap?.spacing ?: emptyList()
                                         // Live drop-target feedback: the frame this drag would
                                         // re-home the node into on release (Layers-tree parity).
@@ -1564,6 +1571,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             reorderPreview = null
                             reparentTargetId = null
                             snapGuides = emptyList()
+                            moveSnappedX = false
+                            moveSnappedY = false
                             spacingBars = emptyList()
                             resizeMatched = false
                             rotateIndicator = null
@@ -1669,8 +1678,8 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     val lines = centerAnchorLines(primarySelectionBox.toSnapBox(), parentOfPrimarySelection.toSnapBox())
                     drawCenterAnchorLines(
                         lines,
-                        verticalSolid = false,
-                        horizontalSolid = false,
+                        verticalSolid = moveSnappedX,
+                        horizontalSolid = moveSnappedY,
                         project = project,
                         style = guideStyle,
                     )

@@ -94,6 +94,33 @@ class MoveStickyTest {
     }
 
     @Test
+    fun parentCenterCatchesBothAxesAndEmitsCenterGuides() {
+        val parent = SnapBox(x = 0.0, y = 0.0, width = 400.0, height = 300.0)
+        // Candidate center is (203, 152), within the 7px catch radius of parent center (200, 150).
+        val out = solveMoveSnap(
+            // Keep the edges away from the parent's golden/proportion anchors so this isolates
+            // the center-to-center candidate rather than a nearer "beautiful position".
+            moved = SnapBox(x = 163.0, y = 122.0, width = 80.0, height = 60.0),
+            containers = listOf(parent),
+            siblings = emptyList(),
+            catch = catch,
+            release = release,
+            allowX = true,
+            allowY = true,
+            prior = MoveSnapState.None,
+        )
+
+        assertClose(-3.0, out.dx)
+        assertClose(-2.0, out.dy)
+        assertTrue(out.snappedX)
+        assertTrue(out.snappedY)
+        assertEquals(200.0, out.state.latchX)
+        assertEquals(150.0, out.state.latchY)
+        assertTrue(out.guides.any { it.line.x1 == 200.0 && it.line.x2 == 200.0 })
+        assertTrue(out.guides.any { it.line.y1 == 150.0 && it.line.y2 == 150.0 })
+    }
+
+    @Test
     fun equalWidthAlignmentKeepsLeftAndRightGuidesVisible() {
         val target = SnapBox(x = 100.0, y = 500.0, width = 40.0, height = 40.0)
         val out = solveMoveSnap(
