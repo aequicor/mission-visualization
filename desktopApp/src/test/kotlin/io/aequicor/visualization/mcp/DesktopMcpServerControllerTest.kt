@@ -36,6 +36,11 @@ class DesktopMcpServerControllerTest {
                 assertTrue(controller.setupPrompt.contains("layouts_path"))
                 assertFalse(controller.setupPrompt.contains(controller.endpoint))
                 assertTrue(controller.setupPrompt.contains(root.toString()))
+                assertTrue(controller.updatePrompt.contains("get_mcp_skill"))
+                assertTrue(controller.updatePrompt.contains("get_slm_skills"))
+                assertTrue(controller.updatePrompt.contains("validate_project_setup"))
+                assertFalse(controller.updatePrompt.contains(controller.endpoint))
+                assertTrue(controller.updatePrompt.contains(root.toString()))
 
                 controller.stop()
                 awaitStatus(controller, McpServerStatus.Stopped)
@@ -63,6 +68,7 @@ class DesktopMcpServerControllerTest {
             assertEquals(project.toRealPath().toString(), controller.allowedFolder)
             assertTrue(controller.connectionPrompt.contains(project.toRealPath().toString()))
             assertTrue(controller.setupPrompt.contains(project.toRealPath().toString()))
+            assertTrue(controller.updatePrompt.contains(project.toRealPath().toString()))
         } finally {
             controller.close()
         }

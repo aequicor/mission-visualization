@@ -163,13 +163,23 @@ internal fun McpServerDialog(controller: McpServerController, onDismiss: () -> U
 
                     McpStepHeader(strings.mcpStepVerify)
                     McpVerificationCard(controller)
+
+                    McpStepHeader(strings.mcpStepUpdatePrompt)
+                    Text(strings.mcpUpdatePromptHelp, style = MaterialTheme.typography.bodySmall, color = colors.mutedInk)
+                    CopyablePromptBlock(controller.updatePrompt)
+                    Button(onClick = { copyPrompt(PromptClipboardTarget.Update, controller.updatePrompt) }) {
+                        Text(strings.mcpCopyUpdatePrompt)
+                    }
+                    if (clipboardErrorFor == PromptClipboardTarget.Update) {
+                        Text(strings.mcpClipboardBusy, color = colors.statusDanger, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
     }
 }
 
-private enum class PromptClipboardTarget { Connection, Setup }
+private enum class PromptClipboardTarget { Connection, Setup, Update }
 
 private suspend fun writeClipboardWithRetry(write: () -> Unit): Boolean {
     repeat(ClipboardWriteAttempts) { attempt ->
