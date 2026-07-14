@@ -135,6 +135,38 @@ class DesignEditorReducerWriteBackTest {
     }
 
     @Test
+    fun pairedAndScaleConstraintsWriteTheirExactModes() {
+        val state = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode(nodeId))
+        val paired = reduceDesignEditor(
+            state,
+            DesignEditorIntent.UpdateConstraints(
+                nodeId = nodeId,
+                horizontal = HorizontalConstraint.LeftRight,
+                vertical = VerticalConstraint.TopBottom,
+            ),
+        )
+        val pairedNode = assertNotNull(paired.document?.nodeById(nodeId))
+        assertEquals(HorizontalConstraint.LeftRight, pairedNode.constraints.horizontal)
+        assertEquals(VerticalConstraint.TopBottom, pairedNode.constraints.vertical)
+        assertTrue("horizontal left-right" in paired.sourceContent(owningFile))
+        assertTrue("vertical top-bottom" in paired.sourceContent(owningFile))
+
+        val scaled = reduceDesignEditor(
+            paired,
+            DesignEditorIntent.UpdateConstraints(
+                nodeId = nodeId,
+                horizontal = HorizontalConstraint.Scale,
+                vertical = VerticalConstraint.Scale,
+            ),
+        )
+        val scaledNode = assertNotNull(scaled.document?.nodeById(nodeId))
+        assertEquals(HorizontalConstraint.Scale, scaledNode.constraints.horizontal)
+        assertEquals(VerticalConstraint.Scale, scaledNode.constraints.vertical)
+        assertTrue("horizontal scale" in scaled.sourceContent(owningFile))
+        assertTrue("vertical scale" in scaled.sourceContent(owningFile))
+    }
+
+    @Test
     fun directSourceEditRecompilesTheEditedSource() {
         val state = reduceDesignEditor(freshState(), DesignEditorIntent.SelectNode("frame_overview"))
         val index = state.sources.indexOfFirst { it.fileName == owningFile }

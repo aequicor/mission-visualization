@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,6 +54,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -63,6 +65,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.MissionEditorStateHolder
@@ -89,6 +93,7 @@ import io.aequicor.visualization.editor.presentation.normalizeAngleDegrees
 import io.aequicor.visualization.editor.presentation.StrokeOp
 import io.aequicor.visualization.editor.presentation.TextRangeEditing
 import io.aequicor.visualization.editor.presentation.TypographyPatch
+import io.aequicor.visualization.editor.presentation.applyFillOp
 import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
 import io.aequicor.visualization.subsystems.annotations.Annotation
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
@@ -656,7 +661,11 @@ private fun DimensionsBlock(state: MissionEditorStateHolder, node: DesignNode, b
                 state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = value, height = nextHeight))
             }
             CompactNumberField("H", height.formatPx(), "h-$nodeId", Modifier.width(fieldWidth), enabled = !locked) { value ->
-                val nextWidth = if (ws.lockAspectRatio && height > 0.0) value * width / height else null
+                val nextWidth = when {
+                    ws.lockAspectRatio && height > 0.0 -> value * width / height
+                    (node.kind as? DesignNodeKind.Text)?.autoResize == TextAutoResize.WidthAndHeight -> width
+                    else -> null
+                }
                 state.dispatch(DesignEditorIntent.ResizeNode(nodeId, width = nextWidth, height = value))
             }
             SmallIconButton(
@@ -795,14 +804,49 @@ private fun FillSection(state: MissionEditorStateHolder, node: DesignNode) {
     val strings = LocalStrings.current
     val nodeId = node.id
     val enabled = !state.designState.isNodeLocked(nodeId)
-    val fills = node.fills.orEmpty()
-    SectionHeaderAdd(strings.inspector.fills) { if (enabled) state.dispatch(DesignEditorIntent.FillCommand(nodeId, FillOp.Add)) }
+    val textKind = node.kind as? DesignNodeKind.Text
+    val selection = state.workspace.textSelection?.takeIf {
+        textKind != null && it.nodeId == nodeId && !it.isCollapsed
+    }
+    val editableLength = textKind?.let { kind ->
+        (kind.content?.defaultText?.takeIf { it.isNotEmpty() } ?: kind.characters.literalOrNull() ?: "").length
+    } ?: 0
+    // A text range inherits the node fill until it gets an explicit glyph fill. Present that
+    // effective paint in the same Fill section, but commit operations into text.spans so a color
+    // change never recolors the entire text node.
+    val fills = if (selection != null && textKind != null) {
+        TextRangeEditing.runsInRange(
+            base = textKind.textStyle ?: DesignTextStyle(),
+            ranges = textKind.styleRanges,
+            length = editableLength,
+            start = selection.min,
+            end = selection.max,
+        ).firstOrNull()?.second ?: node.fills.orEmpty()
+    } else {
+        node.fills.orEmpty()
+    }
+    fun commit(op: FillOp) {
+        if (!enabled) return
+        if (selection != null) {
+            state.dispatch(
+                DesignEditorIntent.SetTextRangeFills(
+                    nodeId = nodeId,
+                    start = selection.min,
+                    end = selection.max,
+                    fills = applyFillOp(fills, op),
+                ),
+            )
+        } else {
+            state.dispatch(DesignEditorIntent.FillCommand(nodeId, op))
+        }
+    }
+    SectionHeaderAdd(strings.inspector.fills) { commit(FillOp.Add) }
     if (fills.isEmpty()) {
         MutedNote(strings.inspector.noFills)
         return
     }
     fills.forEachIndexed { index, paint ->
-        FillRow(state, nodeId, index, paint, enabled) { state.dispatch(DesignEditorIntent.FillCommand(nodeId, it)) }
+        FillRow(state, nodeId, index, paint, enabled, ::commit)
         Spacer(Modifier.height(6.dp))
     }
 }
@@ -2008,6 +2052,12 @@ private fun FontStyleGlyph(weight: Int, italic: Boolean, preview: FontFamily?, m
     )
 }
 
+internal val FigmaFontSizePresets: List<Int> =
+    listOf(10, 11, 12, 13, 14, 15, 16, 20, 24, 32, 36, 40, 48, 64, 96, 128)
+
+internal fun isFontSizePresetSelected(value: String, preset: Int): Boolean =
+    value.toDoubleOrNull()?.let { kotlin.math.abs(it - preset.toDouble()) < 0.000_001 } == true
+
 /** Numeric font-size field with a chevron that opens the standard size presets. */
 @Composable
 private fun FontSizeField(
@@ -2022,31 +2072,49 @@ private fun FontSizeField(
     var expanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(5.dp)
     Box(modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            CompactNumberField(
-                label = "",
-                value = value,
-                resetKey = resetKey,
-                modifier = Modifier.weight(1f),
-                placeholder = placeholder,
-                onCommit = onCommit,
-            )
-            Surface(
-                modifier = Modifier.size(26.dp).clip(shape).clickable { expanded = true },
-                shape = shape,
-                color = colors.controlSurface,
-                border = BorderStroke(1.dp, colors.controlStroke),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = strings.inspector.sizePresets, modifier = Modifier.size(11.dp), tint = colors.controlInk)
+        CompactNumberField(
+            label = "",
+            value = value,
+            resetKey = resetKey,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = placeholder,
+            leadingIcon = EditorIcon.Typography,
+            active = expanded,
+            trailingContent = {
+                Row(Modifier.fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(1.dp).height(14.dp).background(colors.controlStroke))
+                    Box(
+                        modifier = Modifier
+                            .width(25.dp)
+                            .fillMaxHeight()
+                            .clip(shape)
+                            .clickable { expanded = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        EditorSvgIcon(
+                            EditorIcon.ChevronDown,
+                            contentDescription = strings.inspector.sizePresets,
+                            modifier = Modifier.size(11.dp),
+                            tint = colors.controlInk,
+                        )
+                    }
                 }
-            }
-        }
+            },
+            onCommit = onCommit,
+        )
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            listOf(12, 14, 16, 24, 32, 48, 64).forEach { preset ->
+            FigmaFontSizePresets.forEach { preset ->
+                val selected = isFontSizePresetSelected(value, preset)
                 EditorDropdownMenuItem(
                     text = "$preset",
-                    leadingContent = { DropdownMenuIcon(EditorIcon.Typography, modifier = Modifier.size(16.dp)) },
+                    selected = selected,
+                    leadingContent = {
+                        DropdownMenuIcon(
+                            EditorIcon.Typography,
+                            modifier = Modifier.size(16.dp),
+                            tint = if (selected) colors.accent else colors.controlInk,
+                        )
+                    },
                     onClick = { expanded = false; onCommit(preset.toDouble()) },
                 )
             }
@@ -2347,6 +2415,8 @@ private fun CompactNumberField(
     suffix: String = "",
     leadingIcon: EditorIcon? = null,
     placeholder: String = "",
+    active: Boolean = false,
+    trailingContent: (@Composable () -> Unit)? = null,
     onCommit: (Double) -> Unit,
 ) {
     val colors = LocalEditorColors.current
@@ -2361,9 +2431,14 @@ private fun CompactNumberField(
         modifier = modifier.height(26.dp),
         shape = RoundedCornerShape(5.dp),
         color = if (enabled) colors.controlSurface else colors.controlDisabledSurface,
-        border = BorderStroke(1.dp, if (focused) colors.accent else if (enabled) colors.controlStroke else colors.controlDisabledStroke),
+        border = BorderStroke(1.dp, if (focused || active) colors.accent else if (enabled) colors.controlStroke else colors.controlDisabledStroke),
     ) {
-        Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .padding(start = 8.dp, end = if (trailingContent == null) 8.dp else 0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             leadingIcon?.let {
                 EditorSvgIcon(it, contentDescription = null, modifier = Modifier.size(13.dp), tint = if (enabled) colors.ink else colors.mutedInk)
                 Spacer(Modifier.width(5.dp))
@@ -2418,6 +2493,7 @@ private fun CompactNumberField(
             if (suffix.isNotEmpty()) {
                 Text(suffix, style = MaterialTheme.typography.labelMedium, color = if (enabled) colors.ink else colors.mutedInk)
             }
+            trailingContent?.invoke()
         }
     }
 }
@@ -2454,7 +2530,12 @@ private fun CompactSelectField(
                 }
                 Spacer(Modifier.width(6.dp))
                 Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (enabled) colors.ink else colors.mutedInk, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                EditorSvgIcon(EditorIcon.ChevronDown, contentDescription = strings.common.openOptions, modifier = Modifier.size(11.dp), tint = colors.controlInk)
+                EditorSvgIcon(
+                    EditorIcon.ChevronDown,
+                    contentDescription = strings.common.openOptions,
+                    modifier = Modifier.size(11.dp),
+                    tint = if (enabled) colors.controlInk else colors.mutedInk,
+                )
             }
         }
         EditorDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -2723,93 +2804,405 @@ private fun ConstraintsControls(
     onHorizontal: (HorizontalConstraint) -> Unit,
     onVertical: (VerticalConstraint) -> Unit,
 ) {
-    val strings = LocalStrings.current
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            CompactSelectField(
-                value = horizontal?.let { strings.inspector.horizontalConstraint(it) } ?: strings.common.mixed,
-                options = HorizontalConstraint.entries.map { strings.inspector.horizontalConstraint(it) },
-                onSelect = { label -> HorizontalConstraint.entries.firstOrNull { strings.inspector.horizontalConstraint(it) == label }?.let(onHorizontal) },
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val controls: @Composable (Modifier) -> Unit = { modifier ->
+            ConstraintSelectFields(
+                horizontal = horizontal,
+                vertical = vertical,
                 enabled = enabled,
-                leadingIcon = EditorIcon.ConstraintHorizontal,
-            )
-            CompactSelectField(
-                value = vertical?.let { strings.inspector.verticalConstraint(it) } ?: strings.common.mixed,
-                options = VerticalConstraint.entries.map { strings.inspector.verticalConstraint(it) },
-                onSelect = { label -> VerticalConstraint.entries.firstOrNull { strings.inspector.verticalConstraint(it) == label }?.let(onVertical) },
-                enabled = enabled,
-                leadingIcon = EditorIcon.ConstraintVertical,
+                onHorizontal = onHorizontal,
+                onVertical = onVertical,
+                modifier = modifier,
             )
         }
-        ConstraintWidget(horizontal = horizontal, vertical = vertical, modifier = Modifier.weight(1f))
+        val widget: @Composable (Modifier) -> Unit = { modifier ->
+            ConstraintWidget(
+                horizontal = horizontal,
+                vertical = vertical,
+                enabled = enabled,
+                onHorizontal = onHorizontal,
+                onVertical = onVertical,
+                modifier = modifier,
+            )
+        }
+
+        if (maxWidth < 248.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                controls(Modifier.fillMaxWidth())
+                widget(Modifier.fillMaxWidth())
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                controls(Modifier.weight(1f))
+                widget(Modifier.weight(1f))
+            }
+        }
     }
+}
+
+@Composable
+private fun ConstraintSelectFields(
+    horizontal: HorizontalConstraint?,
+    vertical: VerticalConstraint?,
+    enabled: Boolean,
+    onHorizontal: (HorizontalConstraint) -> Unit,
+    onVertical: (VerticalConstraint) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val strings = LocalStrings.current
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        CompactSelectField(
+            value = horizontal?.let { strings.inspector.horizontalConstraint(it) } ?: strings.common.mixed,
+            options = HorizontalConstraint.entries.map { strings.inspector.horizontalConstraint(it) },
+            onSelect = { label -> HorizontalConstraint.entries.firstOrNull { strings.inspector.horizontalConstraint(it) == label }?.let(onHorizontal) },
+            enabled = enabled,
+            leadingContent = { ConstraintOptionPreview(horizontal = horizontal) },
+            optionLeadingContent = { label ->
+                val option = HorizontalConstraint.entries.firstOrNull { strings.inspector.horizontalConstraint(it) == label }
+                ConstraintOptionPreview(horizontal = option)
+            },
+        )
+        CompactSelectField(
+            value = vertical?.let { strings.inspector.verticalConstraint(it) } ?: strings.common.mixed,
+            options = VerticalConstraint.entries.map { strings.inspector.verticalConstraint(it) },
+            onSelect = { label -> VerticalConstraint.entries.firstOrNull { strings.inspector.verticalConstraint(it) == label }?.let(onVertical) },
+            enabled = enabled,
+            leadingContent = { ConstraintOptionPreview(vertical = vertical) },
+            optionLeadingContent = { label ->
+                val option = VerticalConstraint.entries.firstOrNull { strings.inspector.verticalConstraint(it) == label }
+                ConstraintOptionPreview(vertical = option)
+            },
+        )
+    }
+}
+
+/** The direct-manipulation targets of the visual constraints pin grid. */
+internal enum class ConstraintPinTarget {
+    HorizontalLeft,
+    HorizontalCenter,
+    HorizontalRight,
+    HorizontalScale,
+    VerticalTop,
+    VerticalCenter,
+    VerticalBottom,
+    VerticalScale,
+}
+
+/**
+ * Resolves a widget-local tap to a direct constraint control. The center tracks are split so
+ * horizontal and vertical center constraints stay independently addressable.
+ */
+internal fun constraintPinTargetAt(x: Float, y: Float, width: Float, height: Float): ConstraintPinTarget? {
+    if (width <= 0f || height <= 0f) return null
+    val nx = x / width
+    val ny = y / height
+    if (nx !in 0f..1f || ny !in 0f..1f) return null
+
+    return when {
+        ny >= 0.78f && nx < 0.5f -> ConstraintPinTarget.HorizontalScale
+        ny >= 0.78f -> ConstraintPinTarget.VerticalScale
+        nx in 0.42f..0.58f && ny in 0.08f..0.38f -> ConstraintPinTarget.HorizontalCenter
+        ny in 0.42f..0.58f && nx in 0.08f..0.38f -> ConstraintPinTarget.VerticalCenter
+        ny < 0.22f -> ConstraintPinTarget.VerticalTop
+        ny in 0.60f..0.76f -> ConstraintPinTarget.VerticalBottom
+        nx < 0.22f -> ConstraintPinTarget.HorizontalLeft
+        nx > 0.78f -> ConstraintPinTarget.HorizontalRight
+        else -> null
+    }
+}
+
+/** Applies the Figma-style edge-pin toggle contract for one horizontal axis. */
+internal fun nextHorizontalConstraint(
+    current: HorizontalConstraint?,
+    target: ConstraintPinTarget,
+): HorizontalConstraint? = when (target) {
+    ConstraintPinTarget.HorizontalLeft -> when (current) {
+        HorizontalConstraint.Right -> HorizontalConstraint.LeftRight
+        HorizontalConstraint.LeftRight -> HorizontalConstraint.Right
+        else -> HorizontalConstraint.Left
+    }
+    ConstraintPinTarget.HorizontalRight -> when (current) {
+        HorizontalConstraint.Left -> HorizontalConstraint.LeftRight
+        HorizontalConstraint.LeftRight -> HorizontalConstraint.Left
+        else -> HorizontalConstraint.Right
+    }
+    ConstraintPinTarget.HorizontalCenter -> HorizontalConstraint.Center
+    ConstraintPinTarget.HorizontalScale -> HorizontalConstraint.Scale
+    else -> current
+}
+
+/** Applies the Figma-style edge-pin toggle contract for one vertical axis. */
+internal fun nextVerticalConstraint(
+    current: VerticalConstraint?,
+    target: ConstraintPinTarget,
+): VerticalConstraint? = when (target) {
+    ConstraintPinTarget.VerticalTop -> when (current) {
+        VerticalConstraint.Bottom -> VerticalConstraint.TopBottom
+        VerticalConstraint.TopBottom -> VerticalConstraint.Bottom
+        else -> VerticalConstraint.Top
+    }
+    ConstraintPinTarget.VerticalBottom -> when (current) {
+        VerticalConstraint.Top -> VerticalConstraint.TopBottom
+        VerticalConstraint.TopBottom -> VerticalConstraint.Top
+        else -> VerticalConstraint.Bottom
+    }
+    ConstraintPinTarget.VerticalCenter -> VerticalConstraint.Center
+    ConstraintPinTarget.VerticalScale -> VerticalConstraint.Scale
+    else -> current
 }
 
 @Composable
 private fun ConstraintWidget(
     horizontal: HorizontalConstraint?,
     vertical: VerticalConstraint?,
+    enabled: Boolean,
+    onHorizontal: (HorizontalConstraint) -> Unit,
+    onVertical: (VerticalConstraint) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalEditorColors.current
-    val line = colors.mutedInk
-    val active = colors.accent
+    val strings = LocalStrings.current
+    val displayColors = if (enabled) {
+        colors
+    } else {
+        colors.copy(
+            accent = colors.mutedInk,
+            accentContainer = colors.controlDisabledSurface,
+            raisedSurface = colors.controlDisabledSurface,
+            selectionFill = colors.controlDisabledSurface,
+            controlStroke = colors.controlDisabledStroke,
+        )
+    }
     Surface(
-        modifier = modifier.height(58.dp),
+        modifier = modifier.height(72.dp),
         shape = RoundedCornerShape(5.dp),
-        color = colors.controlSurface,
-        border = BorderStroke(1.dp, colors.controlStroke),
+        color = if (enabled) colors.controlSurface else colors.controlDisabledSurface,
+        border = BorderStroke(1.dp, if (enabled) colors.controlStroke else colors.controlDisabledStroke),
     ) {
-        Canvas(Modifier.fillMaxSize().padding(7.dp)) {
-            val stroke = Stroke(1.dp.toPx())
-            val activeStrokeWidth = 2.dp.toPx()
-            val objectWidth = size.width * 0.58f
-            val objectHeight = 22.dp.toPx().coerceAtMost(size.height - 10.dp.toPx())
-            val left = (size.width - objectWidth) / 2f
-            val top = (size.height - objectHeight) / 2f
-            val right = left + objectWidth
-            val bottom = top + objectHeight
-            val centerX = size.width / 2f
-            val centerY = size.height / 2f
-
-            drawRoundRect(
-                color = Color.White,
-                topLeft = Offset(left, top),
-                size = Size(objectWidth, objectHeight),
-                cornerRadius = CornerRadius(5.dp.toPx(), 5.dp.toPx()),
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .semantics { contentDescription = strings.inspector.constraints }
+                .pointerInput(horizontal, vertical, enabled, onHorizontal, onVertical) {
+                    if (!enabled) return@pointerInput
+                    detectTapGestures { position ->
+                        when (val target = constraintPinTargetAt(position.x, position.y, size.width.toFloat(), size.height.toFloat())) {
+                            ConstraintPinTarget.HorizontalLeft,
+                            ConstraintPinTarget.HorizontalCenter,
+                            ConstraintPinTarget.HorizontalRight,
+                            ConstraintPinTarget.HorizontalScale -> nextHorizontalConstraint(horizontal, target)?.let(onHorizontal)
+                            ConstraintPinTarget.VerticalTop,
+                            ConstraintPinTarget.VerticalCenter,
+                            ConstraintPinTarget.VerticalBottom,
+                            ConstraintPinTarget.VerticalScale -> nextVerticalConstraint(vertical, target)?.let(onVertical)
+                            null -> Unit
+                        }
+                    }
+                },
+        ) {
+            val parentLeft = size.width * 0.16f
+            val parentTop = size.height * 0.08f
+            val parentRight = size.width * 0.84f
+            val parentBottom = size.height * 0.68f
+            val childWidth = (parentRight - parentLeft) * 0.42f
+            val childHeight = (parentBottom - parentTop) * 0.42f
+            val childLeft = (size.width - childWidth) / 2f
+            val childTop = (parentTop + parentBottom - childHeight) / 2f
+            drawConstraintDiagram(
+                horizontal = horizontal,
+                vertical = vertical,
+                parentLeft = parentLeft,
+                parentTop = parentTop,
+                parentRight = parentRight,
+                parentBottom = parentBottom,
+                childLeft = childLeft,
+                childTop = childTop,
+                childRight = childLeft + childWidth,
+                childBottom = childTop + childHeight,
+                colors = displayColors,
             )
-            drawRoundRect(
-                color = colors.controlStroke,
-                topLeft = Offset(left, top),
-                size = Size(objectWidth, objectHeight),
-                cornerRadius = CornerRadius(5.dp.toPx(), 5.dp.toPx()),
-                style = stroke,
-            )
-
-            drawLine(line, Offset(0f, centerY), Offset(left - 8.dp.toPx(), centerY), strokeWidth = 1.dp.toPx())
-            drawLine(line, Offset(right + 8.dp.toPx(), centerY), Offset(size.width, centerY), strokeWidth = 1.dp.toPx())
-            drawLine(line, Offset(centerX, 0f), Offset(centerX, top - 6.dp.toPx()), strokeWidth = 1.dp.toPx())
-            drawLine(line, Offset(centerX, bottom + 6.dp.toPx()), Offset(centerX, size.height), strokeWidth = 1.dp.toPx())
-
-            if (horizontal in setOf(HorizontalConstraint.Left, HorizontalConstraint.LeftRight, HorizontalConstraint.Scale)) {
-                drawLine(active, Offset(0f, centerY), Offset(left, centerY), strokeWidth = activeStrokeWidth)
-            }
-            if (horizontal in setOf(HorizontalConstraint.Right, HorizontalConstraint.LeftRight, HorizontalConstraint.Scale)) {
-                drawLine(active, Offset(right, centerY), Offset(size.width, centerY), strokeWidth = activeStrokeWidth)
-            }
-            if (horizontal == HorizontalConstraint.Center) {
-                drawLine(active, Offset(centerX, top - 9.dp.toPx()), Offset(centerX, bottom + 9.dp.toPx()), strokeWidth = activeStrokeWidth)
-            }
-            if (vertical in setOf(VerticalConstraint.Top, VerticalConstraint.TopBottom, VerticalConstraint.Scale)) {
-                drawLine(active, Offset(centerX, 0f), Offset(centerX, top), strokeWidth = activeStrokeWidth)
-            }
-            if (vertical in setOf(VerticalConstraint.Bottom, VerticalConstraint.TopBottom, VerticalConstraint.Scale)) {
-                drawLine(active, Offset(centerX, bottom), Offset(centerX, size.height), strokeWidth = activeStrokeWidth)
-            }
-            if (vertical == VerticalConstraint.Center) {
-                drawLine(active, Offset(left - 10.dp.toPx(), centerY), Offset(right + 10.dp.toPx(), centerY), strokeWidth = activeStrokeWidth)
-            }
+            drawConstraintScaleButtons(horizontal, vertical, displayColors)
         }
+    }
+}
+
+@Composable
+private fun ConstraintOptionPreview(
+    horizontal: HorizontalConstraint? = null,
+    vertical: VerticalConstraint? = null,
+    modifier: Modifier = Modifier.size(16.dp),
+) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        val parentLeft = size.width * 0.12f
+        val parentTop = size.height * 0.12f
+        val parentRight = size.width * 0.88f
+        val parentBottom = size.height * 0.88f
+        val childWidth = (parentRight - parentLeft) * 0.42f
+        val childHeight = (parentBottom - parentTop) * 0.42f
+        val childLeft = (size.width - childWidth) / 2f
+        val childTop = (size.height - childHeight) / 2f
+        drawConstraintDiagram(
+            horizontal = horizontal,
+            vertical = vertical,
+            parentLeft = parentLeft,
+            parentTop = parentTop,
+            parentRight = parentRight,
+            parentBottom = parentBottom,
+            childLeft = childLeft,
+            childTop = childTop,
+            childRight = childLeft + childWidth,
+            childBottom = childTop + childHeight,
+            colors = colors,
+        )
+    }
+}
+
+private fun DrawScope.drawConstraintDiagram(
+    horizontal: HorizontalConstraint?,
+    vertical: VerticalConstraint?,
+    parentLeft: Float,
+    parentTop: Float,
+    parentRight: Float,
+    parentBottom: Float,
+    childLeft: Float,
+    childTop: Float,
+    childRight: Float,
+    childBottom: Float,
+    colors: io.aequicor.visualization.editor.ui.theme.EditorColors,
+) {
+    val centerX = (parentLeft + parentRight) / 2f
+    val centerY = (parentTop + parentBottom) / 2f
+    val childCenterX = (childLeft + childRight) / 2f
+    val childCenterY = (childTop + childBottom) / 2f
+    val neutralWidth = 1.dp.toPx()
+    val activeWidth = 1.8.dp.toPx()
+    val neutral = colors.controlStroke
+    val active = colors.accent
+
+    drawRoundRect(
+        color = colors.raisedSurface,
+        topLeft = Offset(parentLeft, parentTop),
+        size = Size(parentRight - parentLeft, parentBottom - parentTop),
+        cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+    )
+    drawRoundRect(
+        color = neutral,
+        topLeft = Offset(parentLeft, parentTop),
+        size = Size(parentRight - parentLeft, parentBottom - parentTop),
+        cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+        style = Stroke(neutralWidth),
+    )
+    drawRoundRect(
+        color = colors.selectionFill,
+        topLeft = Offset(childLeft, childTop),
+        size = Size(childRight - childLeft, childBottom - childTop),
+        cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+    )
+    drawRoundRect(
+        color = neutral,
+        topLeft = Offset(childLeft, childTop),
+        size = Size(childRight - childLeft, childBottom - childTop),
+        cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+        style = Stroke(neutralWidth),
+    )
+
+    fun line(from: Offset, to: Offset, color: Color = neutral, width: Float = neutralWidth) =
+        drawLine(color, from, to, strokeWidth = width)
+
+    line(Offset(parentLeft, childCenterY), Offset(childLeft, childCenterY))
+    line(Offset(childRight, childCenterY), Offset(parentRight, childCenterY))
+    line(Offset(childCenterX, parentTop), Offset(childCenterX, childTop))
+    line(Offset(childCenterX, childBottom), Offset(childCenterX, parentBottom))
+
+    if (horizontal == HorizontalConstraint.Left || horizontal == HorizontalConstraint.LeftRight) {
+        line(Offset(parentLeft, childCenterY), Offset(childLeft, childCenterY), active, activeWidth)
+    }
+    if (horizontal == HorizontalConstraint.Right || horizontal == HorizontalConstraint.LeftRight) {
+        line(Offset(childRight, childCenterY), Offset(parentRight, childCenterY), active, activeWidth)
+    }
+    if (horizontal == HorizontalConstraint.Center) {
+        line(Offset(centerX, parentTop), Offset(centerX, parentBottom), active, activeWidth)
+    }
+    if (horizontal == HorizontalConstraint.Scale) {
+        line(Offset(parentLeft, centerY), Offset(parentRight, centerY), active, activeWidth)
+        drawConstraintArrow(Offset(parentLeft, centerY), horizontal = true, forward = true, color = active, strokeWidth = activeWidth)
+        drawConstraintArrow(Offset(parentRight, centerY), horizontal = true, forward = false, color = active, strokeWidth = activeWidth)
+    }
+
+    if (vertical == VerticalConstraint.Top || vertical == VerticalConstraint.TopBottom) {
+        line(Offset(childCenterX, parentTop), Offset(childCenterX, childTop), active, activeWidth)
+    }
+    if (vertical == VerticalConstraint.Bottom || vertical == VerticalConstraint.TopBottom) {
+        line(Offset(childCenterX, childBottom), Offset(childCenterX, parentBottom), active, activeWidth)
+    }
+    if (vertical == VerticalConstraint.Center) {
+        line(Offset(parentLeft, centerY), Offset(parentRight, centerY), active, activeWidth)
+    }
+    if (vertical == VerticalConstraint.Scale) {
+        line(Offset(centerX, parentTop), Offset(centerX, parentBottom), active, activeWidth)
+        drawConstraintArrow(Offset(centerX, parentTop), horizontal = false, forward = true, color = active, strokeWidth = activeWidth)
+        drawConstraintArrow(Offset(centerX, parentBottom), horizontal = false, forward = false, color = active, strokeWidth = activeWidth)
+    }
+}
+
+private fun DrawScope.drawConstraintScaleButtons(
+    horizontal: HorizontalConstraint?,
+    vertical: VerticalConstraint?,
+    colors: io.aequicor.visualization.editor.ui.theme.EditorColors,
+) {
+    val gap = 4.dp.toPx()
+    val top = size.height * 0.78f
+    val buttonHeight = size.height - top - 4.dp.toPx()
+    val left = 4.dp.toPx()
+    val mid = size.width / 2f - gap / 2f
+    val right = size.width - 4.dp.toPx()
+    fun button(from: Float, to: Float, active: Boolean, horizontalAxis: Boolean) {
+        val border = if (active) colors.accent else colors.controlStroke
+        drawRoundRect(
+            color = if (active) colors.accentContainer else colors.raisedSurface,
+            topLeft = Offset(from, top),
+            size = Size(to - from, buttonHeight),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+        )
+        drawRoundRect(
+            color = border,
+            topLeft = Offset(from, top),
+            size = Size(to - from, buttonHeight),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+            style = Stroke(1.dp.toPx()),
+        )
+        val center = Offset((from + to) / 2f, top + buttonHeight / 2f)
+        val distance = if (horizontalAxis) (to - from) * 0.22f else buttonHeight * 0.22f
+        if (horizontalAxis) {
+            drawLine(border, Offset(center.x - distance, center.y), Offset(center.x + distance, center.y), strokeWidth = 1.3.dp.toPx())
+            drawConstraintArrow(Offset(center.x - distance, center.y), horizontal = true, forward = true, color = border, strokeWidth = 1.3.dp.toPx())
+            drawConstraintArrow(Offset(center.x + distance, center.y), horizontal = true, forward = false, color = border, strokeWidth = 1.3.dp.toPx())
+        } else {
+            drawLine(border, Offset(center.x, center.y - distance), Offset(center.x, center.y + distance), strokeWidth = 1.3.dp.toPx())
+            drawConstraintArrow(Offset(center.x, center.y - distance), horizontal = false, forward = true, color = border, strokeWidth = 1.3.dp.toPx())
+            drawConstraintArrow(Offset(center.x, center.y + distance), horizontal = false, forward = false, color = border, strokeWidth = 1.3.dp.toPx())
+        }
+    }
+    button(left, mid, horizontal == HorizontalConstraint.Scale, horizontalAxis = true)
+    button(mid + gap, right, vertical == VerticalConstraint.Scale, horizontalAxis = false)
+}
+
+private fun DrawScope.drawConstraintArrow(
+    point: Offset,
+    horizontal: Boolean,
+    forward: Boolean,
+    color: Color,
+    strokeWidth: Float,
+) {
+    val arrow = 3.dp.toPx()
+    val direction = if (forward) 1f else -1f
+    if (horizontal) {
+        drawLine(color, point, Offset(point.x + arrow * direction, point.y - arrow), strokeWidth = strokeWidth)
+        drawLine(color, point, Offset(point.x + arrow * direction, point.y + arrow), strokeWidth = strokeWidth)
+    } else {
+        drawLine(color, point, Offset(point.x - arrow, point.y + arrow * direction), strokeWidth = strokeWidth)
+        drawLine(color, point, Offset(point.x + arrow, point.y + arrow * direction), strokeWidth = strokeWidth)
     }
 }
 

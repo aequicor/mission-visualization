@@ -117,6 +117,8 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.UpdateStroke,
     is DesignEditorIntent.StrokeCommand,
     is DesignEditorIntent.UpdateTypography,
+    is DesignEditorIntent.UpdateTypographyRange,
+    is DesignEditorIntent.SetTextRangeFills,
     is DesignEditorIntent.SetTextRangeStyleRef,
     is DesignEditorIntent.SetTextLink,
     is DesignEditorIntent.SetTextCharacters,
@@ -149,10 +151,6 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.InteractionCommand,
     is DesignEditorIntent.MotionCommand,
     -> DesignIntentPersistence.WriteBack
-
-    is DesignEditorIntent.UpdateTypographyRange,
-    is DesignEditorIntent.SetTextRangeFills,
-    -> DesignIntentPersistence.Unsupported
 
     is DesignEditorIntent.EffectCommand -> when (op) {
         is EffectOp.ToggleAt -> DesignIntentPersistence.Unsupported

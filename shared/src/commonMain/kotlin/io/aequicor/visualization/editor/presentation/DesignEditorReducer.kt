@@ -71,6 +71,7 @@ import io.aequicor.visualization.engine.ir.model.Bindable
 import io.aequicor.visualization.engine.ir.model.DesignUnit
 import io.aequicor.visualization.engine.ir.model.TextLink
 import io.aequicor.visualization.engine.ir.model.TextStyleRange
+import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
@@ -190,14 +191,7 @@ internal fun reduceDesignEditorUnchecked(state: DesignEditorState, intent: Desig
         }
         is DesignEditorIntent.PositionNode -> state.positionNodeWriteBack(intent)
         is DesignEditorIntent.UpdateSize -> state.editUnlockedNode(intent.nodeId) { node ->
-            val sizing = node.sizing ?: DesignSizing()
-            node.copy(
-                size = DesignSize(intent.width ?: node.size.width, intent.height ?: node.size.height),
-                sizing = sizing.copy(
-                    horizontal = if (intent.width != null) SizingMode.Fixed else sizing.horizontal,
-                    vertical = if (intent.height != null) SizingMode.Fixed else sizing.vertical,
-                ),
-            )
+            node.withExplicitSize(intent.width, intent.height)
         }
         is DesignEditorIntent.ResizeNode -> state.resizeNodeWriteBack(intent)
         is DesignEditorIntent.MoveNodes -> state.moveNodes(intent)
@@ -1871,21 +1865,59 @@ private fun DesignEditorState.textAutoResizeWriteBack(intent: DesignEditorIntent
 
 private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.ResizeNode): DesignEditorState {
     if (intent.width == null && intent.height == null) return this
-    val edit = SetSizing(
-        nodeId = intent.nodeId,
-        width = intent.width?.let { SizingSpec(mode = SizingMode.Fixed, value = it) },
-        height = intent.height?.let { SizingSpec(mode = SizingMode.Fixed, value = it) },
-    )
-    return writeBackEdits(intent.nodeId, listOf(edit)) { node ->
-        val sizing = node.sizing ?: DesignSizing()
-        node.copy(
-            size = DesignSize(intent.width ?: node.size.width, intent.height ?: node.size.height),
-            sizing = sizing.copy(
-                horizontal = if (intent.width != null) SizingMode.Fixed else sizing.horizontal,
-                vertical = if (intent.height != null) SizingMode.Fixed else sizing.vertical,
+    val patched = document?.nodeById(intent.nodeId)?.withExplicitSize(intent.width, intent.height)
+    val edits = buildList {
+        add(
+            SetSizing(
+                nodeId = intent.nodeId,
+                width = intent.width?.let { SizingSpec(mode = SizingMode.Fixed, value = it) },
+                height = intent.height?.let { SizingSpec(mode = SizingMode.Fixed, value = it) },
             ),
         )
+        // Text owns a second resizing contract in addition to layout sizing. Persist both in one
+        // transaction; otherwise an authored `autosize both` wins again after recompile and the
+        // box snaps back to its content dimensions on pointer-up.
+        (patched?.kind as? DesignNodeKind.Text)?.let { text ->
+            add(SetTextAutoResizeEdit(intent.nodeId, text.autoResize))
+        }
     }
+    return writeBackEdits(intent.nodeId, edits) { node ->
+        node.withExplicitSize(intent.width, intent.height)
+    }
+}
+
+/**
+ * Applies an explicit box dimension and keeps text measurement consistent with it. Horizontal
+ * resize of auto-width text becomes fixed-width/auto-height so wrapping still reflows; an explicit
+ * height makes the text box fully fixed because the model has no auto-width-only mode.
+ */
+private fun DesignNode.withExplicitSize(width: Double?, height: Double?): DesignNode {
+    val currentSizing = sizing ?: DesignSizing()
+    var nextSizing = currentSizing.copy(
+        horizontal = if (width != null) SizingMode.Fixed else currentSizing.horizontal,
+        vertical = if (height != null) SizingMode.Fixed else currentSizing.vertical,
+    )
+    val text = kind as? DesignNodeKind.Text
+    val nextAutoResize = text?.let {
+        when {
+            height != null -> TextAutoResize.None
+            width != null && it.autoResize == TextAutoResize.WidthAndHeight -> TextAutoResize.Height
+            else -> it.autoResize
+        }
+    }
+    if (text != null && nextAutoResize != text.autoResize) {
+        nextSizing = when (nextAutoResize) {
+            TextAutoResize.WidthAndHeight -> DesignSizing(SizingMode.Hug, SizingMode.Hug)
+            TextAutoResize.Height -> DesignSizing(SizingMode.Fixed, SizingMode.Hug)
+            TextAutoResize.None -> DesignSizing(SizingMode.Fixed, SizingMode.Fixed)
+            null -> nextSizing
+        }
+    }
+    return copy(
+        size = DesignSize(width ?: size.width, height ?: size.height),
+        sizing = nextSizing,
+        kind = if (text != null && nextAutoResize != null) text.copy(autoResize = nextAutoResize) else kind,
+    )
 }
 
 private fun DesignEditorState.positionNodeWriteBack(intent: DesignEditorIntent.PositionNode): DesignEditorState =
@@ -2264,8 +2296,8 @@ private fun DesignNode.applyFillOp(op: FillOp): DesignNode =
         fillStyleId = "",
     )
 
-/** Pure paint-list transformation shared by node fills and vector-network region fills. */
-private fun applyFillOp(current: List<DesignPaint>, op: FillOp): List<DesignPaint> {
+/** Pure paint-list transformation shared by node fills, text ranges and vector-network regions. */
+internal fun applyFillOp(current: List<DesignPaint>, op: FillOp): List<DesignPaint> {
     val fills = current.toMutableList()
     when (op) {
         FillOp.Add -> fills.add(DesignPaint.Solid(DefaultFillColor.bindable()))

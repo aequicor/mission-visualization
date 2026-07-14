@@ -39,6 +39,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -468,15 +470,24 @@ internal fun EditorDropdownMenuItem(
     leadingContent: (@Composable () -> Unit)? = null,
     trailingContent: (@Composable () -> Unit)? = null,
     enabled: Boolean = true,
+    selected: Boolean = false,
     onClick: () -> Unit,
 ) {
     val colors = LocalEditorColors.current
     DropdownMenuItem(
+        modifier = Modifier
+            .background(if (selected) colors.selectionFill else Color.Transparent)
+            .semantics { this.selected = selected },
         text = {
             Text(
                 text,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (enabled) colors.ink else colors.mutedInk,
+                color = when {
+                    !enabled -> colors.mutedInk
+                    selected -> colors.accent
+                    else -> colors.ink
+                },
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis,

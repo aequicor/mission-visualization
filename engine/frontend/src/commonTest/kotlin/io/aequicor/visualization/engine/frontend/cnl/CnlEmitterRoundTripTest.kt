@@ -598,6 +598,12 @@ class CnlEmitterRoundTripTest {
         assertLeafRoundTrips("Text «Read the terms» span (range (9 14) style typography.title)") { it is DesignNodeKind.Text }
 
     @Test
+    fun textWithInlineTypographyAndFillSpan() =
+        assertLeafRoundTrips(
+            "Text «Mission live» span (range (0 7) font «Source Sans 3» weight 600 italic yes size 24 fills (color (#FF3344 opacity 0.75)))",
+        ) { it is DesignNodeKind.Text }
+
+    @Test
     fun textWithMultipleStyleSpans() =
         assertLeafRoundTrips("Text «Bold and italic» span (range (0 4) style typography.body.strong) span (range (9 15) style typography.body.em)") {
             it is DesignNodeKind.Text
