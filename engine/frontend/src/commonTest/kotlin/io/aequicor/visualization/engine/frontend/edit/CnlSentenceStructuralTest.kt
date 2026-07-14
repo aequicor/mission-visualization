@@ -37,6 +37,45 @@ class CnlSentenceStructuralTest {
     }
 
     @Test
+    fun movesHeadingAfterCnlSentenceLandsPastWholeBodyWithoutCapturingSiblings() {
+        // `right` has two body sentences; moving a heading section to sit "after existing" must not
+        // splice the heading between them (which would capture `existing2` as its child on
+        // recompile). It lands after the whole leaf body instead, leaving `existing2` a child of
+        // `right`.
+        val twoBodySource = """
+            ---
+            screen: capture-guard
+            sourceLocale: en-US
+            ---
+
+            # Capture guard
+
+            ## Frame: Left id left 300 by 500 position 0 0
+
+            ### Frame: Movable id movable 100 by 100 position 0 0
+
+            Rectangle id movable_child 20 by 20 position 0 0 color #0000FF
+
+            ## Frame: Right id right 300 by 500 position 400 0
+
+            Rectangle id existing 40 by 40 position 10 20 color #00FF00
+
+            Rectangle id existing2 40 by 40 position 10 80 color #00FFFF
+        """.trimIndent() + "\n"
+        val compiled = compileForEdit(twoBodySource)
+
+        val newSource = applySlmEdit(
+            twoBodySource,
+            MoveSection("movable", "right", afterSiblingId = "existing"),
+            compiled,
+        ).requireNewSource()
+
+        val document = compileForEdit(newSource).requireDocument()
+        assertEquals(listOf("existing", "existing2", "movable"), document.requireNode("right").children.map { it.id })
+        assertEquals(listOf("movable_child"), document.requireNode("movable").children.map { it.id })
+    }
+
+    @Test
     fun movesCnlSentenceAfterCnlSentenceSibling() {
         val compiled = compileForEdit(source)
 

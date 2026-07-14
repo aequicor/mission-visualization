@@ -731,6 +731,17 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             val down = gestureStart.change
                             shiftHeld = gestureStart.shiftPressed
                             altHeld = gestureStart.altPressed
+                            // Reconcile the sticky keyboard-tracked Ctrl/Cmd flag with the live pointer
+                            // modifiers at press. The flag exists because some backends attach Ctrl/Cmd
+                            // only to the first move, not the down event; but a Ctrl/Cmd *release* that
+                            // lands on a sibling pane (focus leaves the canvas without a window blur, so
+                            // neither the key handler nor resetHeldModifiers fires) leaves the flag stuck
+                            // true. The pointer event is authoritative for what is physically down now:
+                            // when it reports Ctrl/Cmd up, clear the stale flag so a plain press-drag on a
+                            // node is not forced into a marquee. A genuinely-held Ctrl/Cmd is still promoted
+                            // mid-drag from the live modifiers (resolveCanvasDragOperation), covering the
+                            // late-report backend the flag was added for.
+                            if (!gestureStart.ctrlOrMetaPressed) ctrlOrMetaHeld = false
                             val ctrlOrMetaPressedAtStart = gestureStart.ctrlOrMetaPressed || ctrlOrMetaHeld
                             val additiveSelectionPressed = gestureStart.shiftPressed || ctrlOrMetaPressedAtStart
                             // Ctrl/Cmd changes where a marquee may start; Shift changes how

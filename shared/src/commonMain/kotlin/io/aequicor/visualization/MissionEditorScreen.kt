@@ -297,6 +297,14 @@ class MissionEditorStateHolder(
         private set
 
     /**
+     * Monotonic counter bumped on every external-error occurrence, even while [folderExternalError]
+     * stays continuously true. Lets the error snackbar re-show after a manual dismiss when a
+     * subsequent broken snapshot arrives without the flag ever flipping back to false.
+     */
+    var folderExternalErrorNonce by mutableStateOf(0)
+        private set
+
+    /**
      * The in-editor sources an external change replaced while they were unsaved, or null when
      * there is nothing to recover. Surfaced as a one-click "restore my edit" affordance so a
      * concurrent edit is never silently lost.
@@ -522,6 +530,7 @@ class MissionEditorStateHolder(
         // last good canvas. An empty folder is a valid empty project and must not reveal Welcome.
         if (!isEmptyProject && incomingDocument == null) {
             folderExternalError = true
+            folderExternalErrorNonce++
             return
         }
         folderExternalError = !isEmptyProject && (docs.document == null || docs.hasErrors)
@@ -971,7 +980,7 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
     val strings = LocalStrings.current
     val colors = LocalEditorColors.current
     val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(state.folderExternalError, strings.menu.folderExternalError) {
+    LaunchedEffect(state.folderExternalError, state.folderExternalErrorNonce, strings.menu.folderExternalError) {
         if (state.folderExternalError) {
             snackbarHostState.showSnackbar(
                 message = strings.menu.folderExternalError,

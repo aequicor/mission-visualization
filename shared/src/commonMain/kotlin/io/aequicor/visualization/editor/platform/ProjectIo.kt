@@ -129,9 +129,12 @@ internal data class FolderFileWrite(
 )
 
 /**
- * Commits all [writes] as one optimistic transaction. Implementations must verify every base
- * before changing any target. False means nothing was committed (or a partial commit was rolled
- * back) and the caller must keep its previous sync base.
+ * Commits all [writes] as one optimistic transaction (a null [FolderFileWrite.content] deletes the
+ * file). Implementations must verify every base before changing any target. Returns false when the
+ * commit could not be initiated (e.g. no folder is connected/watching), in which case the caller
+ * must keep its previous sync base; true when the batch was accepted for writing. The browser bridge
+ * writes/deletes asynchronously, so a `true` there means "accepted", with drift/IO conflicts caught
+ * afterwards by the disk watcher.
  */
 internal expect fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean
 

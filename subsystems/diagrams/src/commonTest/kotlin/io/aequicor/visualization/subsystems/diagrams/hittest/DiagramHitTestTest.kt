@@ -79,15 +79,69 @@ class DiagramHitTestTest {
     }
 
     @Test
-    fun virtualDrawIoConnectionPointBeatsNodeBody() {
+    fun virtualConnectionPointIsOfferedOnlyOutsideTheNodeBody() {
         val graph = diagramGraph {
             node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
         }
 
-        val hit = hitTest(graph, emptyMap(), DiagramPoint(25.0, 1.0), tolerance = 5.0)
+        // Just OUTSIDE the top edge, within tolerance of the auto top-q1 grid point: an edge can be
+        // started from the node's perimeter (draw.io connection cross), so a virtual Port is offered.
+        val outside = hitTest(graph, emptyMap(), DiagramPoint(25.0, -1.0), tolerance = 5.0)
+        assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("top-q1")), outside)
 
-        assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("top-q1")), hit)
+        // The SAME neighbourhood but just INSIDE the body selects the node — a plain click there has
+        // to select/move the node, not get swallowed by the virtual grid (which the caller would turn
+        // into an edge-drag with no click-without-move fallback).
+        val inside = hitTest(graph, emptyMap(), DiagramPoint(25.0, 1.0), tolerance = 5.0)
+        assertEquals(DiagramHit.Node(DiagramNodeId("a")), inside)
+
+        // The virtual grid is a pure hit-test convenience: it never mutates the node's declared ports.
         assertEquals(emptyList(), graph.nodeById(DiagramNodeId("a"))!!.ports, "hit-test must not persist the virtual port")
+    }
+
+    @Test
+    fun foregroundBodyBeatsAnOccludedNodesVirtualPort() {
+        // D1 z-order: a background node's virtual connection point that lands under a foreground
+        // node's body must NOT be returned in front of that body.
+        val graph = diagramGraph {
+            node("back", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+            node("front", x = 50.0, y = 0.0, width = 100.0, height = 100.0)
+        }
+        // (100, 50) is "back"'s right mid-side virtual port AND sits inside "front"'s body (its center).
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(100.0, 50.0), tolerance = 5.0)
+        assertEquals(DiagramHit.Node(DiagramNodeId("front")), hit)
+    }
+
+    @Test
+    fun defaultNodePerimeterClicksSelectTheNode() {
+        // D3 selectability: a node with NO declared ports must stay selectable near its corners and
+        // sides, where pre-fix the auto grid swallowed the click as a Port (no click fallback in the
+        // caller, so the node could be neither selected nor moved there).
+        val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0) }
+
+        // Just inside the top-left corner — coincides with the top-left virtual grid point.
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("a")),
+            hitTest(graph, emptyMap(), DiagramPoint(2.0, 2.0), tolerance = 5.0),
+        )
+        // Just inside the left edge — coincides with the left mid-side virtual point.
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("a")),
+            hitTest(graph, emptyMap(), DiagramPoint(2.0, 50.0), tolerance = 5.0),
+        )
+    }
+
+    @Test
+    fun declaredPortStillOutranksBodyAfterVirtualGridFix() {
+        // A DECLARED port is an intentional handle and keeps its priority over the node body it sits
+        // on, even though the virtual grid is now resolved AFTER bodies. An interior anchor proves it
+        // is the declared-port pass (not the body pass) that answers.
+        val interiorPort = DiagramPort(DiagramPortId("hub"), DiagramPortAnchor.RelativePoint(0.5, 0.5))
+        val graph = diagramGraph {
+            node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0, ports = listOf(interiorPort))
+        }
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(51.0, 50.0), tolerance = 5.0)
+        assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("hub")), hit)
     }
 
     @Test

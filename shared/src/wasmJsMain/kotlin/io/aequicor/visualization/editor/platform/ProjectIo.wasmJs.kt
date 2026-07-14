@@ -1,6 +1,9 @@
 package io.aequicor.visualization.editor.platform
 
 import kotlin.js.ExperimentalWasmJsInterop
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.put
 
 internal actual val platformProjectLandingMode: ProjectLandingMode = ProjectLandingMode.WebDom
 
@@ -1089,16 +1092,20 @@ private fun ensureFolderSyncInstalled() {
             idbDelete("root").catch(function () {});
           }
 
+          // Returns true when the file now holds `content` (freshly written or already equal),
+          // false when the write was skipped because the file drifted from our base or an I/O error
+          // was thrown. The editor's compare-and-swap trusts this boolean to decide whether it may
+          // advance its sync base, so it must never lie about a skipped/failed write.
           async function writeFileNow(handle, name, content, base) {
             try {
               var existing = null;
               try { existing = await (await (await resolveFileHandleFor(handle, name, false)).getFile()).text(); } catch (e) { existing = null; }
               // Pre-write concurrency guard: if the file drifted from our base, an external edit
               // landed since we last synced — do not clobber it. The watcher surfaces it inbound.
-              if (existing !== null && base !== undefined && existing !== base) return;
+              if (existing !== null && base !== undefined && existing !== base) return false;
               if (existing === content) {
                 if (state.handle === handle) publishedByName[name] = content;
-                return;
+                return true;
               }
               var target = await resolveFileHandleFor(handle, name, true);
               var writable = await target.createWritable();
@@ -1112,13 +1119,46 @@ private fun ensureFolderSyncInstalled() {
                 publishedByName[name] = content;
                 writtenEcho[name] = { hash: hashStr(content), expiry: Date.now() + ECHO_WINDOW_MS };
               }
-            } catch (err) { console.error(err); }
+              return true;
+            } catch (err) { console.error(err); return false; }
           }
 
-          function enqueueWrite(name, content) {
-            if (!state.handle || state.status !== "watching") return;
+          // Delete the on-disk file for a null-content compare-and-swap entry (a FolderFileWrite
+          // whose content is null). Mirrors writeFileNow's drift guard: an externally-changed file
+          // is left in place and reported as false. Returns true when the file is gone (removed now
+          // or already absent). Bookkeeping is dropped so the watcher does not read the removal back
+          // as an external change.
+          async function removeFileNow(handle, name, base) {
+            try {
+              var existing = null;
+              try { existing = await (await (await resolveFileHandleFor(handle, name, false)).getFile()).text(); } catch (e) { existing = null; }
+              if (existing === null) {
+                if (state.handle === handle) { delete meta[name]; delete publishedByName[name]; }
+                return true;
+              }
+              if (base !== undefined && existing !== base) return false;
+              var segs = name.split("/").filter(function (s) { return s.length > 0; });
+              var dir = handle;
+              for (var i = 0; i < segs.length - 1; i++) {
+                dir = await dir.getDirectoryHandle(safeSeg(segs[i]), { create: false });
+              }
+              await dir.removeEntry(safeSeg(segs[segs.length - 1]));
+              if (state.handle === handle && state.status === "watching") {
+                delete meta[name];
+                delete publishedByName[name];
+              }
+              return true;
+            } catch (err) { console.error(err); return false; }
+          }
+
+          // Queue one compare-and-swap op (content === null means delete). Returns a promise that
+          // resolves to whether the op actually landed, so the editor can await the real result
+          // instead of assuming success. Per-file ordering is preserved through the chain, so a
+          // delete and a re-create of the same file can never race.
+          function enqueueOp(name, content) {
+            if (!state.handle || state.status !== "watching") return Promise.resolve(false);
             // Snapshot the handle before the first await. Leaving the editor disconnects the live
-            // watcher immediately, but every queued write keeps enough authority to finish.
+            // watcher immediately, but every queued op keeps enough authority to finish.
             var handle = state.handle;
             var chains = writeChainsByHandle.get(handle);
             if (!chains) { chains = {}; writeChainsByHandle.set(handle, chains); }
@@ -1128,7 +1168,9 @@ private fun ensureFolderSyncInstalled() {
             var base = hasQueuedBase ? queued[name] : publishedByName[name];
             queued[name] = content;
             var previous = chains[name] || Promise.resolve();
-            var current = previous.then(function () { return writeFileNow(handle, name, content, base); });
+            var current = previous.then(function () {
+              return content === null ? removeFileNow(handle, name, base) : writeFileNow(handle, name, content, base);
+            });
             chains[name] = current;
             current.finally(function () {
               if (chains[name] !== current) return;
@@ -1137,6 +1179,22 @@ private fun ensureFolderSyncInstalled() {
               if (Object.keys(chains).length === 0) writeChainsByHandle.delete(handle);
               if (Object.keys(queued).length === 0) queuedContentByHandle.delete(handle);
             });
+            return current;
+          }
+
+          // Commit a batch of compare-and-swap entries ([{ name, content }], content === null for a
+          // delete). Resolves to true only when every entry landed; a single skipped/failed entry
+          // yields false so the editor keeps its old sync base and retries the whole diff later.
+          async function commitBatch(writesJson) {
+            var list;
+            try { list = JSON.parse(writesJson || "[]"); } catch (e) { return false; }
+            if (!Array.isArray(list) || list.length === 0) return true;
+            if (!state.handle || state.status !== "watching") return false;
+            var results = await Promise.all(list.map(function (w) {
+              var content = (w && w.content !== null && w.content !== undefined) ? String(w.content) : null;
+              return enqueueOp(w.name, content);
+            }));
+            return results.every(function (ok) { return ok; });
           }
 
           window.__mvFolderSync = {
@@ -1153,7 +1211,13 @@ private fun ensureFolderSyncInstalled() {
             disconnect: function () { disconnect(); },
             refresh: function () { refresh(); },
             forget: function (id) { forget(id); },
-            writeFile: function (name, content) { enqueueWrite(name, content); }
+            // Commit an outbound compare-and-swap batch (content === null deletes the entry). The
+            // optional onDone reports whether every entry actually landed (false on any drift-skip /
+            // I/O failure / disconnected write); callers that fire-and-forget may omit it.
+            writeBatch: function (writesJson, onDone) {
+              var report = (typeof onDone === "function") ? onDone : function () {};
+              commitBatch(writesJson).then(function (ok) { report(!!ok); }, function () { report(false); });
+            }
           };
           probe();
         })();
@@ -1239,17 +1303,44 @@ internal actual fun folderSyncStatus(): String? =
 internal actual fun folderSyncError(): String? =
     js("(window.__mvFolderSync ? (window.__mvFolderSync.lastError || null) : null)")
 
+@OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformWriteFolderFiles(writes: List<FolderFileWrite>): Boolean {
-    // The browser bridge owns its asynchronous compare-and-write queue. Keep one common commit
-    // boundary; desktop supplies the stronger temp-file/rollback implementation below.
-    writes.forEach { write -> write.content?.let { platformWriteFolderFile(write.fileName, it) } }
+    if (writes.isEmpty()) return true
+    ensureFolderSyncInstalled()
+    // No folder is connected/watching: nothing can be committed, so report false and let the caller
+    // keep its previous sync base. This is the synchronously-knowable failure case.
+    if (folderSyncStatus() != "watching") return false
+    // Hand the batch to the browser bridge's asynchronous compare-and-swap queue, which now includes
+    // deletes for null-content entries (so a removed screen is actually removed from disk instead of
+    // being read back and resurrected). Accepted for writing; drift/I-O conflicts on an accepted
+    // batch are surfaced afterwards by the disk watcher as an external change.
+    folderSyncWriteBatch(encodeFolderWrites(writes))
     return true
 }
 
 @OptIn(ExperimentalWasmJsInterop::class)
 internal actual fun platformWriteFolderFile(fileName: String, content: String) {
-    js("if (window.__mvFolderSync) window.__mvFolderSync.writeFile(fileName, content)")
+    ensureFolderSyncInstalled()
+    if (folderSyncStatus() != "watching") return
+    // Single-entry compare-and-swap; the bridge derives the drift base from its own view of disk.
+    folderSyncWriteBatch(encodeFolderWrites(listOf(FolderFileWrite(fileName, baseContent = null, content = content))))
 }
+
+/** Serializes an outbound batch to the `[{ "name", "content": string | null }]` JSON the bridge parses. */
+private fun encodeFolderWrites(writes: List<FolderFileWrite>): String =
+    buildJsonArray {
+        writes.forEach { write ->
+            addJsonObject {
+                put("name", write.fileName)
+                // A null content is emitted as JSON null and read back as a delete op by the bridge.
+                put("content", write.content)
+            }
+        }
+    }.toString()
+
+@OptIn(ExperimentalWasmJsInterop::class)
+private fun folderSyncWriteBatch(writesJson: String): Unit =
+    js("window.__mvFolderSync.writeBatch(writesJson)")
 
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun jsEpochMillis(): Double = js("Date.now()")

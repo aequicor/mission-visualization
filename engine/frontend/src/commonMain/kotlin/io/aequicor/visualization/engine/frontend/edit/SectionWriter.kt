@@ -144,7 +144,16 @@ internal class SectionWriter(
         val insertBeforeLine = when {
             afterSiblingSpan != null -> {
                 val sibling = headingAt(afterSiblingSpan.startLine)
-                if (sibling != null) footprintEndLine(sibling) else afterSiblingSpan.endLine + 1
+                if (sibling != null) {
+                    footprintEndLine(sibling)
+                } else {
+                    // afterSibling is a leaf CNL sentence. Splicing a heading between body sentences
+                    // would make it capture every following body sentence as its own child on
+                    // recompile (silent structural corruption the id-set/parent vetoes do not
+                    // catch), so land it after the new parent's entire leaf body — before its first
+                    // child heading — the only heading-safe position next to a sentence sibling.
+                    if (newParentHeading != null) bodyEndLine(newParentHeading) else newParentSpan.endLine + 1
+                }
             }
             newParentHeading != null -> footprintEndLine(newParentHeading)
             else -> newParentSpan.endLine + 1

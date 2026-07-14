@@ -18,12 +18,14 @@ import io.aequicor.visualization.engine.ir.resolve.IcuLiteFormatter
 /**
  * IR-I18N — text content, resources, ICU, typography, truncation.
  *
- * - IR-I18N-001 (error): a used `TextContent.key` missing from a target locale bundle.
+ * - IR-I18N-001 (warning): a used `TextContent.key` missing from a target locale bundle
+ *   (an expected soft-fallback state — the resolver falls back to defaultText).
  * - IR-I18N-002 (warning): the same content key authored with different defaultText
  *   (the duplicate-key hazard that survives JSON parsing — a literal duplicate inside
  *   one bundle is collapsed by the JSON object semantics before validation can see it).
  * - IR-I18N-003 (warning, info-level): orphan resource key no text content references.
- * - IR-I18N-004 (error): resource message with invalid ICU syntax.
+ * - IR-I18N-004 (warning): resource message with invalid ICU syntax (renders literally,
+ *   so this is advice rather than a hard failure).
  * - IR-I18N-005 (warning): plural argument missing the locale's required categories
  *   (en: one/other; ru: one/few/many/other; others fall back to the English set,
  *   mirroring IcuLiteFormatter's plural rules).
@@ -84,7 +86,7 @@ internal object TextI18nChecks {
             val bundle = ctx.mergedResources[locale].orEmpty()
             contents.forEach { (content, node) ->
                 if (content.key.isNotEmpty() && content.key !in bundle) {
-                    sink += validationError(
+                    sink += validationWarning(
                         "IR-I18N-001",
                         "i18n key '${content.key}' (used by '${node.id}') is missing from locale '$locale'",
                         ctx.location(node),
@@ -136,7 +138,7 @@ internal object TextI18nChecks {
             bundle.forEach { (key, message) ->
                 val inspection = IcuLiteFormatter.inspect(message)
                 if (inspection.syntaxError != null) {
-                    sink += validationError(
+                    sink += validationWarning(
                         "IR-I18N-004",
                         "Malformed ICU message '$key' in locale '$locale': ${inspection.syntaxError}",
                     )

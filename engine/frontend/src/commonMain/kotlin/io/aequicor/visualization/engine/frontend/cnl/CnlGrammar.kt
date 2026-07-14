@@ -582,7 +582,10 @@ internal object CnlGrammar {
     }
 
     private fun renderAutoLayoutMarker(node: DesignNode): String? =
-        if (node.containerKind == ContainerKind.AutoLayout && node.type in setOf("screen", "component", "section")) {
+        // Fixed-noun containers (screen/component/section/group) cannot encode container kind in
+        // their heading noun the way a plain `Frame`/`AutoLayout` heading does, so an Auto Layout
+        // one carries an explicit `auto-layout` marker that round-trips back to containerKind.
+        if (node.containerKind == ContainerKind.AutoLayout && node.type in setOf("screen", "component", "section", "group")) {
             "auto-layout"
         } else {
             null

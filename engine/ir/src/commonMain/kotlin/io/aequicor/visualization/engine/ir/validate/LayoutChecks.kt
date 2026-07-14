@@ -34,8 +34,9 @@ import io.aequicor.visualization.engine.ir.model.literalOrNull
  * - IR-LAYOUT-008 (error): `scroll.fixedChildren` id that is not a direct child.
  * - IR-LAYOUT-009/010 (error): containerKind and flow properties disagree.
  * - IR-LAYOUT-011 (warning): a non-default resize constraint has no authored
- *   position/anchors, or is attached to an in-flow Auto Layout child where constraints
- *   do not place the node.
+ *   position/anchors to preserve, so it cannot place the node. In-flow Auto Layout
+ *   children that do carry a position/anchors are left alone (Figma keeps the
+ *   constraint for when the child is later detached).
  */
 internal object LayoutChecks {
 
@@ -199,16 +200,10 @@ internal object LayoutChecks {
     ) {
         val node = entry.node
         if (node.constraints == DesignConstraints()) return
-        val parent = entry.parent ?: return
-        if (parent.layout.mode != LayoutMode.None && !node.layoutChild.absolute) {
-            sink += validationWarning(
-                "IR-LAYOUT-011",
-                "Resize constraints on in-flow child '${node.id}' do not align it inside " +
-                    "AutoLayout '${parent.id}'; use the parent's align/distribute settings",
-                ctx.location(node),
-            )
-            return
-        }
+        // In-flow Auto Layout children legitimately carry resize constraints in Figma: the
+        // constraint takes effect only if the child is later detached/absolutized. Flagging
+        // every such child was noise, so we only warn when the constraint truly cannot place
+        // the node — i.e. there is no authored position or anchors to preserve.
         if (node.position == null && node.anchors == null) {
             sink += validationWarning(
                 "IR-LAYOUT-011",

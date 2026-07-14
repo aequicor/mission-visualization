@@ -77,19 +77,17 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                 toolAnnotations = ToolAnnotations(readOnlyHint = true, openWorldHint = false),
             ) {
                 val markdown = getMissionVisualizationMcpSkill()
+                val header = """
+                    skill_name: $MissionVisualizationMcpSkillName
+                    skill_version: $MissionVisualizationMcpSkillVersion
+                    sha256: ${sha256(markdown)}
+                    install_hint: Install the Markdown below at the AI agent's actual project root using this client's native project-scoped skill mechanism. The MCP allowed layouts root may only be a subfolder; do not infer skill scope from it.
+
+                    --- BEGIN SKILL.md ---
+                """.trimIndent()
                 CallToolResult(
                     content = listOf(
-                        TextContent(
-                            """
-                            skill_name: $MissionVisualizationMcpSkillName
-                            skill_version: $MissionVisualizationMcpSkillVersion
-                            sha256: ${sha256(markdown)}
-                            install_hint: Install the Markdown below at the AI agent's actual project root using this client's native project-scoped skill mechanism. The MCP allowed layouts root may only be a subfolder; do not infer skill scope from it.
-
-                            --- BEGIN SKILL.md ---
-                            $markdown--- END SKILL.md ---
-                            """.trimIndent(),
-                        ),
+                        TextContent("$header\n$markdown--- END SKILL.md ---"),
                     ),
                 )
             }
@@ -114,15 +112,13 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                                 """.trimIndent(),
                             ),
                         ) + bundle.files.map { file ->
-                            TextContent(
-                                """
+                            val header = """
                                 skill_name: ${file.name}
                                 sha256: ${sha256(file.markdown)}
 
                                 --- BEGIN ${file.name}/SKILL.md ---
-                                ${file.markdown}--- END ${file.name}/SKILL.md ---
-                                """.trimIndent(),
-                            )
+                            """.trimIndent()
+                            TextContent("$header\n${file.markdown}--- END ${file.name}/SKILL.md ---")
                         },
                     )
                 } catch (failure: Exception) {
@@ -383,7 +379,7 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
             .joinToString("") { byte -> "%02x".format(byte) }
 
         private fun formatMetadata(result: RenderLayoutResult): String {
-            return """
+            val header = """
                 source: ${result.source}
                 target: ${result.target}
                 dimensions: ${result.width}x${result.height} px
@@ -391,22 +387,22 @@ internal class MissionMcpServerHost private constructor(private val stopAction: 
                 source_fingerprint: ${java.lang.Long.toUnsignedString(result.fingerprint, 16)}
                 saved_path: ${result.savedPath}
                 diagnostics:
-                ${formatDiagnostics(result.diagnostics)}
             """.trimIndent()
+            return "$header\n${formatDiagnostics(result.diagnostics)}"
         }
 
         private fun formatCheckResult(result: CheckLayoutResult): String {
             val errors = result.diagnostics.count { it.severity == io.aequicor.visualization.engine.ir.model.DesignSeverity.Error }
             val warnings = result.diagnostics.count { it.severity == io.aequicor.visualization.engine.ir.model.DesignSeverity.Warning }
-            return """
+            val header = """
                 source: ${result.source}
                 valid: ${result.valid}
                 source_fingerprint: ${java.lang.Long.toUnsignedString(result.fingerprint, 16)}
                 errors: $errors
                 warnings: $warnings
                 diagnostics:
-                ${formatDiagnostics(result.diagnostics)}
             """.trimIndent()
+            return "$header\n${formatDiagnostics(result.diagnostics)}"
         }
 
         private fun formatDiagnostics(diagnostics: List<io.aequicor.visualization.engine.ir.model.DesignDiagnostic>): String =

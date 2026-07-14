@@ -80,7 +80,13 @@ internal fun ProjectLandingScreen(state: MissionEditorStateHolder) {
         }
     }
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    // Request focus initially and re-request it whenever the open-project dialog or the language
+    // dropdown closes — those overlays steal focus, leaving arrow/Enter navigation dead otherwise.
+    LaunchedEffect(projectChoiceVisible, languageExpanded) {
+        if (!projectChoiceVisible && !languageExpanded) {
+            focusRequester.requestFocus()
+        }
+    }
 
     Box(
         modifier = Modifier

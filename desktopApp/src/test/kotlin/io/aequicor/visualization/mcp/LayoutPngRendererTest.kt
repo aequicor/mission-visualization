@@ -100,6 +100,22 @@ class LayoutPngRendererTest {
     }
 
     @Test
+    fun preloadsBundledEditorIconSvgSourcesForVectorShapes() {
+        // Regression: on a cold process rememberVectorAssetProvider's async loader had not run, so
+        // iconRef vector shapes rendered as the plain box fallback. The renderer now preloads the
+        // bundled editor-icon SVGs off the classpath synchronously before rendering.
+        val sources = LayoutPngRenderer.editorIconSvgSources()
+
+        assertTrue(sources.isNotEmpty(), "Expected bundled editor-icon SVG sources to load")
+        for (icon in listOf("rectangle", "ellipse", "star")) {
+            val svg = sources[icon]
+            assertTrue(svg != null && svg.contains("<svg"), "Missing SVG source for shape icon '$icon'")
+        }
+        // Idempotent: the process cache returns the same populated map on subsequent calls.
+        assertTrue(LayoutPngRenderer.editorIconSvgSources() === sources, "Icon sources should be cached")
+    }
+
+    @Test
     fun checkSurfacesFrameAndTextAlignmentTraps() = runBlocking {
         val root = createTempDirectory("mcp-alignment-check")
         root.resolve("alignment.layout.md").writeText(

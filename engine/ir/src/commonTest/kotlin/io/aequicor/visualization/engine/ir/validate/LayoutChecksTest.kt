@@ -10,10 +10,23 @@ class LayoutChecksTest {
         validate(
             """
             { "pages": [ { "id": "p", "children": [
-              { "id": "legacy", "type": "frame", "layout": { "mode": "vertical", "gap": 8 } }
+              { "id": "legacy", "type": "frame", "containerKind": "frame", "layout": { "mode": "vertical", "gap": 8 } }
             ] } ] }
             """.trimIndent(),
         ).assertHas("IR-LAYOUT-009", DesignSeverity.Error, messagePart = "legacy")
+    }
+
+    @Test
+    fun legacyFrameWithFlowButNoContainerKindInfersAutoLayout() {
+        // JSON that predates the containerKind field (or omits it) is read as AutoLayout when its
+        // layout has a flow mode, so it is not flagged as a Frame/flow contradiction.
+        validate(
+            """
+            { "pages": [ { "id": "p", "children": [
+              { "id": "legacy", "type": "frame", "layout": { "mode": "vertical", "gap": 8 } }
+            ] } ] }
+            """.trimIndent(),
+        ).assertNone("IR-LAYOUT-009")
     }
 
     @Test
@@ -152,7 +165,10 @@ class LayoutChecksTest {
     }
 
     @Test
-    fun constraintsOnInFlowChildWarn() {
+    fun constraintsOnInFlowChildWithPositionAreClean() {
+        // Figma legitimately lets an in-flow Auto Layout child carry a non-default resize
+        // constraint (it applies once the child is detached/absolutized). As long as the
+        // child has an authored position to preserve, IR-LAYOUT-011 must stay silent.
         validate(
             """
             { "pages": [ { "id": "p", "children": [
@@ -160,11 +176,12 @@ class LayoutChecksTest {
                 "size": { "width": 200, "height": 100 }, "layout": { "mode": "vertical" },
                 "children": [
                   { "id": "card", "type": "frame", "size": { "width": 80, "height": 40 },
-                    "constraints": { "horizontal": "center", "vertical": "center" } }
+                    "position": { "x": 60, "y": 30 },
+                    "constraints": { "horizontal": "right", "vertical": "bottom" } }
                 ]
               }
             ] } ] }
             """.trimIndent(),
-        ).assertHas("IR-LAYOUT-011", DesignSeverity.Warning, messagePart = "in-flow child")
+        ).assertNone("IR-LAYOUT-011")
     }
 }

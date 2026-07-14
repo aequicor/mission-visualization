@@ -20,6 +20,7 @@ private object DesktopProjectResourceStore : ProjectResourceStore {
             return
         }
         withContext(Dispatchers.IO) {
+            flushSessionEntries(root)
             atomicWrite(resourceTarget(root, relative), bytes)
         }
     }
@@ -29,6 +30,7 @@ private object DesktopProjectResourceStore : ProjectResourceStore {
         val root = activeProjectRoot()
         if (root == null) return sessionEntries[relative]?.copyOf()
         return withContext(Dispatchers.IO) {
+            flushSessionEntries(root)
             resourceTarget(root, relative)
                 .takeIf(Files::isRegularFile)
                 ?.let(Files::readAllBytes)
@@ -38,6 +40,7 @@ private object DesktopProjectResourceStore : ProjectResourceStore {
     override suspend fun list(): List<String> {
         val root = activeProjectRoot() ?: return sessionEntries.keys.sorted()
         return withContext(Dispatchers.IO) {
+            flushSessionEntries(root)
             val resources = root.resolve(ResourceDirectory).normalize()
             if (!Files.isDirectory(resources)) return@withContext emptyList()
             Files.walk(resources).use { paths ->
@@ -59,6 +62,9 @@ private object DesktopProjectResourceStore : ProjectResourceStore {
             return
         }
         withContext(Dispatchers.IO) {
+            // A full replace supersedes any pre-connect session buffer; drop it so a later lazy
+            // flush cannot resurrect resources this call intended to remove.
+            sessionEntries.clear()
             val resourceRoot = root.resolve(ResourceDirectory).normalize()
             require(resourceRoot.startsWith(root)) { "Resource directory escapes the project folder" }
             if (Files.isDirectory(resourceRoot)) {
@@ -67,6 +73,22 @@ private object DesktopProjectResourceStore : ProjectResourceStore {
                 }
             }
             normalized.forEach { (path, bytes) -> atomicWrite(resourceTarget(root, path), bytes) }
+        }
+    }
+
+    /**
+     * Migrates resources buffered before a folder was connected ([sessionEntries]) onto disk under
+     * the project `res/` directory, then clears the buffer. Idempotent: a no-op once flushed, so it
+     * is safe to call at the top of every disk-backed operation the first time a root appears.
+     */
+    private fun flushSessionEntries(root: Path) {
+        if (sessionEntries.isEmpty()) return
+        synchronized(sessionEntries) {
+            if (sessionEntries.isEmpty()) return
+            sessionEntries.forEach { (relative, bytes) ->
+                atomicWrite(resourceTarget(root, relative), bytes)
+            }
+            sessionEntries.clear()
         }
     }
 }
@@ -89,8 +111,19 @@ private fun normalizedResourcePath(path: String): String {
 }
 
 private fun resourceTarget(root: Path, relative: String): Path {
-    val target = root.resolve(relative).toAbsolutePath().normalize()
-    require(target.startsWith(root) && target != root) { "Resource path escapes the project folder: $relative" }
+    val canonicalRoot = root.toRealPath()
+    val target = canonicalRoot.resolve(relative).toAbsolutePath().normalize()
+    require(target.startsWith(canonicalRoot) && target != canonicalRoot) {
+        "Resource path escapes the project folder: $relative"
+    }
+    // Lexical containment is not enough: a symlinked `res/` (or any ancestor) can point outside the
+    // project. Mirror ProjectIo.safeResolve — resolve the nearest existing ancestor's real path and
+    // require it to still live under the canonical root.
+    val existingAncestor = generateSequence(target.parent) { it.parent }.firstOrNull { Files.exists(it) }
+        ?: error("Resource target has no accessible parent")
+    require(existingAncestor.toRealPath().startsWith(canonicalRoot)) {
+        "Resource path escapes the connected folder through a symbolic link: $relative"
+    }
     return target
 }
 

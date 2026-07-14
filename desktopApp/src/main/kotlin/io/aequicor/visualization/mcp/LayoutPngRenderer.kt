@@ -9,7 +9,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.unit.Density
 import io.aequicor.visualization.editor.data.SlmVectorAssetProvider
 import io.aequicor.visualization.editor.domain.editorSlmCompileOptions
-import io.aequicor.visualization.editor.ui.rememberVectorAssetProvider
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.backend.compose.DesignArtboard
 import io.aequicor.visualization.engine.backend.compose.ImageAssetProvider
@@ -24,6 +23,7 @@ import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.literalOrNull
 import io.aequicor.visualization.engine.ir.validate.validateDesignDocument
 import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
+import java.net.JarURLConnection
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -125,6 +125,9 @@ internal class LayoutPngRenderer(
                 fingerprint = result.sourceFingerprint,
                 diagnostics = diagnostics,
                 imageAssets = loadLocalImages(document, sourcePath),
+                // Warm the bundled editor-icon SVG sources synchronously (off the render thread)
+                // so iconRef vector shapes resolve to real outlines when render(1L) fires.
+                vectorSvgSources = editorIconSvgSources(),
             )
         }
 
@@ -186,6 +189,15 @@ internal class LayoutPngRenderer(
 
     @OptIn(ExperimentalComposeUiApi::class)
     private fun renderOnSwing(input: CompiledInput, request: RenderLayoutRequest): RenderedImage {
+        // A one-shot ImageComposeScene renders synchronously and never awaits the produceState
+        // loader that rememberVectorAssetProvider relies on, so on a cold process the bundled
+        // editor-icon SVGs would still be empty and iconRef shapes would fall back to a plain box.
+        // The sources are preloaded on the IO thread (see CompiledInput.vectorSvgSources), so this
+        // plain provider already resolves them synchronously.
+        val vectorAssets = SlmVectorAssetProvider(
+            svgSources = input.vectorSvgSources,
+            document = input.document,
+        )
         var measuredLayout: LayoutBox? = null
         ImageComposeScene(
             width = 1,
@@ -200,7 +212,7 @@ internal class LayoutPngRenderer(
                 deviceHeight = input.document.screen?.frame?.height ?: input.rootNode.size.height,
                 showSelection = false,
                 interactive = false,
-                vectorAssets = SlmVectorAssetProvider(document = input.document),
+                vectorAssets = vectorAssets,
                 imageAssets = input.imageAssets,
                 fontProvider = rememberBundledFontProvider(),
                 onLayoutComputed = { measuredLayout = it },
@@ -228,7 +240,6 @@ internal class LayoutPngRenderer(
             panY = ((request.padding - crop.y) * request.scale).toFloat(),
         )
         val scene = ImageComposeScene(width = width, height = height, density = Density(1f)) {
-            val vectorAssets = rememberVectorAssetProvider(input.document)
             DesignArtboard(
                 document = input.document,
                 pageId = input.pageId,
@@ -365,6 +376,7 @@ internal class LayoutPngRenderer(
         val fingerprint: Long,
         val diagnostics: List<DesignDiagnostic>,
         val imageAssets: ImageAssetProvider,
+        val vectorSvgSources: Map<String, String>,
     )
 
     private data class RenderedImage(val width: Int, val height: Int, val pngBytes: ByteArray)
@@ -372,5 +384,69 @@ internal class LayoutPngRenderer(
     private class FixedImageAssetProvider(private val images: Map<String, ImageBitmap>) : ImageAssetProvider {
         override val generation: Int = images.hashCode()
         override fun resolve(ref: String): ImageBitmap? = images[ref]
+    }
+
+    internal companion object {
+        // JVM classpath location of the bundled editor-icon SVGs (Material Symbols). This mirrors
+        // the resource path Compose's Res.readBytes uses in the shared module; those loaders and
+        // their cache are private/internal to :shared and unreachable from here, so the icon
+        // sources are read straight off the classpath instead.
+        private const val EDITOR_ICONS_RESOURCE_DIR =
+            "composeResources/io.aequicor.visualization.shared.generated.resources/files/editor-icons"
+
+        @Volatile
+        private var cachedEditorIconSvgSources: Map<String, String>? = null
+
+        /**
+         * Icon-name → raw SVG source for every bundled editor icon, loaded once and process-cached.
+         * Keys are the file basenames (`rectangle`, `ellipse`, `star`, …) that
+         * [SlmVectorAssetProvider] matches an `iconRef` against, mirroring the shared
+         * `loadEditorIconSvgSources`. Idempotent: a populated cache is returned as-is; an empty
+         * load is not cached so a later attempt can retry.
+         */
+        internal fun editorIconSvgSources(): Map<String, String> {
+            cachedEditorIconSvgSources?.let { return it }
+            val loaded = loadEditorIconSvgSources()
+            if (loaded.isNotEmpty()) cachedEditorIconSvgSources = loaded
+            return loaded
+        }
+
+        private fun loadEditorIconSvgSources(): Map<String, String> = runCatching {
+            val classLoader = LayoutPngRenderer::class.java.classLoader ?: return@runCatching emptyMap()
+            val dirUrl = classLoader.getResource(EDITOR_ICONS_RESOURCE_DIR) ?: return@runCatching emptyMap()
+            when (dirUrl.protocol) {
+                "file" -> {
+                    val result = LinkedHashMap<String, String>()
+                    Files.newDirectoryStream(Path.of(dirUrl.toURI()), "*.svg").use { entries ->
+                        for (entry in entries) {
+                            val name = entry.fileName.toString().removeSuffix(".svg")
+                            result[name] = Files.readString(entry, StandardCharsets.UTF_8)
+                        }
+                    }
+                    result
+                }
+                "jar" -> {
+                    val prefix = "$EDITOR_ICONS_RESOURCE_DIR/"
+                    val result = LinkedHashMap<String, String>()
+                    val connection = (dirUrl.openConnection() as JarURLConnection).apply { useCaches = false }
+                    connection.jarFile.use { jar ->
+                        val entries = jar.entries()
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
+                            val entryName = entry.name
+                            if (entry.isDirectory || !entryName.startsWith(prefix) || !entryName.endsWith(".svg")) {
+                                continue
+                            }
+                            val relative = entryName.substring(prefix.length)
+                            if ('/' in relative) continue
+                            result[relative.removeSuffix(".svg")] =
+                                jar.getInputStream(entry).use { it.readBytes().decodeToString() }
+                        }
+                    }
+                    result
+                }
+                else -> emptyMap()
+            }
+        }.getOrDefault(emptyMap())
     }
 }

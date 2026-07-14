@@ -15,6 +15,7 @@ import io.aequicor.visualization.engine.ir.model.DesignRepeat
 import io.aequicor.visualization.engine.ir.model.DesignTable
 import io.aequicor.visualization.engine.ir.model.DesignTextStyle
 import io.aequicor.visualization.subsystems.figures.DesignViewBox
+import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.MaskType
 import io.aequicor.visualization.engine.ir.model.MediaKind
 import io.aequicor.visualization.subsystems.figures.ShapeType
@@ -52,12 +53,19 @@ internal fun DesignDocumentReader.readNode(element: JsonElement, pointer: String
     val type = obj.stringOrDefault("type", "frame")
     val kind = readKind(type, obj, pointer)
     val layoutObj = obj["layout"] as? JsonObject
-    val containerKind = when (val raw = obj.stringOrDefault("containerKind", "frame")) {
-        "frame" -> ContainerKind.Frame
-        "autoLayout" -> ContainerKind.AutoLayout
-        else -> {
-            error("$pointer/containerKind", "Unknown containerKind '$raw'; expected frame or autoLayout")
-            ContainerKind.Frame
+    val layout = readAutoLayout(layoutObj, "$pointer/layout")
+    val containerKind = if ("containerKind" !in obj) {
+        // Field absent (legacy/foreign/partial JSON): infer from the parsed layout so a
+        // non-none layout mode is not silently downgraded to Frame (IR-LAYOUT-009).
+        if (layout.mode != LayoutMode.None) ContainerKind.AutoLayout else ContainerKind.Frame
+    } else {
+        when (val raw = obj.stringOrDefault("containerKind", "frame")) {
+            "frame" -> ContainerKind.Frame
+            "autoLayout" -> ContainerKind.AutoLayout
+            else -> {
+                error("$pointer/containerKind", "Unknown containerKind '$raw'; expected frame or autoLayout")
+                ContainerKind.Frame
+            }
         }
     }
     return DesignNode(
@@ -82,7 +90,7 @@ internal fun DesignDocumentReader.readNode(element: JsonElement, pointer: String
         sizing = readSizing(obj["sizing"], "$pointer/sizing"),
         minSize = (obj["minSize"] as? JsonObject)?.let { readSize(it, "$pointer/minSize") },
         maxSize = (obj["maxSize"] as? JsonObject)?.let { readSize(it, "$pointer/maxSize") },
-        layout = readAutoLayout(layoutObj, "$pointer/layout"),
+        layout = layout,
         layoutChild = readLayoutChild(obj["layoutChild"], "$pointer/layoutChild"),
         gridPlacement = (obj["gridPlacement"] as? JsonObject)?.let { readGridPlacement(it) },
         fills = (obj["fills"] as? JsonArray)?.mapIndexedNotNull { index, paint ->

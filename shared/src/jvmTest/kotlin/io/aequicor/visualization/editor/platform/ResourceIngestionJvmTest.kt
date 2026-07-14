@@ -78,4 +78,42 @@ class ResourceIngestionJvmTest {
 
         assertEquals(96.0 to 72.0, parseSvgIntrinsicSize(svg))
     }
+
+    @Test
+    fun parsesSvgThatDeclaresADoctype() {
+        // Illustrator/Inkscape routinely emit this PUBLIC DOCTYPE pointing at the SVG 1.1 DTD.
+        // The parser must tolerate the DOCTYPE (and must NOT fetch the remote DTD URL) and still
+        // report the intrinsic size. This test stays offline precisely because the DTD is not read.
+        val svg = (
+            """<?xml version="1.0" encoding="UTF-8"?>
+""" +
+                """<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" """ +
+                """"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+""" +
+                """<svg width="24" height="24" xmlns="http://www.w3.org/2000/svg"/>"""
+            ).toByteArray()
+
+        assertEquals(24.0 to 24.0, parseSvgIntrinsicSize(svg))
+    }
+
+    @Test
+    fun doesNotResolveExternalEntityDuringSvgParse() {
+        // XXE probe: an external general entity points at a file that does not exist. If the parser
+        // fetched external entities, the missing file would raise an exception and parsing would
+        // fail (null). Because external entities are disabled and the resolver hands back an empty
+        // source, parsing succeeds and the width/height are read as-is — no external I/O occurs.
+        val missing = Files.createTempFile("xxe-probe", ".txt")
+        Files.delete(missing)
+        val systemId = missing.toUri().toString()
+        val svg = (
+            """<?xml version="1.0"?>
+""" +
+                """<!DOCTYPE svg [ <!ENTITY xxe SYSTEM "$systemId"> ]>
+""" +
+                """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">""" +
+                """<desc>&xxe;</desc></svg>"""
+            ).toByteArray()
+
+        assertEquals(24.0 to 24.0, parseSvgIntrinsicSize(svg))
+    }
 }

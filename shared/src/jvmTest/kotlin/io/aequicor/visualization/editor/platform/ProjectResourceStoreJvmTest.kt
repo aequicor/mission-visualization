@@ -9,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertSame
 
 class ProjectResourceStoreJvmTest {
@@ -43,5 +44,47 @@ class ProjectResourceStoreJvmTest {
                 createProjectResourceStore().put("res/../outside.png", byteArrayOf(1))
             }
         }
+    }
+
+    @Test
+    fun migratesResourcesDroppedBeforeConnectOntoDiskOnConnect() = runBlocking {
+        // No folder connected yet: the store buffers the drop in memory only.
+        platformResetFolderSyncForTest()
+        val store = createProjectResourceStore()
+        store.replaceAll(emptyList()) // clear any pre-connect buffer from earlier tests
+        val bytes = byteArrayOf(9, 8, 7, 6)
+        store.put("res/icons/pre.svg", bytes)
+
+        // Now a folder is connected. The buffered resource must be migrated to disk and readable.
+        val root = createTempDirectory("desktop-resource-store-migrate")
+        root.resolve("screen.layout.md").writeText("# Screen\n")
+        platformConnectFolderForTest(root)
+
+        assertContentEquals(bytes, store.read("res/icons/pre.svg"))
+        assertEquals(listOf("res/icons/pre.svg"), store.list())
+        assertContentEquals(bytes, Files.readAllBytes(root.resolve("res/icons/pre.svg")))
+    }
+
+    @Test
+    fun rejectsResourceDirectorySymlinkThatEscapesProjectFolder() = runBlocking {
+        platformResetFolderSyncForTest()
+        val store = createProjectResourceStore()
+        store.replaceAll(emptyList())
+
+        val root = createTempDirectory("desktop-resource-store-symlink")
+        root.resolve("screen.layout.md").writeText("# Screen\n")
+        val outside = createTempDirectory("desktop-resource-store-outside")
+        try {
+            Files.createSymbolicLink(root.resolve("res"), outside)
+        } catch (_: Exception) {
+            // Filesystem/OS without symlink support (e.g. Windows without privilege) — skip.
+            return@runBlocking
+        }
+        platformConnectFolderForTest(root)
+
+        assertFailsWith<IllegalArgumentException> {
+            store.put("res/pwned.png", byteArrayOf(1))
+        }
+        assertFalse(Files.exists(outside.resolve("pwned.png")))
     }
 }

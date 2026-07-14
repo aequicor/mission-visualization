@@ -1235,9 +1235,15 @@ private fun DesignEditorState.convertContainer(
     )
     val nextDocument = before.updateNode(intent.nodeId) { converted }
     val inMemory = pushHistory(before).copy(document = nextDocument)
+    // Keep the in-memory conversion even when the node has no stable owning source; peer
+    // structural ops (createObject/addResourceMedia/detach) fall back to `inMemory`. On write-back
+    // failure `withStructuralSource` also returns the in-memory conversion plus a diagnostic (never
+    // the pre-conversion document), so reduceCommitted does not early-return and persistCandidate's
+    // ReemitNode rescue can still express the change (e.g. an AutoLayout group or a screen-root
+    // frame that ReplaceSection cannot address).
     val expected = compiledResults.getOrNull(owningSourceIndex(intent.nodeId) ?: -1)
-        ?.document?.pageTreeIds() ?: return this
-    val persisted = withStructuralSource(
+        ?.document?.pageTreeIds() ?: return inMemory
+    return withStructuralSource(
         ownerNodeId = intent.nodeId,
         edits = listOf(ReplaceSection(intent.nodeId, converted)),
         inMemory = inMemory,
@@ -1250,7 +1256,6 @@ private fun DesignEditorState.convertContainer(
             )
         },
     )
-    return if (persisted.sources == sources) copy(diagnostics = persisted.diagnostics) else persisted
 }
 
 private fun DesignEditorState.setAutoLayoutMode(intent: DesignEditorIntent.SetLayoutMode): DesignEditorState {

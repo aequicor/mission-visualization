@@ -38,6 +38,32 @@ class DesignJsonParserTest {
     }
 
     @Test
+    fun containerKindInferredFromLayoutWhenFieldAbsent() {
+        // Field absent + non-none layout mode (legacy/foreign/partial JSON) must infer AutoLayout,
+        // otherwise it deserializes as Frame and IR-LAYOUT-009 flags it as a hard error on round-trip.
+        val inferred = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode("""{ "id": "x", "type": "frame", "layout": { "mode": "vertical" } }"""),
+        ).node
+        assertEquals(ContainerKind.AutoLayout, inferred.containerKind)
+        assertEquals(
+            ContainerKind.AutoLayout,
+            assertIs<DesignNodeParseResult.Success>(parseDesignNode(writeDesignNode(inferred).toJsonString())).node.containerKind,
+        )
+
+        // Field absent + none/absent layout mode still infers Frame.
+        val frame = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode("""{ "id": "x", "type": "frame" }"""),
+        ).node
+        assertEquals(ContainerKind.Frame, frame.containerKind)
+
+        // Explicit field still wins over inference: containerKind=frame despite a non-none layout mode.
+        val explicit = assertIs<DesignNodeParseResult.Success>(
+            parseDesignNode("""{ "id": "x", "type": "frame", "containerKind": "frame", "layout": { "mode": "vertical" } }"""),
+        ).node
+        assertEquals(ContainerKind.Frame, explicit.containerKind)
+    }
+
+    @Test
     fun parsesDocumentStructureWithBindingsAndAutoLayout() {
         val result = parseDesignDocument(
             """

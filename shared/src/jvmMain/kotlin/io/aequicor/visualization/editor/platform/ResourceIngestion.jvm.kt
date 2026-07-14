@@ -34,6 +34,7 @@ import javax.swing.ImageIcon
 import javax.swing.RootPaneContainer
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
+import org.xml.sax.InputSource
 
 /** Desktop image payload normalized for the common resource-ingestion callbacks. */
 internal data class JvmIngestedImage(
@@ -379,13 +380,21 @@ internal fun parseSvgIntrinsicSize(bytes: ByteArray): Pair<Double, Double>? = ru
         isNamespaceAware = true
         isXIncludeAware = false
         isExpandEntityReferences = false
-        runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+        // Allow a plain `<!DOCTYPE svg ...>` declaration (Illustrator/Inkscape emit one) while still
+        // blocking XXE: reject only external general/parameter entities and external DTD fetching,
+        // not the DOCTYPE itself.
+        runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", false) }
         runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
         runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
+        runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
         runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "") }
         runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "") }
     }
-    val root = factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes)).documentElement
+    val builder = factory.newDocumentBuilder().apply {
+        // Defense in depth: never fetch an external entity/DTD; hand back an empty source instead.
+        setEntityResolver { _, _ -> InputSource(ByteArrayInputStream(ByteArray(0))) }
+    }
+    val root = builder.parse(ByteArrayInputStream(bytes)).documentElement
     val rootName = (root.localName ?: root.tagName.substringAfter(':')).lowercase(Locale.ROOT)
     require(rootName == "svg")
 
