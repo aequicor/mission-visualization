@@ -48,6 +48,18 @@ data class SetSizing(
     val height: SizingSpec? = null,
 ) : SlmEdit
 
+/**
+ * Sets the root artboard size in the screen's `frame:` frontmatter. The screen root may be a
+ * synthetic node produced from a plain H1 and therefore have no ordinary CNL source anchor;
+ * frontmatter is its canonical sizing contract. When the root H1 is also a CNL sentence, the
+ * patcher keeps that duplicate size in sync in the same transaction.
+ */
+data class SetScreenFrame(
+    override val nodeId: String,
+    val width: Double? = null,
+    val height: Double? = null,
+) : SlmEdit
+
 /** One sizing axis: mode plus optional fixed/min/max dimensions. */
 data class SizingSpec(
     val mode: SizingMode,

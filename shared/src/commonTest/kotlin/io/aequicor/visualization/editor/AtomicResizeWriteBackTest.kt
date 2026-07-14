@@ -3,6 +3,7 @@ package io.aequicor.visualization.editor
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
+import io.aequicor.visualization.editor.presentation.ScreenPreset
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
@@ -50,6 +51,18 @@ class AtomicResizeWriteBackTest {
         ### Text: id text characters «ТевваВ» name «Text» width hug height hug position 8 4 color #182733 size 16 autosize both
     """.trimIndent() + "\n"
 
+    private val rootScreenSource = """
+        ---
+        screen: recorderPip
+        sourceLocale: ru-RU
+        frame: { width: 128, height: 296 }
+        ---
+
+        # Recorder PiP
+
+        ## Frame: Transport Controls id transport_controls 128 by 214 position 0 82
+    """.trimIndent() + "\n"
+
     @Test
     fun canvasInteractionPersistsContainerResizeWithoutStyleDrift() {
         val originalSource = MissionDocumentSource("storyboard-editor.layout.md", source)
@@ -66,6 +79,56 @@ class AtomicResizeWriteBackTest {
         assertEquals(404.0, node.size.height, messages)
         assertEquals(StrokeAlign.Center, node.strokes?.align, messages)
         assertNotEquals(source, state.sources.single().content)
+        assertTrue(state.diagnostics.none { it.severity == DesignSeverity.Error }, messages)
+    }
+
+    @Test
+    fun canvasInteractionPersistsRootScreenResize() {
+        val originalSource = MissionDocumentSource("recorder-pip.layout.md", rootScreenSource)
+        var state = createDesignEditorState(compileMissionDocuments(listOf(originalSource)))
+        val initialDocument = assertNotNull(state.document)
+        val root = assertNotNull(initialDocument.nodeById("recorderPip"))
+        val child = assertNotNull(initialDocument.nodeById("transport_controls"))
+        assertEquals(128.0, root.size.width)
+        assertEquals(296.0, root.size.height)
+
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        state = reduceDesignEditor(state, DesignEditorIntent.UpdateSize("recorderPip", 78.7, 223.3))
+        state = reduceDesignEditor(state, DesignEditorIntent.ResizeNode("recorderPip", 78.7, 223.3))
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
+
+        val messages = state.diagnostics.joinToString("\n") { it.message }
+        val resizedDocument = assertNotNull(state.document, messages)
+        val resized = assertNotNull(resizedDocument.nodeById("recorderPip"), messages)
+        assertEquals(78.7, resized.size.width, messages)
+        assertEquals(223.3, resized.size.height, messages)
+        val resizedChild = assertNotNull(resizedDocument.nodeById("transport_controls"))
+        assertEquals(child.position, resizedChild.position, "root resize must not move children")
+        assertEquals(child.size, resizedChild.size, "root resize must not scale children")
+        assertEquals(child.constraints, resizedChild.constraints, "root resize must not rewrite child constraints")
+        assertNotEquals(rootScreenSource, state.sources.single().content)
+        assertTrue(state.diagnostics.none { it.severity == DesignSeverity.Error }, messages)
+    }
+
+    @Test
+    fun canvasInteractionKeepsCreatedScreenFrontmatterAndRootSentenceInSync() {
+        var state = createDesignEditorState(compileMissionDocuments(emptyList()))
+        state = reduceDesignEditor(state, DesignEditorIntent.CreateScreen(ScreenPreset.Mobile, "Created"))
+        val rootId = state.selectedNodeId
+
+        state = reduceDesignEditor(state, DesignEditorIntent.BeginInteraction)
+        state = reduceDesignEditor(state, DesignEditorIntent.UpdateSize(rootId, 420.0, 700.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.ResizeNode(rootId, 420.0, 700.0))
+        state = reduceDesignEditor(state, DesignEditorIntent.EndInteraction)
+
+        val messages = state.diagnostics.joinToString("\n") { it.message }
+        val root = assertNotNull(state.document?.nodeById(rootId), messages)
+        assertEquals(420.0, root.size.width, messages)
+        assertEquals(700.0, root.size.height, messages)
+        val source = state.sources.single().content
+        assertTrue("  width: 420" in source, source)
+        assertTrue("  height: 700" in source, source)
+        assertTrue("420 by 700" in source, source)
         assertTrue(state.diagnostics.none { it.severity == DesignSeverity.Error }, messages)
     }
 

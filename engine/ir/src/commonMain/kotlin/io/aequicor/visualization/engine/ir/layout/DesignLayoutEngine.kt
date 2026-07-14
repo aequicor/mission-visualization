@@ -86,8 +86,9 @@ data class LayoutBox(
         }
 
         // Path-accurate self-test: a click in the bounding box but outside the actual
-        // outline (a star's notch, a vector's transparent area) misses, so a node behind
-        // still gets a chance. Nodes whose box IS their outline skip this (geometry == null).
+        // primitive outline (for example, a star's notch) misses, so a node behind still
+        // gets a chance. Nodes whose whole box is the hit target, including vectors/SVGs,
+        // skip this (geometry == null).
         return this.takeIf { hitsSelf }
     }
 

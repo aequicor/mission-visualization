@@ -26,6 +26,7 @@ import io.aequicor.visualization.engine.frontend.edit.SetBooleanOp
 import io.aequicor.visualization.engine.frontend.edit.SetCornerRadii
 import io.aequicor.visualization.engine.frontend.edit.SetStrokes
 import io.aequicor.visualization.engine.frontend.edit.SetSizing
+import io.aequicor.visualization.engine.frontend.edit.SetScreenFrame
 import io.aequicor.visualization.engine.frontend.edit.SetNodePosition
 import io.aequicor.visualization.engine.frontend.edit.SetNodeRotation
 import io.aequicor.visualization.engine.frontend.edit.SetStyleProperty
@@ -74,6 +75,7 @@ import io.aequicor.visualization.engine.ir.model.TextStyleRange
 import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.GradientKind
 import io.aequicor.visualization.engine.ir.model.GradientStop
+import io.aequicor.visualization.engine.ir.model.FramePreset
 import io.aequicor.visualization.engine.ir.model.HorizontalConstraint
 import io.aequicor.visualization.engine.ir.model.LayoutMode
 import io.aequicor.visualization.engine.ir.model.GridTrack
@@ -1865,6 +1867,10 @@ private fun DesignEditorState.textAutoResizeWriteBack(intent: DesignEditorIntent
 
 private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.ResizeNode): DesignEditorState {
     if (intent.width == null && intent.height == null) return this
+    val rootPage = document?.pages?.firstOrNull { page ->
+        page.children.firstOrNull()?.id == intent.nodeId
+    }
+    if (rootPage != null) return resizeScreenRootWriteBack(intent, rootPage.id)
     val patched = document?.nodeById(intent.nodeId)?.withExplicitSize(intent.width, intent.height)
     val edits = buildList {
         add(
@@ -1884,6 +1890,34 @@ private fun DesignEditorState.resizeNodeWriteBack(intent: DesignEditorIntent.Res
     return writeBackEdits(intent.nodeId, edits) { node ->
         node.withExplicitSize(intent.width, intent.height)
     }
+}
+
+/**
+ * Screen roots get their artboard size from `frame:` frontmatter. A legacy plain H1 root has no
+ * ordinary node source anchor, so routing it through [SetSizing] makes a valid live preview snap
+ * back on interaction end. Persist the screen contract directly and mirror the first screen's
+ * metadata in detached interaction state so the atomic semantic gate sees the same desired model.
+ */
+private fun DesignEditorState.resizeScreenRootWriteBack(
+    intent: DesignEditorIntent.ResizeNode,
+    pageId: String,
+): DesignEditorState {
+    val resized = writeBackEdits(
+        nodeId = intent.nodeId,
+        edits = listOf(SetScreenFrame(intent.nodeId, intent.width, intent.height)),
+    ) { node ->
+        node.withExplicitSize(intent.width, intent.height)
+    }
+    val document = resized.document ?: return resized
+    val screen = document.screen ?: return resized
+    if (screen.id != pageId) return resized
+    val current = screen.frame
+    val nextFrame = FramePreset(
+        preset = current?.preset.orEmpty(),
+        width = intent.width ?: current?.width,
+        height = intent.height ?: current?.height,
+    )
+    return resized.copy(document = document.copy(screen = screen.copy(frame = nextFrame)))
 }
 
 /**

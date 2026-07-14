@@ -57,7 +57,7 @@ class HitTestTest {
     }
 
     @Test
-    fun loweredVectorGeometryMapsThroughViewBoxFit() {
+    fun vectorUsesWholeBoundsAsHitTarget() {
         // lower-left triangle in a 10x10 viewBox, fit into a 100x100 box
         val geometry = PathGeometry(
             commands = listOf(
@@ -69,8 +69,9 @@ class HitTestTest {
             sourceViewBox = RectD(0.0, 0.0, 10.0, 10.0),
         )
         val box = shapeBox(DesignNodeKind.Shape(ShapeType.Vector), geometry = geometry)
-        assertEquals(box, box.hitTest(30.0, 30.0)) // maps to (3,3): inside x+y<10
-        assertNull(box.hitTest(80.0, 80.0)) // maps to (8,8): outside x+y<10
+        assertEquals(box, box.hitTest(30.0, 30.0)) // painted triangle
+        assertEquals(box, box.hitTest(80.0, 80.0)) // transparent SVG area inside its box
+        assertNull(box.hitTest(101.0, 80.0))
     }
 
     @Test

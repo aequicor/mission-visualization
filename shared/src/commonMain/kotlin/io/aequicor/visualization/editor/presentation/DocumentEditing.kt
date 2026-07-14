@@ -77,6 +77,28 @@ internal fun DesignDocument.pressHitBelongsToSelection(selectedIds: Set<String>,
 }
 
 /**
+ * Resolves the Figma-style tap result while a nested container is the sole selection.
+ *
+ * A plain tap on one of that container's descendants keeps the container selected, so the
+ * same press can drag it without unexpectedly grabbing an inner layer. A double-tap drills
+ * exactly one hierarchy level toward the deepest hit — it never skips straight to a grandchild.
+ * Returning null means the hit is not guarded by a nested selection and the normal canvas
+ * selection/edit-mode behavior should run instead. Top-level screen frames are deliberately
+ * excluded, matching [pressHitBelongsToSelection]: their children remain directly selectable.
+ */
+internal fun DesignDocument.nestedSelectionTargetForTap(
+    selectedIds: Set<String>,
+    hitId: String,
+    doubleTap: Boolean,
+): String? {
+    val selectedId = selectedIds.singleOrNull() ?: return null
+    if (hitId.isBlank() || selectedId == hitId || topLevelOwnerPage(selectedId) != null) return null
+    val selected = nodeById(selectedId) ?: return null
+    val childTowardHit = selected.children.firstOrNull { child -> child.findById(hitId) != null } ?: return null
+    return if (doubleTap) childTowardHit.id else selectedId
+}
+
+/**
  * Inserts [node] as a child of [parentId] at [index] (clamped; -1 appends). When
  * [parentId] matches a page id or a page's root-frame is intended, resolves to the
  * appropriate container. Returns the document unchanged if the parent is missing.

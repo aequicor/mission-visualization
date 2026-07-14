@@ -206,12 +206,20 @@ private fun reducePreview(state: DesignEditorState, intent: DesignEditorIntent):
 }
 
 private fun reduceCommitted(state: DesignEditorState, intent: DesignEditorIntent): DesignEditorState {
-    val candidate = reduceDesignEditorUnchecked(state, intent)
     if (state.interacting) {
         // No source escapes during a gesture. EndInteraction replays these prepared commands and
         // validates the complete multi-node/multi-file result before publishing it atomically. A
         // commit may be document-inert because its preview already applied the final value (for
         // example UpdateSize followed by ResizeNode); it still must be queued to patch the source.
+        // Reduce against a source-detached state so writeBackEdits takes its in-memory path. Running
+        // a surgical write-back here would recompile from the unchanged interaction checkpoint and
+        // replace the live preview document with only this one intent's source edit. Sequential
+        // PositionNode commits from a multi-selection would then erase one another before
+        // EndInteraction sees the desired document.
+        val candidate = reduceDesignEditorUnchecked(
+            state.copy(sources = emptyList(), compiledResults = emptyList()),
+            intent,
+        )
         val pending = if (intent is DiagramEditorIntent || intent is DesignEditorIntent.CommitVectorNetwork) {
             state.interactionPendingIntents
         } else {
@@ -231,6 +239,7 @@ private fun reduceCommitted(state: DesignEditorState, intent: DesignEditorIntent
             interactionPendingIntents = pending,
         )
     }
+    val candidate = reduceDesignEditorUnchecked(state, intent)
     if (candidate.document == state.document) return candidate
     return persistCandidate(state, candidate, intent)
 }
