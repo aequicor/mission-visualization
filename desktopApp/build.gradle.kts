@@ -27,6 +27,9 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("missionVisualizationVersion").get()
+val isMacOsBuild = providers.systemProperty("os.name")
+    .map { it.startsWith("Mac", ignoreCase = true) }
+    .getOrElse(false)
 
 dependencies {
     implementation(projects.shared)
@@ -54,6 +57,12 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "io.aequicor.visualization.MainKt"
+        if (isMacOsBuild) {
+            // The JBR ships Apple's public gesture API inside java.desktop but does not export
+            // that compatibility package by default. Required by the reflection-only pinch bridge;
+            // Windows/Linux launchers never receive this platform-specific JVM option.
+            jvmArgs("--add-exports=java.desktop/com.apple.eawt.event=ALL-UNNAMED")
+        }
         buildTypes.release.proguard {
             configurationFiles.from(project.file("proguard-rules.pro"))
             optimize.set(false)

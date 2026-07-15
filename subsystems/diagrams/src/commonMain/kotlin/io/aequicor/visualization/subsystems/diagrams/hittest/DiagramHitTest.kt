@@ -1,5 +1,8 @@
 package io.aequicor.visualization.subsystems.diagrams.hittest
 
+import io.aequicor.visualization.subsystems.diagrams.geometry.containsPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.outlineResizeHandlePoints
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabel
@@ -19,7 +22,7 @@ import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-/** The eight resize handles on a selected node's bounding box. */
+/** The eight resize handles on a selected node's rendered outline. */
 enum class DiagramResizeHandle {
     TOP_LEFT,
     TOP,
@@ -117,8 +120,8 @@ sealed interface DiagramHit {
  * (auto mid-sides / quarter-points / corners on every node) is offered only when no node body
  * is under the pointer — a click on a node body selects/moves that node, and a lower node's
  * virtual point never wins over a foreground body. Locked or invisible nodes and
- * nodes/edges on locked or invisible layers are transparent to hits. Rotation is ignored
- * (hit boxes are the axis-aligned bounds).
+ * nodes/edges on locked or invisible layers are transparent to hits. Node bodies follow their
+ * rendered outline; rotation is ignored because diagram outline rendering currently ignores it.
  *
  * @param routes routed polylines per edge (from the routing layer), in document
  *   coordinates. Edges missing from the map fall back to
@@ -199,7 +202,7 @@ fun hitTest(
     // and only in empty space (see the two node passes below).
     for (node in nodesTopDown) {
         node.ports.forEach { port ->
-            if (distance(point, node.portPosition(port)) <= tolerance) {
+            if (distance(point, anchorPoint(node, port)) <= tolerance) {
                 return DiagramHit.Port(node.id, port.id)
             }
         }
@@ -221,12 +224,12 @@ fun hitTest(
         }
     }
 
-    // Node body: the top-most node whose bounds contain the point wins. Resolving bodies BEFORE
+    // Node body: the top-most node whose rendered outline contains the point wins. Resolving bodies BEFORE
     // any virtual connection point is what makes a plain click select/move the node under the
     // cursor, and it guarantees a virtual port belonging to an occluded (lower) node can never be
     // returned in front of the body that covers it.
     for (node in nodesTopDown) {
-        if (node.bounds.contains(point)) {
+        if (node.containsPoint(point)) {
             return DiagramHit.Node(node.id, nodeHitPart(node, point))
         }
     }
@@ -239,7 +242,7 @@ fun hitTest(
     // only when a drag actually pins an edge to it.
     for (node in nodesTopDown) {
         node.connectionPorts().forEach { port ->
-            if (distance(point, node.portPosition(port)) <= tolerance) {
+            if (distance(point, anchorPoint(node, port)) <= tolerance) {
                 return DiagramHit.Port(node.id, port.id)
             }
         }
@@ -255,7 +258,7 @@ fun resolveEndpointPoint(graph: DiagramGraph, endpoint: DiagramEndpoint): Diagra
         is DiagramEndpoint.FloatingAnchor -> graph.nodeById(endpoint.nodeId)?.bounds?.center
         is DiagramEndpoint.FixedPort -> graph.nodeById(endpoint.nodeId)?.let { node ->
             val port = node.portById(endpoint.portId)
-            if (port != null) node.portPosition(port) else node.bounds.center
+            if (port != null) anchorPoint(node, port) else node.bounds.center
         }
     }
 
@@ -405,17 +408,7 @@ private fun DiagramGraph.layerInteractivity(): Map<DiagramLayerId?, Boolean> =
     }
 
 private fun resizeHandlePositions(node: DiagramNode): List<Pair<DiagramResizeHandle, DiagramPoint>> {
-    val b = node.bounds
-    return listOf(
-        DiagramResizeHandle.TOP_LEFT to DiagramPoint(b.left, b.top),
-        DiagramResizeHandle.TOP to DiagramPoint(b.centerX, b.top),
-        DiagramResizeHandle.TOP_RIGHT to DiagramPoint(b.right, b.top),
-        DiagramResizeHandle.RIGHT to DiagramPoint(b.right, b.centerY),
-        DiagramResizeHandle.BOTTOM_RIGHT to DiagramPoint(b.right, b.bottom),
-        DiagramResizeHandle.BOTTOM to DiagramPoint(b.centerX, b.bottom),
-        DiagramResizeHandle.BOTTOM_LEFT to DiagramPoint(b.left, b.bottom),
-        DiagramResizeHandle.LEFT to DiagramPoint(b.left, b.centerY),
-    )
+    return DiagramResizeHandle.entries.zip(node.outlineResizeHandlePoints())
 }
 
 private fun edgeRoute(

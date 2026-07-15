@@ -1,6 +1,10 @@
 package io.aequicor.visualization.editor.platform
 
+import java.awt.Dialog
+import java.awt.FileDialog
+import java.awt.Frame
 import java.awt.GraphicsEnvironment
+import java.awt.KeyboardFocusManager
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -10,9 +14,10 @@ import javax.swing.JFileChooser
 /**
  * Opens the operating system's folder picker where one is available.
  *
- * Swing does not delegate directory selection to the Windows shell, so Windows uses the modern
- * Common Item Dialog (`IFileOpenDialog` + `FOS_PICKFOLDERS`) in a short-lived STA PowerShell
- * process. Other desktop systems retain the portable Swing chooser as a fallback.
+ * Swing does not delegate directory selection to the host shell. macOS uses AWT's native
+ * `FileDialog` in directory mode, while Windows uses the modern Common Item Dialog
+ * (`IFileOpenDialog` + `FOS_PICKFOLDERS`) in a short-lived STA PowerShell process. Other desktop
+ * systems retain the portable Swing chooser as a fallback.
  */
 fun chooseNativeFolder(title: String, initialDirectory: Path? = null): Path? {
     if (GraphicsEnvironment.isHeadless()) return null
@@ -22,7 +27,13 @@ fun chooseNativeFolder(title: String, initialDirectory: Path? = null): Path? {
         ?.toAbsolutePath()
         ?.normalize()
 
-    if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+    val osName = System.getProperty("os.name").orEmpty()
+    if (osName.startsWith("Mac", ignoreCase = true)) {
+        val result = chooseMacOsFolder(title, initial)
+        if (result.dialogOpened) return result.selectedPath
+    }
+
+    if (osName.startsWith("Windows", ignoreCase = true)) {
         val result = chooseWindowsFolder(title, initial)
         if (result.dialogOpened) return result.selectedPath
     }
@@ -34,6 +45,46 @@ private data class NativeFolderResult(
     val dialogOpened: Boolean,
     val selectedPath: Path? = null,
 )
+
+private const val MacOsDirectoryDialogProperty = "apple.awt.fileDialogForDirectories"
+private val macOsFolderPickerLock = Any()
+
+private fun chooseMacOsFolder(title: String, initialDirectory: Path?): NativeFolderResult =
+    synchronized(macOsFolderPickerLock) {
+        runCatching {
+            val previousDirectoryMode = System.getProperty(MacOsDirectoryDialogProperty)
+            var dialog: FileDialog? = null
+            try {
+                System.setProperty(MacOsDirectoryDialogProperty, "true")
+                dialog = when (val owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow) {
+                    is Frame -> FileDialog(owner, title, FileDialog.LOAD)
+                    is Dialog -> FileDialog(owner, title, FileDialog.LOAD)
+                    else -> FileDialog(null as Frame?, title, FileDialog.LOAD)
+                }.apply {
+                    initialDirectory?.let { directory = it.toString() }
+                    isMultipleMode = false
+                }
+                dialog.isVisible = true
+
+                NativeFolderResult(
+                    dialogOpened = true,
+                    selectedPath = dialog.file?.let { selectedName ->
+                        dialog.directory
+                            ?.let(Path::of)
+                            ?.resolve(selectedName)
+                            ?: Path.of(selectedName)
+                    }?.toAbsolutePath()?.normalize(),
+                )
+            } finally {
+                dialog?.dispose()
+                if (previousDirectoryMode == null) {
+                    System.clearProperty(MacOsDirectoryDialogProperty)
+                } else {
+                    System.setProperty(MacOsDirectoryDialogProperty, previousDirectoryMode)
+                }
+            }
+        }.getOrDefault(NativeFolderResult(dialogOpened = false))
+    }
 
 private fun chooseWindowsFolder(title: String, initialDirectory: Path?): NativeFolderResult {
     val script = buildString {

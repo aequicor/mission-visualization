@@ -3,9 +3,14 @@ package io.aequicor.visualization.subsystems.diagrams.routing
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityKind
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityNode
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.math.PI
@@ -154,6 +159,55 @@ class EdgeRoutingTest {
         // First segment leaves downward, perpendicular to the bottom side.
         val second = routed.points[1]
         assertTrue(abs(second.x - 50.0) < 1e-6 && second.y > 60.0)
+        assertAxisAligned(routed.points)
+    }
+
+    @Test
+    fun orthogonalFloatingRouteTouchesRhombusOutline() {
+        val graph = diagramGraph {
+            val source = node("source", x = 0.0, y = 0.0, width = 100.0, height = 40.0)
+            val decision = node(
+                "decision",
+                x = 300.0,
+                y = 0.0,
+                width = 100.0,
+                height = 100.0,
+                payload = UmlActivityNode(UmlActivityKind.DECISION, "Condition?"),
+            )
+            edge("e", from = source, to = decision, routing = DiagramRoutingStyle.ORTHOGONAL)
+        }
+
+        val routed = routeEdge(graph, graph.edges.single())
+        assertPointEquals(DiagramPoint(330.0, 20.0), routed.targetPoint)
+        assertEquals(DiagramNodeSide.LEFT, routed.targetSide)
+        assertAxisAligned(routed.points)
+    }
+
+    @Test
+    fun orthogonalFixedSidePortTouchesRhombusOutline() {
+        val portId = DiagramPortId("left-q1")
+        val graph = diagramGraph {
+            val source = node("source", x = 0.0, y = 0.0, width = 100.0, height = 50.0)
+            val decision = node(
+                "decision",
+                x = 300.0,
+                y = 0.0,
+                width = 100.0,
+                height = 100.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS),
+                ports = listOf(DiagramPort(portId, DiagramPortAnchor.SideOffset(DiagramNodeSide.LEFT, 0.25))),
+            )
+            edge(
+                "e",
+                source = DiagramEndpoint.FloatingAnchor(source),
+                target = DiagramEndpoint.FixedPort(decision, portId),
+                routing = DiagramRoutingStyle.ORTHOGONAL,
+            )
+        }
+
+        val routed = routeEdge(graph, graph.edges.single())
+        assertPointEquals(DiagramPoint(325.0, 25.0), routed.targetPoint)
+        assertEquals(DiagramNodeSide.LEFT, routed.targetSide)
         assertAxisAligned(routed.points)
     }
 

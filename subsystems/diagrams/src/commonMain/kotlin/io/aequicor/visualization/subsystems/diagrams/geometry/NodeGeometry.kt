@@ -5,6 +5,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.FlowchartNodeKind
@@ -12,6 +13,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityKind
 import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateKind
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlNoteNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.math.abs
@@ -20,54 +22,94 @@ import kotlin.math.sqrt
 /**
  * Perimeter family used for floating edge attachment ([perimeterIntersection]).
  *
- * Most payloads (tables, UML class/component/..., containers) attach on their bounding
- * rectangle; round shapes attach on the inscribed ellipse; decision/gateway shapes on
- * the inscribed rhombus. Polygonal basic shapes (triangle/hexagon/...) approximate
- * with the bounding rectangle in v1.
+ * Rectangular payloads attach on their bounding rectangle; round shapes attach on the
+ * inscribed ellipse; decision/gateway shapes on the inscribed rhombus. Other shaped
+ * payloads use their exact rendered outline.
  */
-enum class DiagramPerimeterKind { RECTANGLE, ELLIPSE, RHOMBUS }
+enum class DiagramPerimeterKind { RECTANGLE, ELLIPSE, RHOMBUS, OUTLINE }
 
 /** The perimeter family this node's payload attaches floating edges to. */
 fun DiagramNode.perimeterKind(): DiagramPerimeterKind = when (val payload = payload) {
     is DiagramNodePayload.BasicShape -> when (payload.shape) {
-        DiagramShapeKind.ELLIPSE -> DiagramPerimeterKind.ELLIPSE
+        DiagramShapeKind.RECTANGLE, DiagramShapeKind.TEXT -> DiagramPerimeterKind.RECTANGLE
+        DiagramShapeKind.ELLIPSE, DiagramShapeKind.CLOUD -> DiagramPerimeterKind.ELLIPSE
         DiagramShapeKind.RHOMBUS -> DiagramPerimeterKind.RHOMBUS
-        else -> DiagramPerimeterKind.RECTANGLE
+        else -> DiagramPerimeterKind.OUTLINE
     }
 
     is DiagramNodePayload.FlowchartNode -> when (payload.kind) {
+        FlowchartNodeKind.PROCESS -> DiagramPerimeterKind.RECTANGLE
         FlowchartNodeKind.DECISION -> DiagramPerimeterKind.RHOMBUS
-        else -> DiagramPerimeterKind.RECTANGLE
+        else -> DiagramPerimeterKind.OUTLINE
     }
 
     is DiagramNodePayload.BpmnNode -> when (payload.kind) {
         BpmnNodeKind.EVENT -> DiagramPerimeterKind.ELLIPSE
         BpmnNodeKind.GATEWAY -> DiagramPerimeterKind.RHOMBUS
-        else -> DiagramPerimeterKind.RECTANGLE
+        BpmnNodeKind.TASK -> DiagramPerimeterKind.OUTLINE
     }
 
     is UmlStateNode -> when (payload.kind) {
         UmlStateKind.INITIAL, UmlStateKind.FINAL -> DiagramPerimeterKind.ELLIPSE
-        else -> DiagramPerimeterKind.RECTANGLE
+        else -> DiagramPerimeterKind.OUTLINE
     }
 
     is UmlActivityNode -> when (payload.kind) {
         UmlActivityKind.START, UmlActivityKind.END -> DiagramPerimeterKind.ELLIPSE
         UmlActivityKind.DECISION -> DiagramPerimeterKind.RHOMBUS
-        else -> DiagramPerimeterKind.RECTANGLE
+        UmlActivityKind.ACTION -> DiagramPerimeterKind.OUTLINE
+        UmlActivityKind.FORK, UmlActivityKind.JOIN -> DiagramPerimeterKind.RECTANGLE
     }
 
     is UmlUseCaseNode -> DiagramPerimeterKind.ELLIPSE
 
+    is UmlNoteNode -> DiagramPerimeterKind.OUTLINE
+
     else -> DiagramPerimeterKind.RECTANGLE
 }
 
-/** Absolute document position of a fixed [port] on [node] (alias of [DiagramNode.portPosition]). */
-fun anchorPoint(node: DiagramNode, port: DiagramPort): DiagramPoint = node.portPosition(port)
+/**
+ * Absolute visual position of a fixed [port] on [node]. Side ports and legacy relative ports on
+ * a bounding-box edge are projected onto the rendered contour; arbitrary interior/outside
+ * relative points keep their authored position.
+ */
+fun anchorPoint(node: DiagramNode, port: DiagramPort): DiagramPoint {
+    val raw = node.portPosition(port)
+    return when (val anchor = port.anchor) {
+        is DiagramPortAnchor.SideOffset -> {
+            val coordinate = if (anchor.side.exitsHorizontally) raw.y else raw.x
+            node.outlineSideIntersection(anchor.side, coordinate) ?: raw
+        }
+
+        is DiagramPortAnchor.RelativePoint -> {
+            if (node.containsPoint(raw)) return raw
+            val onLeft = anchor.x == 0.0 && anchor.y in 0.0..1.0
+            val onRight = anchor.x == 1.0 && anchor.y in 0.0..1.0
+            val onTop = anchor.y == 0.0 && anchor.x in 0.0..1.0
+            val onBottom = anchor.y == 1.0 && anchor.x in 0.0..1.0
+            val boundarySides = listOfNotNull(
+                DiagramNodeSide.LEFT.takeIf { onLeft },
+                DiagramNodeSide.RIGHT.takeIf { onRight },
+                DiagramNodeSide.TOP.takeIf { onTop },
+                DiagramNodeSide.BOTTOM.takeIf { onBottom },
+            )
+            when (boundarySides.size) {
+                1 -> {
+                    val side = boundarySides.single()
+                    val coordinate = if (side.exitsHorizontally) raw.y else raw.x
+                    node.outlineSideIntersection(side, coordinate) ?: raw
+                }
+
+                in 2..4 -> node.outlineIntersection(raw) ?: raw
+                else -> raw
+            }
+        }
+    }
+}
 
 /** Absolute document position of the port with [portId], or `null` if the node has no such port. */
 fun anchorPoint(node: DiagramNode, portId: DiagramPortId): DiagramPoint? =
-    node.portById(portId)?.let(node::portPosition)
+    node.portById(portId)?.let { port -> anchorPoint(node, port) }
 
 /**
  * The point where a ray from the node center toward [towards] crosses the node's
@@ -96,6 +138,7 @@ fun perimeterIntersection(node: DiagramNode, towards: DiagramPoint): DiagramPoin
         }
 
         DiagramPerimeterKind.RHOMBUS -> 1.0 / (abs(dx) / halfWidth + abs(dy) / halfHeight)
+        DiagramPerimeterKind.OUTLINE -> return node.outlineIntersection(towards) ?: center
     }
     return DiagramPoint(center.x + dx * t, center.y + dy * t)
 }

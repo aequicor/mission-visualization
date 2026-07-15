@@ -13,6 +13,9 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import io.aequicor.visualization.subsystems.diagrams.hittest.ConnectTarget
+import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
+import io.aequicor.visualization.subsystems.diagrams.geometry.outlineResizeHandlePoints
 import io.aequicor.visualization.subsystems.diagrams.hittest.connectionPorts
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
@@ -38,7 +41,7 @@ data class DiagramOverlayStyle(
     val fixedIndicator: Color = Color(0xFF0E9E6E),
 )
 
-/** Selection frame + 8 resize handles around each selected node. */
+/** Selection contour + 8 resize handles on the rendered outline of each selected node. */
 @Composable
 fun DiagramSelectionOverlay(
     graph: DiagramGraph,
@@ -62,26 +65,22 @@ internal fun DrawScope.drawSelectionFrame(
     handleSize: Float,
     chromeScale: Float = 1f,
 ) {
-    val bounds = node.bounds
-    val topLeft = Offset(bounds.left.toFloat(), bounds.top.toFloat())
-    val size = Size(bounds.width.toFloat(), bounds.height.toFloat())
-    drawRect(style.accent, topLeft = topLeft, size = size, style = Stroke(1.5f * chromeScale))
+    drawPath(
+        node.outlinePath().toComposePath(),
+        color = style.accent,
+        style = Stroke(1.5f * chromeScale, join = StrokeJoin.Round),
+    )
 
-    val xs = listOf(bounds.left, bounds.centerX, bounds.right)
-    val ys = listOf(bounds.top, bounds.centerY, bounds.bottom)
     val half = handleSize / 2f
-    ys.forEachIndexed { rowIndex, y ->
-        xs.forEachIndexed { columnIndex, x ->
-            if (rowIndex == 1 && columnIndex == 1) return@forEachIndexed // center is not a handle
-            val corner = Offset(x.toFloat() - half, y.toFloat() - half)
-            drawRect(style.handleFill, topLeft = corner, size = Size(handleSize, handleSize))
-            drawRect(
-                style.handleStroke,
-                topLeft = corner,
-                size = Size(handleSize, handleSize),
-                style = Stroke(1.2f * chromeScale),
-            )
-        }
+    node.outlineResizeHandlePoints().forEach { point ->
+        val corner = Offset(point.x.toFloat() - half, point.y.toFloat() - half)
+        drawRect(style.handleFill, topLeft = corner, size = Size(handleSize, handleSize))
+        drawRect(
+            style.handleStroke,
+            topLeft = corner,
+            size = Size(handleSize, handleSize),
+            style = Stroke(1.2f * chromeScale),
+        )
     }
 }
 
@@ -121,7 +120,7 @@ internal fun DrawScope.drawPortIndicators(
 ) {
     // Draw the passive grid first so the active marker can sit on top without shifting geometry.
     node.connectionPorts().forEach { port ->
-        val point = node.portPosition(port)
+        val point = anchorPoint(node, port)
         val center = Offset(point.x.toFloat(), point.y.toFloat())
         if (port.id == highlightedPortId) {
             drawCircle(style.fixedIndicator.copy(alpha = 0.20f), radius = 7f * chromeScale, center = center)
@@ -156,7 +155,7 @@ fun DiagramConnectTargetOverlay(
             is ConnectTarget.Port -> {
                 val node = graph.nodeById(target.nodeId) ?: return@Canvas
                 node.connectionPorts().forEach { port ->
-                    val point = node.portPosition(port)
+                    val point = anchorPoint(node, port)
                     drawFixedPortMarker(
                         Offset(point.x.toFloat(), point.y.toFloat()),
                         style.fixedIndicator,
@@ -176,12 +175,10 @@ fun DiagramConnectTargetOverlay(
 
             is ConnectTarget.Floating -> {
                 val node = graph.nodeById(target.nodeId) ?: return@Canvas
-                val bounds = node.bounds
-                drawRect(
+                drawPath(
+                    path = node.outlinePath().toComposePath(),
                     color = style.floatingIndicator,
-                    topLeft = Offset(bounds.left.toFloat(), bounds.top.toFloat()),
-                    size = Size(bounds.width.toFloat(), bounds.height.toFloat()),
-                    style = Stroke(1.8f * chromeScale),
+                    style = Stroke(1.8f * chromeScale, join = StrokeJoin.Round),
                 )
                 val snap = Offset(target.snapPoint.x.toFloat(), target.snapPoint.y.toFloat())
                 drawCircle(style.floatingIndicator, radius = 3.5f * chromeScale, center = snap)

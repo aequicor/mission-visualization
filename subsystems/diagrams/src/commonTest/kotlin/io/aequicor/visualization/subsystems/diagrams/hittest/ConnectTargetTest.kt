@@ -1,6 +1,9 @@
 package io.aequicor.visualization.subsystems.diagrams.hittest
 
+import io.aequicor.visualization.subsystems.diagrams.geometry.containsPoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.test.Test
@@ -47,6 +50,27 @@ class ConnectTargetTest {
         // Mid-sides unchanged.
         assertEquals(DiagramPoint(50.0, 0.0), position("top"))
         assertEquals(DiagramPoint(100.0, 30.0), position("right"))
+    }
+
+    @Test
+    fun virtualConnectionGridIsProjectedOntoShapedOutline() {
+        val graph = diagramGraph {
+            node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 100.0,
+                height = 60.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS),
+            )
+        }
+        val node = graph.nodeById(a)!!
+        val ports = node.connectionPorts()
+
+        fun position(id: String): DiagramPoint = node.portPosition(ports.first { it.id.value == id })
+        assertEquals(DiagramPoint(25.0, 15.0), position("top-left"))
+        assertEquals(DiagramPoint(50.0, 0.0), position("top"))
+        assertTrue(ports.all { node.containsPoint(node.portPosition(it)) })
     }
 
     @Test
@@ -147,6 +171,29 @@ class ConnectTargetTest {
             pointer = DiagramPoint(500.0, 500.0),
         )
         assertEquals(ConnectTarget.Free(DiagramPoint(500.0, 500.0)), target)
+    }
+
+    @Test
+    fun resolveDoesNotTreatRhombusBoundingCornerAsItsBody() {
+        val graph = diagramGraph {
+            node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 100.0,
+                height = 60.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS),
+            )
+        }
+        val pointer = DiagramPoint(4.0, 4.0)
+
+        assertEquals(
+            ConnectTarget.Free(pointer),
+            graph.resolveConnectTarget(
+                from = DiagramPoint(-100.0, 30.0),
+                pointer = pointer,
+            ),
+        )
     }
 
     @Test

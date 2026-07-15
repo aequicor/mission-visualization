@@ -1,11 +1,16 @@
 package io.aequicor.visualization.subsystems.diagrams.hittest
 
+import io.aequicor.visualization.subsystems.diagrams.geometry.containsPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
 import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterIntersection
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.path.rayIntersections
 import kotlin.math.hypot
 
 /**
@@ -18,7 +23,24 @@ import kotlin.math.hypot
  */
 fun DiagramNode.connectionPorts(): List<DiagramPort> {
     val declaredIds = ports.map { it.id }.toSet()
-    return ports + DiagramPort.connectionPointGrid().filter { it.id !in declaredIds }
+    val grid = DiagramPort.connectionPointGrid().filter { it.id !in declaredIds }
+    val targets = grid.map(::portPosition)
+    val projected = outlinePath().rayIntersections(bounds.center, targets)
+    val virtual = grid.mapIndexed { index, port ->
+        projectVirtualPortToOutline(port, projected[index] ?: targets[index])
+    }
+    return ports + virtual
+}
+
+/** Keeps the dense virtual grid, but places each generated point on the rendered contour. */
+private fun DiagramNode.projectVirtualPortToOutline(port: DiagramPort, projected: DiagramPoint): DiagramPort {
+    if (width <= 0.0 || height <= 0.0) return port
+    return port.copy(
+        anchor = DiagramPortAnchor.RelativePoint(
+            x = (projected.x - x) / width,
+            y = (projected.y - y) / height,
+        ),
+    )
 }
 
 /**
@@ -52,7 +74,7 @@ sealed interface ConnectTarget {
 /**
  * Resolves what a dragged edge end lands on at [pointer], coming from [from] (the source
  * anchor, used to pick the floating perimeter crossing). Picks the topmost visible, unlocked
- * node containing [pointer], other than [excludeNodeId]; snaps to that node's nearest
+ * node whose rendered body contains [pointer], other than [excludeNodeId]; snaps to that node's nearest
  * connection point when within [portSnapRadius] (a fixed pin), otherwise attaches floating on
  * its perimeter. When the pointer is just outside every node, connection points keep the same
  * magnetic radius so crossing a node boundary does not drop a pending draw.io-style snap.
@@ -69,7 +91,7 @@ fun DiagramGraph.resolveConnectTarget(
         it.visible && !it.locked && it.id != excludeNodeId
     }
 
-    candidates.firstOrNull { it.bounds.contains(pointer) }?.let { node ->
+    candidates.firstOrNull { it.containsPoint(pointer) }?.let { node ->
         node.nearestConnectionPort(pointer, portSnapRadius)?.let { (port, position) ->
             return ConnectTarget.Port(node.id, port, position)
         }
@@ -89,6 +111,6 @@ private fun DiagramNode.nearestConnectionPort(
     pointer: DiagramPoint,
     portSnapRadius: Double,
 ): Pair<DiagramPort, DiagramPoint>? = connectionPorts()
-    .map { port -> port to portPosition(port) }
+    .map { port -> port to anchorPoint(this, port) }
     .minByOrNull { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) }
     ?.takeIf { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) <= portSnapRadius }

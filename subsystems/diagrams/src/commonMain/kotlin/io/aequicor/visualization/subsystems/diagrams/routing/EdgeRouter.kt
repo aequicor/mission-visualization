@@ -1,10 +1,12 @@
 package io.aequicor.visualization.subsystems.diagrams.routing
 
 import io.aequicor.visualization.subsystems.diagrams.geometry.GEOMETRY_EPSILON
+import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
 import io.aequicor.visualization.subsystems.diagrams.geometry.exitsHorizontally
 import io.aequicor.visualization.subsystems.diagrams.geometry.minus
 import io.aequicor.visualization.subsystems.diagrams.geometry.nearlyEquals
 import io.aequicor.visualization.subsystems.diagrams.geometry.outwardNormal
+import io.aequicor.visualization.subsystems.diagrams.geometry.outlineSideIntersection
 import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterIntersection
 import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterSide
 import io.aequicor.visualization.subsystems.diagrams.geometry.plus
@@ -30,7 +32,7 @@ import kotlin.math.sin
  * Routes one edge of [graph] into a concrete [RoutedEdge] polyline/spline.
  *
  * Endpoint resolution:
- * - [DiagramEndpoint.FixedPort] — exact port position (route glued to the port);
+ * - [DiagramEndpoint.FixedPort] — exact visual port position (route glued to the outline);
  * - [DiagramEndpoint.FloatingAnchor] — the router picks the exit point on the node's
  *   attachment perimeter (see `perimeterIntersection`) facing the next route target;
  * - [DiagramEndpoint.FreePoint] — the point itself.
@@ -101,7 +103,7 @@ private fun rawEndpointPoint(graph: DiagramGraph, endpoint: DiagramEndpoint): Di
             val port = requireNotNull(node.portById(endpoint.portId)) {
                 "node ${node.id.value} has no port ${endpoint.portId.value}"
             }
-            node.portPosition(port)
+            anchorPoint(node, port)
         }
     }
 
@@ -127,7 +129,7 @@ private fun resolvePointEnd(
     }
 }
 
-/** Endpoint resolution for orthogonal styles: anchor on a bounding-box side + exit side. */
+/** Endpoint resolution for orthogonal styles: anchor on the rendered outline + logical exit side. */
 private fun resolveOrthogonalEnd(
     graph: DiagramGraph,
     endpoint: DiagramEndpoint,
@@ -142,7 +144,7 @@ private fun resolveOrthogonalEnd(
         val port = requireNotNull(node.portById(endpoint.portId)) {
             "node ${node.id.value} has no port ${endpoint.portId.value}"
         }
-        val anchor = node.portPosition(port)
+        val anchor = anchorPoint(node, port)
         val side = (port.anchor as? DiagramPortAnchor.SideOffset)?.side
             ?: perimeterSide(node, anchor)
         ResolvedEnd(anchor, node, side)
@@ -154,7 +156,7 @@ private fun resolveOrthogonalEnd(
         val side = dominantSide(bounds.center, reference)
         val (low, high) = sideCoordinateRange(bounds, side, options.obstacleMargin)
         val anchor = anchorOnSide(
-            bounds,
+            node,
             side,
             (if (side.exitsHorizontally) reference.y else reference.x).coerceIn(low, high),
         )
@@ -431,7 +433,7 @@ private fun plannedAnchor(
             val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
             idealSideCoordinate(node.bounds, other.bounds, side, low, high)
         }
-    return anchorOnSide(node.bounds, side, coordinate)
+    return anchorOnSide(node, side, coordinate)
 }
 
 private data class SideAttachment(val edgeId: DiagramEdgeId, val position: Double)
@@ -560,14 +562,14 @@ private fun sideCoordinateRange(
 }
 
 private fun anchorOnSide(
-    bounds: DiagramRect,
+    node: DiagramNode,
     side: DiagramNodeSide,
     coordinate: Double,
-): DiagramPoint = when (side) {
-    DiagramNodeSide.TOP -> DiagramPoint(coordinate, bounds.top)
-    DiagramNodeSide.BOTTOM -> DiagramPoint(coordinate, bounds.bottom)
-    DiagramNodeSide.LEFT -> DiagramPoint(bounds.left, coordinate)
-    DiagramNodeSide.RIGHT -> DiagramPoint(bounds.right, coordinate)
+): DiagramPoint = node.outlineSideIntersection(side, coordinate) ?: when (side) {
+    DiagramNodeSide.TOP -> DiagramPoint(coordinate, node.bounds.top)
+    DiagramNodeSide.BOTTOM -> DiagramPoint(coordinate, node.bounds.bottom)
+    DiagramNodeSide.LEFT -> DiagramPoint(node.bounds.left, coordinate)
+    DiagramNodeSide.RIGHT -> DiagramPoint(node.bounds.right, coordinate)
 }
 
 // --- Route post-processing -------------------------------------------------------------
@@ -770,8 +772,7 @@ private fun resolveEntityRelationEnd(
         val node = endpointNode(graph, endpoint)!!
         val bounds = node.bounds
         val side = if (reference.x >= bounds.centerX) DiagramNodeSide.RIGHT else DiagramNodeSide.LEFT
-        val x = if (side == DiagramNodeSide.RIGHT) bounds.right else bounds.left
-        ResolvedEnd(DiagramPoint(x, bounds.centerY), node, side)
+        ResolvedEnd(anchorOnSide(node, side, bounds.centerY), node, side)
     }
 }
 

@@ -65,6 +65,8 @@ import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramSelection
 import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
+import io.aequicor.visualization.editor.platform.canvasWheelPanAxes
+import io.aequicor.visualization.editor.platform.canvasWheelZoomAxis
 import io.aequicor.visualization.editor.platform.platformCanvasWheelPanPixels
 import io.aequicor.visualization.editor.platform.platformCanvasWheelZoomUnits
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
@@ -85,6 +87,9 @@ import io.aequicor.visualization.subsystems.diagrams.compose.DiagramPreviewStyle
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramSelectionOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramWaypointOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.rememberDiagramRoutes
+import io.aequicor.visualization.subsystems.diagrams.geometry.containsPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.intersectsOutline
 import io.aequicor.visualization.subsystems.diagrams.hittest.ConnectTarget
 import io.aequicor.visualization.subsystems.diagrams.hittest.connectionPorts
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
@@ -470,7 +475,9 @@ internal fun DiagramEditOverlay(
                                 }
                                 if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
                                     val factor = zoomFactorForScroll(
-                                        platformCanvasWheelZoomUnits(-change.scrollDelta.y),
+                                        platformCanvasWheelZoomUnits(
+                                            -canvasWheelZoomAxis(change.scrollDelta.x, change.scrollDelta.y),
+                                        ),
                                     )
                                     if (factor != 1f) {
                                         state.updateWorkspace {
@@ -485,10 +492,13 @@ internal fun DiagramEditOverlay(
                                         }
                                     }
                                 } else {
-                                    val scrollX = if (modifiers.isShiftPressed) change.scrollDelta.y else change.scrollDelta.x
-                                    val scrollY = if (modifiers.isShiftPressed) 0f else change.scrollDelta.y
-                                    val panX = platformCanvasWheelPanPixels(-scrollX, density)
-                                    val panY = platformCanvasWheelPanPixels(-scrollY, density)
+                                    val scroll = canvasWheelPanAxes(
+                                        change.scrollDelta.x,
+                                        change.scrollDelta.y,
+                                        modifiers.isShiftPressed,
+                                    )
+                                    val panX = platformCanvasWheelPanPixels(-scroll.x, density)
+                                    val panY = platformCanvasWheelPanPixels(-scroll.y, density)
                                     state.updateWorkspace {
                                         it.copy(viewport = it.viewport.panByScreenDelta(panX, panY, density))
                                     }
@@ -982,7 +992,7 @@ internal fun DiagramEditOverlay(
                             val boxSelection = selectionBox
                             if (marqueeMoved && boxSelection != null) {
                                 val hitIds = live.nodes
-                                    .filter { it.visible && !it.locked && it.bounds.intersects(boxSelection) }
+                                    .filter { it.visible && !it.locked && it.intersectsOutline(boxSelection) }
                                     .map { it.id.value }
                                     .toSet()
                                 state.updateWorkspace {
@@ -1484,7 +1494,7 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
     // yet, so resolve their exact geometry directly instead of falling back to the node center.
     val fromPoint = liveGraph()?.let { graph ->
         if (sourceNodeId != null && sourcePortToAdd != null) {
-            graph.nodeById(sourceNodeId)?.portPosition(sourcePortToAdd)
+            graph.nodeById(sourceNodeId)?.let { sourceNode -> anchorPoint(sourceNode, sourcePortToAdd) }
         } else {
             resolveEndpointPoint(graph, source)
         }
@@ -1523,7 +1533,7 @@ private suspend fun AwaitPointerEventScope.dragNewDiagramEdge(
         is ConnectTarget.Free -> {
             // Released back inside the anchored end's node: cancel rather than mint a stub.
             val anchorNode = sourceNodeId?.let { graph.nodeById(it) }
-            if (anchorNode != null && anchorNode.bounds.contains(landing.snapPoint)) return
+            if (anchorNode != null && anchorNode.containsPoint(landing.snapPoint)) return
             DiagramEndpoint.FreePoint(landing.snapPoint.x, landing.snapPoint.y) to null
         }
 
@@ -1606,16 +1616,16 @@ private fun connectDiagramEdge(
 
 // --- Pure geometry helpers --------------------------------------------------------
 
-/** Topmost visible, unlocked diagram node whose bounds contain [point] (list order = z-order). */
+/** Topmost visible, unlocked diagram node whose rendered body contains [point] (list order = z-order). */
 private fun hitDiagramNodeAt(graph: DiagramGraph, point: DiagramPoint): DiagramNodeId? =
     graph.nodes.asReversed()
-        .firstOrNull { it.visible && !it.locked && it.bounds.contains(point) }
+        .firstOrNull { it.visible && !it.locked && it.containsPoint(point) }
         ?.id
 
 /**
- * Node under [point] for hover purposes: an exact bounds hit first, else the topmost node
- * whose bounds inflated by [margin] contain [point]. Without this margin the hover (and the
- * directional arrows) would vanish the instant the pointer leaves the raw bounds.
+ * Node under [point] for hover purposes: an exact body hit first, else the topmost node whose
+ * outline halo contains [point]. Without this margin the hover (and the directional arrows)
+ * would vanish the instant the pointer leaves the rendered body.
  */
 private fun hoverDiagramNodeAt(
     graph: DiagramGraph,
@@ -1624,11 +1634,7 @@ private fun hoverDiagramNodeAt(
 ): DiagramNodeId? {
     hitDiagramNodeAt(graph, point)?.let { return it }
     return graph.nodes.asReversed()
-        .firstOrNull { node ->
-            node.visible && !node.locked &&
-                point.x >= node.bounds.left - margin && point.x <= node.bounds.right + margin &&
-                point.y >= node.bounds.top - margin && point.y <= node.bounds.bottom + margin
-        }
+        .firstOrNull { node -> node.visible && !node.locked && node.containsPoint(point, margin) }
         ?.id
 }
 
@@ -1648,7 +1654,7 @@ internal fun hoverDiagramPortAt(
         var nearestPort: DiagramPort? = null
         var nearestDistanceSquared = Double.MAX_VALUE
         node.connectionPorts().forEach { port ->
-            val position = node.portPosition(port)
+            val position = anchorPoint(node, port)
             val dx = position.x - point.x
             val dy = position.y - point.y
             val distanceSquared = dx * dx + dy * dy
@@ -1662,7 +1668,7 @@ internal fun hoverDiagramPortAt(
             ?.let { DiagramHit.Port(node.id, it.id) }
     }
 
-    candidates.firstOrNull { it.bounds.contains(point) }?.let { node ->
+    candidates.firstOrNull { it.containsPoint(point) }?.let { node ->
         return nearestPort(node)
     }
     candidates.forEach { node ->

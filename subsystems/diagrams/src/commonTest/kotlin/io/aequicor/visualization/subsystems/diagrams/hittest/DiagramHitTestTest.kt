@@ -11,6 +11,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.SwimlaneLane
 import io.aequicor.visualization.subsystems.diagrams.model.TableCell
 import io.aequicor.visualization.subsystems.diagrams.model.TableColumn
@@ -63,6 +64,46 @@ class DiagramHitTestTest {
         val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0) }
         val hit = hitTest(graph, emptyMap(), DiagramPoint(50.0, 50.0))
         assertEquals(DiagramHit.Node(DiagramNodeId("a")), hit)
+    }
+
+    @Test
+    fun shapedNodeDoesNotHitThroughItsBoundingBoxCorner() {
+        val graph = diagramGraph {
+            node(
+                "diamond",
+                x = 0.0,
+                y = 0.0,
+                width = 100.0,
+                height = 100.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS),
+            )
+        }
+
+        assertNull(hitTest(graph, emptyMap(), DiagramPoint(2.0, 2.0), tolerance = 5.0))
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("diamond")),
+            hitTest(graph, emptyMap(), DiagramPoint(50.0, 50.0), tolerance = 0.0),
+        )
+    }
+
+    @Test
+    fun transparentCornerOfForegroundShapeLetsTheNodeBehindWin() {
+        val graph = diagramGraph {
+            node("back", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+            node(
+                "front",
+                x = 50.0,
+                y = 50.0,
+                width = 100.0,
+                height = 100.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS),
+            )
+        }
+
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("back")),
+            hitTest(graph, emptyMap(), DiagramPoint(60.0, 60.0), tolerance = 0.0),
+        )
     }
 
     @Test
@@ -160,6 +201,27 @@ class DiagramHitTestTest {
 
         val unselected = hitTest(graph, emptyMap(), point, tolerance = 5.0)
         assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("tl")), unselected)
+    }
+
+    @Test
+    fun rhombusResizeHandleIsOnTheBlueOutline() {
+        val graph = diagramGraph {
+            node(
+                "diamond",
+                x = 0.0,
+                y = 0.0,
+                width = 100.0,
+                height = 100.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS),
+            )
+        }
+        val selected = setOf(DiagramNodeId("diamond"))
+
+        assertEquals(
+            DiagramHit.ResizeHandle(DiagramNodeId("diamond"), DiagramResizeHandle.TOP_LEFT),
+            hitTest(graph, emptyMap(), DiagramPoint(25.0, 25.0), tolerance = 2.0, selectedNodeIds = selected),
+        )
+        assertNull(hitTest(graph, emptyMap(), DiagramPoint(0.0, 0.0), tolerance = 2.0, selectedNodeIds = selected))
     }
 
     @Test
