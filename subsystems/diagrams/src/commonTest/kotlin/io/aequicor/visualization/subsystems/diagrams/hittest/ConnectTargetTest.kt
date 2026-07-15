@@ -79,6 +79,52 @@ class ConnectTargetTest {
     }
 
     @Test
+    fun resolveKeepsPortMagneticJustOutsideNodeBounds() {
+        val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0) }
+        // The pointer has crossed the top edge, but is still within the port's snap halo.
+        val target = graph.resolveConnectTarget(
+            from = DiagramPoint(25.0, -100.0),
+            pointer = DiagramPoint(25.0, -6.0),
+        )
+
+        assertTrue(target is ConnectTarget.Port)
+        target as ConnectTarget.Port
+        assertEquals(a, target.nodeId)
+        assertEquals("top-q1", target.port.id.value)
+        assertEquals(DiagramPoint(25.0, 0.0), target.snapPoint)
+    }
+
+    @Test
+    fun resolveDoesNotLetCoveredPortStealForegroundNodeBody() {
+        val foreground = DiagramNodeId("foreground")
+        val graph = diagramGraph {
+            node("background", x = 0.0, y = 0.0, width = 100.0, height = 60.0)
+            node("foreground", x = 80.0, y = -10.0, width = 100.0, height = 100.0)
+        }
+        // This is the background node's right midpoint, but it lies inside the topmost node.
+        val target = graph.resolveConnectTarget(
+            from = DiagramPoint(250.0, 60.0),
+            pointer = DiagramPoint(100.0, 30.0),
+        )
+
+        assertTrue(target is ConnectTarget.Floating)
+        target as ConnectTarget.Floating
+        assertEquals(foreground, target.nodeId)
+    }
+
+    @Test
+    fun resolveIsFreeOutsidePortMagneticRadius() {
+        val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0) }
+        val pointer = DiagramPoint(25.0, -11.0)
+        val target = graph.resolveConnectTarget(
+            from = DiagramPoint(25.0, -100.0),
+            pointer = pointer,
+        )
+
+        assertEquals(ConnectTarget.Free(pointer), target)
+    }
+
+    @Test
     fun resolveFloatsOnPerimeterFacingSourceWhenOverBodyAwayFromPorts() {
         val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0) }
         // Node center (50, 30): every side midpoint is > snap radius away, so floating.

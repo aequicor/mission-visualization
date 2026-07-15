@@ -46,11 +46,12 @@ fun DiagramSelectionOverlay(
     modifier: Modifier = Modifier,
     style: DiagramOverlayStyle = DiagramOverlayStyle(),
     handleSize: Float = 7f,
+    chromeScale: Float = 1f,
 ) {
     Canvas(modifier) {
         selectedNodeIds.forEach { id ->
             val node = graph.nodeById(id) ?: return@forEach
-            drawSelectionFrame(node, style, handleSize)
+            drawSelectionFrame(node, style, handleSize * chromeScale, chromeScale)
         }
     }
 }
@@ -59,11 +60,12 @@ internal fun DrawScope.drawSelectionFrame(
     node: DiagramNode,
     style: DiagramOverlayStyle,
     handleSize: Float,
+    chromeScale: Float = 1f,
 ) {
     val bounds = node.bounds
     val topLeft = Offset(bounds.left.toFloat(), bounds.top.toFloat())
     val size = Size(bounds.width.toFloat(), bounds.height.toFloat())
-    drawRect(style.accent, topLeft = topLeft, size = size, style = Stroke(1.5f))
+    drawRect(style.accent, topLeft = topLeft, size = size, style = Stroke(1.5f * chromeScale))
 
     val xs = listOf(bounds.left, bounds.centerX, bounds.right)
     val ys = listOf(bounds.top, bounds.centerY, bounds.bottom)
@@ -73,7 +75,12 @@ internal fun DrawScope.drawSelectionFrame(
             if (rowIndex == 1 && columnIndex == 1) return@forEachIndexed // center is not a handle
             val corner = Offset(x.toFloat() - half, y.toFloat() - half)
             drawRect(style.handleFill, topLeft = corner, size = Size(handleSize, handleSize))
-            drawRect(style.handleStroke, topLeft = corner, size = Size(handleSize, handleSize), style = Stroke(1.2f))
+            drawRect(
+                style.handleStroke,
+                topLeft = corner,
+                size = Size(handleSize, handleSize),
+                style = Stroke(1.2f * chromeScale),
+            )
         }
     }
 }
@@ -91,6 +98,7 @@ fun DiagramPortsOverlay(
     style: DiagramOverlayStyle = DiagramOverlayStyle(),
     highlightedNodeId: DiagramNodeId? = null,
     highlightedPortId: DiagramPortId? = null,
+    chromeScale: Float = 1f,
 ) {
     Canvas(modifier) {
         nodeIds.forEach { id ->
@@ -99,6 +107,7 @@ fun DiagramPortsOverlay(
                 node = node,
                 style = style,
                 highlightedPortId = highlightedPortId.takeIf { id == highlightedNodeId },
+                chromeScale = chromeScale,
             )
         }
     }
@@ -108,17 +117,23 @@ internal fun DrawScope.drawPortIndicators(
     node: DiagramNode,
     style: DiagramOverlayStyle,
     highlightedPortId: DiagramPortId? = null,
+    chromeScale: Float = 1f,
 ) {
     // Draw the passive grid first so the active marker can sit on top without shifting geometry.
     node.connectionPorts().forEach { port ->
         val point = node.portPosition(port)
         val center = Offset(point.x.toFloat(), point.y.toFloat())
         if (port.id == highlightedPortId) {
-            drawCircle(style.fixedIndicator.copy(alpha = 0.20f), radius = 7f, center = center)
-            drawCircle(style.fixedIndicator, radius = 7f, center = center, style = Stroke(1.2f))
-            drawFixedPortMarker(center, style.fixedIndicator)
+            drawCircle(style.fixedIndicator.copy(alpha = 0.20f), radius = 7f * chromeScale, center = center)
+            drawCircle(
+                style.fixedIndicator,
+                radius = 7f * chromeScale,
+                center = center,
+                style = Stroke(1.2f * chromeScale),
+            )
+            drawFixedPortMarker(center, style.fixedIndicator, chromeScale)
         } else {
-            drawFixedPortMarker(center, style.floatingIndicator)
+            drawFixedPortMarker(center, style.floatingIndicator, chromeScale)
         }
     }
 }
@@ -134,6 +149,7 @@ fun DiagramConnectTargetOverlay(
     target: ConnectTarget?,
     modifier: Modifier = Modifier,
     style: DiagramOverlayStyle = DiagramOverlayStyle(),
+    chromeScale: Float = 1f,
 ) {
     Canvas(modifier) {
         when (target) {
@@ -141,12 +157,21 @@ fun DiagramConnectTargetOverlay(
                 val node = graph.nodeById(target.nodeId) ?: return@Canvas
                 node.connectionPorts().forEach { port ->
                     val point = node.portPosition(port)
-                    drawFixedPortMarker(Offset(point.x.toFloat(), point.y.toFloat()), style.fixedIndicator)
+                    drawFixedPortMarker(
+                        Offset(point.x.toFloat(), point.y.toFloat()),
+                        style.fixedIndicator,
+                        chromeScale,
+                    )
                 }
                 // The point being snapped to reads brighter, with a filled ring.
                 val snap = Offset(target.snapPoint.x.toFloat(), target.snapPoint.y.toFloat())
-                drawCircle(style.fixedIndicator.copy(alpha = 0.22f), radius = 6f, center = snap)
-                drawCircle(style.fixedIndicator, radius = 6f, center = snap, style = Stroke(1.6f))
+                drawCircle(style.fixedIndicator.copy(alpha = 0.22f), radius = 6f * chromeScale, center = snap)
+                drawCircle(
+                    style.fixedIndicator,
+                    radius = 6f * chromeScale,
+                    center = snap,
+                    style = Stroke(1.6f * chromeScale),
+                )
             }
 
             is ConnectTarget.Floating -> {
@@ -156,10 +181,10 @@ fun DiagramConnectTargetOverlay(
                     color = style.floatingIndicator,
                     topLeft = Offset(bounds.left.toFloat(), bounds.top.toFloat()),
                     size = Size(bounds.width.toFloat(), bounds.height.toFloat()),
-                    style = Stroke(1.8f),
+                    style = Stroke(1.8f * chromeScale),
                 )
                 val snap = Offset(target.snapPoint.x.toFloat(), target.snapPoint.y.toFloat())
-                drawCircle(style.floatingIndicator, radius = 3.5f, center = snap)
+                drawCircle(style.floatingIndicator, radius = 3.5f * chromeScale, center = snap)
             }
 
             is ConnectTarget.Free, null -> Unit
@@ -167,9 +192,23 @@ fun DiagramConnectTargetOverlay(
     }
 }
 
-private fun DrawScope.drawFixedPortMarker(center: Offset, color: Color, arm: Float = 3.5f) {
-    drawLine(color, Offset(center.x - arm, center.y - arm), Offset(center.x + arm, center.y + arm), strokeWidth = 1.6f, cap = StrokeCap.Round)
-    drawLine(color, Offset(center.x - arm, center.y + arm), Offset(center.x + arm, center.y - arm), strokeWidth = 1.6f, cap = StrokeCap.Round)
+private fun DrawScope.drawFixedPortMarker(center: Offset, color: Color, chromeScale: Float = 1f) {
+    val arm = 3.5f * chromeScale
+    val strokeWidth = 1.6f * chromeScale
+    drawLine(
+        color,
+        Offset(center.x - arm, center.y - arm),
+        Offset(center.x + arm, center.y + arm),
+        strokeWidth = strokeWidth,
+        cap = StrokeCap.Round,
+    )
+    drawLine(
+        color,
+        Offset(center.x - arm, center.y + arm),
+        Offset(center.x + arm, center.y - arm),
+        strokeWidth = strokeWidth,
+        cap = StrokeCap.Round,
+    )
 }
 
 /**
@@ -186,6 +225,7 @@ fun DiagramWaypointOverlay(
     routes: Map<DiagramEdgeId, RoutedEdge>,
     modifier: Modifier = Modifier,
     style: DiagramOverlayStyle = DiagramOverlayStyle(),
+    chromeScale: Float = 1f,
 ) {
     Canvas(modifier) {
         selectedEdgeIds.forEach { id ->
@@ -208,25 +248,45 @@ fun DiagramWaypointOverlay(
                         dx * dx + dy * dy <= VirtualBendDotSuppressRadius * VirtualBendDotSuppressRadius
                     }
                     if (!nearManualWaypoint && segLength >= MinVirtualBendDotSegment) {
-                        drawVirtualBendDot(Offset(midX.toFloat(), midY.toFloat()), style)
+                        drawVirtualBendDot(
+                            Offset(midX.toFloat(), midY.toFloat()),
+                            style,
+                            chromeScale = chromeScale,
+                        )
                     }
                 }
             }
 
             // Real manual waypoint grabs.
             edge.waypoints.forEach { waypoint ->
-                drawWaypointHandle(Offset(waypoint.x.toFloat(), waypoint.y.toFloat()), style)
+                drawWaypointHandle(
+                    Offset(waypoint.x.toFloat(), waypoint.y.toFloat()),
+                    style,
+                    chromeScale = chromeScale,
+                )
             }
 
             if (route != null && route.size >= 2) {
                 // Endpoint rings: source at the first routed point, target at the last (over the
                 // arrowhead) — the draw.io re-attach grabs, visually distinct from the bend dots.
-                drawEndpointHandle(Offset(route.first().x.toFloat(), route.first().y.toFloat()), style)
-                drawEndpointHandle(Offset(route.last().x.toFloat(), route.last().y.toFloat()), style)
+                drawEndpointHandle(
+                    Offset(route.first().x.toFloat(), route.first().y.toFloat()),
+                    style,
+                    chromeScale = chromeScale,
+                )
+                drawEndpointHandle(
+                    Offset(route.last().x.toFloat(), route.last().y.toFloat()),
+                    style,
+                    chromeScale = chromeScale,
+                )
 
                 edge.labels.forEach { label ->
                     val anchor = edgeLabelAnchorPoint(route, label)
-                    drawLabelHandle(Offset(anchor.x.toFloat(), anchor.y.toFloat()), style)
+                    drawLabelHandle(
+                        Offset(anchor.x.toFloat(), anchor.y.toFloat()),
+                        style,
+                        chromeScale = chromeScale,
+                    )
                 }
             }
         }
@@ -239,9 +299,15 @@ private const val VirtualBendDotSuppressRadius = 6.0
 /** Segments shorter than this (doc units) skip their bend dot, so it never collides with a ring. */
 private const val MinVirtualBendDotSegment = 18.0
 
-internal fun DrawScope.drawWaypointHandle(center: Offset, style: DiagramOverlayStyle, radius: Float = 4f) {
-    drawCircle(style.accent, radius = radius, center = center)
-    drawCircle(style.handleFill, radius = radius, center = center, style = Stroke(1.4f))
+internal fun DrawScope.drawWaypointHandle(
+    center: Offset,
+    style: DiagramOverlayStyle,
+    radius: Float = 4f,
+    chromeScale: Float = 1f,
+) {
+    val scaledRadius = radius * chromeScale
+    drawCircle(style.accent, radius = scaledRadius, center = center)
+    drawCircle(style.handleFill, radius = scaledRadius, center = center, style = Stroke(1.4f * chromeScale))
 }
 
 /**
@@ -249,30 +315,48 @@ internal fun DrawScope.drawWaypointHandle(center: Offset, style: DiagramOverlayS
  * circle with an [DiagramOverlayStyle.accent] ring — the draw.io source/target endpoint look,
  * heavier than the manual-waypoint dot so the two read differently.
  */
-internal fun DrawScope.drawEndpointHandle(center: Offset, style: DiagramOverlayStyle, radius: Float = 5.5f) {
-    drawCircle(style.handleFill, radius = radius, center = center)
-    drawCircle(style.accent, radius = radius, center = center, style = Stroke(1.6f))
+internal fun DrawScope.drawEndpointHandle(
+    center: Offset,
+    style: DiagramOverlayStyle,
+    radius: Float = 5.5f,
+    chromeScale: Float = 1f,
+) {
+    val scaledRadius = radius * chromeScale
+    drawCircle(style.handleFill, radius = scaledRadius, center = center)
+    drawCircle(style.accent, radius = scaledRadius, center = center, style = Stroke(1.6f * chromeScale))
 }
 
 /**
  * A "grab here to bend" hint at a segment midpoint: a small, low-alpha accent dot with a thin
  * accent ring — deliberately lighter than a real waypoint so the affordance reads as virtual.
  */
-private fun DrawScope.drawVirtualBendDot(center: Offset, style: DiagramOverlayStyle, radius: Float = 3f) {
-    drawCircle(style.accent.copy(alpha = 0.35f), radius = radius, center = center)
-    drawCircle(style.accent.copy(alpha = 0.7f), radius = radius, center = center, style = Stroke(1f))
+private fun DrawScope.drawVirtualBendDot(
+    center: Offset,
+    style: DiagramOverlayStyle,
+    radius: Float = 3f,
+    chromeScale: Float = 1f,
+) {
+    val scaledRadius = radius * chromeScale
+    drawCircle(style.accent.copy(alpha = 0.35f), radius = scaledRadius, center = center)
+    drawCircle(style.accent.copy(alpha = 0.7f), radius = scaledRadius, center = center, style = Stroke(chromeScale))
 }
 
-private fun DrawScope.drawLabelHandle(center: Offset, style: DiagramOverlayStyle, half: Float = 4f) {
+private fun DrawScope.drawLabelHandle(
+    center: Offset,
+    style: DiagramOverlayStyle,
+    half: Float = 4f,
+    chromeScale: Float = 1f,
+) {
+    val scaledHalf = half * chromeScale
     val diamond = Path().apply {
-        moveTo(center.x, center.y - half)
-        lineTo(center.x + half, center.y)
-        lineTo(center.x, center.y + half)
-        lineTo(center.x - half, center.y)
+        moveTo(center.x, center.y - scaledHalf)
+        lineTo(center.x + scaledHalf, center.y)
+        lineTo(center.x, center.y + scaledHalf)
+        lineTo(center.x - scaledHalf, center.y)
         close()
     }
     drawPath(diamond, style.handleFill)
-    drawPath(diamond, style.accent, style = Stroke(1.4f))
+    drawPath(diamond, style.accent, style = Stroke(1.4f * chromeScale))
 }
 
 /**
@@ -286,14 +370,40 @@ fun DiagramDirectionalArrowsOverlay(
     modifier: Modifier = Modifier,
     style: DiagramOverlayStyle = DiagramOverlayStyle(),
     distance: Float = 14f,
+    chromeScale: Float = 1f,
 ) {
     Canvas(modifier) {
         val node = nodeId?.let { graph.nodeById(it) } ?: return@Canvas
         val bounds = node.bounds
-        drawDirectionalArrow(Offset(bounds.centerX.toFloat(), bounds.top.toFloat() - distance), dx = 0f, dy = -1f, style = style)
-        drawDirectionalArrow(Offset(bounds.right.toFloat() + distance, bounds.centerY.toFloat()), dx = 1f, dy = 0f, style = style)
-        drawDirectionalArrow(Offset(bounds.centerX.toFloat(), bounds.bottom.toFloat() + distance), dx = 0f, dy = 1f, style = style)
-        drawDirectionalArrow(Offset(bounds.left.toFloat() - distance, bounds.centerY.toFloat()), dx = -1f, dy = 0f, style = style)
+        val scaledDistance = distance * chromeScale
+        drawDirectionalArrow(
+            Offset(bounds.centerX.toFloat(), bounds.top.toFloat() - scaledDistance),
+            dx = 0f,
+            dy = -1f,
+            style = style,
+            chromeScale = chromeScale,
+        )
+        drawDirectionalArrow(
+            Offset(bounds.right.toFloat() + scaledDistance, bounds.centerY.toFloat()),
+            dx = 1f,
+            dy = 0f,
+            style = style,
+            chromeScale = chromeScale,
+        )
+        drawDirectionalArrow(
+            Offset(bounds.centerX.toFloat(), bounds.bottom.toFloat() + scaledDistance),
+            dx = 0f,
+            dy = 1f,
+            style = style,
+            chromeScale = chromeScale,
+        )
+        drawDirectionalArrow(
+            Offset(bounds.left.toFloat() - scaledDistance, bounds.centerY.toFloat()),
+            dx = -1f,
+            dy = 0f,
+            style = style,
+            chromeScale = chromeScale,
+        )
     }
 }
 
@@ -308,21 +418,27 @@ private fun DrawScope.drawDirectionalArrow(
     dy: Float,
     style: DiagramOverlayStyle,
     size: Float = 7f,
+    chromeScale: Float = 1f,
 ) {
+    val scaledSize = size * chromeScale
     // Perpendicular of the pointing direction, so the base spans across the arrow.
     val px = -dy
     val py = dx
-    val base = Offset(tip.x - dx * size, tip.y - dy * size)
+    val base = Offset(tip.x - dx * scaledSize, tip.y - dy * scaledSize)
     val triangle = Path().apply {
-        moveTo(base.x + px * size, base.y + py * size)
+        moveTo(base.x + px * scaledSize, base.y + py * scaledSize)
         lineTo(tip.x, tip.y)
-        lineTo(base.x - px * size, base.y - py * size)
+        lineTo(base.x - px * scaledSize, base.y - py * scaledSize)
         close()
     }
     // Faint blue idle-hint opacities (draw.io parity): the chevrons read as a light hint over the
     // shape until the pointer engages them, not as solid blue.
     drawPath(triangle, style.accent.copy(alpha = 0.18f))
-    drawPath(triangle, style.accent.copy(alpha = 0.45f), style = Stroke(1.2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    drawPath(
+        triangle,
+        style.accent.copy(alpha = 0.45f),
+        style = Stroke(1.2f * chromeScale, cap = StrokeCap.Round, join = StrokeJoin.Round),
+    )
 }
 
 /** Free helper for hosts that already own a Canvas: same chrome, no extra composable. */
@@ -331,9 +447,10 @@ fun DrawScope.drawDiagramSelection(
     selectedNodeIds: Set<DiagramNodeId>,
     style: DiagramOverlayStyle = DiagramOverlayStyle(),
     handleSize: Float = 7f,
+    chromeScale: Float = 1f,
 ) {
     selectedNodeIds.forEach { id ->
         val node = graph.nodeById(id) ?: return@forEach
-        drawSelectionFrame(node, style, handleSize)
+        drawSelectionFrame(node, style, handleSize * chromeScale, chromeScale)
     }
 }
