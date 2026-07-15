@@ -2,6 +2,7 @@ package io.aequicor.visualization.subsystems.diagrams.path
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DiagramPathTest {
@@ -46,5 +47,66 @@ class DiagramPathTest {
         assertTrue(rect.intersects(DiagramRect(90.0, 40.0, 50.0, 50.0)))
         assertTrue(!rect.intersects(DiagramRect(200.0, 0.0, 10.0, 10.0)))
         assertEquals(DiagramPoint(50.0, 25.0), rect.center)
+    }
+
+    @Test
+    fun closedPathContainsItsAreaAndBoundary() {
+        val diamond = diagramPath {
+            moveTo(50.0, 0.0)
+            lineTo(100.0, 50.0)
+            lineTo(50.0, 100.0)
+            lineTo(0.0, 50.0)
+            close()
+        }
+
+        assertTrue(diamond.contains(DiagramPoint(50.0, 50.0)))
+        assertTrue(diamond.contains(DiagramPoint(25.0, 25.0)), "the contour belongs to the hit area")
+        assertFalse(diamond.contains(DiagramPoint(5.0, 5.0)), "a bounding-box corner is outside the diamond")
+    }
+
+    @Test
+    fun arcPathUsesCurvedAreaInsteadOfItsBounds() {
+        val ellipse = diagramPath {
+            moveTo(0.0, 50.0)
+            arcTo(radiusX = 50.0, radiusY = 50.0, sweep = true, endX = 100.0, endY = 50.0)
+            arcTo(radiusX = 50.0, radiusY = 50.0, sweep = true, endX = 0.0, endY = 50.0)
+            close()
+        }
+
+        assertTrue(ellipse.contains(DiagramPoint(50.0, 50.0)))
+        assertFalse(ellipse.contains(DiagramPoint(5.0, 5.0)))
+        assertTrue(ellipse.contains(DiagramPoint(50.0, -2.0), outlineTolerance = 2.1))
+    }
+
+    @Test
+    fun pathRectangleIntersectionFollowsTheFilledContour() {
+        val diamond = diagramPath {
+            moveTo(50.0, 0.0)
+            lineTo(100.0, 50.0)
+            lineTo(50.0, 100.0)
+            lineTo(0.0, 50.0)
+            close()
+        }
+
+        assertFalse(diamond.intersects(DiagramRect(0.0, 0.0, 5.0, 5.0)))
+        assertTrue(diamond.intersects(DiagramRect(45.0, 45.0, 10.0, 10.0)))
+        assertTrue(diamond.intersects(DiagramRect(48.0, -5.0, 4.0, 10.0)))
+    }
+
+    @Test
+    fun rayIntersectionFindsTheVisibleBoundary() {
+        val diamond = diagramPath {
+            moveTo(50.0, 0.0)
+            lineTo(100.0, 50.0)
+            lineTo(50.0, 100.0)
+            lineTo(0.0, 50.0)
+            close()
+        }
+
+        assertEquals(
+            DiagramPoint(75.0, 25.0),
+            diamond.rayIntersection(DiagramPoint(50.0, 50.0), DiagramPoint(100.0, 0.0)),
+        )
+        assertEquals(null, diamond.rayIntersection(DiagramPoint(50.0, 50.0), DiagramPoint(50.0, 50.0)))
     }
 }

@@ -5,18 +5,23 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.FlowchartNodeKind
 import io.aequicor.visualization.subsystems.diagrams.model.TableColumn
 import io.aequicor.visualization.subsystems.diagrams.model.TableNode
 import io.aequicor.visualization.subsystems.diagrams.model.TableRow
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityKind
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPathSegment
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -102,6 +107,10 @@ class NodeGeometryTest {
             DiagramPerimeterKind.RHOMBUS,
             node(DiagramNodePayload.FlowchartNode(FlowchartNodeKind.DECISION)).perimeterKind(),
         )
+        assertEquals(
+            DiagramPerimeterKind.OUTLINE,
+            node(DiagramNodePayload.BasicShape(DiagramShapeKind.TRIANGLE)).perimeterKind(),
+        )
     }
 
     @Test
@@ -115,6 +124,22 @@ class NodeGeometryTest {
             assertPointEquals(DiagramPoint(0.0, 30.0), it)
         }
         assertNull(anchorPoint(withPorts, DiagramPortId("missing")))
+    }
+
+    @Test
+    fun shapedNodePortsResolveOnTheVisibleContour() {
+        val rhombus = node(DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS))
+        val leftQuarter = DiagramPort(
+            DiagramPortId("left-q1"),
+            DiagramPortAnchor.SideOffset(DiagramNodeSide.LEFT, 0.25),
+        )
+        val legacyCorner = DiagramPort(
+            DiagramPortId("top-left"),
+            DiagramPortAnchor.RelativePoint(0.0, 0.0),
+        )
+
+        assertPointEquals(DiagramPoint(25.0, 15.0), anchorPoint(rhombus, leftQuarter))
+        assertPointEquals(DiagramPoint(25.0, 15.0), anchorPoint(rhombus, legacyCorner))
     }
 
     @Test
@@ -147,5 +172,64 @@ class NodeGeometryTest {
     fun ellipseOutlineUsesArcs() {
         val outline = node(DiagramNodePayload.BasicShape(DiagramShapeKind.ELLIPSE)).outlinePath()
         assertTrue(outline.segments.count { it is DiagramPathSegment.ArcTo } == 2)
+    }
+
+    @Test
+    fun nodeHitAreaFollowsTheRenderedOutline() {
+        val rhombus = node(DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS))
+        val ellipse = node(DiagramNodePayload.BasicShape(DiagramShapeKind.ELLIPSE))
+        val triangle = node(DiagramNodePayload.BasicShape(DiagramShapeKind.TRIANGLE))
+
+        assertTrue(rhombus.containsPoint(DiagramPoint(50.0, 30.0)))
+        assertFalse(rhombus.containsPoint(DiagramPoint(2.0, 2.0)))
+        assertFalse(ellipse.containsPoint(DiagramPoint(2.0, 2.0)))
+        assertFalse(triangle.containsPoint(DiagramPoint(2.0, 2.0)))
+    }
+
+    @Test
+    fun outlineToleranceCreatesAHaloAroundTheActualShape() {
+        val rhombus = node(DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS))
+        val nearTopLeftEdge = DiagramPoint(24.0, 15.0)
+
+        assertFalse(rhombus.containsPoint(nearTopLeftEdge))
+        assertTrue(rhombus.containsPoint(nearTopLeftEdge, outlineTolerance = 1.0))
+        assertFalse(rhombus.containsPoint(DiagramPoint(2.0, 2.0), outlineTolerance = 4.0))
+    }
+
+    @Test
+    fun marqueeIntersectionUsesTheActualNodeArea() {
+        val rhombus = node(DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS))
+
+        assertFalse(rhombus.intersectsOutline(DiagramRect(0.0, 0.0, 4.0, 4.0)))
+        assertTrue(rhombus.intersectsOutline(DiagramRect(45.0, 25.0, 10.0, 10.0)))
+    }
+
+    @Test
+    fun polygonPerimeterIntersectionUsesItsOutline() {
+        val triangle = node(DiagramNodePayload.BasicShape(DiagramShapeKind.TRIANGLE))
+
+        assertPointEquals(
+            DiagramPoint(100.0 / 3.0, 20.0),
+            perimeterIntersection(triangle, DiagramPoint(0.0, 0.0)),
+        )
+    }
+
+    @Test
+    fun resizeHandlesFollowTheVisibleOutline() {
+        val rhombus = node(UmlActivityNode(UmlActivityKind.DECISION, "Condition?"))
+
+        assertEquals(
+            listOf(
+                DiagramPoint(25.0, 15.0),
+                DiagramPoint(50.0, 0.0),
+                DiagramPoint(75.0, 15.0),
+                DiagramPoint(100.0, 30.0),
+                DiagramPoint(75.0, 45.0),
+                DiagramPoint(50.0, 60.0),
+                DiagramPoint(25.0, 45.0),
+                DiagramPoint(0.0, 30.0),
+            ),
+            rhombus.outlineResizeHandlePoints(),
+        )
     }
 }

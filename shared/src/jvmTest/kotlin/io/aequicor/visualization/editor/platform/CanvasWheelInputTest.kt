@@ -8,9 +8,11 @@ import kotlin.test.assertTrue
 class CanvasWheelInputTest {
 
     @Test
-    fun desktopWheelTickPansByDensityAwareScreenDistance() {
-        assertEquals(128f, platformCanvasWheelPanPixels(scrollUnits = 1f, density = 2f))
-        assertEquals(-32f, platformCanvasWheelPanPixels(scrollUnits = -0.25f, density = 2f))
+    fun desktopWheelTickKeepsWindowsDistanceAndSoftensMacTrackpadMotion() {
+        assertEquals(128f, desktopCanvasWheelPanPixels(scrollUnits = 1f, density = 2f, macOs = false))
+        assertEquals(-32f, desktopCanvasWheelPanPixels(scrollUnits = -0.25f, density = 2f, macOs = false))
+        assertEquals(40f, desktopCanvasWheelPanPixels(scrollUnits = 1f, density = 2f, macOs = true))
+        assertEquals(-10f, desktopCanvasWheelPanPixels(scrollUnits = -0.25f, density = 2f, macOs = true))
     }
 
     @Test

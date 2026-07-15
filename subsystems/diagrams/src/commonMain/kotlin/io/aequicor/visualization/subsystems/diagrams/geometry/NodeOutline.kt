@@ -3,6 +3,7 @@ package io.aequicor.visualization.subsystems.diagrams.geometry
 import io.aequicor.visualization.subsystems.diagrams.model.BpmnNodeKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.FlowchartNodeKind
 import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityKind
@@ -12,8 +13,12 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlStateKind
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPath
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
+import io.aequicor.visualization.subsystems.diagrams.path.contains
 import io.aequicor.visualization.subsystems.diagrams.path.diagramPath
+import io.aequicor.visualization.subsystems.diagrams.path.intersects
+import io.aequicor.visualization.subsystems.diagrams.path.rayIntersection
 
 /**
  * The node's closed outline in document coordinates: the contour a floating edge
@@ -69,6 +74,72 @@ fun DiagramNode.outlinePath(): DiagramPath {
 
         else -> rectanglePath(b)
     }
+}
+
+/** True when [point] lies in the node's rendered body or within [outlineTolerance] of it. */
+fun DiagramNode.containsPoint(point: DiagramPoint, outlineTolerance: Double = 0.0): Boolean {
+    val tolerance = outlineTolerance.coerceAtLeast(0.0)
+    if (point.x < bounds.left - tolerance || point.x > bounds.right + tolerance ||
+        point.y < bounds.top - tolerance || point.y > bounds.bottom + tolerance
+    ) {
+        return false
+    }
+    return outlinePath().contains(point, tolerance)
+}
+
+/** True when the node's rendered body intersects [rect], not merely its bounding box. */
+fun DiagramNode.intersectsOutline(rect: DiagramRect): Boolean =
+    bounds.intersects(rect) && outlinePath().intersects(rect)
+
+/** Point where a center-originating ray towards [towards] reaches the rendered outline. */
+fun DiagramNode.outlineIntersection(towards: DiagramPoint): DiagramPoint? =
+    outlinePath().rayIntersection(bounds.center, towards)
+
+/**
+ * Intersection with the requested logical [side] while preserving [coordinate] on that side's
+ * axis. Orthogonal connectors therefore keep a horizontal/vertical exit while touching the
+ * rendered contour instead of the bounding rectangle.
+ */
+fun DiagramNode.outlineSideIntersection(side: DiagramNodeSide, coordinate: Double): DiagramPoint? {
+    val reach = maxOf(width, height, 1.0) + 1.0
+    val (origin, towards) = when (side) {
+        DiagramNodeSide.TOP -> {
+            val x = coordinate.coerceIn(bounds.left, bounds.right)
+            DiagramPoint(x, bounds.centerY) to DiagramPoint(x, bounds.top - reach)
+        }
+
+        DiagramNodeSide.RIGHT -> {
+            val y = coordinate.coerceIn(bounds.top, bounds.bottom)
+            DiagramPoint(bounds.centerX, y) to DiagramPoint(bounds.right + reach, y)
+        }
+
+        DiagramNodeSide.BOTTOM -> {
+            val x = coordinate.coerceIn(bounds.left, bounds.right)
+            DiagramPoint(x, bounds.centerY) to DiagramPoint(x, bounds.bottom + reach)
+        }
+
+        DiagramNodeSide.LEFT -> {
+            val y = coordinate.coerceIn(bounds.top, bounds.bottom)
+            DiagramPoint(bounds.centerX, y) to DiagramPoint(bounds.left - reach, y)
+        }
+    }
+    return outlinePath().rayIntersection(origin, towards)
+}
+
+/** Eight resize positions on the visible contour, ordered clockwise from top-left. */
+fun DiagramNode.outlineResizeHandlePoints(): List<DiagramPoint> {
+    val b = bounds
+    val directions = listOf(
+        DiagramPoint(b.left, b.top),
+        DiagramPoint(b.centerX, b.top),
+        DiagramPoint(b.right, b.top),
+        DiagramPoint(b.right, b.centerY),
+        DiagramPoint(b.right, b.bottom),
+        DiagramPoint(b.centerX, b.bottom),
+        DiagramPoint(b.left, b.bottom),
+        DiagramPoint(b.left, b.centerY),
+    )
+    return directions.map { direction -> outlineIntersection(direction) ?: direction }
 }
 
 private fun defaultCornerRadius(bounds: DiagramRect): Double =

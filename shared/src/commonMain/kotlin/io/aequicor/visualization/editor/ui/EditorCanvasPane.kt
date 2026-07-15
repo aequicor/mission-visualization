@@ -221,6 +221,10 @@ import io.aequicor.visualization.editor.platform.CanvasExportBounds
 import io.aequicor.visualization.editor.platform.ProjectResourceStore
 import io.aequicor.visualization.editor.platform.createProjectResourceStore
 import io.aequicor.visualization.editor.platform.IngestionError
+import io.aequicor.visualization.editor.platform.canvasMagnificationFactor
+import io.aequicor.visualization.editor.platform.canvasWheelPanAxes
+import io.aequicor.visualization.editor.platform.canvasWheelZoomAxis
+import io.aequicor.visualization.editor.platform.installCanvasMagnification
 import io.aequicor.visualization.editor.platform.installResourceIngestion
 import io.aequicor.visualization.editor.platform.platformCanvasWheelPanPixels
 import io.aequicor.visualization.editor.platform.platformCanvasWheelZoomUnits
@@ -375,12 +379,14 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         onDispose { handle.dispose() }
     }
 
+    var canvasBoundsInWindow by remember { mutableStateOf(Rect.Zero) }
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .padding(4.dp)
             .onGloballyPositioned { coordinates ->
                 val bounds = coordinates.boundsInWindow()
+                canvasBoundsInWindow = bounds
                 state.onCanvasExportBounds(
                     CanvasExportBounds(
                         left = bounds.left.toDouble(),
@@ -457,8 +463,38 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
         var wheelZoomTarget by remember { mutableStateOf<Float?>(null) }
         var wheelZoomFocus by remember { mutableStateOf(Offset.Zero) }
         val wheelZoomPulse = remember { Channel<Unit>(Channel.CONFLATED) }
+        val latestCanvasBounds by rememberUpdatedState(canvasBoundsInWindow)
         DisposableEffect(wheelZoomPulse) {
             onDispose { wheelZoomPulse.close() }
+        }
+        // Compose Desktop receives wheel scrolling from AWT, but macOS pinch lives in the native
+        // Apple magnification API. The platform bridge is a no-op on Windows and every web target.
+        DisposableEffect(state, density, canvasWpx, canvasHpx) {
+            val handle = installCanvasMagnification { event ->
+                val bounds = latestCanvasBounds
+                val focus = if (event.sceneXDp != null && event.sceneYDp != null) {
+                    Offset(
+                        x = event.sceneXDp * density - bounds.left,
+                        y = event.sceneYDp * density - bounds.top,
+                    )
+                } else {
+                    Offset(canvasWpx / 2f, canvasHpx / 2f)
+                }
+                if (focus.x !in 0f..canvasWpx || focus.y !in 0f..canvasHpx) {
+                    return@installCanvasMagnification
+                }
+                val factor = canvasMagnificationFactor(event.magnification)
+                if (factor == 1f) return@installCanvasMagnification
+
+                wheelZoomTarget = null
+                if (state.workspace.pendingZoomTo != null) {
+                    state.updateWorkspace { it.copy(pendingZoomTo = null) }
+                }
+                state.updateWorkspace {
+                    it.copy(viewport = it.viewport.zoomAround(focus.x, focus.y, factor, density))
+                }
+            }
+            onDispose { handle.dispose() }
         }
         LaunchedEffect(density) {
             while (true) {
@@ -691,7 +727,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                         }
                                         if (modifiers.isCtrlPressed || modifiers.isMetaPressed) {
                                             val factor = zoomFactorForScroll(
-                                                platformCanvasWheelZoomUnits(-change.scrollDelta.y),
+                                                platformCanvasWheelZoomUnits(
+                                                    -canvasWheelZoomAxis(change.scrollDelta.x, change.scrollDelta.y),
+                                                ),
                                             )
                                             if (factor != 1f) {
                                                 // Anchor to the live *visible* zoom, not the pending
@@ -706,10 +744,13 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                                 wheelZoomPulse.trySend(Unit)
                                             }
                                         } else {
-                                            val scrollX = if (modifiers.isShiftPressed) change.scrollDelta.y else change.scrollDelta.x
-                                            val scrollY = if (modifiers.isShiftPressed) 0f else change.scrollDelta.y
-                                            val panX = platformCanvasWheelPanPixels(-scrollX, density)
-                                            val panY = platformCanvasWheelPanPixels(-scrollY, density)
+                                            val scroll = canvasWheelPanAxes(
+                                                change.scrollDelta.x,
+                                                change.scrollDelta.y,
+                                                modifiers.isShiftPressed,
+                                            )
+                                            val panX = platformCanvasWheelPanPixels(-scroll.x, density)
+                                            val panY = platformCanvasWheelPanPixels(-scroll.y, density)
                                             state.updateWorkspace {
                                                 it.copy(viewport = it.viewport.panByScreenDelta(panX, panY, density))
                                             }

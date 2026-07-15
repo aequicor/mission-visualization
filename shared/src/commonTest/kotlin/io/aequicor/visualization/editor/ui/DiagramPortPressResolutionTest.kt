@@ -4,7 +4,9 @@ import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramResizeHandle
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
 import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
@@ -72,5 +74,26 @@ class DiagramPortPressResolutionTest {
         }
 
         assertNull(hoverDiagramPortAt(graph, DiagramPoint(100.0, 50.0), tolerance = 5.0))
+    }
+
+    @Test
+    fun transparentCornerOfForegroundShapeDoesNotBlockPortBehindIt() {
+        val background = DiagramNodeId("background")
+        val graph = diagramGraph {
+            node("background", x = 0.0, y = 0.0, width = 100.0, height = 100.0)
+            node(
+                "foreground",
+                x = 90.0,
+                y = 0.0,
+                width = 100.0,
+                height = 100.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS),
+            )
+        }
+
+        assertEquals(
+            DiagramHit.Port(background, DiagramPortId("right-q1")),
+            hoverDiagramPortAt(graph, DiagramPoint(100.0, 25.0), tolerance = 5.0),
+        )
     }
 }
