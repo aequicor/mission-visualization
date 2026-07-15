@@ -92,7 +92,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $compiler)) {
             throw "Inno Setup compiler not found at $compiler"
           }
-          & $compiler /?
+          $compilerVersion = (Get-Item -LiteralPath $compiler).VersionInfo.ProductVersion
+          if ($compilerVersion -notmatch '^6\.7\.1(?:\.|$)') {
+            throw "Expected Inno Setup 6.7.1, found $compilerVersion at $compiler"
+          }
+          Write-Host "Verified ISCC.exe $compilerVersion at $compiler"
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "INNO_SETUP_COMPILER=$compiler" -Encoding utf8
 
       - name: Build release installer
