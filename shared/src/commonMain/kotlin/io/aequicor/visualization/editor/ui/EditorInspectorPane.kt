@@ -5036,10 +5036,10 @@ private fun DiagramEdgeControls(
         strings.inspector.diagramArrowhead(edge.sourceArrowhead.kind),
         DiagramArrowheadKind.entries.map { strings.inspector.diagramArrowhead(it) },
         enabled = !locked,
-        leadingContent = { DiagramArrowheadPreview(edge.sourceArrowhead.kind) },
+        leadingContent = { DiagramArrowheadPreview(edge.sourceArrowhead.kind, atStart = true) },
         optionLeadingContent = { label ->
             DiagramArrowheadKind.entries.firstOrNull { strings.inspector.diagramArrowhead(it) == label }
-                ?.let { DiagramArrowheadPreview(it) }
+                ?.let { DiagramArrowheadPreview(it, atStart = true) }
         },
     ) { label ->
         DiagramArrowheadKind.entries.firstOrNull { strings.inspector.diagramArrowhead(it) == label }?.let {
@@ -5304,7 +5304,7 @@ private fun DiagramCornerPreview(style: DiagramCornerStyle, modifier: Modifier =
 }
 
 @Composable
-private fun DiagramRoutingPreview(style: DiagramRoutingStyle, modifier: Modifier = Modifier.size(18.dp)) {
+internal fun DiagramRoutingPreview(style: DiagramRoutingStyle, modifier: Modifier = Modifier.size(18.dp)) {
     val colors = LocalEditorColors.current
     Canvas(modifier) {
         val w = size.width
@@ -5383,20 +5383,33 @@ private fun DiagramLineJumpPreview(style: LineJumpStyle, modifier: Modifier = Mo
 }
 
 @Composable
-private fun DiagramArrowheadPreview(kind: DiagramArrowheadKind, modifier: Modifier = Modifier.size(18.dp)) {
+internal fun DiagramArrowheadPreview(
+    kind: DiagramArrowheadKind,
+    modifier: Modifier = Modifier.size(18.dp),
+    atStart: Boolean = false,
+) {
     val colors = LocalEditorColors.current
     Canvas(modifier) {
         val y = (size.height / 2f).toDouble()
-        val tip = DiagramPoint((size.width - 2f).toDouble(), y)
+        val tip = DiagramPoint(if (atStart) 2.0 else (size.width - 2f).toDouble(), y)
+        val direction = DiagramPoint(if (atStart) -1.0 else 1.0, 0.0)
         val geometry = arrowheadPath(
             DiagramArrowhead(kind, size = size.minDimension * 0.45),
             tip = tip,
-            direction = DiagramPoint(1.0, 0.0),
+            direction = direction,
         )
         drawLine(
             colors.controlInk,
-            Offset(2f, y.toFloat()),
-            Offset((tip.x - geometry.lineShorten).toFloat(), y.toFloat()),
+            start = if (atStart) {
+                Offset((tip.x + geometry.lineShorten).toFloat(), y.toFloat())
+            } else {
+                Offset(2f, y.toFloat())
+            },
+            end = if (atStart) {
+                Offset(size.width - 2f, y.toFloat())
+            } else {
+                Offset((tip.x - geometry.lineShorten).toFloat(), y.toFloat())
+            },
             strokeWidth = 1.4f,
             cap = androidx.compose.ui.graphics.StrokeCap.Round,
         )

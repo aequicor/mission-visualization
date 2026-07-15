@@ -54,7 +54,10 @@ sealed interface ConnectTarget {
  * anchor, used to pick the floating perimeter crossing). Picks the topmost visible, unlocked
  * node containing [pointer], other than [excludeNodeId]; snaps to that node's nearest
  * connection point when within [portSnapRadius] (a fixed pin), otherwise attaches floating on
- * its perimeter; with no node under the pointer, a free point. List order is z-order.
+ * its perimeter. When the pointer is just outside every node, connection points keep the same
+ * magnetic radius so crossing a node boundary does not drop a pending draw.io-style snap.
+ * With no node or connection point under the pointer, returns a free point. List order is
+ * z-order.
  */
 fun DiagramGraph.resolveConnectTarget(
     from: DiagramPoint,
@@ -62,15 +65,30 @@ fun DiagramGraph.resolveConnectTarget(
     excludeNodeId: DiagramNodeId? = null,
     portSnapRadius: Double = 10.0,
 ): ConnectTarget {
-    val node = nodes.asReversed().firstOrNull {
-        it.visible && !it.locked && it.id != excludeNodeId && it.bounds.contains(pointer)
-    } ?: return ConnectTarget.Free(pointer)
-
-    val nearest = node.connectionPorts()
-        .map { port -> port to node.portPosition(port) }
-        .minByOrNull { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) }
-    if (nearest != null && hypot(nearest.second.x - pointer.x, nearest.second.y - pointer.y) <= portSnapRadius) {
-        return ConnectTarget.Port(node.id, nearest.first, nearest.second)
+    val candidates = nodes.asReversed().filter {
+        it.visible && !it.locked && it.id != excludeNodeId
     }
-    return ConnectTarget.Floating(node.id, perimeterIntersection(node, from))
+
+    candidates.firstOrNull { it.bounds.contains(pointer) }?.let { node ->
+        node.nearestConnectionPort(pointer, portSnapRadius)?.let { (port, position) ->
+            return ConnectTarget.Port(node.id, port, position)
+        }
+        return ConnectTarget.Floating(node.id, perimeterIntersection(node, from))
+    }
+
+    candidates.forEach { node ->
+        node.nearestConnectionPort(pointer, portSnapRadius)?.let { (port, position) ->
+            return ConnectTarget.Port(node.id, port, position)
+        }
+    }
+
+    return ConnectTarget.Free(pointer)
 }
+
+private fun DiagramNode.nearestConnectionPort(
+    pointer: DiagramPoint,
+    portSnapRadius: Double,
+): Pair<DiagramPort, DiagramPoint>? = connectionPorts()
+    .map { port -> port to portPosition(port) }
+    .minByOrNull { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) }
+    ?.takeIf { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) <= portSnapRadius }

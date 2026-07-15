@@ -1,10 +1,16 @@
 package io.aequicor.visualization.editor.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
@@ -21,8 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
@@ -49,6 +57,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import io.aequicor.visualization.MissionEditorStateHolder
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
@@ -58,6 +68,7 @@ import io.aequicor.visualization.editor.presentation.zoomFactorForScroll
 import io.aequicor.visualization.editor.platform.platformCanvasWheelPanPixels
 import io.aequicor.visualization.editor.platform.platformCanvasWheelZoomUnits
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
+import io.aequicor.visualization.editor.ui.strings.LocalStrings
 import io.aequicor.visualization.engine.backend.compose.CanvasViewport
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
@@ -81,12 +92,15 @@ import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramNodeHitPart
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramResizeHandle
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
 import io.aequicor.visualization.subsystems.diagrams.hittest.hitTest
+import io.aequicor.visualization.subsystems.diagrams.hittest.pointAlongPolyline
 import io.aequicor.visualization.subsystems.diagrams.hittest.resolveConnectTarget
 import io.aequicor.visualization.subsystems.diagrams.hittest.resolveEndpointPoint
 import io.aequicor.visualization.subsystems.diagrams.model.BpmnNodeKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
@@ -96,6 +110,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.model.withEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.ErAttribute
@@ -251,12 +266,23 @@ internal fun editorDiagramPreviewStyle(): DiagramPreviewStyle {
 /** Screen-space pick radius for diagram element hits. */
 private const val DiagramHitRadiusPx = 8f
 
-/** Distance (graph units) of the hover directional chevrons from the node bounds. */
+/** Precise screen-space radius that turns a connection point green and makes it actionable. */
+private const val DiagramPortHitRadiusPx = 4f
+
+/** Screen-space distance of the hover directional chevrons from the node bounds. */
 private const val DiagramArrowDistance = 14f
 
 /** What an in-flight edge-draw drag looks like (graph coordinates). */
 /** In-flight edge-draw preview: the routed (bent) polyline the finished connector will take. */
 private data class DiagramEdgePreview(val points: List<DiagramPoint>)
+
+private enum class DiagramEdgeToolbarMenu { SOURCE, TARGET, ROUTING }
+
+private val DiagramEdgeToolbarWidth = 106.dp
+private val DiagramEdgeToolbarHeight = 36.dp
+private val DiagramEdgeToolbarButtonSize = 34.dp
+private const val DiagramEdgeToolbarMarginPx = 8f
+private const val DiagramEdgeToolbarGapPx = 12f
 
 /** Target of the inline diagram text editor. */
 private sealed interface DiagramTextEditTarget {
@@ -348,31 +374,52 @@ internal fun DiagramEditOverlay(
                 translationY = origin.y
             },
     ) {
+        val chromeScale = 1f / zoomPx.coerceAtLeast(0.01f)
         DiagramSelectionOverlay(
             graph = graph,
             selectedNodeIds = selectedNodeIds,
             modifier = Modifier.fillMaxSize(),
             style = overlayStyle,
-            handleSize = (7f / zoomPx).coerceIn(2f, 24f),
+            chromeScale = chromeScale,
         )
-        val portNodeIds = selectedNodeIds + setOfNotNull(hoveredElementId?.let(::DiagramNodeId))
+        val hoveredConnectionNodeId = hoveredElementId
+            ?.let(::DiagramNodeId)
+            ?.takeUnless { it in selectedNodeIds }
+        val portNodeIds = setOfNotNull(hoveredConnectionNodeId)
         DiagramPortsOverlay(
             graph = graph,
             nodeIds = portNodeIds,
             modifier = Modifier.fillMaxSize(),
             style = overlayStyle,
-            highlightedNodeId = hoveredPort?.nodeId,
-            highlightedPortId = hoveredPort?.portId,
+            highlightedNodeId = hoveredPort?.nodeId?.takeIf { it == hoveredConnectionNodeId },
+            highlightedPortId = hoveredPort
+                ?.takeIf { it.nodeId == hoveredConnectionNodeId }
+                ?.portId,
+            chromeScale = chromeScale,
         )
-        DiagramWaypointOverlay(graph, selectedEdgeIds, routes, Modifier.fillMaxSize(), overlayStyle)
+        DiagramWaypointOverlay(
+            graph,
+            selectedEdgeIds,
+            routes,
+            Modifier.fillMaxSize(),
+            overlayStyle,
+            chromeScale,
+        )
         DiagramDirectionalArrowsOverlay(
             graph = graph,
-            nodeId = hoveredElementId?.let(::DiagramNodeId),
+            nodeId = hoveredConnectionNodeId,
             modifier = Modifier.fillMaxSize(),
             style = overlayStyle,
             distance = DiagramArrowDistance,
+            chromeScale = chromeScale,
         )
-        DiagramConnectTargetOverlay(graph, connectTarget, Modifier.fillMaxSize(), overlayStyle)
+        DiagramConnectTargetOverlay(
+            graph,
+            connectTarget,
+            Modifier.fillMaxSize(),
+            overlayStyle,
+            chromeScale,
+        )
         // Alignment guides + equal-spacing bars from the snap solver (graph coords; strokes scaled
         // by 1/zoom so they stay ~constant on screen inside the graph→screen graphics layer).
         if (snapGuides.isNotEmpty() || snapSpacing.isNotEmpty()) {
@@ -458,12 +505,23 @@ internal fun DiagramEditOverlay(
                                             latestViewport.toDocX(change.position.x) - liveBox.x,
                                             latestViewport.toDocY(change.position.y) - liveBox.y,
                                         )
-                                        val tolerance = (DiagramHitRadiusPx / latestZoomPx.coerceAtLeast(0.01f))
+                                        val safeZoom = latestZoomPx.coerceAtLeast(0.01f)
+                                        val portTolerance = (DiagramPortHitRadiusPx / safeZoom)
                                             .toDouble()
-                                            .coerceAtLeast(2.0)
-                                        hoveredPort = hoverDiagramPortAt(live, point, tolerance)
+                                            .coerceAtLeast(1.0)
+                                        val selectedNow = state.workspace.diagramSelection.elementIds
+                                            .map(::DiagramNodeId)
+                                            .toSet()
+                                        hoveredPort = diagramConnectionPortForSelection(
+                                            hoverDiagramPortAt(live, point, portTolerance),
+                                            selectedNow,
+                                        )
                                         hoveredElementId = (
-                                            hoveredPort?.nodeId ?: hoverDiagramNodeAt(live, point)
+                                            hoveredPort?.nodeId ?: hoverDiagramNodeAt(
+                                                live,
+                                                point,
+                                                ((DiagramArrowDistance + DiagramHitRadiusPx) / safeZoom).toDouble(),
+                                            )
                                         )?.value
                                     } else {
                                         hoveredPort = null
@@ -593,12 +651,24 @@ internal fun DiagramEditOverlay(
                     }
 
                     val tolerance = (DiagramHitRadiusPx / zoom).toDouble().coerceAtLeast(2.0)
+                    val portTolerance = (DiagramPortHitRadiusPx / zoom).toDouble().coerceAtLeast(1.0)
+                    val selectedNodesAtPress = state.workspace.diagramSelection.elementIds
+                        .map(::DiagramNodeId)
+                        .toSet()
 
                     // A press on a hovered node's directional arrow: dragging draws a new edge;
                     // a click (no drag past slop) clones the node in that direction, connected.
-                    val hoverNode = hoveredElementId?.let { live.nodeById(DiagramNodeId(it)) }
+                    val hoverNode = hoveredElementId
+                        ?.let(::DiagramNodeId)
+                        ?.takeUnless { it in selectedNodesAtPress }
+                        ?.let(live::nodeById)
                     val arrowSide = hoverNode?.let {
-                        directionalArrowSideHit(it, point, DiagramArrowDistance.toDouble(), tolerance + 4.0)
+                        directionalArrowSideHit(
+                            it,
+                            point,
+                            (DiagramArrowDistance / zoom).toDouble(),
+                            tolerance + (4f / zoom).toDouble(),
+                        )
                     }
                     if (hoverNode != null && arrowSide != null) {
                         dragNewDiagramEdge(
@@ -622,9 +692,16 @@ internal fun DiagramEditOverlay(
 
                     val routedPoints = routeAllEdgesLenient(live, RoutingOptions.Default)
                         .mapValues { (_, routed) -> routed.points }
-                    val typedSelectedNodes = state.workspace.diagramSelection.elementIds.map(::DiagramNodeId).toSet()
+                    val typedSelectedNodes = selectedNodesAtPress
                     val typedSelectedEdges = state.workspace.diagramSelection.edgeIds.map(::DiagramEdgeId).toSet()
-                    val hit = hitTest(live, routedPoints, point, tolerance, typedSelectedNodes, typedSelectedEdges)
+                    val baseHit = hitTest(live, routedPoints, point, tolerance, typedSelectedNodes, typedSelectedEdges)
+                    val hit = preferHighlightedDiagramPort(
+                        hit = baseHit,
+                        highlightedPort = diagramConnectionPortForSelection(
+                            hoverDiagramPortAt(live, point, portTolerance),
+                            typedSelectedNodes,
+                        ),
+                    )
 
                     // Shared double-click detection (draw.io modal-free text): a node opens its label,
                     // an edge opens/creates a mid-line label, empty canvas creates a shape with a caret.
@@ -968,6 +1045,24 @@ internal fun DiagramEditOverlay(
         }
     }
 
+    // Draw.io-style contextual controls for a single selected connector. Keeping these on the
+    // canvas makes the three common edits (start marker, end marker, route) one click away while
+    // the inspector retains the complete edge property set.
+    if (edgePreview == null && textEdit == null) {
+        val selectedEdge = selectedEdgeIds.singleOrNull()?.let(graph::edgeById)
+        val selectedRoute = selectedEdge?.let { routes[it.id]?.points }
+        if (selectedEdge != null && selectedRoute != null) {
+            DiagramEdgeQuickToolbar(
+                state = state,
+                editId = editId,
+                edge = selectedEdge,
+                route = selectedRoute,
+                box = box,
+                viewport = viewport,
+            )
+        }
+    }
+
     // Inline text editor for a double-clicked label / table cell / edge label.
     textEdit?.let { target ->
         DiagramInlineTextEditor(
@@ -982,6 +1077,184 @@ internal fun DiagramEditOverlay(
             onDone = { textEdit = null },
         )
     }
+}
+
+/** Arc-length midpoint of the visible route, used as the stable toolbar attachment point. */
+internal fun diagramEdgeToolbarAnchor(route: List<DiagramPoint>): DiagramPoint? =
+    route.takeIf { it.size >= 2 }?.let { pointAlongPolyline(it, 0.5) }
+
+/**
+ * Places the toolbar to the left of its connector anchor and clamps it to the visible canvas.
+ * The result is screen-pixel geometry, so zoom never changes the control's physical size.
+ */
+internal fun diagramEdgeToolbarOffset(
+    anchor: Offset,
+    viewportSize: Size,
+    toolbarSize: Size,
+    margin: Float = DiagramEdgeToolbarMarginPx,
+    gap: Float = DiagramEdgeToolbarGapPx,
+): Offset {
+    val maxX = max(margin, viewportSize.width - toolbarSize.width - margin)
+    val maxY = max(margin, viewportSize.height - toolbarSize.height - margin)
+    return Offset(
+        x = (anchor.x - toolbarSize.width - gap).coerceIn(margin, maxX),
+        y = (anchor.y - toolbarSize.height / 2f).coerceIn(margin, maxY),
+    )
+}
+
+/** Compact on-canvas edge toolbar matching the start / end / route controls in draw.io. */
+@Composable
+private fun DiagramEdgeQuickToolbar(
+    state: MissionEditorStateHolder,
+    editId: String,
+    edge: DiagramEdge,
+    route: List<DiagramPoint>,
+    box: LayoutBox,
+    viewport: CanvasViewport,
+) {
+    val anchor = diagramEdgeToolbarAnchor(route) ?: return
+    val anchorScreen = viewport.toScreen(box.x + anchor.x, box.y + anchor.y)
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var expandedMenu by remember(edge.id) { mutableStateOf<DiagramEdgeToolbarMenu?>(null) }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val toolbarSizePx = with(density) {
+            Size(DiagramEdgeToolbarWidth.toPx(), DiagramEdgeToolbarHeight.toPx())
+        }
+        val toolbarOffset = diagramEdgeToolbarOffset(
+            anchor = anchorScreen,
+            viewportSize = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat()),
+            toolbarSize = toolbarSizePx,
+        )
+        Surface(
+            modifier = Modifier
+                .offset { IntOffset(toolbarOffset.x.roundToInt(), toolbarOffset.y.roundToInt()) }
+                .width(DiagramEdgeToolbarWidth)
+                .height(DiagramEdgeToolbarHeight),
+            shape = RoundedCornerShape(8.dp),
+            color = colors.raisedSurface,
+            border = BorderStroke(1.dp, colors.controlStroke),
+            shadowElevation = 5.dp,
+        ) {
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                DiagramEdgeToolbarDropdownButton(
+                    label = strings.inspector.startHead,
+                    expanded = expandedMenu == DiagramEdgeToolbarMenu.SOURCE,
+                    onExpandedChange = { expandedMenu = if (it) DiagramEdgeToolbarMenu.SOURCE else null },
+                    preview = {
+                        DiagramArrowheadPreview(
+                            edge.sourceArrowhead.kind,
+                            modifier = Modifier.size(20.dp),
+                            atStart = true,
+                        )
+                    },
+                ) { dismiss ->
+                    DiagramArrowheadKind.entries.forEach { kind ->
+                        EditorDropdownMenuItem(
+                            text = strings.inspector.diagramArrowhead(kind),
+                            leadingContent = { DiagramArrowheadPreview(kind, atStart = true) },
+                            selected = kind == edge.sourceArrowhead.kind,
+                            onClick = {
+                                dismiss()
+                                state.dispatch(
+                                    DiagramEditorIntent.SetDiagramEdgeArrowheads(
+                                        editId,
+                                        edge.id.value,
+                                        source = DiagramArrowhead(kind),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+
+                DiagramEdgeToolbarDivider()
+
+                DiagramEdgeToolbarDropdownButton(
+                    label = strings.inspector.endHead,
+                    expanded = expandedMenu == DiagramEdgeToolbarMenu.TARGET,
+                    onExpandedChange = { expandedMenu = if (it) DiagramEdgeToolbarMenu.TARGET else null },
+                    preview = {
+                        DiagramArrowheadPreview(edge.targetArrowhead.kind, modifier = Modifier.size(20.dp))
+                    },
+                ) { dismiss ->
+                    DiagramArrowheadKind.entries.forEach { kind ->
+                        EditorDropdownMenuItem(
+                            text = strings.inspector.diagramArrowhead(kind),
+                            leadingContent = { DiagramArrowheadPreview(kind) },
+                            selected = kind == edge.targetArrowhead.kind,
+                            onClick = {
+                                dismiss()
+                                state.dispatch(
+                                    DiagramEditorIntent.SetDiagramEdgeArrowheads(
+                                        editId,
+                                        edge.id.value,
+                                        target = DiagramArrowhead(kind),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+
+                DiagramEdgeToolbarDivider()
+
+                DiagramEdgeToolbarDropdownButton(
+                    label = strings.inspector.routing,
+                    expanded = expandedMenu == DiagramEdgeToolbarMenu.ROUTING,
+                    onExpandedChange = { expandedMenu = if (it) DiagramEdgeToolbarMenu.ROUTING else null },
+                    preview = { DiagramRoutingPreview(edge.routing, modifier = Modifier.size(20.dp)) },
+                ) { dismiss ->
+                    DiagramRoutingStyle.entries.forEach { routing ->
+                        EditorDropdownMenuItem(
+                            text = strings.inspector.diagramRouting(routing),
+                            leadingContent = { DiagramRoutingPreview(routing) },
+                            selected = routing == edge.routing,
+                            onClick = {
+                                dismiss()
+                                state.dispatch(DiagramEditorIntent.SetDiagramEdgeRouting(editId, edge.id.value, routing))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagramEdgeToolbarDropdownButton(
+    label: String,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    preview: @Composable () -> Unit,
+    menuContent: @Composable (dismiss: () -> Unit) -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    Box(Modifier.size(DiagramEdgeToolbarButtonSize), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .size(DiagramEdgeToolbarButtonSize)
+                .clip(RoundedCornerShape(7.dp))
+                .background(if (expanded) colors.selectionFill else colors.raisedSurface)
+                .clickable { onExpandedChange(!expanded) }
+                .semantics { contentDescription = label },
+            contentAlignment = Alignment.Center,
+        ) {
+            preview()
+        }
+        EditorDropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
+            menuContent { onExpandedChange(false) }
+        }
+    }
+}
+
+@Composable
+private fun DiagramEdgeToolbarDivider() {
+    val colors = LocalEditorColors.current
+    Box(Modifier.width(1.dp).height(20.dp).background(colors.controlStroke))
 }
 
 /** Small floating text field over the edited label; text is selected on open, Enter and Escape
@@ -1341,14 +1614,15 @@ private fun hitDiagramNodeAt(graph: DiagramGraph, point: DiagramPoint): DiagramN
 
 /**
  * Node under [point] for hover purposes: an exact bounds hit first, else the topmost node
- * whose bounds inflated by the directional-arrow margin contain [point]. The arrows sit
- * [DiagramArrowDistance] outside the node, so the pointer must leave the raw bounds to aim
- * at one — without this margin the hover (and the arrows) would vanish the instant the
- * pointer reaches toward them, making both the clone-click and the edge-drag unreachable.
+ * whose bounds inflated by [margin] contain [point]. Without this margin the hover (and the
+ * directional arrows) would vanish the instant the pointer leaves the raw bounds.
  */
-private fun hoverDiagramNodeAt(graph: DiagramGraph, point: DiagramPoint): DiagramNodeId? {
+private fun hoverDiagramNodeAt(
+    graph: DiagramGraph,
+    point: DiagramPoint,
+    margin: Double,
+): DiagramNodeId? {
     hitDiagramNodeAt(graph, point)?.let { return it }
-    val margin = (DiagramArrowDistance + 8f).toDouble()
     return graph.nodes.asReversed()
         .firstOrNull { node ->
             node.visible && !node.locked &&
@@ -1358,15 +1632,19 @@ private fun hoverDiagramNodeAt(graph: DiagramGraph, point: DiagramPoint): Diagra
         ?.id
 }
 
-/** Nearest visible connection point within the screen-normalized hover radius. */
-private fun hoverDiagramPortAt(
+/**
+ * Nearest visible connection point within the screen-normalized hover radius. A foreground
+ * body owns the pointer first, so a covered node cannot expose a green port through it.
+ */
+internal fun hoverDiagramPortAt(
     graph: DiagramGraph,
     point: DiagramPoint,
     tolerance: Double,
 ): DiagramHit.Port? {
     val toleranceSquared = tolerance * tolerance
-    graph.nodes.asReversed().forEach { node ->
-        if (!node.visible || node.locked) return@forEach
+    val candidates = graph.nodes.asReversed().filter { it.visible && !it.locked }
+
+    fun nearestPort(node: DiagramNode): DiagramHit.Port? {
         var nearestPort: DiagramPort? = null
         var nearestDistanceSquared = Double.MAX_VALUE
         node.connectionPorts().forEach { port ->
@@ -1379,11 +1657,41 @@ private fun hoverDiagramPortAt(
                 nearestDistanceSquared = distanceSquared
             }
         }
-        if (nearestDistanceSquared <= toleranceSquared) {
-            return DiagramHit.Port(node.id, nearestPort!!.id)
-        }
+        return nearestPort
+            ?.takeIf { nearestDistanceSquared <= toleranceSquared }
+            ?.let { DiagramHit.Port(node.id, it.id) }
+    }
+
+    candidates.firstOrNull { it.bounds.contains(point) }?.let { node ->
+        return nearestPort(node)
+    }
+    candidates.forEach { node ->
+        nearestPort(node)?.let { return it }
     }
     return null
+}
+
+/**
+ * Connection affordances belong to hover mode. Once a node is selected, its perimeter handles
+ * resize geometry instead, so the same pointer position must not start a connection.
+ */
+internal fun diagramConnectionPortForSelection(
+    port: DiagramHit.Port?,
+    selectedNodeIds: Set<DiagramNodeId>,
+): DiagramHit.Port? = port?.takeUnless { it.nodeId in selectedNodeIds }
+
+/**
+ * The green port marker is an explicit interaction promise. It beats the same node's body or
+ * resize handle, while existing edge endpoint/waypoint/label grabs retain their own priority.
+ */
+internal fun preferHighlightedDiagramPort(
+    hit: DiagramHit?,
+    highlightedPort: DiagramHit.Port?,
+): DiagramHit? = when {
+    highlightedPort == null -> hit
+    hit is DiagramHit.ResizeHandle && hit.nodeId == highlightedPort.nodeId -> highlightedPort
+    hit is DiagramHit.Node && hit.nodeId == highlightedPort.nodeId -> highlightedPort
+    else -> hit
 }
 
 /** Normalized rect (non-negative width/height) spanning two graph points, for the marquee. */
