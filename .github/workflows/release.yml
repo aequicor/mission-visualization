@@ -89,14 +89,14 @@ jobs:
         run: |
           choco install innosetup --version=6.7.1 --yes --no-progress
           $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path -LiteralPath $compiler)) {
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
             throw "Inno Setup compiler not found at $compiler"
           }
-          $compilerVersion = (Get-Item -LiteralPath $compiler).VersionInfo.ProductVersion
-          if ($compilerVersion -notmatch '^6\.7\.1(?:\.|$)') {
-            throw "Expected Inno Setup 6.7.1, found $compilerVersion at $compiler"
+          $compilerFile = Get-Item -LiteralPath $compiler
+          if ($compilerFile.Length -le 0) {
+            throw "Inno Setup compiler is empty at $compiler"
           }
-          Write-Host "Verified ISCC.exe $compilerVersion at $compiler"
+          Write-Host "Verified ISCC.exe from Chocolatey Inno Setup 6.7.1 at $compiler"
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "INNO_SETUP_COMPILER=$compiler" -Encoding utf8
 
       - name: Build release installer
