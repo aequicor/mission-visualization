@@ -1,0 +1,155 @@
+name: Release desktop installers
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Validate tag and project version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^missionVisualizationVersion=//p' gradle.properties)"
+          test -n "$version"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            test "v$version" = "$GITHUB_REF_NAME"
+          fi
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Run JVM tests and desktop build
+        run: ./gradlew jvmTest :desktopApp:build --stacktrace
+
+  package:
+    needs: verify
+    name: Package ${{ matrix.id }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            os: windows-latest
+            tasks: ":desktopApp:packageReleaseWindowsInstaller"
+            paths: desktopApp/build/compose/binaries/main-release/inno/*.exe
+          - id: macos-x64
+            os: macos-15-intel
+            tasks: ":desktopApp:packageReleaseDmg"
+            dmg_suffix: macos-x64
+            paths: desktopApp/build/compose/binaries/main-release/dmg/*.dmg
+          - id: macos-arm64
+            os: macos-latest
+            tasks: ":desktopApp:packageReleaseDmg"
+            dmg_suffix: macos-arm64
+            paths: desktopApp/build/compose/binaries/main-release/dmg/*.dmg
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Install Inno Setup 6.7.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install innosetup --version=6.7.1 --yes --no-progress
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $compiler)) {
+            throw "Inno Setup compiler not found at $compiler"
+          }
+          & $compiler /?
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "INNO_SETUP_COMPILER=$compiler" -Encoding utf8
+
+      - name: Build release installer
+        shell: bash
+        run: ./gradlew ${{ matrix.tasks }} --stacktrace
+
+      - name: Print macOS packaging diagnostics
+        if: failure() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ -d desktopApp/build/compose/logs ]]; then
+            find desktopApp/build/compose/logs -type f -print -exec cat {} \;
+          fi
+
+      - name: Add macOS architecture to DMG name
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          dmg="$(find desktopApp/build/compose/binaries/main-release/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          version="$(sed -n 's/^missionVisualizationVersion=//p' gradle.properties)"
+          mv "$dmg" "$(dirname "$dmg")/Mission Visualization-$version-${{ matrix.dmg_suffix }}.dmg"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mission-visualization-${{ matrix.id }}
+          path: ${{ matrix.paths }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: mission-visualization-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate release assets
+        shell: bash
+        run: |
+          test "$(find release-assets -type f -name '*.exe' | wc -l)" -eq 1
+          test "$(find release-assets -type f -name '*.dmg' | wc -l)" -eq 2
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --generate-notes --title "Mission Visualization ${GITHUB_REF_NAME#v}"

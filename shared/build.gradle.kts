@@ -16,7 +16,7 @@ compose.resources {
 
 val appVersionProvider = providers.gradleProperty("mvAppVersion")
     .orElse(providers.environmentVariable("MV_APP_VERSION"))
-    .orElse("0.1.0-dev")
+    .orElse(providers.gradleProperty("missionVisualizationVersion"))
 
 val generatedAppBuildInfoDir = layout.buildDirectory.dir("generated/appBuildInfo/commonMain/kotlin")
 

@@ -50,6 +50,18 @@ See **[EDITOR.md](EDITOR.md)** for the implemented scope, wiring, and known gaps
 - Web (Wasm): `./gradlew :webApp:wasmJsBrowserDevelopmentRun`
 - Android debug: `./gradlew :androidApp:assembleDebug`
 
+## Desktop installers
+
+Production desktop packages include their own Java runtime. Build a host-architecture
+macOS DMG with `./gradlew :desktopApp:packageReleaseDmg`. On Windows with Inno Setup
+6.7.1 installed, build the current-user EXE with
+`.\gradlew.bat :desktopApp:packageReleaseWindowsInstaller`. Release packaging uses
+JDK 21 and the single version declared in `missionVisualizationVersion` inside
+`gradle.properties`.
+
+See **[docs/releasing.md](docs/releasing.md)** for artifact locations, CI behavior,
+and the required installation checks on real Intel/Apple Silicon Macs and Windows.
+
 ## Tests
 
 - Editor / shared (JVM): `./gradlew :shared:jvmTest`
