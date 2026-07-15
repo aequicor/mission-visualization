@@ -1,11 +1,13 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
+import io.aequicor.visualization.editor.domain.annotationLayersFrom
 import io.aequicor.visualization.editor.domain.annotationSidecarFileName
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.domain.editorSlmCompileOptions
 import io.aequicor.visualization.editor.domain.isAnnotationSidecarFileName
 import io.aequicor.visualization.editor.domain.mergeMissionDocuments
+import io.aequicor.visualization.editor.domain.normalizeAnnotationSidecarSources
 import io.aequicor.visualization.engine.frontend.blocks.TypedBlockKind
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.engine.frontend.edit.DeleteSection
@@ -129,6 +131,7 @@ import io.aequicor.visualization.subsystems.annotations.detachAnnotationImage
 import io.aequicor.visualization.subsystems.annotations.moveAnnotation
 import io.aequicor.visualization.subsystems.annotations.removeAnnotationReference
 import io.aequicor.visualization.subsystems.annotations.setAnnotationKind
+import io.aequicor.visualization.subsystems.annotations.setAnnotationStatus
 import io.aequicor.visualization.subsystems.annotations.updateAnnotationText
 import kotlin.math.cos
 import kotlin.math.sin
@@ -470,6 +473,13 @@ internal fun reduceDesignEditorUnchecked(state: DesignEditorState, intent: Desig
         }
         is DesignEditorIntent.SetAnnotationKind -> state.writeBackAnnotations(intent.screenFileName) {
             it.setAnnotationKind(intent.annotationId, intent.kind)
+        }
+        is DesignEditorIntent.SetAnnotationStatus -> state.writeBackAnnotations(intent.screenFileName) {
+            it.setAnnotationStatus(intent.annotationId, intent.status)
+        }
+        is DesignEditorIntent.CommitAnnotation -> state.writeBackAnnotations(intent.screenFileName) {
+            it.setAnnotationKind(intent.annotationId, intent.kind)
+                .updateAnnotationText(intent.annotationId, intent.text)
         }
         is DesignEditorIntent.AttachAnnotationImage -> state.writeBackAnnotations(intent.screenFileName) {
             it.attachAnnotationImage(intent.annotationId, intent.image)
@@ -1517,6 +1527,19 @@ private fun DesignEditorState.editSource(intent: DesignEditorIntent.EditSource):
         return copy(sources = nextSources, diagnostics = diagnostics)
     }
 
+    val normalizedSources = normalizeAnnotationSidecarSources(nextSources)
+    if (normalizedSources != nextSources) {
+        val documents = compileMissionDocuments(normalizedSources)
+        return copy(
+            document = documents.document,
+            diagnostics = documents.diagnostics,
+            sources = documents.sources,
+            compiledResults = documents.compiled,
+            annotationLayers = annotationLayersFrom(documents.sources),
+            redoStack = emptyList(),
+        ).reselectAfterSourceEdit(index)
+    }
+
     val nextCompiled = compiledResults.toMutableList().apply {
         this[index] = recompiled
     }.toList()
@@ -1526,6 +1549,7 @@ private fun DesignEditorState.editSource(intent: DesignEditorIntent.EditSource):
         diagnostics = merged.diagnostics,
         sources = merged.sources,
         compiledResults = merged.compiled,
+        annotationLayers = annotationLayersFrom(nextSources),
         redoStack = emptyList(),
     )
     return next.reselectAfterSourceEdit(index)

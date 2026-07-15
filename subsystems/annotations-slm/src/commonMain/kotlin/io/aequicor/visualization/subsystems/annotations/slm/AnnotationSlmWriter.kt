@@ -2,6 +2,8 @@ package io.aequicor.visualization.subsystems.annotations.slm
 
 import io.aequicor.visualization.subsystems.annotations.Annotation
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
+import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 import io.aequicor.visualization.subsystems.annotations.normalizeAnnotationBodyText
 
 /**
@@ -47,6 +49,10 @@ public object AnnotationSlmWriter {
         append(" {").append(AnnotationSlmFormat.ID_KEY).append('=').append(annotation.id)
         annotation.author?.let { author ->
             append(", ").append(AnnotationSlmFormat.AUTHOR_KEY).append('=').append(author)
+        }
+        if (annotation.kind == AnnotationKind.Issue && annotation.status != AnnotationStatus.Open) {
+            append(", ").append(AnnotationSlmFormat.STATUS_KEY).append('=')
+                .append(AnnotationSlmFormat.statusToken(annotation.status))
         }
         append('}')
     }

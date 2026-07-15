@@ -13,6 +13,8 @@ import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationImage
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
+import io.aequicor.visualization.subsystems.annotations.slm.AnnotationLayoutComments
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -37,6 +39,11 @@ class AnnotationReducerWriteBackTest {
 
     private fun DesignEditorState.sidecarContent(): String =
         assertNotNull(sources.firstOrNull { it.fileName == sidecarFile }, "missing sidecar $sidecarFile").content
+
+    private fun DesignEditorState.layoutComments() = AnnotationLayoutComments.parse(
+        screenFile,
+        assertNotNull(sources.firstOrNull { it.fileName == screenFile }).content,
+    ).layer.annotations
 
     private fun DesignEditorState.layer() = assertNotNull(annotationLayers[screenFile], "missing layer for $screenFile")
 
@@ -87,11 +94,8 @@ class AnnotationReducerWriteBackTest {
         )
 
         assertEquals(listOf("ann-1", "ann-2"), next.layer().annotations.map { it.id })
-        assertEquals(
-            "## issue @tile_1 {id=ann-1}\n\n## note @(120,340) {id=ann-2}\n",
-            next.sidecarContent(),
-            "second section appended with one blank line between",
-        )
+        assertEquals("## issue @tile_1 {id=ann-1}\n", next.sidecarContent())
+        assertEquals(listOf("ann-2"), next.layoutComments().map { it.id }, "comment is embedded in layout.md")
     }
 
     @Test
@@ -116,7 +120,19 @@ class AnnotationReducerWriteBackTest {
         )
 
         assertEquals(AnnotationKind.Note, next.layer().annotations.single().kind)
-        assertEquals("## note @tile_1 {id=ann-1}\n", next.sidecarContent())
+        assertEquals("", next.sidecarContent(), "the issue section leaves the sidecar")
+        assertEquals(listOf("ann-1"), next.layoutComments().map { it.id }, "the comment moves into layout.md")
+    }
+
+    @Test
+    fun setIssueStatusWritesItToTheSidecar() {
+        val next = reduceDesignEditor(
+            freshState().withIssueOnTile(),
+            DesignEditorIntent.SetAnnotationStatus(screenFile, "ann-1", AnnotationStatus.InReview),
+        )
+
+        assertEquals(AnnotationStatus.InReview, next.layer().annotations.single().status)
+        assertEquals("## issue @tile_1 {id=ann-1, status=in-review}\n", next.sidecarContent())
     }
 
     @Test
@@ -203,7 +219,8 @@ class AnnotationReducerWriteBackTest {
         val next = reduceDesignEditor(two, DesignEditorIntent.DeleteAnnotation(screenFile, "ann-1"))
 
         assertEquals(listOf("ann-2"), next.layer().annotations.map { it.id })
-        assertEquals("## note @(1,2) {id=ann-2}\n", next.sidecarContent(), "only the deleted section left the file")
+        assertEquals("", next.sidecarContent(), "the deleted issue leaves the sidecar empty")
+        assertEquals(listOf("ann-2"), next.layoutComments().map { it.id }, "the layout comment remains")
     }
 
     @Test
@@ -310,5 +327,18 @@ class AnnotationReducerWriteBackTest {
         val workspace = EditorWorkspaceState(selectedAnnotationId = "ann-1")
         val intent = DesignEditorIntent.SetAnnotationText(screenFile, "ann-1", "text")
         assertSame(workspace, reduceAnnotationWorkspace(workspace, intent))
+    }
+
+    @Test
+    fun placingAnAnnotationDoesNotDeactivateTheToolbarTool() {
+        val workspace = EditorWorkspaceState(annotationTool = AnnotationTool.Note)
+        val intent = DesignEditorIntent.AddAnnotation(
+            screenFile,
+            AnnotationAnchor.FreePoint(1.0, 2.0),
+            AnnotationKind.Note,
+        )
+
+        assertSame(workspace, reduceAnnotationWorkspace(workspace, intent))
+        assertEquals(AnnotationTool.Note, workspace.annotationTool)
     }
 }

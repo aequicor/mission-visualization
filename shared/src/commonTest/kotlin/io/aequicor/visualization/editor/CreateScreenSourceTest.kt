@@ -13,6 +13,7 @@ import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.slm.AnnotationLayoutComments
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -147,7 +148,9 @@ class CreateScreenSourceTest {
                 AnnotationKind.Note,
             ),
         )
-        assertTrue(state.sources.any { it.fileName == originalSidecarFile }, "fixture has an annotation sidecar")
+        assertFalse(state.sources.any { it.fileName == originalSidecarFile }, "a comment does not create an issue sidecar")
+        val originalLayout = assertNotNull(state.sources.firstOrNull { it.fileName == originalScreenFile })
+        assertEquals(1, AnnotationLayoutComments.parse(originalScreenFile, originalLayout.content).layer.annotations.size)
 
         state = reduceDesignEditor(
             state,

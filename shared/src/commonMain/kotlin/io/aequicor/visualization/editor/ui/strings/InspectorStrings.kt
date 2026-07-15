@@ -14,6 +14,7 @@ import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramCornerStyle
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
@@ -198,6 +199,8 @@ interface InspectorStrings {
     val noExtraReferences: String
     fun deletedNode(nodeId: String): String
     val addSelectedNode: String
+    val status: String
+    val createUnifiedIssuesPrompt: String
 
     // --- Diagram ---------------------------------------------------------------
     val diagramSection: CompactLabel
@@ -263,6 +266,7 @@ interface InspectorStrings {
     fun handleMirror(mirror: HandleMirror): String
     fun booleanOp(operation: BooleanOperationKind): String
     fun annotationKind(kind: AnnotationKind): String
+    fun annotationStatus(status: AnnotationStatus): String
     fun diagramRelation(relation: DiagramRelation): String
     fun diagramRouting(style: DiagramRoutingStyle): String
     fun diagramPattern(pattern: DiagramStrokePattern): String
@@ -429,6 +433,8 @@ object InspectorStringsEn : InspectorStrings {
     override val noExtraReferences = "No extra node references."
     override fun deletedNode(nodeId: String) = "$nodeId (deleted)"
     override val addSelectedNode = "Add selected node"
+    override val status = "Status"
+    override val createUnifiedIssuesPrompt = "Create one AI-agent prompt from issues"
 
     override val diagramSection = CompactLabel("Diagram", "Diagram", "Dgm")
     override val editDiagram = "Edit diagram"
@@ -583,8 +589,14 @@ object InspectorStringsEn : InspectorStrings {
     }
 
     override fun annotationKind(kind: AnnotationKind) = when (kind) {
-        AnnotationKind.Note -> "Note"
+        AnnotationKind.Note -> "Comment"
         AnnotationKind.Issue -> "Issue"
+    }
+
+    override fun annotationStatus(status: AnnotationStatus) = when (status) {
+        AnnotationStatus.Open -> "Open"
+        AnnotationStatus.InReview -> "In review"
+        AnnotationStatus.Closed -> "Closed"
     }
 
     override fun diagramRelation(relation: DiagramRelation) = when (relation) {
@@ -827,6 +839,8 @@ object InspectorStringsRu : InspectorStrings {
     override val noExtraReferences = "Нет дополнительных ссылок на узлы."
     override fun deletedNode(nodeId: String) = "$nodeId (удалён)"
     override val addSelectedNode = "Добавить выбранный узел"
+    override val status = "Статус"
+    override val createUnifiedIssuesPrompt = "Создать единый промпт для ИИ-агента из замечаний"
 
     override val diagramSection = CompactLabel("Диаграмма", "Диагр", "Дгм")
     override val editDiagram = "Редактировать диаграмму"
@@ -981,8 +995,14 @@ object InspectorStringsRu : InspectorStrings {
     }
 
     override fun annotationKind(kind: AnnotationKind) = when (kind) {
-        AnnotationKind.Note -> "Заметка"
+        AnnotationKind.Note -> "Комментарий"
         AnnotationKind.Issue -> "Замечание"
+    }
+
+    override fun annotationStatus(status: AnnotationStatus) = when (status) {
+        AnnotationStatus.Open -> "Открыто"
+        AnnotationStatus.InReview -> "Проверяется"
+        AnnotationStatus.Closed -> "Закрыто"
     }
 
     override fun diagramRelation(relation: DiagramRelation) = when (relation) {

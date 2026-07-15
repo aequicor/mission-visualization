@@ -60,9 +60,10 @@ Compose-превью с оверлеями (выделение, инспекто
     `Annotation`/`AnnotationKind` note|issue/`AnnotationAnchor` node|free/`AnnotationLayer`,
     чистые операции слоя, `annotationBadgePosition`, `AnnotationPromptExporter` — промпт для
     ИИ-агента только из issue, scope selected/screen/document, контекст узлов через
-    `nodeContext`-лямбду), compose-рендерер (`AnnotationBadge` капля / `AnnotationCard`
+    `nodeContext`-лямбду; статусы issue open|in-review|closed), compose-рендерер (`AnnotationBadge` капля / `AnnotationCard`
     табличка с data-URI-картинкой / `AnnotationOverlay` поверх артборда с pan/zoom;
-    issue = `statusWarning`) и sidecar-формат `*.annotations.md` (`AnnotationSlmParser`
+    issue = `statusWarning`), комментарии внутри `*.layout.md` и отдельный sidecar-формат
+    `*.annotations.md` только для замечаний (`AnnotationSlmParser`
     толерантный / `AnnotationSlmWriter` round-trip / `AnnotationSlmPatcher` хирургический
     upsert/delete секции; спека — `design-book/annotations-sidecar-format.md`). Потребитель —
     `:shared` (интенты + `writeBackAnnotations`, оверлей в канве, секция инспектора, экспорт).

@@ -129,10 +129,12 @@ import io.aequicor.visualization.editor.presentation.annotationMoveCommitTarget
 import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
 import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.Annotation
 import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
 import io.aequicor.visualization.subsystems.annotations.ExportScope
 import io.aequicor.visualization.subsystems.annotations.compose.AnnotationOverlay
 import io.aequicor.visualization.subsystems.annotations.compose.AnnotationViewTransform
+import io.aequicor.visualization.subsystems.annotations.compose.annotationScreenAnchor
 import androidx.compose.ui.platform.LocalClipboardManager
 import io.aequicor.visualization.editor.presentation.BoundsBox
 import io.aequicor.visualization.editor.presentation.CanvasParentFrame
@@ -1880,6 +1882,17 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     },
                     onMoveCancel = { annotationDrag = null },
                 )
+                annotationLayer.annotations
+                    .firstOrNull { it.id == ws.annotationComposerId }
+                    ?.let { annotation ->
+                        AnnotationComposerOverlay(
+                            annotation = annotation,
+                            screenFileName = annotationScreenFile,
+                            state = state,
+                            nodeBounds = { nodeId -> annotationNodeVisualBounds(layout, nodeId) },
+                            transform = AnnotationViewTransform(viewport.zoom, viewport.panX, viewport.panY),
+                        )
+                    }
             }
         }
         groupContextMenuPosition?.let { position ->
@@ -5044,6 +5057,9 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
     var lastKind by remember { mutableStateOf(AnnotationTool.Note) }
     var expanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(8.dp)
+    LaunchedEffect(activeTool) {
+        if (activeTool != AnnotationTool.None) lastKind = activeTool
+    }
     fun activate(tool: AnnotationTool) {
         state.dispatch(DesignEditorIntent.SetAnnotationTool(tool))
         if (tool != AnnotationTool.None) {
@@ -5235,7 +5251,7 @@ private fun ExportIssuesAction(state: MissionEditorStateHolder) {
  * `navigator.clipboard` is unavailable and the copy silently does nothing.
  */
 @Composable
-private fun ExportPromptPopup(prompt: String, onCopyAgain: () -> Unit, onDismiss: () -> Unit) {
+internal fun ExportPromptPopup(prompt: String, onCopyAgain: () -> Unit, onDismiss: () -> Unit) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
     Popup(
@@ -5321,11 +5337,141 @@ private fun AnnotationKind.annotationTool(): AnnotationTool = when (this) {
     AnnotationKind.Issue -> AnnotationTool.Issue
 }
 
+/** Focused composer shown immediately after a canvas comment marker is placed. */
+@Composable
+private fun AnnotationComposerOverlay(
+    annotation: Annotation,
+    screenFileName: String,
+    state: MissionEditorStateHolder,
+    nodeBounds: (String) -> io.aequicor.visualization.subsystems.annotations.AnnotationRect?,
+    transform: AnnotationViewTransform,
+) {
+    val colors = LocalEditorColors.current
+    val strings = LocalStrings.current
+    val focusRequester = remember(annotation.id) { FocusRequester() }
+    var draft by remember(annotation.id) { mutableStateOf(annotation.body.text) }
+    val anchor = annotationScreenAnchor(annotation, nodeBounds, transform)
+    LaunchedEffect(annotation.id) { runCatching { focusRequester.requestFocus() } }
+    val density = LocalDensity.current
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val composerWidth = (maxWidth - 16.dp).coerceAtMost(AnnotationComposerWidth).coerceAtLeast(1.dp)
+        val widthPx = with(density) { composerWidth.toPx() }
+        val heightEstimatePx = with(density) { AnnotationComposerHeightEstimate.toPx() }
+        val marginPx = with(density) { 8.dp.toPx() }
+        val x = (anchor.x + 14f).coerceIn(marginPx, (constraints.maxWidth - widthPx - marginPx).coerceAtLeast(marginPx))
+        val y = (anchor.y - 12f).coerceIn(marginPx, (constraints.maxHeight - heightEstimatePx - marginPx).coerceAtLeast(marginPx))
+        Surface(
+            modifier = Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }.width(composerWidth),
+            shape = RoundedCornerShape(8.dp),
+            color = colors.raisedSurface,
+            border = BorderStroke(1.dp, colors.accent),
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 132.dp),
+                    shape = RoundedCornerShape(5.dp),
+                    color = colors.controlSurface,
+                    border = BorderStroke(1.dp, colors.controlStroke),
+                ) {
+                    Box(Modifier.padding(8.dp), contentAlignment = Alignment.TopStart) {
+                        if (draft.isEmpty()) {
+                            Text(
+                                strings.canvas.annotationInputPlaceholder,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.mutedInk,
+                            )
+                        }
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                            textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.ink),
+                            cursorBrush = SolidColor(colors.accent),
+                        )
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnnotationComposerButton(
+                        label = strings.canvas.createIssue,
+                        kind = AnnotationKind.Issue,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        commitAnnotationComposer(state, screenFileName, annotation.id, draft, AnnotationKind.Issue)
+                    }
+                    AnnotationComposerButton(
+                        label = strings.canvas.createComment,
+                        kind = AnnotationKind.Note,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        commitAnnotationComposer(state, screenFileName, annotation.id, draft, AnnotationKind.Note)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val AnnotationComposerWidth = 280.dp
+private val AnnotationComposerHeightEstimate = 190.dp
+
+@Composable
+private fun AnnotationComposerButton(
+    label: String,
+    kind: AnnotationKind,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(5.dp)
+    Surface(
+        modifier = modifier.height(30.dp).clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            AnnotationKindPreview(kind, Modifier.size(14.dp))
+            Text(
+                label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.controlInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun commitAnnotationComposer(
+    state: MissionEditorStateHolder,
+    screenFileName: String,
+    annotationId: String,
+    text: String,
+    kind: AnnotationKind,
+) {
+    state.dispatch(DesignEditorIntent.CommitAnnotation(screenFileName, annotationId, text, kind))
+    state.updateWorkspace { workspace ->
+        workspace.copy(
+            annotationComposerId = "",
+            annotationTool = kind.annotationTool(),
+            inspectorTab = InspectorTab.Comments,
+            expandedAnnotationIds = workspace.expandedAnnotationIds + annotationId,
+        )
+    }
+}
+
 /**
  * Annotation-tool click: mints a note/issue on the current screen's review layer — on
  * the hit node (badge offset keeps it where clicked) or as a free point — then selects
- * and expands the new annotation, opens the Comments inspector for typing the text and
- * leaves annotation mode (one placement per activation, like the shape tools).
+ * and opens its focused on-canvas composer. Annotation mode intentionally stays armed
+ * after the placement so the toolbar keeps its active state and another marker can be
+ * placed after the composer is committed.
  */
 private fun commitAddAnnotation(
     state: MissionEditorStateHolder,
@@ -5351,12 +5497,13 @@ private fun commitAddAnnotation(
         ?.id
     if (createdId != null) {
         state.dispatch(DesignEditorIntent.SelectAnnotation(createdId))
-        if (createdId !in state.workspace.expandedAnnotationIds) {
-            state.dispatch(DesignEditorIntent.ToggleAnnotationExpanded(createdId))
+        state.updateWorkspace {
+            it.copy(
+                inspectorTab = InspectorTab.Comments,
+                annotationComposerId = createdId,
+            )
         }
-        state.updateWorkspace { it.copy(inspectorTab = InspectorTab.Comments) }
     }
-    state.dispatch(DesignEditorIntent.SetAnnotationTool(AnnotationTool.None))
 }
 
 /**

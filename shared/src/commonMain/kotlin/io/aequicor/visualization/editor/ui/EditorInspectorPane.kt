@@ -62,6 +62,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -99,7 +100,10 @@ import io.aequicor.visualization.subsystems.annotations.Annotation
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationImage
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
+import io.aequicor.visualization.subsystems.annotations.ExportScope
+import androidx.compose.ui.platform.LocalClipboardManager
 import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
 import io.aequicor.visualization.subsystems.annotations.annotationBadgePosition
 import io.aequicor.visualization.subsystems.annotations.compose.rememberAnnotationImage
@@ -3661,6 +3665,8 @@ private val BlendModes = listOf("normal", "multiply", "screen", "overlay", "dark
 @Composable
 private fun InspectorComments(state: MissionEditorStateHolder) {
     val strings = LocalStrings.current
+    val clipboard = LocalClipboardManager.current
+    var exportedPrompt by remember { mutableStateOf<String?>(null) }
     val design = state.designState
     val screenFileName = remember(design.compiledResults, design.sources, design.selectedPageId) {
         design.screenFileNamesByPageId()[design.selectedPageId]
@@ -3672,18 +3678,30 @@ private fun InspectorComments(state: MissionEditorStateHolder) {
             candidate.annotations.firstOrNull { it.id == id }?.let { candidate.screenFileName to it }
         }
     }
-    if (layer == null && selection == null) {
-        EmptyInspector(strings.inspector.noAnnotationsYet)
-        return
+    exportedPrompt?.let { prompt ->
+        ExportPromptPopup(
+            prompt = prompt,
+            onCopyAgain = { clipboard.setText(AnnotatedString(prompt)) },
+            onDismiss = { exportedPrompt = null },
+        )
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Box(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            UnifiedIssuesPromptButton(strings.inspector.createUnifiedIssuesPrompt) {
+                val prompt = state.exportIssuesPrompt(ExportScope.WholeDocument)
+                clipboard.setText(AnnotatedString(prompt))
+                exportedPrompt = prompt
+            }
+        }
         if (layer != null) AnnotationListSection(state, layer)
         if (selection != null) {
             val (ownerScreen, annotation) = selection
             AnnotationSection(state, ownerScreen, annotation)
         } else {
             Box(Modifier.padding(18.dp)) {
-                MutedNote(strings.inspector.selectAnnotationHint)
+                MutedNote(
+                    if (layer == null) strings.inspector.noAnnotationsYet else strings.inspector.selectAnnotationHint,
+                )
             }
         }
     }
@@ -3722,7 +3740,11 @@ private fun AnnotationListSection(state: MissionEditorStateHolder, layer: Annota
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        strings.inspector.annotationKind(annotation.kind),
+                        if (annotation.kind == AnnotationKind.Issue) {
+                            strings.inspector.annotationStatus(annotation.status)
+                        } else {
+                            strings.inspector.annotationKind(annotation.kind)
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = if (annotation.kind == AnnotationKind.Issue) colors.statusWarning else colors.mutedInk,
                         fontWeight = FontWeight.SemiBold,
@@ -3760,6 +3782,34 @@ private fun AnnotationSection(state: MissionEditorStateHolder, screenFileName: S
                 )
             }
 
+            if (annotation.kind == AnnotationKind.Issue) {
+                Column {
+                    InspectorSubLabel(strings.inspector.status)
+                    SelectField(
+                        value = strings.inspector.annotationStatus(annotation.status),
+                        options = AnnotationStatus.entries.map { strings.inspector.annotationStatus(it) },
+                        onSelect = { label ->
+                            AnnotationStatus.entries
+                                .firstOrNull { strings.inspector.annotationStatus(it) == label }
+                                ?.let { status ->
+                                    if (status != annotation.status) {
+                                        state.dispatch(
+                                            DesignEditorIntent.SetAnnotationStatus(screenFileName, annotation.id, status),
+                                        )
+                                    }
+                                }
+                        },
+                        modifier = Modifier.widthIn(max = InspectorCompactSelectMaxWidth).fillMaxWidth(),
+                        leadingContent = { AnnotationStatusPreview(annotation.status, Modifier.size(16.dp)) },
+                        optionLeadingContent = { label ->
+                            AnnotationStatus.entries
+                                .firstOrNull { strings.inspector.annotationStatus(it) == label }
+                                ?.let { AnnotationStatusPreview(it, Modifier.size(16.dp)) }
+                        },
+                    )
+                }
+            }
+
             Column {
                 InspectorSubLabel(strings.inspector.text)
                 AnnotationTextField(
@@ -3788,6 +3838,27 @@ private fun AnnotationSection(state: MissionEditorStateHolder, screenFileName: S
             AnnotationDangerButton(strings.inspector.deleteAnnotation) {
                 state.dispatch(DesignEditorIntent.DeleteAnnotation(screenFileName, annotation.id))
             }
+        }
+    }
+}
+
+@Composable
+private fun UnifiedIssuesPromptButton(label: String, onClick: () -> Unit) {
+    val colors = LocalEditorColors.current
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(shape).clickable(onClick = onClick),
+        shape = shape,
+        color = colors.controlSurface,
+        border = BorderStroke(1.dp, colors.controlStroke),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            EditorSvgIcon(EditorIcon.Export, contentDescription = null, modifier = Modifier.size(18.dp), tint = colors.controlInk)
+            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = colors.controlInk)
         }
     }
 }

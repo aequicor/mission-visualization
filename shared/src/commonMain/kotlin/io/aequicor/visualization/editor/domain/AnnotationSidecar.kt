@@ -7,14 +7,16 @@ import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.engine.ir.model.SourceLocation
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
+import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.slm.AnnotationLayoutComments
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmParseResult
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmParser
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmPatcher
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmWriter
 
 /**
- * Annotation sidecar convention: every screen `<screen>.layout.md` may carry a review
- * layer in `<screen>.annotations.md` next to it. Sidecars ride in the same
+ * Annotation storage convention: neutral comments are embedded in `<screen>.layout.md`;
+ * actionable issues live in `<screen>.annotations.md` next to it. Sidecars ride in the same
  * [MissionDocumentSource] list as the SLM screens — so drafts, Save/Reset and restore
  * persist them for free — but they are never compiled as SLM: [compileMissionDocuments]
  * routes them to [AnnotationSlmParser] via a placeholder compile result that keeps the
@@ -49,13 +51,23 @@ fun annotationLayersFrom(sources: List<MissionDocumentSource>): Map<String, Anno
     val layers = LinkedHashMap<String, AnnotationLayer>()
     sources.forEach { source ->
         if (source.fileName.endsWith(ScreenLayoutSuffix)) {
-            layers.getOrPut(source.fileName) { AnnotationLayer(source.fileName) }
+            val comments = AnnotationLayoutComments.parse(source.fileName, source.content).layer.annotations
+                .filter { it.kind == AnnotationKind.Note }
+            layers[source.fileName] = AnnotationLayer(source.fileName, comments)
         }
     }
     sources.forEach { source ->
         if (isAnnotationSidecarFileName(source.fileName)) {
             val screenFileName = screenFileNameForSidecar(source.fileName)
-            layers[screenFileName] = AnnotationSlmParser.parse(screenFileName, source.content).layer
+            val existing = layers[screenFileName]?.annotations.orEmpty()
+            val sidecar = AnnotationSlmParser.parse(screenFileName, source.content).layer.annotations
+            // Notes in a sidecar are a legacy input. Load them without loss when the
+            // owning screen is absent; the normalization boundary migrates them into
+            // layout.md whenever that screen exists.
+            layers[screenFileName] = AnnotationLayer(
+                screenFileName,
+                (existing + sidecar).distinctBy { it.id },
+            )
         }
     }
     return layers
@@ -112,7 +124,9 @@ fun annotationSidecarDiagnostics(fileName: String, content: String): List<Design
  * so the pinned text persists through drafts like any other source content.
  */
 fun normalizeAnnotationSidecarSources(sources: List<MissionDocumentSource>): List<MissionDocumentSource> {
-    if (sources.none { isAnnotationSidecarFileName(it.fileName) }) return sources
+    if (sources.none { isAnnotationSidecarFileName(it.fileName) }) {
+        return normalizeAnnotationIdsAcrossStores(migrateLayoutIssuesToSidecars(sources))
+    }
     val pinned = sources.map { source ->
         if (!isAnnotationSidecarFileName(source.fileName)) return@map source
         val content = AnnotationSlmPatcher.pinIds(source.content)
@@ -140,6 +154,115 @@ fun normalizeAnnotationSidecarSources(sources: List<MissionDocumentSource>): Lis
         }
         if (renames.isNotEmpty()) {
             result[index] = result[index].copy(content = renameSidecarSections(result[index].content, parsed, renames))
+        }
+    }
+    val splitByKind = migrateLayoutIssuesToSidecars(migrateSidecarNotesToLayouts(result))
+    return normalizeAnnotationIdsAcrossStores(splitByKind)
+}
+
+/** Moves legacy sidecar notes into their owning layout source; issues stay separate. */
+private fun migrateSidecarNotesToLayouts(sources: List<MissionDocumentSource>): List<MissionDocumentSource> {
+    val result = sources.toMutableList()
+    sources.forEachIndexed { sidecarIndex, source ->
+        if (!isAnnotationSidecarFileName(source.fileName)) return@forEachIndexed
+        val screenFileName = screenFileNameForSidecar(source.fileName)
+        val layoutIndex = result.indexOfFirst { it.fileName == screenFileName }
+        if (layoutIndex < 0) return@forEachIndexed
+        val parsed = AnnotationSlmParser.parse(screenFileName, result[sidecarIndex].content).layer
+        val notes = parsed.annotations.filter { it.kind == AnnotationKind.Note }
+        if (notes.isEmpty()) return@forEachIndexed
+
+        var layoutText = result[layoutIndex].content
+        var sidecarText = result[sidecarIndex].content
+        notes.forEach { note ->
+            layoutText = AnnotationLayoutComments.upsert(layoutText, note)
+            sidecarText = AnnotationSlmPatcher.deleteSection(sidecarText, note.id)
+        }
+        result[layoutIndex] = result[layoutIndex].copy(content = layoutText)
+        result[sidecarIndex] = result[sidecarIndex].copy(content = sidecarText)
+    }
+    return result
+}
+
+/** Moves hand-authored issues out of an embedded layout block into the sidecar. */
+private fun migrateLayoutIssuesToSidecars(sources: List<MissionDocumentSource>): List<MissionDocumentSource> {
+    val result = sources.toMutableList()
+    sources.filter { it.fileName.endsWith(ScreenLayoutSuffix) }.forEach { source ->
+        val layoutIndex = result.indexOfFirst { it.fileName == source.fileName }
+        if (layoutIndex < 0) return@forEach
+        val parsed = AnnotationLayoutComments.parse(source.fileName, result[layoutIndex].content).layer
+        val issues = parsed.annotations.filter { it.kind == AnnotationKind.Issue }
+        if (issues.isEmpty()) return@forEach
+
+        val sidecarName = annotationSidecarFileName(source.fileName)
+        var sidecarIndex = result.indexOfFirst { it.fileName == sidecarName }
+        if (sidecarIndex < 0) {
+            result += MissionDocumentSource(sidecarName, "")
+            sidecarIndex = result.lastIndex
+        }
+        var layoutText = result[layoutIndex].content
+        var sidecarText = result[sidecarIndex].content
+        issues.forEach { issue ->
+            layoutText = AnnotationLayoutComments.delete(layoutText, issue.id)
+            sidecarText = AnnotationSlmPatcher.upsertSection(sidecarText, issue)
+        }
+        result[layoutIndex] = result[layoutIndex].copy(content = layoutText)
+        result[sidecarIndex] = result[sidecarIndex].copy(content = sidecarText)
+    }
+    return result
+}
+
+/** Enforces globally unique annotation ids across embedded comments and issue sidecars. */
+private fun normalizeAnnotationIdsAcrossStores(sources: List<MissionDocumentSource>): List<MissionDocumentSource> {
+    val result = sources.map { source ->
+        if (!source.fileName.endsWith(ScreenLayoutSuffix)) return@map source
+        val parsed = AnnotationLayoutComments.parse(source.fileName, source.content)
+        if (parsed.needsRewrite) {
+            source.copy(content = AnnotationLayoutComments.write(source.content, parsed.layer))
+        } else {
+            source
+        }
+    }.toMutableList()
+    val allIds = result.flatMap { source ->
+        when {
+            source.fileName.endsWith(ScreenLayoutSuffix) ->
+                AnnotationLayoutComments.parse(source.fileName, source.content).layer.annotations.map { it.id }
+            isAnnotationSidecarFileName(source.fileName) ->
+                AnnotationSlmParser.parse(screenFileNameForSidecar(source.fileName), source.content).layer.annotations.map { it.id }
+            else -> emptyList()
+        }
+    }.toMutableSet()
+    val claimed = mutableSetOf<String>()
+    result.indices.forEach { index ->
+        val source = result[index]
+        val parsed = when {
+            source.fileName.endsWith(ScreenLayoutSuffix) -> AnnotationLayoutComments.parse(source.fileName, source.content)
+            isAnnotationSidecarFileName(source.fileName) ->
+                AnnotationSlmParser.parse(screenFileNameForSidecar(source.fileName), source.content)
+            else -> return@forEach
+        }
+        val renames = LinkedHashMap<String, String>()
+        parsed.layer.annotations.forEach { annotation ->
+            if (annotation.id in claimed) {
+                val fresh = mintAnnotationIdAvoiding(allIds + claimed)
+                renames[annotation.id] = fresh
+                allIds += fresh
+                claimed += fresh
+            } else {
+                claimed += annotation.id
+            }
+        }
+        if (renames.isEmpty()) return@forEach
+        if (source.fileName.endsWith(ScreenLayoutSuffix)) {
+            var content = source.content
+            renames.forEach { (oldId, newId) ->
+                val annotation = parsed.layer.annotations.first { it.id == oldId }
+                content = AnnotationLayoutComments.delete(content, oldId)
+                content = AnnotationLayoutComments.upsert(content, annotation.copy(id = newId))
+            }
+            result[index] = source.copy(content = content)
+        } else {
+            result[index] = source.copy(content = renameSidecarSections(source.content, parsed, renames))
         }
     }
     return result

@@ -50,6 +50,8 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.AddAnnotation,
     is DesignEditorIntent.SetAnnotationText,
     is DesignEditorIntent.SetAnnotationKind,
+    is DesignEditorIntent.SetAnnotationStatus,
+    is DesignEditorIntent.CommitAnnotation,
     is DesignEditorIntent.AttachAnnotationImage,
     is DesignEditorIntent.DetachAnnotationImage,
     is DesignEditorIntent.MoveAnnotation,

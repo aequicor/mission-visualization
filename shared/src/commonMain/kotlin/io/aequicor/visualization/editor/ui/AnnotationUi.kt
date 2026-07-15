@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 import io.aequicor.visualization.subsystems.annotations.compose.AnnotationOverlayColors
 import io.aequicor.visualization.subsystems.annotations.compose.badgeFill
 import io.aequicor.visualization.subsystems.annotations.compose.badgeStroke
@@ -64,4 +65,16 @@ internal fun AnnotationKindPreview(kind: AnnotationKind, modifier: Modifier = Mo
         drawPath(droplet, outline, style = Stroke(1.dp.toPx()))
         drawCircle(colors.badgeStroke(kind), radius = d * 0.14f, center = Offset(left + d / 2f, d / 2f))
     }
+}
+
+/** Status glyph used by the selected value and every issue-status dropdown row. */
+@Composable
+internal fun AnnotationStatusPreview(status: AnnotationStatus, modifier: Modifier = Modifier.size(16.dp)) {
+    val colors = LocalEditorColors.current
+    val (icon, tint) = when (status) {
+        AnnotationStatus.Open -> EditorIcon.Comments to colors.statusWarning
+        AnnotationStatus.InReview -> EditorIcon.Timer to colors.accent
+        AnnotationStatus.Closed -> EditorIcon.Check to colors.mutedInk
+    }
+    EditorSvgIcon(icon = icon, contentDescription = null, modifier = modifier, tint = tint)
 }

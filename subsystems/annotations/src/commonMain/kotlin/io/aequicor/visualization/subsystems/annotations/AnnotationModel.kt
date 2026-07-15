@@ -1,14 +1,17 @@
 package io.aequicor.visualization.subsystems.annotations
 
 /**
- * Annotation core model. Pure Kotlin, no Compose, no :engine:* deps — annotations live
- * in a sidecar review layer next to the design SLM and reference design nodes only by
- * node id. Expansion state at runtime is view state (workspace), not document state;
- * the model carries only the authored [Annotation.defaultExpanded] hint.
+ * Annotation core model. Pure Kotlin, no Compose, no :engine:* deps. Comments live in
+ * their screen's layout source while actionable issues use a sibling sidecar; both are
+ * presented as one layer and reference design nodes only by id. Expansion state at
+ * runtime is view state (workspace), not document state.
  */
 
 /** Kind of an annotation: neutral note or an actionable issue (exported to AI prompts). */
 public enum class AnnotationKind { Note, Issue }
+
+/** Lifecycle of an actionable issue. Notes do not use this value. */
+public enum class AnnotationStatus { Open, InReview, Closed }
 
 /** Where an annotation is pinned on the canvas. */
 public sealed interface AnnotationAnchor {
@@ -60,9 +63,11 @@ public data class Annotation(
     /** Extra node ids this annotation also refers to (besides the anchor). */
     val references: List<String> = emptyList(),
     val author: String? = null,
+    /** Issue workflow state; ignored for [AnnotationKind.Note]. */
+    val status: AnnotationStatus = AnnotationStatus.Open,
 )
 
-/** Sidecar model of one screen's annotations (`<screen>.annotations.md`). */
+/** Unified comment + issue layer of one screen. */
 public data class AnnotationLayer(
     val screenFileName: String,
     val annotations: List<Annotation> = emptyList(),
