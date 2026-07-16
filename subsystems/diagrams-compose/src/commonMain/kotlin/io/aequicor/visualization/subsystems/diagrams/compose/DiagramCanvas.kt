@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.rememberTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
@@ -166,6 +167,11 @@ fun DrawScope.drawDiagramGraph(
                     emptyList()
                 } else {
                     edgeLabelObstacleRoutes(graph, routePoints, edge.id)
+                },
+                labelAvoidRects = if (edge.labels.isEmpty()) {
+                    emptyList()
+                } else {
+                    edgeLabelAvoidRects(graph, edge.id)
                 },
             )
             drawnRoutes += routed

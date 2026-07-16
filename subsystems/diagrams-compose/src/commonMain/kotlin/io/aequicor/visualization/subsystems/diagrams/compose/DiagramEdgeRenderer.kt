@@ -19,6 +19,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramStrokePattern
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPathSegment
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 import io.aequicor.visualization.subsystems.diagrams.routing.routedEdgeToPath
 import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
@@ -51,6 +52,7 @@ internal fun DrawScope.drawDiagramEdge(
     flowPhase: Float? = null,
     jumpOverRoutes: List<RoutedEdge> = emptyList(),
     labelObstacleRoutes: List<List<DiagramPoint>> = emptyList(),
+    labelAvoidRects: List<DiagramRect> = emptyList(),
 ) {
     val style = edge.style
     val ink = (style.stroke?.toComposeColor() ?: colors.edgeStroke).applyOpacity(style.opacity)
@@ -119,7 +121,7 @@ internal fun DrawScope.drawDiagramEdge(
     // A sequence message's caption reads above its horizontal row rather than sitting on the line.
     val messageLabelLift = if (edge.relation is DiagramRelation.Message) SEQUENCE_MESSAGE_LABEL_LIFT else 0.0
     edge.labels.forEach { edgeLabel ->
-        val anchor = edgeLabelAnchorPoint(points, edgeLabel, labelObstacleRoutes)
+        val anchor = edgeLabelAnchorPoint(points, edgeLabel, labelObstacleRoutes, labelAvoidRects)
         drawCenteredLabel(
             measurer,
             edgeLabel.label,

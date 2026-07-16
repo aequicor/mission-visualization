@@ -76,7 +76,8 @@ fun nudgeRoutedEdges(
         for ((routeIndex, route) in routes.withIndex()) {
             if (route.routing != DiagramRoutingStyle.ORTHOGONAL &&
                 route.routing != DiagramRoutingStyle.SIMPLE &&
-                route.routing != DiagramRoutingStyle.ENTITY_RELATION
+                route.routing != DiagramRoutingStyle.ENTITY_RELATION &&
+                route.routing != DiagramRoutingStyle.CURVED
             ) {
                 continue
             }
@@ -110,6 +111,11 @@ fun nudgeRoutedEdges(
         }
     }
 
+    // Segments closer than this across the lane axis share one corridor: exactly
+    // collinear runs AND near-misses (a couple of pixels apart read as one fat line)
+    // both get spread. Kept below the spread spacing so nudged lanes never re-cluster.
+    val laneTolerance = spacing * 0.75
+
     fun applyOffsets(horizontal: Boolean) {
         val segments = laneSegments(horizontal)
             .sortedWith(compareBy({ it.coordinate }, { it.spanStart }))
@@ -118,7 +124,7 @@ fun nudgeRoutedEdges(
             var clusterEnd = clusterStart + 1
             var reach = segments[clusterStart].spanEnd
             while (clusterEnd < segments.size &&
-                abs(segments[clusterEnd].coordinate - segments[clusterStart].coordinate) < GEOMETRY_EPSILON &&
+                abs(segments[clusterEnd].coordinate - segments[clusterStart].coordinate) < laneTolerance &&
                 segments[clusterEnd].spanStart < reach - GEOMETRY_EPSILON
             ) {
                 reach = maxOf(reach, segments[clusterEnd].spanEnd)
@@ -193,10 +199,16 @@ fun nudgeRoutedEdges(
                         shiftedB = DiagramPoint(b.x + offset, b.y)
                     }
                     // Never push a segment against a node body the original run kept
-                    // clear of (raw-bounds fallback legs may already touch one).
+                    // clear of (raw-bounds fallback legs may already touch one) — and a
+                    // boundary-hugging segment must never be pushed into the interior.
                     val pushedIntoNode = obstacles.any { rect ->
-                        segmentNearRect(shiftedA, shiftedB, rect, NUDGE_CLEARANCE) &&
-                            !segmentNearRect(a, b, rect, NUDGE_CLEARANCE)
+                        (
+                            segmentNearRect(shiftedA, shiftedB, rect, NUDGE_CLEARANCE) &&
+                                !segmentNearRect(a, b, rect, NUDGE_CLEARANCE)
+                            ) || (
+                            segmentNearRect(shiftedA, shiftedB, rect, 0.0) &&
+                                !segmentNearRect(a, b, rect, 0.0)
+                            )
                     }
                     if (pushedIntoNode) continue
                     pts[segment.index] = shiftedA

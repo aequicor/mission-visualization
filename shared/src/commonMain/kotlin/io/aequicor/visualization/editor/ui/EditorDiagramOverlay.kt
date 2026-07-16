@@ -96,6 +96,7 @@ import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramNodeHitPart
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramResizeHandle
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
 import io.aequicor.visualization.subsystems.diagrams.hittest.hitTest
 import io.aequicor.visualization.subsystems.diagrams.hittest.pointAlongPolyline
@@ -1874,7 +1875,7 @@ private fun diagramTextEditRect(
         } else {
             val label = edge.labels.firstOrNull { it.position == target.position }
             val anchor = if (label != null) {
-                edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id))
+                edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id))
             } else {
                 route[route.size / 2]
             }

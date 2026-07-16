@@ -17,8 +17,10 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.TableNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -185,7 +187,7 @@ fun hitTest(
     for (edge in edgesTopDown) {
         val route = edgeRoute(graph, edge, routes) ?: continue
         edge.labels.forEach { label ->
-            val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id))
+            val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id))
             val halfWidth = maxOf(label.label.text.length * 3.5, 12.0) + 4.0
             val halfHeight = 9.0
             if (abs(point.x - anchor.x) <= halfWidth && abs(point.y - anchor.y) <= halfHeight) {
@@ -280,15 +282,17 @@ private val MIDDLE_LABEL_FRACTIONS = listOf(0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0
  * for SOURCE / MIDDLE / TARGET, lifted [EDGE_LABEL_LINE_GAP] perpendicular to the line so the
  * connector does not cross the text, plus the label's manual offset (drag override) on top.
  *
- * With [otherRoutes] given, an undragged MIDDLE label slides along the route away from
- * crossings with those routes (dense corridors), staying as close to the center as a clear
- * spot allows. Every surface reading the anchor (renderer, overlays, hit-test) must pass
- * the same context or labels and their hit areas drift apart.
+ * With [otherRoutes] and/or [avoidRects] given, an undragged MIDDLE label slides along the
+ * route away from crossings with those routes (dense corridors) and away from foreign node
+ * bodies, staying as close to the center as a clear spot allows. Every surface reading the
+ * anchor (renderer, overlays, hit-test) must pass the same context or labels and their hit
+ * areas drift apart.
  */
 fun edgeLabelAnchorPoint(
     route: List<DiagramPoint>,
     label: DiagramEdgeLabel,
     otherRoutes: List<List<DiagramPoint>> = emptyList(),
+    avoidRects: List<DiagramRect> = emptyList(),
 ): DiagramPoint {
     selfLoopTopAnchor(route)?.let { top ->
         // A self-message loop (see routeMessage): the caption reads *above* the loop's top
@@ -302,7 +306,7 @@ fun edgeLabelAnchorPoint(
     }
     val fraction = when (label.position) {
         DiagramEdgeLabelPosition.SOURCE -> 0.1
-        DiagramEdgeLabelPosition.MIDDLE -> middleLabelFraction(route, label, otherRoutes)
+        DiagramEdgeLabelPosition.MIDDLE -> middleLabelFraction(route, label, otherRoutes, avoidRects)
         DiagramEdgeLabelPosition.TARGET -> 0.9
     }
     val base = pointAlongPolyline(route, fraction)
@@ -311,6 +315,26 @@ fun edgeLabelAnchorPoint(
         base.x + lift.x + label.offsetX,
         base.y + lift.y + label.offsetY,
     )
+}
+
+/**
+ * Node bodies an edge label must stay out of — every visible node that participates in
+ * an edge, except this edge's own endpoints (decorative containers with no connections
+ * would otherwise swallow every candidate). The companion context to
+ * [edgeLabelObstacleRoutes] for [edgeLabelAnchorPoint].
+ */
+fun edgeLabelAvoidRects(graph: DiagramGraph, edgeId: DiagramEdgeId): List<DiagramRect> {
+    val edge = graph.edges.firstOrNull { it.id == edgeId } ?: return emptyList()
+    val own = setOfNotNull(edge.source.attachedNodeId, edge.target.attachedNodeId)
+    val connected = buildSet {
+        for (candidate in graph.edges) {
+            candidate.source.attachedNodeId?.let(::add)
+            candidate.target.attachedNodeId?.let(::add)
+        }
+    }
+    return graph.nodes
+        .filter { it.visible && it.id in connected && it.id !in own }
+        .map { it.bounds }
 }
 
 /**
@@ -330,27 +354,51 @@ fun edgeLabelObstacleRoutes(
     .mapNotNull { routes[it.id] }
 
 /**
- * The first candidate fraction whose on-line point clears every crossing with
- * [otherRoutes] by [EDGE_LABEL_CROSSING_CLEARANCE]; when none does, the candidate with
- * the largest clearance. A manually dragged label always stays at the center fraction —
- * the user's offset is relative to it.
+ * The first candidate fraction whose lifted anchor clears every crossing with
+ * [otherRoutes] by [EDGE_LABEL_CROSSING_CLEARANCE] and stays outside every [avoidRects]
+ * body; when none does, the candidate scoring best (rect-clear outranks crossing
+ * clearance, ties keep the centermost). A manually dragged label always stays at the
+ * center fraction — the user's offset is relative to it.
  */
 private fun middleLabelFraction(
     route: List<DiagramPoint>,
     label: DiagramEdgeLabel,
     otherRoutes: List<List<DiagramPoint>>,
+    avoidRects: List<DiagramRect>,
 ): Double {
-    if (label.offsetX != 0.0 || label.offsetY != 0.0 || otherRoutes.isEmpty()) return 0.5
+    if (label.offsetX != 0.0 || label.offsetY != 0.0) return 0.5
+    if (otherRoutes.isEmpty() && avoidRects.isEmpty()) return 0.5
     val crossings = routeCrossings(route, otherRoutes)
-    if (crossings.isEmpty()) return 0.5
+    if (crossings.isEmpty() && avoidRects.isEmpty()) return 0.5
+    val halfWidth = label.label.text.length * 3.5
+    val halfHeight = 8.0
+
+    fun anchorAt(fraction: Double): DiagramPoint {
+        val base = pointAlongPolyline(route, fraction)
+        val lift = edgeLabelLift(route, fraction)
+        return DiagramPoint(base.x + lift.x, base.y + lift.y)
+    }
+
+    fun clearOfRects(point: DiagramPoint): Boolean = avoidRects.none { rect ->
+        point.x + halfWidth > rect.left + 1.0 && point.x - halfWidth < rect.right - 1.0 &&
+            point.y + halfHeight > rect.top + 1.0 && point.y - halfHeight < rect.bottom - 1.0
+    }
+
     var bestFraction = 0.5
-    var bestClearance = -1.0
+    var bestScore = Double.NEGATIVE_INFINITY
     for (candidate in MIDDLE_LABEL_FRACTIONS) {
-        val point = pointAlongPolyline(route, candidate)
-        val clearance = crossings.minOf { distance(it, point) }
-        if (clearance >= EDGE_LABEL_CROSSING_CLEARANCE) return candidate
-        if (clearance > bestClearance) {
-            bestClearance = clearance
+        val point = anchorAt(candidate)
+        val rectClear = clearOfRects(point)
+        val clearance = if (crossings.isEmpty()) {
+            EDGE_LABEL_CROSSING_CLEARANCE
+        } else {
+            crossings.minOf { distance(it, point) }
+        }
+        if (rectClear && clearance >= EDGE_LABEL_CROSSING_CLEARANCE) return candidate
+        val score = (if (rectClear) 1000.0 else 0.0) +
+            minOf(clearance, EDGE_LABEL_CROSSING_CLEARANCE)
+        if (score > bestScore) {
+            bestScore = score
             bestFraction = candidate
         }
     }

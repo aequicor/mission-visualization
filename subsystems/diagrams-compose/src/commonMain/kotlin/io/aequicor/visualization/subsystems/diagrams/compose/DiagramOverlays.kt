@@ -18,6 +18,7 @@ import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlineResizeHandlePoints
 import io.aequicor.visualization.subsystems.diagrams.hittest.connectionPorts
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
@@ -280,7 +281,7 @@ fun DiagramWaypointOverlay(
                 )
 
                 edge.labels.forEach { label ->
-                    val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, id))
+                    val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, id), edgeLabelAvoidRects(graph, id))
                     drawLabelHandle(
                         Offset(anchor.x.toFloat(), anchor.y.toFloat()),
                         style,

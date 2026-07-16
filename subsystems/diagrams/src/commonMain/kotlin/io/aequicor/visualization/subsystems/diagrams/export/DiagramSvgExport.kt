@@ -5,6 +5,7 @@ import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadsForRelation
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
@@ -120,6 +121,11 @@ fun diagramToSvg(
                 emptyList()
             } else {
                 edgeLabelObstacleRoutes(graph, routePoints, edge.id)
+            },
+            labelAvoidRects = if (edge.labels.isEmpty()) {
+                emptyList()
+            } else {
+                edgeLabelAvoidRects(graph, edge.id)
             },
         )
         drawnRoutes += route
@@ -384,6 +390,7 @@ private fun StringBuilder.appendEdge(
     options: SvgExportOptions,
     jumpOverRoutes: List<RoutedEdge> = emptyList(),
     labelObstacleRoutes: List<List<DiagramPoint>> = emptyList(),
+    labelAvoidRects: List<DiagramRect> = emptyList(),
 ) {
     val notation = arrowheadsForRelation(edge.relation)
     val sourceHead = edge.sourceArrowhead.takeIf { it.kind != DiagramArrowheadKind.NONE } ?: notation.source
@@ -418,7 +425,7 @@ private fun StringBuilder.appendEdge(
     for (edgeLabel in edge.labels) {
         // Shared anchor logic (self-loop caption, perpendicular lift, crossing slide,
         // manual offsets) — the export must match the on-canvas label placement.
-        val anchor = edgeLabelAnchorPoint(points, edgeLabel, labelObstacleRoutes)
+        val anchor = edgeLabelAnchorPoint(points, edgeLabel, labelObstacleRoutes, labelAvoidRects)
         svgText(
             x = anchor.x,
             y = anchor.y,

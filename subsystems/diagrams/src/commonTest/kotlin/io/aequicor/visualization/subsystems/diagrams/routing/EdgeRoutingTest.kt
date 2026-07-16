@@ -766,8 +766,9 @@ class EdgeRoutingTest {
             )
         }
         val routed = routeEdge(graph, graph.edges.single())
+        // CURVED routes like ORTHOGONAL (obstacle-aware bends) and is rendered as a
+        // spline through the route points; the manual waypoint stays mandatory.
         assertTrue(routed.isCurve)
-        assertEquals(3, routed.points.size)
         assertTrue(routed.points.any { it.nearly(waypoint) })
     }
 

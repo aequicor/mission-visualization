@@ -19,6 +19,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
+import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import kotlin.math.PI
@@ -46,7 +47,9 @@ fun routeEdge(
     options: RoutingOptions = RoutingOptions.Default,
 ): RoutedEdge = when (edge.routing) {
     DiagramRoutingStyle.STRAIGHT -> routeThroughPoints(graph, edge, curve = false)
-    DiagramRoutingStyle.CURVED -> routeThroughPoints(graph, edge, curve = true)
+    // CURVED is a smoothed obstacle-aware route (draw.io semantics): the orthogonal
+    // pipeline plans anchors and dodges nodes, the renderer splines through the bends.
+    DiagramRoutingStyle.CURVED -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
     DiagramRoutingStyle.ORTHOGONAL -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
     DiagramRoutingStyle.SIMPLE -> routeOrthogonal(graph, edge, options, avoidObstacles = false)
     DiagramRoutingStyle.ISOMETRIC -> routeIsometric(graph, edge)
@@ -359,18 +362,19 @@ private fun legObstacles(
 
 // --- Floating-pair anchor planning ----------------------------------------------------
 
-private data class PlannedEnds(val source: ResolvedEnd, val target: ResolvedEnd)
+private data class PlannedEnds(val source: ResolvedEnd?, val target: ResolvedEnd?)
 
 /**
- * Joint anchor planning for orthogonal edges with floating anchors on both ends and no
- * manual waypoints: instead of resolving each end against the other's center (which lands
- * anchors on node corners and picks sides facing adjacent nodes), the pair of exit sides
- * is chosen together across the wider inter-node gap, anchors sit on the midpoint of the
- * nodes' projection overlap (a straight segment whenever the corridor allows), and all
- * planned attachments sharing a node side are spread apart so no two edges leave or enter
- * through the same point. Returns `null` when the plan does not apply (waypoints, ports,
- * free points, self-loops, or bounds overlapping on both axes) — callers then fall back
- * to per-end resolution.
+ * Joint anchor planning for orthogonal-family edges with floating anchors and no manual
+ * waypoints: instead of resolving each floating end against the other's center (which
+ * lands anchors on node corners and picks sides facing adjacent nodes), the exit side is
+ * chosen across the wider inter-node gap, anchors sit on the midpoint of the nodes'
+ * projection overlap (a straight segment whenever the corridor allows), and all planned
+ * attachments sharing a node side are spread apart so no two edges leave or enter
+ * through the same point. An edge with one floating end (the other on a fixed port)
+ * gets a plan for the floating end only. Returns `null` when the plan does not apply
+ * (waypoints, free points, self-loops, or bounds overlapping on both axes) — callers
+ * fall back to per-end resolution for any unplanned end.
  */
 private fun planFloatingEnds(
     graph: DiagramGraph,
@@ -378,18 +382,26 @@ private fun planFloatingEnds(
     options: RoutingOptions,
 ): PlannedEnds? {
     if (edge.waypoints.isNotEmpty()) return null
-    if (edge.source !is DiagramEndpoint.FloatingAnchor) return null
-    if (edge.target !is DiagramEndpoint.FloatingAnchor) return null
-    val sourceNode = endpointNode(graph, edge.source)!!
-    val targetNode = endpointNode(graph, edge.target)!!
-    if (sourceNode.id == targetNode.id) return null
+    val sourceNode = edge.source.attachedNodeId?.let(graph::nodeById)
+    val targetNode = edge.target.attachedNodeId?.let(graph::nodeById)
+    if (sourceNode == null || targetNode == null || sourceNode.id == targetNode.id) return null
     val sides = facingSides(sourceNode.bounds, targetNode.bounds) ?: return null
-    val sourceAnchor = plannedAnchor(graph, options, sourceNode, sides.sourceSide, targetNode, edge.id)
-    val targetAnchor = plannedAnchor(graph, options, targetNode, sides.targetSide, sourceNode, edge.id)
-    return PlannedEnds(
-        ResolvedEnd(sourceAnchor, sourceNode, sides.sourceSide),
-        ResolvedEnd(targetAnchor, targetNode, sides.targetSide),
-    )
+    val source = (edge.source as? DiagramEndpoint.FloatingAnchor)?.let {
+        ResolvedEnd(
+            plannedAnchor(graph, options, sourceNode, sides.sourceSide, targetNode, edge.id),
+            sourceNode,
+            sides.sourceSide,
+        )
+    }
+    val target = (edge.target as? DiagramEndpoint.FloatingAnchor)?.let {
+        ResolvedEnd(
+            plannedAnchor(graph, options, targetNode, sides.targetSide, sourceNode, edge.id),
+            targetNode,
+            sides.targetSide,
+        )
+    }
+    if (source == null && target == null) return null
+    return PlannedEnds(source, target)
 }
 
 private data class FacingSides(val sourceSide: DiagramNodeSide, val targetSide: DiagramNodeSide)
@@ -456,9 +468,11 @@ private data class SideAttachment(val edgeId: DiagramEdgeId, val position: Doubl
 
 /**
  * Deterministic attachment layout of one node side: every plannable edge of the graph
- * attaching to `(node, side)` gets its ideal coordinate (projection-overlap midpoint,
- * else the other node's center, clamped inside the side with a corner inset), then the
- * sorted ideals are spread to at least [RoutingOptions.anchorSeparation] apart.
+ * attaching to `(node, side)` through a floating end gets its ideal coordinate
+ * (projection-overlap midpoint, else the other node's center, clamped inside the side
+ * with a corner inset), then the sorted ideals are spread to at least
+ * [RoutingOptions.anchorSeparation] apart. Edges whose other end sits on a fixed port
+ * take part too — their floating end must not stack on the planned ones.
  */
 private fun sideAttachments(
     graph: DiagramGraph,
@@ -474,19 +488,23 @@ private fun sideAttachments(
         if (candidate.waypoints.isNotEmpty()) continue
         if (candidate.routing != DiagramRoutingStyle.ORTHOGONAL &&
             candidate.routing != DiagramRoutingStyle.SIMPLE &&
-            candidate.routing != DiagramRoutingStyle.ENTITY_RELATION
+            candidate.routing != DiagramRoutingStyle.ENTITY_RELATION &&
+            candidate.routing != DiagramRoutingStyle.CURVED
         ) {
             continue
         }
-        val candidateSource = candidate.source as? DiagramEndpoint.FloatingAnchor ?: continue
-        val candidateTarget = candidate.target as? DiagramEndpoint.FloatingAnchor ?: continue
-        if (candidateSource.nodeId == candidateTarget.nodeId) continue
-        val other = when (node.id) {
-            candidateSource.nodeId -> graph.nodeById(candidateTarget.nodeId) ?: continue
-            candidateTarget.nodeId -> graph.nodeById(candidateSource.nodeId) ?: continue
+        val sourceNodeId = candidate.source.attachedNodeId
+        val targetNodeId = candidate.target.attachedNodeId
+        if (sourceNodeId == null || targetNodeId == null || sourceNodeId == targetNodeId) continue
+        val isSourceEnd = when (node.id) {
+            sourceNodeId -> true
+            targetNodeId -> false
             else -> continue
         }
-        val candidateSide = if (node.id == candidateSource.nodeId) {
+        val thisEnd = if (isSourceEnd) candidate.source else candidate.target
+        if (thisEnd !is DiagramEndpoint.FloatingAnchor) continue
+        val other = graph.nodeById(if (isSourceEnd) targetNodeId else sourceNodeId) ?: continue
+        val candidateSide = if (isSourceEnd) {
             facingSides(node.bounds, other.bounds)?.sourceSide
         } else {
             facingSides(other.bounds, node.bounds)?.targetSide
