@@ -10,13 +10,15 @@ import kotlin.math.sqrt
 private const val MAX_BARYCENTER_ROUNDS = 8
 
 /**
- * Layered (Sugiyama-lite) auto-layout for class/component/deployment/flowchart diagrams.
+ * Layered (Sugiyama) auto-layout for class/component/deployment/flowchart diagrams.
  *
  * Pipeline: undirected connected-component split → per component: DFS cycle breaking →
- * longest-path layer assignment → barycenter ordering inside layers (seeded by BFS
- * discovery order, down/up sweeps until stable) → coordinates with even gaps, every
- * layer centered on the common axis → shelf-packing of the component blocks, so
- * disconnected clusters and isolated nodes do not inflate layer 0 of the main flow.
+ * longest-path layer assignment → dummy vertices for edges spanning two or more layers
+ * (they order like nodes and reserve a cross-axis corridor for the edge) → barycenter
+ * ordering inside layers (seeded by BFS discovery order, down/up sweeps until stable) →
+ * coordinates with even gaps, every layer centered on the common axis → shelf-packing
+ * of the component blocks, so disconnected clusters and isolated nodes do not inflate
+ * layer 0 of the main flow.
  *
  * Only node positions change; edges are untouched (the router re-routes them).
  * Deterministic: identical input always yields the identical output.
@@ -46,16 +48,22 @@ internal fun layeredPositions(
         val crossExtent: Double,
     )
 
+    // Extents are measured over ALL slots — a trailing dummy corridor is part of the
+    // component's block, otherwise the next packed component would sit in the lane
+    // reserved for a long edge.
     val placed = components.map { component ->
-        val positions = componentPositions(nodesById, component, config)
+        val layout = layoutComponent(nodesById, component, config)
         var mainMax = 0.0
         var crossMax = 0.0
-        for ((id, point) in positions) {
-            val node = nodesById.getValue(id)
-            mainMax = maxOf(mainMax, if (horizontalFlow) point.x + node.width else point.y + node.height)
-            crossMax = maxOf(crossMax, if (horizontalFlow) point.y + node.height else point.x + node.width)
+        for (slot in layout.graph.slots) {
+            val point = layout.positions.getValue(slot.key)
+            val node = slot.realId?.let(nodesById::getValue)
+            val width = node?.width ?: if (horizontalFlow) 0.0 else config.dummySize
+            val height = node?.height ?: if (horizontalFlow) config.dummySize else 0.0
+            mainMax = maxOf(mainMax, if (horizontalFlow) point.x + width else point.y + height)
+            crossMax = maxOf(crossMax, if (horizontalFlow) point.y + height else point.x + width)
         }
-        PlacedComponent(positions, mainMax, crossMax)
+        PlacedComponent(realPositions(layout), mainMax, crossMax)
     }
 
     // Shelf packing: component blocks flow across the cross axis and wrap into a new band
@@ -134,39 +142,85 @@ private fun componentPositions(
     nodesById: Map<DiagramNodeId, DiagramNode>,
     adjacency: ScopeAdjacency,
     config: DiagramLayoutConfig,
-): Map<DiagramNodeId, DiagramPoint> {
+): Map<DiagramNodeId, DiagramPoint> = realPositions(layoutComponent(nodesById, adjacency, config))
+
+/** Real-node positions of a slot-level layout (dummies dropped). */
+private fun realPositions(layout: ComponentLayout): Map<DiagramNodeId, DiagramPoint> = buildMap {
+    for (slot in layout.graph.slots) {
+        val id = slot.realId ?: continue
+        put(id, layout.positions.getValue(slot.key))
+    }
+}
+
+/**
+ * Slot-level layered layout of one connected component: longest-path layering, dummy
+ * insertion for long edges, BFS-seeded barycenter ordering, and coordinates. Dummies
+ * are part of the returned positions — the seam tests use to see reserved corridors.
+ */
+internal fun layoutComponent(
+    nodesById: Map<DiagramNodeId, DiagramNode>,
+    adjacency: ScopeAdjacency,
+    config: DiagramLayoutConfig,
+): ComponentLayout {
     val links = adjacency.acyclicLinks()
     val predecessors = links.groupBy({ it.to }, { it.from })
-    val successors = links.groupBy({ it.from }, { it.to })
+    val layerAssignments = assignLongestPathLayers(adjacency.members, predecessors)
+    val layered = buildLayeredGraph(adjacency.members, links, layerAssignments)
+    seedLayersByBfs(layered)
+    orderLayersByBarycenter(layered)
+    return ComponentLayout(layered, slotPositions(layered, nodesById, config))
+}
 
-    // Longest-path layering: sources at layer 0, layer(n) = max(layer(pred)) + 1.
-    val layerAssignments = mutableMapOf<DiagramNodeId, Int>()
-    fun layerOf(id: DiagramNodeId): Int = layerAssignments.getOrPut(id) {
-        predecessors[id].orEmpty().maxOfOrNull { layerOf(it) + 1 } ?: 0
+/**
+ * Reorders every layer by BFS discovery over the down links from the sources
+ * (key-sorted, neighbors visited in key order): connected runs start out near each
+ * other instead of scattered by id, giving the barycenter sweeps a better start.
+ */
+private fun seedLayersByBfs(layered: LayeredGraph) {
+    val allKeys = layered.slots.map { it.key }
+    val order = mutableListOf<String>()
+    val enqueued = mutableSetOf<String>()
+    val queue = ArrayDeque<String>()
+    for (key in allKeys.sorted()) {
+        if (layered.up[key].orEmpty().isEmpty() && enqueued.add(key)) queue += key
     }
-    adjacency.members.forEach { layerOf(it) }
-
-    val layerCount = layerAssignments.values.max() + 1
-    val layers = List(layerCount) { mutableListOf<DiagramNodeId>() }
-    for (member in bfsSeedOrder(adjacency.members, predecessors, successors)) {
-        layers[layerAssignments.getValue(member)] += member
+    while (queue.isNotEmpty()) {
+        val current = queue.removeFirst()
+        order += current
+        for (next in layered.down[current].orEmpty().sorted()) {
+            if (enqueued.add(next)) queue += next
+        }
     }
+    // Safety net for slots not reached from a source (cannot happen after cycle
+    // breaking, which leaves every component with at least one source).
+    for (key in allKeys) {
+        if (enqueued.add(key)) order += key
+    }
+    val rank = order.withIndex().associate { (index, key) -> key to index }
+    for (layer in layered.layers) layer.sortBy { rank.getValue(it.key) }
+}
 
-    // Barycenter ordering: nodes chase the mean position of their neighbors; nodes
-    // without neighbors keep their slot. Stable sort keeps ties deterministic.
-    val indexOf = mutableMapOf<DiagramNodeId, Int>()
-    fun reindex(layer: MutableList<DiagramNodeId>) {
-        layer.forEachIndexed { index, id -> indexOf[id] = index }
+/**
+ * Barycenter ordering: slots (real and dummy alike) chase the mean position of their
+ * neighbors; slots without neighbors keep their place. Stable sort keeps ties
+ * deterministic; down/up sweep rounds repeat until the orders stop changing.
+ */
+private fun orderLayersByBarycenter(layered: LayeredGraph) {
+    val layers = layered.layers
+    val layerCount = layers.size
+    val indexOf = mutableMapOf<String, Int>()
+    fun reindex(layer: MutableList<LayerSlot>) {
+        layer.forEachIndexed { index, slot -> indexOf[slot.key] = index }
     }
     layers.forEach { reindex(it) }
 
-    fun sweep(neighborsOf: Map<DiagramNodeId, List<DiagramNodeId>>, layerOrder: IntProgression) {
+    fun sweep(neighborsOf: Map<String, List<String>>, layerOrder: IntProgression) {
         for (layerIndex in layerOrder) {
             val layer = layers[layerIndex]
-            val sorted = layer.sortedBy { id ->
-                val neighbors = neighborsOf[id].orEmpty()
+            val sorted = layer.sortedBy { slot ->
+                val neighbors = neighborsOf[slot.key].orEmpty()
                 if (neighbors.isEmpty()) {
-                    indexOf.getValue(id).toDouble()
+                    indexOf.getValue(slot.key).toDouble()
                 } else {
                     neighbors.sumOf { indexOf.getValue(it).toDouble() } / neighbors.size
                 }
@@ -181,72 +235,55 @@ private fun componentPositions(
     var stable = false
     while (!stable && round < MAX_BARYCENTER_ROUNDS) {
         val before = layers.map { it.toList() }
-        sweep(predecessors, 1 until layerCount)
-        sweep(successors, (layerCount - 2) downTo 0)
+        sweep(layered.up, 1 until layerCount)
+        sweep(layered.down, (layerCount - 2) downTo 0)
         stable = layers.map { it.toList() } == before
         round++
     }
+}
 
-    // Coordinates: layers advance along the flow axis, nodes spread across it with
-    // even gaps; each layer (and each node inside its layer band) is centered.
+/**
+ * Coordinates: layers advance along the flow axis, slots spread across it with even
+ * gaps; each layer (and each real node inside its layer band) is centered. A dummy
+ * occupies [DiagramLayoutConfig.dummySize] across the flow and nothing along it.
+ */
+private fun slotPositions(
+    layered: LayeredGraph,
+    nodesById: Map<DiagramNodeId, DiagramNode>,
+    config: DiagramLayoutConfig,
+): Map<String, DiagramPoint> {
     val horizontalFlow = config.direction == LayoutDirection.LEFT_RIGHT
-    fun mainExtent(node: DiagramNode): Double = if (horizontalFlow) node.width else node.height
-    fun crossExtent(node: DiagramNode): Double = if (horizontalFlow) node.height else node.width
+    fun mainExtent(slot: LayerSlot): Double = slot.realId?.let {
+        val node = nodesById.getValue(it)
+        if (horizontalFlow) node.width else node.height
+    } ?: 0.0
 
-    val layerMainExtents = layers.map { layer ->
-        layer.maxOf { mainExtent(nodesById.getValue(it)) }
-    }
+    fun crossExtent(slot: LayerSlot): Double = slot.realId?.let {
+        val node = nodesById.getValue(it)
+        if (horizontalFlow) node.height else node.width
+    } ?: config.dummySize
+
+    val layers = layered.layers
+    val layerMainExtents = layers.map { layer -> layer.maxOf(::mainExtent) }
     val layerCrossTotals = layers.map { layer ->
-        layer.sumOf { crossExtent(nodesById.getValue(it)) } + config.nodeGap * (layer.size - 1)
+        layer.sumOf(::crossExtent) + config.nodeGap * (layer.size - 1)
     }
     val maxCrossTotal = layerCrossTotals.max()
 
-    val positions = mutableMapOf<DiagramNodeId, DiagramPoint>()
+    val positions = mutableMapOf<String, DiagramPoint>()
     var main = 0.0
     layers.forEachIndexed { layerIndex, layer ->
         var cross = (maxCrossTotal - layerCrossTotals[layerIndex]) / 2.0
-        for (id in layer) {
-            val node = nodesById.getValue(id)
-            val nodeMain = main + (layerMainExtents[layerIndex] - mainExtent(node)) / 2.0
-            positions[id] = if (horizontalFlow) {
-                DiagramPoint(x = nodeMain, y = cross)
+        for (slot in layer) {
+            val slotMain = main + (layerMainExtents[layerIndex] - mainExtent(slot)) / 2.0
+            positions[slot.key] = if (horizontalFlow) {
+                DiagramPoint(x = slotMain, y = cross)
             } else {
-                DiagramPoint(x = cross, y = nodeMain)
+                DiagramPoint(x = cross, y = slotMain)
             }
-            cross += crossExtent(node) + config.nodeGap
+            cross += crossExtent(slot) + config.nodeGap
         }
         main += layerMainExtents[layerIndex] + config.layerGap
     }
     return positions
-}
-
-/**
- * BFS discovery order over the acyclic links from the component's sources (id-sorted,
- * successors visited in id order): seeds each layer so connected runs start out near
- * each other instead of scattered by id, giving the barycenter sweeps a better start.
- */
-private fun bfsSeedOrder(
-    members: List<DiagramNodeId>,
-    predecessors: Map<DiagramNodeId, List<DiagramNodeId>>,
-    successors: Map<DiagramNodeId, List<DiagramNodeId>>,
-): List<DiagramNodeId> {
-    val order = mutableListOf<DiagramNodeId>()
-    val enqueued = mutableSetOf<DiagramNodeId>()
-    val queue = ArrayDeque<DiagramNodeId>()
-    for (member in members) {
-        if (predecessors[member].orEmpty().isEmpty() && enqueued.add(member)) queue += member
-    }
-    while (queue.isNotEmpty()) {
-        val current = queue.removeFirst()
-        order += current
-        for (next in successors[current].orEmpty().sortedBy { it.value }) {
-            if (enqueued.add(next)) queue += next
-        }
-    }
-    // Safety net for members not reached from a source (cannot happen after cycle
-    // breaking, which leaves every component with at least one source).
-    for (member in members) {
-        if (enqueued.add(member)) order += member
-    }
-    return order
 }

@@ -27,12 +27,15 @@ enum class LayoutDirection {
  * @param layerGap gap between consecutive layers/levels along the flow direction.
  * @param nodeGap gap between neighboring nodes within a layer/level.
  * @param containerPadding inset from a container's top-left corner to its laid-out children.
+ * @param dummySize cross-axis extent reserved by each dummy vertex of a long edge
+ *   (an edge spanning two or more layers) — the corridor the edge runs through.
  */
 data class DiagramLayoutConfig(
     val direction: LayoutDirection = LayoutDirection.TOP_DOWN,
     val layerGap: Double = 80.0,
     val nodeGap: Double = 40.0,
     val containerPadding: Double = 24.0,
+    val dummySize: Double = 12.0,
 ) {
     init {
         require(layerGap >= 0.0) { "layerGap must be >= 0, got $layerGap" }
@@ -40,6 +43,7 @@ data class DiagramLayoutConfig(
         require(containerPadding >= 0.0) {
             "containerPadding must be >= 0, got $containerPadding"
         }
+        require(dummySize >= 0.0) { "dummySize must be >= 0, got $dummySize" }
     }
 
     companion object {
