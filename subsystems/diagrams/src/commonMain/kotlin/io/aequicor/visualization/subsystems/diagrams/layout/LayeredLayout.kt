@@ -199,9 +199,10 @@ private fun seedLayersByBfs(layered: LayeredGraph) {
 }
 
 /**
- * Coordinates: layers advance along the flow axis, slots spread across it with even
- * gaps; each layer (and each real node inside its layer band) is centered. A dummy
- * occupies [DiagramLayoutConfig.dummySize] across the flow and nothing along it.
+ * Coordinates: layers advance along the flow axis; across it every slot takes its
+ * Brandes–Köpf center ([assignCrossCenters]) — aligned parent/child runs and long-edge
+ * dummy chains share one coordinate instead of stairstepping. A dummy occupies
+ * [DiagramLayoutConfig.dummySize] across the flow and nothing along it.
  */
 private fun slotPositions(
     layered: LayeredGraph,
@@ -219,25 +220,22 @@ private fun slotPositions(
         if (horizontalFlow) node.height else node.width
     } ?: config.dummySize
 
+    val centers = assignCrossCenters(layered, config.nodeGap, ::crossExtent)
+    val minEdge = layered.slots.minOf { centers.getValue(it.key) - crossExtent(it) / 2.0 }
+
     val layers = layered.layers
     val layerMainExtents = layers.map { layer -> layer.maxOf(::mainExtent) }
-    val layerCrossTotals = layers.map { layer ->
-        layer.sumOf(::crossExtent) + config.nodeGap * (layer.size - 1)
-    }
-    val maxCrossTotal = layerCrossTotals.max()
-
     val positions = mutableMapOf<String, DiagramPoint>()
     var main = 0.0
     layers.forEachIndexed { layerIndex, layer ->
-        var cross = (maxCrossTotal - layerCrossTotals[layerIndex]) / 2.0
         for (slot in layer) {
             val slotMain = main + (layerMainExtents[layerIndex] - mainExtent(slot)) / 2.0
+            val cross = centers.getValue(slot.key) - crossExtent(slot) / 2.0 - minEdge
             positions[slot.key] = if (horizontalFlow) {
                 DiagramPoint(x = slotMain, y = cross)
             } else {
                 DiagramPoint(x = cross, y = slotMain)
             }
-            cross += crossExtent(slot) + config.nodeGap
         }
         main += layerMainExtents[layerIndex] + config.layerGap
     }

@@ -190,9 +190,31 @@ class LayeredGraphTest {
             node("q", x = 500.0, y = 500.0)
         }
         val laid = layeredLayout(graph)
-        // Layer 1 is the widest: x1 (0..120), x2 (160..280), corridor (320..332).
-        // The slot-level extent is 332; q packs at 332 + nodeGap*2, clear of the lane.
-        assertEquals(412.0, laid.node("q").x)
+        // The packing offset must come from the SLOT-level extent (corridor included),
+        // not from real-node bounds — otherwise q lands inside the reserved lane.
+        val component = diagramGraph {
+            val m = node("m")
+            val z = node("z")
+            val x1 = node("x1")
+            val x2 = node("x2")
+            val t = node("t")
+            edge("m-x1", m, x1)
+            edge("m-x2", m, x2)
+            edge("x1-t", x1, t)
+            edge("x2-t", x2, t)
+            edge("z-t", z, t)
+        }
+        val config = DiagramLayoutConfig.Default
+        val layout = layoutComponent(
+            nodesById = component.nodes.associateBy { it.id },
+            adjacency = component.scopeAdjacency(null),
+            config = config,
+        )
+        val slotCrossMax = layout.graph.slots.maxOf { slot ->
+            val width = slot.realId?.let { component.nodeById(it)!!.width } ?: config.dummySize
+            layout.positions.getValue(slot.key).x + width
+        }
+        assertEquals(slotCrossMax + config.nodeGap * 2, laid.node("q").x)
     }
 
     @Test
