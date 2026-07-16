@@ -103,7 +103,7 @@ fun diagramToSvg(
             .append("\" fill=\"").append(background.toSvgHex()).append("\"/>\n")
     }
     for (node in nodes) svg.appendNode(node, options)
-    for (edge in edges) svg.appendEdge(edge, routedById.getValue(edge.id), allRouted, options)
+    for (edge in edges) svg.appendEdge(edge, routedById.getValue(edge.id), options)
     svg.append("</svg>")
     return svg.toString()
 }
@@ -352,7 +352,6 @@ private fun StringBuilder.appendActor(node: DiagramNode, payload: UmlActorNode, 
 private fun StringBuilder.appendEdge(
     edge: DiagramEdge,
     routedEdge: RoutedEdge,
-    allRouted: List<RoutedEdge>,
     options: SvgExportOptions,
 ) {
     val notation = arrowheadsForRelation(edge.relation)
@@ -372,8 +371,6 @@ private fun StringBuilder.appendEdge(
     val linePath = routedEdgeToPath(
         routed = routedEdge.copy(points = trimmedPoints),
         style = edge.style,
-        lineJumps = edge.lineJumps,
-        otherEdges = allRouted,
     )
     append("<path d=\"").append(linePath.toSvgPathData())
         .append("\" fill=\"none\" stroke=\"").append(stroke.toSvgHex())

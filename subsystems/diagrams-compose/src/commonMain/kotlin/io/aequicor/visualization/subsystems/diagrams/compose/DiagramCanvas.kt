@@ -133,7 +133,6 @@ fun DrawScope.drawDiagramGraph(
     measurer: ComposeTypographyMeasurer,
     flowPhase: Float? = null,
 ) {
-    val allRoutes = routes.values.toList()
     val knownLayers = graph.layers.map { it.id }.toSet()
 
     fun layerKey(id: DiagramLayerId?): DiagramLayerId? = id?.takeIf { it in knownLayers }
@@ -152,7 +151,7 @@ fun DrawScope.drawDiagramGraph(
         }
         edgesByLayer[layerId].orEmpty().forEach { edge: DiagramEdge ->
             val routed = routes[edge.id] ?: return@forEach
-            drawDiagramEdge(edge, routed, allRoutes, colors, measurer, flowPhase)
+            drawDiagramEdge(edge, routed, colors, measurer, flowPhase)
         }
     }
 }

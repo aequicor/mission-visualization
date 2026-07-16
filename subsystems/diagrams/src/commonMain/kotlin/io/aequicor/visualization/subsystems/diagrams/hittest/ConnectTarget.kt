@@ -3,15 +3,23 @@ package io.aequicor.visualization.subsystems.diagrams.hittest
 import io.aequicor.visualization.subsystems.diagrams.geometry.containsPoint
 import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
+import io.aequicor.visualization.subsystems.diagrams.geometry.outlineSideIntersection
 import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterIntersection
+import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.rayIntersections
 import kotlin.math.hypot
+import kotlin.math.round
+
+private const val GENERATED_PORT_STEPS = 10_000.0
+private const val CONNECT_EPSILON = 1e-9
 
 /**
  * The connection points offered while wiring an edge to [this] node: its declared [ports]
@@ -75,11 +83,12 @@ sealed interface ConnectTarget {
  * Resolves what a dragged edge end lands on at [pointer], coming from [from] (the source
  * anchor, used to pick the floating perimeter crossing). Picks the topmost visible, unlocked
  * node whose rendered body contains [pointer], other than [excludeNodeId]; snaps to that node's nearest
- * connection point when within [portSnapRadius] (a fixed pin), otherwise attaches floating on
- * its perimeter. When the pointer is just outside every node, connection points keep the same
- * magnetic radius so crossing a node boundary does not drop a pending draw.io-style snap.
- * With no node or connection point under the pointer, returns a free point. List order is
- * z-order.
+ * declared/grid connection point when within [portSnapRadius] (a fixed pin). Anywhere else
+ * within that radius of the rendered perimeter becomes an exact generated side port, so an
+ * endpoint can be placed continuously along the whole boundary instead of jumping between the
+ * 16 grid points. Deeper inside the node it remains a floating attachment. The same magnetic
+ * radius applies just outside a node. With no node or perimeter under the pointer, returns a
+ * free point. List order is z-order.
  */
 fun DiagramGraph.resolveConnectTarget(
     from: DiagramPoint,
@@ -95,11 +104,17 @@ fun DiagramGraph.resolveConnectTarget(
         node.nearestConnectionPort(pointer, portSnapRadius)?.let { (port, position) ->
             return ConnectTarget.Port(node.id, port, position)
         }
+        node.generatedPerimeterPort(pointer, portSnapRadius)?.let { (port, position) ->
+            return ConnectTarget.Port(node.id, port, position)
+        }
         return ConnectTarget.Floating(node.id, perimeterIntersection(node, from))
     }
 
     candidates.forEach { node ->
         node.nearestConnectionPort(pointer, portSnapRadius)?.let { (port, position) ->
+            return ConnectTarget.Port(node.id, port, position)
+        }
+        node.generatedPerimeterPort(pointer, portSnapRadius)?.let { (port, position) ->
             return ConnectTarget.Port(node.id, port, position)
         }
     }
@@ -114,3 +129,36 @@ private fun DiagramNode.nearestConnectionPort(
     .map { port -> port to anchorPoint(this, port) }
     .minByOrNull { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) }
     ?.takeIf { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) <= portSnapRadius }
+
+/**
+ * Creates a deterministic virtual port at the pointer's exact place on the rendered contour.
+ * The side offset is quantized to the four decimal places supported by SLM write-back, keeping
+ * the preview, persisted graph and a later reload at the same position.
+ */
+private fun DiagramNode.generatedPerimeterPort(
+    pointer: DiagramPoint,
+    snapRadius: Double,
+): Pair<DiagramPort, DiagramPoint>? {
+    if (width <= CONNECT_EPSILON || height <= CONNECT_EPSILON) return null
+    if (hypot(pointer.x - bounds.centerX, pointer.y - bounds.centerY) <= CONNECT_EPSILON) return null
+
+    val side = perimeterSide(this, pointer)
+    val sideCoordinate = when (side) {
+        DiagramNodeSide.TOP, DiagramNodeSide.BOTTOM -> pointer.x
+        DiagramNodeSide.LEFT, DiagramNodeSide.RIGHT -> pointer.y
+    }
+    val projected = outlineSideIntersection(side, sideCoordinate) ?: perimeterIntersection(this, pointer)
+    if (hypot(projected.x - pointer.x, projected.y - pointer.y) > snapRadius) return null
+
+    val rawOffset = when (side) {
+        DiagramNodeSide.TOP, DiagramNodeSide.BOTTOM -> (projected.x - x) / width
+        DiagramNodeSide.LEFT, DiagramNodeSide.RIGHT -> (projected.y - y) / height
+    }
+    val offsetStep = round(rawOffset.coerceIn(0.0, 1.0) * GENERATED_PORT_STEPS).toInt()
+    val offset = offsetStep / GENERATED_PORT_STEPS
+    val port = DiagramPort(
+        id = DiagramPortId("mv-auto-${side.name.lowercase()}-$offsetStep"),
+        anchor = DiagramPortAnchor.SideOffset(side, offset),
+    )
+    return port to anchorPoint(this, port)
+}

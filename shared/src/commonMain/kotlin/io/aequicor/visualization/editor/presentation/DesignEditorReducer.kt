@@ -505,12 +505,31 @@ internal fun reduceDesignEditorUnchecked(state: DesignEditorState, intent: Desig
         is DesignEditorIntent.DeleteAnnotation -> state.writeBackAnnotations(intent.screenFileName) {
             it.deleteAnnotation(intent.annotationId)
         }
+        is DesignEditorIntent.CancelAnnotationAuthoring -> state.writeBackAnnotations(intent.screenFileName) { layer ->
+            val draft = layer.annotations.firstOrNull { it.id == intent.annotationId }
+            if (
+                draft != null &&
+                draft.body.text.isBlank() &&
+                draft.image == null &&
+                draft.references.isEmpty()
+            ) {
+                layer.deleteAnnotation(intent.annotationId)
+            } else {
+                layer
+            }
+        }
 
-        // --- Annotations (view; the document state is untouched) ---
-        // Handled by reduceAnnotationWorkspace against EditorWorkspaceState.
+        // --- Annotations (view; the document itself is untouched) ---
+        // Activating annotation placement must also leave inline text edit: its full-canvas
+        // field otherwise owns the press before the annotation gesture surface can see it.
+        is DesignEditorIntent.SetAnnotationTool -> if (intent.tool == AnnotationTool.None) {
+            state
+        } else {
+            state.copy(editingTextNodeId = "")
+        }
+        // The remaining view state is handled by reduceAnnotationWorkspace.
         is DesignEditorIntent.ToggleAnnotationExpanded,
         is DesignEditorIntent.SelectAnnotation,
-        is DesignEditorIntent.SetAnnotationTool,
         -> state
 
         // --- Diagram canvas (see DiagramEditing.kt) ---

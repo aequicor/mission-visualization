@@ -2,7 +2,9 @@ package io.aequicor.visualization.subsystems.diagrams.hittest
 
 import io.aequicor.visualization.subsystems.diagrams.geometry.containsPoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
@@ -116,6 +118,49 @@ class ConnectTargetTest {
         assertEquals(a, target.nodeId)
         assertEquals("top-q1", target.port.id.value)
         assertEquals(DiagramPoint(25.0, 0.0), target.snapPoint)
+    }
+
+    @Test
+    fun resolvePinsAnyPositionAlongNodeBoundary() {
+        val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0) }
+        // 37% is deliberately between the predefined quarter and midpoint ports.
+        val target = graph.resolveConnectTarget(
+            from = DiagramPoint(37.0, -100.0),
+            pointer = DiagramPoint(37.0, 3.0),
+        )
+
+        assertTrue(target is ConnectTarget.Port)
+        target as ConnectTarget.Port
+        assertEquals(a, target.nodeId)
+        assertEquals("mv-auto-top-3700", target.port.id.value)
+        assertEquals(DiagramPortAnchor.SideOffset(DiagramNodeSide.TOP, 0.37), target.port.anchor)
+        assertEquals(DiagramPoint(37.0, 0.0), target.snapPoint)
+    }
+
+    @Test
+    fun resolvePinsAnyPositionAlongShapedBoundary() {
+        val graph = diagramGraph {
+            node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 300.0,
+                height = 180.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.ELLIPSE),
+            )
+        }
+        // (240, 18) lies on the ellipse and is not within the magnetic radius of a grid point.
+        val target = graph.resolveConnectTarget(
+            from = DiagramPoint(240.0, -100.0),
+            pointer = DiagramPoint(240.0, 18.0),
+        )
+
+        assertTrue(target is ConnectTarget.Port)
+        target as ConnectTarget.Port
+        assertEquals(DiagramPortAnchor.SideOffset(DiagramNodeSide.TOP, 0.8), target.port.anchor)
+        assertEquals(240.0, target.snapPoint.x, absoluteTolerance = 1e-6)
+        // The renderer's flattened ellipse stays within its documented 0.25-unit tolerance.
+        assertEquals(18.0, target.snapPoint.y, absoluteTolerance = 0.25)
     }
 
     @Test

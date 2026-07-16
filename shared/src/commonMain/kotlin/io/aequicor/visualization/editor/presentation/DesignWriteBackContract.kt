@@ -60,6 +60,7 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.AddAnnotationReference,
     is DesignEditorIntent.RemoveAnnotationReference,
     is DesignEditorIntent.DeleteAnnotation,
+    is DesignEditorIntent.CancelAnnotationAuthoring,
     -> DesignIntentPersistence.SourceManaged
 
     is DesignEditorIntent.UpdatePosition,

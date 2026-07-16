@@ -121,12 +121,13 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.runtime.CompositionLocalProvider
 import kotlin.time.TimeSource
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.domain.diagramAnnotationTargetId
 import io.aequicor.visualization.editor.presentation.AncestorRotation
 import io.aequicor.visualization.editor.presentation.AnnotationTool
 import io.aequicor.visualization.editor.presentation.InspectorTab
 import io.aequicor.visualization.editor.presentation.annotationAnchorForPress
 import io.aequicor.visualization.editor.presentation.annotationMoveCommitTarget
-import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
+import io.aequicor.visualization.editor.presentation.annotationTargetVisualBounds
 import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 import io.aequicor.visualization.subsystems.annotations.Annotation
@@ -849,7 +850,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                                 val up = waitForUpOrCancellation()
                                 if (up != null) {
                                     up.consume()
-                                    commitAddAnnotation(state, annotationKind, start, viewport, pressDocument, pressLayout)
+                                    commitAddAnnotation(state, annotationKind, start, viewport, pressDocument, pressLayout, zoomPx)
                                 }
                                 return@awaitEachGesture
                             }
@@ -1851,7 +1852,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                     // Anchors resolve through the node's effective (post-rotation) bounds, the
                     // same transform path the selection overlay uses — raw layout boxes are
                     // pre-rotation and would detach badges after any ancestor rotate.
-                    nodeBounds = { nodeId -> annotationNodeVisualBounds(layout, nodeId) },
+                    nodeBounds = { nodeId -> annotationTargetVisualBounds(layout, document, nodeId) },
                     transform = AnnotationViewTransform(viewport.zoom, viewport.panX, viewport.panY),
                     colors = annotationOverlayColors(),
                     onToggleExpand = { id -> state.dispatch(DesignEditorIntent.ToggleAnnotationExpanded(id)) },
@@ -1889,8 +1890,12 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             annotation = annotation,
                             screenFileName = annotationScreenFile,
                             state = state,
-                            nodeBounds = { nodeId -> annotationNodeVisualBounds(layout, nodeId) },
+                            nodeBounds = { nodeId -> annotationTargetVisualBounds(layout, document, nodeId) },
                             transform = AnnotationViewTransform(viewport.zoom, viewport.panX, viewport.panY),
+                            onCancel = {
+                                cancelAnnotationAuthoring(state, annotationScreenFile)
+                                runCatching { focusRequester.requestFocus() }
+                            },
                         )
                     }
             }
@@ -3177,6 +3182,8 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             when {
                 // A live drag takes priority: abort it (revert + no undo entry).
                 state.activeDrag -> state.requestCancelDrag()
+                state.workspace.annotationTool != AnnotationTool.None ||
+                    state.workspace.annotationComposerId.isNotBlank() -> cancelAnnotationAuthoring(state)
                 // Two-step exit (draw.io): first Escape clears the element selection, second leaves
                 // diagram edit mode entirely.
                 state.workspace.diagramEditNodeId.isNotBlank() &&
@@ -4651,6 +4658,27 @@ internal fun resolveDiagramElementSelection(
     return DiagramElementTarget(id, selection)
 }
 
+/**
+ * Annotation target at a canvas press. A diagram node/port resolves to the scoped inner
+ * node; empty diagram space and edges retain the regular design-node fallback.
+ */
+internal fun resolveAnnotationTargetAt(
+    layout: LayoutBox?,
+    document: DesignDocument?,
+    docX: Double,
+    docY: Double,
+    zoomPx: Float,
+    fallbackNodeId: String,
+): String {
+    val diagramTarget = resolveDiagramElementSelection(layout, document, docX, docY, zoomPx)
+    val elementId = diagramTarget?.selection?.elementIds?.singleOrNull()
+    return if (diagramTarget != null && elementId != null) {
+        diagramAnnotationTargetId(diagramTarget.diagramId, elementId)
+    } else {
+        fallbackNodeId
+    }
+}
+
 private fun nodesIn(
     layout: LayoutBox?,
     document: DesignDocument?,
@@ -5062,10 +5090,7 @@ private fun AnnotationToolFlyout(state: MissionEditorStateHolder) {
     }
     fun activate(tool: AnnotationTool) {
         state.dispatch(DesignEditorIntent.SetAnnotationTool(tool))
-        if (tool != AnnotationTool.None) {
-            lastKind = tool
-            state.updateWorkspace { it.copy(tool = EditorTool.Select) }
-        }
+        if (tool != AnnotationTool.None) lastKind = tool
     }
     Box {
         Box(
@@ -5345,6 +5370,7 @@ private fun AnnotationComposerOverlay(
     state: MissionEditorStateHolder,
     nodeBounds: (String) -> io.aequicor.visualization.subsystems.annotations.AnnotationRect?,
     transform: AnnotationViewTransform,
+    onCancel: () -> Unit,
 ) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current
@@ -5385,7 +5411,17 @@ private fun AnnotationComposerOverlay(
                         androidx.compose.foundation.text.BasicTextField(
                             value = draft,
                             onValueChange = { draft = it },
-                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                        onCancel()
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                },
                             textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.ink),
                             cursorBrush = SolidColor(colors.accent),
                         )
@@ -5466,6 +5502,30 @@ private fun commitAnnotationComposer(
     }
 }
 
+/** Escape from annotation authoring, including cleanup of an uncommitted empty marker. */
+private fun cancelAnnotationAuthoring(
+    state: MissionEditorStateHolder,
+    screenFileName: String? = null,
+) {
+    val design = state.designState
+    val annotationId = state.workspace.annotationComposerId
+    val composerScreen = annotationId.takeIf(String::isNotBlank)?.let { id ->
+        design.annotationLayers.entries.firstOrNull { (_, layer) ->
+            layer.annotations.any { annotation -> annotation.id == id }
+        }?.key
+    }
+    val targetScreen = screenFileName
+        ?: composerScreen
+        ?: design.screenFileNamesByPageId()[design.selectedPageId]
+        ?: ""
+    state.dispatch(
+        DesignEditorIntent.CancelAnnotationAuthoring(
+            screenFileName = targetScreen,
+            annotationId = annotationId,
+        ),
+    )
+}
+
 /**
  * Annotation-tool click: mints a note/issue on the current screen's review layer — on
  * the hit node (badge offset keeps it where clicked) or as a free point — then selects
@@ -5480,16 +5540,18 @@ private fun commitAddAnnotation(
     viewport: CanvasViewport,
     document: DesignDocument,
     layout: LayoutBox?,
+    zoomPx: Float,
 ) {
     val design = state.designState
     val screenFileName = design.screenFileNamesByPageId()[design.selectedPageId] ?: return
     val docX = viewport.toDocX(position.x)
     val docY = viewport.toDocY(position.y)
     val hitId = hitNode(layout, document, viewport, position)
+    val targetId = resolveAnnotationTargetAt(layout, document, docX, docY, zoomPx, hitId)
     // Visual (post-rotation) bounds: the anchor offset must live in the same space the
     // overlay re-applies it in, or the badge would drift on rotated nodes.
-    val hitBounds = annotationNodeVisualBounds(layout, hitId)
-    val anchor = annotationAnchorForPress(docX, docY, hitId, hitBounds)
+    val hitBounds = annotationTargetVisualBounds(layout, document, targetId)
+    val anchor = annotationAnchorForPress(docX, docY, targetId, hitBounds)
     val idsBefore = design.annotationLayers[screenFileName]?.annotations?.mapTo(mutableSetOf()) { it.id }.orEmpty()
     state.dispatch(DesignEditorIntent.AddAnnotation(screenFileName, anchor, kind))
     val createdId = state.designState.annotationLayers[screenFileName]?.annotations

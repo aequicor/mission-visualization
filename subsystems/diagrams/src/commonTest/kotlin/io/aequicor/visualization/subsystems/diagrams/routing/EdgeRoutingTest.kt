@@ -1,5 +1,6 @@
 package io.aequicor.visualization.subsystems.diagrams.routing
 
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
@@ -440,6 +441,173 @@ class EdgeRoutingTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun interiorSegmentIsNudgedAwayFromAnotherEdgesEndpointSegment() {
+        val endpointRoute = RoutedEdge(
+            edgeId = DiagramEdgeId("endpoint"),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(
+                DiagramPoint(0.0, 0.0),
+                DiagramPoint(100.0, 0.0),
+                DiagramPoint(100.0, 100.0),
+            ),
+        )
+        val crossingRoute = RoutedEdge(
+            edgeId = DiagramEdgeId("crossing"),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(
+                DiagramPoint(50.0, -50.0),
+                DiagramPoint(100.0, -50.0),
+                DiagramPoint(100.0, 50.0),
+                DiagramPoint(150.0, 50.0),
+            ),
+        )
+
+        val nudged = nudgeRoutedEdges(listOf(endpointRoute, crossingRoute))
+        val fixed = nudged.first { it.edgeId == endpointRoute.edgeId }
+        val moved = nudged.first { it.edgeId == crossingRoute.edgeId }
+
+        assertEquals(endpointRoute.points, fixed.points, "endpoint stubs must stay attached")
+        assertTrue(
+            abs(moved.points[1].x - 100.0) > 1e-6 && abs(moved.points[2].x - 100.0) > 1e-6,
+            "movable segment ${moved.points[1]} -> ${moved.points[2]} still overlaps the endpoint lane",
+        )
+        assertAxisAligned(moved.points)
+    }
+
+    @Test
+    fun authoredPortRoutesDoNotGrowDanglingAppendices() {
+        fun port(id: String, side: DiagramNodeSide, offset: Double): DiagramPort =
+            DiagramPort(DiagramPortId(id), DiagramPortAnchor.SideOffset(side, offset))
+
+        val graph = diagramGraph {
+            val configureEntrances = node(
+                "configure_entrances",
+                x = 70.0,
+                y = 480.0,
+                width = 300.0,
+                height = 110.0,
+                ports = listOf(
+                    port("entrance", DiagramNodeSide.BOTTOM, 0.5),
+                    port("senior", DiagramNodeSide.TOP, 0.8),
+                ),
+            )
+            node("fill_house_representatives", x = 970.0, y = 375.0, width = 280.0, height = 130.0)
+            node("propose_representative_change", x = 90.0, y = 1010.0, width = 320.0, height = 120.0)
+            node("approve_representative_change", x = 440.0, y = 1120.0, width = 440.0, height = 100.0)
+            val mkd = node(
+                "mkd",
+                x = 430.0,
+                y = 280.0,
+                width = 360.0,
+                height = 170.0,
+                ports = listOf(port("entrances", DiagramNodeSide.BOTTOM, 0.47)),
+            )
+            val chair = node(
+                "house_chair",
+                x = 240.0,
+                y = 520.0,
+                width = 300.0,
+                height = 150.0,
+                ports = listOf(
+                    port("filled", DiagramNodeSide.TOP, 0.9),
+                    port("approved_change", DiagramNodeSide.LEFT, 0.75),
+                ),
+            )
+            val council = node(
+                "house_council_member",
+                x = 690.0,
+                y = 550.0,
+                width = 300.0,
+                height = 150.0,
+                ports = listOf(port("approved_change", DiagramNodeSide.RIGHT, 0.5)),
+            )
+            val entrance = node(
+                "house_entrance",
+                x = 250.0,
+                y = 730.0,
+                width = 300.0,
+                height = 140.0,
+                ports = listOf(
+                    port("house", DiagramNodeSide.TOP, 0.9),
+                    port("configured", DiagramNodeSide.LEFT, 0.15),
+                    port("senior", DiagramNodeSide.RIGHT, 0.5),
+                ),
+            )
+            node("entrance_senior", x = 690.0, y = 730.0, width = 320.0, height = 140.0)
+            val change = node(
+                "representative_change",
+                x = 450.0,
+                y = 910.0,
+                width = 390.0,
+                height = 150.0,
+                ports = listOf(
+                    port("chair", DiagramNodeSide.LEFT, 0.35),
+                    port("council", DiagramNodeSide.RIGHT, 0.7),
+                ),
+            )
+
+            edge(
+                "mkd_has_entrances",
+                source = DiagramEndpoint.FixedPort(mkd, DiagramPortId("entrances")),
+                target = DiagramEndpoint.FixedPort(entrance, DiagramPortId("house")),
+                waypoints = listOf(DiagramPoint(600.0, 690.0), DiagramPoint(520.0, 690.0)),
+            )
+            edge(
+                "change_targets_chair",
+                source = DiagramEndpoint.FixedPort(change, DiagramPortId("chair")),
+                target = DiagramEndpoint.FixedPort(chair, DiagramPortId("approved_change")),
+                waypoints = listOf(DiagramPoint(210.0, 963.0), DiagramPoint(210.0, 633.0)),
+            )
+            edge(
+                "change_targets_council",
+                source = DiagramEndpoint.FixedPort(change, DiagramPortId("council")),
+                target = DiagramEndpoint.FixedPort(council, DiagramPortId("approved_change")),
+                // The first via has stale Y after the source node was resized. It is
+                // still the corner of the horizontal port leg and must not grow a tail.
+                waypoints = listOf(DiagramPoint(1060.0, 1023.5), DiagramPoint(1060.0, 625.0)),
+            )
+            edge(
+                "configure_entrances_changes_entrance",
+                source = DiagramEndpoint.FixedPort(configureEntrances, DiagramPortId("entrance")),
+                target = DiagramEndpoint.FixedPort(entrance, DiagramPortId("configured")),
+                waypoints = listOf(DiagramPoint(230.0, 700.0), DiagramPoint(230.0, 751.0)),
+            )
+        }
+
+        val routes = routeAllEdgesLenient(graph)
+        routes.values.forEach { route ->
+            assertAxisAligned(route.points)
+        }
+        assertEquals(
+            listOf(
+                DiagramPoint(599.2, 450.0),
+                DiagramPoint(599.2, 690.0),
+                DiagramPoint(520.0, 690.0),
+                DiagramPoint(520.0, 730.0),
+            ),
+            routes.getValue(DiagramEdgeId("mkd_has_entrances")).points,
+        )
+        assertEquals(
+            listOf(
+                DiagramPoint(450.0, 962.5),
+                DiagramPoint(210.0, 962.5),
+                DiagramPoint(210.0, 632.5),
+                DiagramPoint(240.0, 632.5),
+            ),
+            routes.getValue(DiagramEdgeId("change_targets_chair")).points,
+        )
+        assertEquals(
+            listOf(
+                DiagramPoint(840.0, 1015.0),
+                DiagramPoint(1060.0, 1015.0),
+                DiagramPoint(1060.0, 625.0),
+                DiagramPoint(990.0, 625.0),
+            ),
+            routes.getValue(DiagramEdgeId("change_targets_council")).points,
+        )
     }
 
     @Test

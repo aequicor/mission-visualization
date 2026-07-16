@@ -2,6 +2,7 @@ package io.aequicor.visualization.editor.domain
 
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.subsystems.annotations.AnnotatedNodeRef
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
@@ -53,6 +54,24 @@ class ExportIssuesPromptUseCase {
                             screenFileName = screenFileName,
                             bounds = AnnotationRect.fromSize(box.x, box.y, box.width, box.height),
                         )
+                    }
+                    val graph = (document.nodeById(nodeId)?.kind as? DesignNodeKind.Diagram)?.graph
+                    graph?.nodes?.forEach { element ->
+                        val targetId = diagramAnnotationTargetId(nodeId, element.id.value)
+                        if (targetId !in refs) {
+                            refs[targetId] = AnnotatedNodeRef(
+                                nodeId = "$nodeId/${element.id.value}",
+                                label = element.annotationTargetLabel() ?: element.id.value,
+                                type = element.annotationTargetType(),
+                                screenFileName = screenFileName,
+                                bounds = AnnotationRect.fromSize(
+                                    box.x + element.x,
+                                    box.y + element.y,
+                                    element.width,
+                                    element.height,
+                                ),
+                            )
+                        }
                     }
                 }
             }

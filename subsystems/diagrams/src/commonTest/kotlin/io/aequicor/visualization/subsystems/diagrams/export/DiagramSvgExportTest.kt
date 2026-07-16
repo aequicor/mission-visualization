@@ -1,10 +1,15 @@
 package io.aequicor.visualization.subsystems.diagrams.export
 
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
+import io.aequicor.visualization.subsystems.diagrams.model.LineJumpStyle
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlMember
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdges
 import io.aequicor.visualization.subsystems.diagrams.templates.diagramTemplates
 import kotlin.test.Test
@@ -86,6 +91,42 @@ class DiagramSvgExportTest {
         val graph = simpleGraph()
         val routed = routeAllEdges(graph)
         assertEquals(diagramToSvg(graph, routed), diagramToSvg(graph))
+    }
+
+    @Test
+    fun crossingsStayStraightEvenForLegacyJumpStyle() {
+        val graph = diagramGraph {
+            edge(
+                id = "horizontal",
+                source = DiagramEndpoint.FreePoint(0.0, 50.0),
+                target = DiagramEndpoint.FreePoint(100.0, 50.0),
+                routing = DiagramRoutingStyle.STRAIGHT,
+                lineJumps = LineJumpStyle.ARC,
+            )
+            edge(
+                id = "vertical",
+                source = DiagramEndpoint.FreePoint(50.0, 0.0),
+                target = DiagramEndpoint.FreePoint(50.0, 100.0),
+                routing = DiagramRoutingStyle.STRAIGHT,
+            )
+        }
+        val routes = listOf(
+            RoutedEdge(
+                DiagramEdgeId("horizontal"),
+                DiagramRoutingStyle.STRAIGHT,
+                listOf(DiagramPoint(0.0, 50.0), DiagramPoint(100.0, 50.0)),
+            ),
+            RoutedEdge(
+                DiagramEdgeId("vertical"),
+                DiagramRoutingStyle.STRAIGHT,
+                listOf(DiagramPoint(50.0, 0.0), DiagramPoint(50.0, 100.0)),
+            ),
+        )
+
+        val svg = diagramToSvg(graph, routes)
+
+        assertTrue(svg.contains("d=\"M 0 50 L 100 50\""), svg)
+        assertTrue(!svg.contains(" A "), svg)
     }
 
     @Test

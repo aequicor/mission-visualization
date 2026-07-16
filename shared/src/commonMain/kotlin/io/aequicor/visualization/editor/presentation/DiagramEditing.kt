@@ -105,10 +105,11 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
             )
         }
     }
-    is DiagramEditorIntent.DeleteDiagramElement -> diagramWriteBack(intent.nodeId) { graph ->
-        val afterNodes = intent.elementIds.fold(graph) { g, id -> g.removeNode(DiagramNodeId(id)) }
-        intent.edgeIds.fold(afterNodes) { g, id -> g.removeEdge(DiagramEdgeId(id)) }
-    }
+    is DiagramEditorIntent.DeleteDiagramElement ->
+        detachAnnotationsForDiagramNodeDelete(intent.nodeId, intent.elementIds).diagramWriteBack(intent.nodeId) { graph ->
+            val afterNodes = intent.elementIds.fold(graph) { g, id -> g.removeNode(DiagramNodeId(id)) }
+            intent.edgeIds.fold(afterNodes) { g, id -> g.removeEdge(DiagramEdgeId(id)) }
+        }
     is DiagramEditorIntent.MoveDiagramNode -> diagramWriteBack(intent.nodeId) {
         it.moveNode(DiagramNodeId(intent.elementId), intent.dx, intent.dy)
     }

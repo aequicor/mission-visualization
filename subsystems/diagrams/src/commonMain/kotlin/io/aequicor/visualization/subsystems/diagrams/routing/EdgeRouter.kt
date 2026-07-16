@@ -257,7 +257,13 @@ private fun routeOrthogonal(
     val targetStub = target.side?.let {
         target.anchor + it.outwardNormal() * stubLength(target.anchor, it, margin, foreignBounds)
     } ?: target.anchor
-    val mandatory = dedupePoints(listOf(sourceStub) + edge.waypoints + listOf(targetStub))
+    val mandatory = alignedMandatoryPoints(
+        sourceStub = sourceStub,
+        sourceSide = source.side,
+        waypoints = edge.waypoints,
+        targetStub = targetStub,
+        targetSide = target.side,
+    )
 
     val innerPoints: List<DiagramPoint> = if (mandatory.size == 2 && !avoidObstacles) {
         connectOrthogonally(mandatory[0], mandatory[1], source.side, target.side)
@@ -275,9 +281,13 @@ private fun routeOrthogonal(
         for ((from, to) in mandatory.zipWithNext()) {
             val leg = if (avoidObstacles) {
                 val legObstacles = legObstacles(obstacles, from, to)
-                orthogonalGridRoute(from, seedDirection, to, legObstacles, options.turnPenalty)
-                    ?.let { collapseJogs(it, legObstacles, jogThreshold) }
-                    ?: manhattanLeg(from, to, seedDirection)
+                if (axisAligned(from, to) && segmentClear(from, to, legObstacles)) {
+                    listOf(from, to)
+                } else {
+                    orthogonalGridRoute(from, seedDirection, to, legObstacles, options.turnPenalty)
+                        ?.let { collapseJogs(it, legObstacles, jogThreshold) }
+                        ?: manhattanLeg(from, to, seedDirection)
+                }
             } else {
                 manhattanLeg(from, to, seedDirection)
             }
@@ -626,6 +636,9 @@ private fun isVerticalSegment(a: DiagramPoint, b: DiagramPoint): Boolean =
 private fun isHorizontalSegment(a: DiagramPoint, b: DiagramPoint): Boolean =
     abs(a.y - b.y) < GEOMETRY_EPSILON && abs(a.x - b.x) > GEOMETRY_EPSILON
 
+private fun axisAligned(a: DiagramPoint, b: DiagramPoint): Boolean =
+    abs(a.x - b.x) < GEOMETRY_EPSILON || abs(a.y - b.y) < GEOMETRY_EPSILON
+
 /** Whether the axis-aligned segment `a..b` avoids every obstacle's strict interior. */
 private fun segmentClear(
     a: DiagramPoint,
@@ -778,6 +791,69 @@ private fun resolveEntityRelationEnd(
 
 // --- Polyline utilities --------------------------------------------------------------
 
+/**
+ * Keeps authored `via` points exact except for sub-pixel rounding against an adjacent
+ * stub/waypoint. Without this snap, e.g. a rounded `x=600` next to a port at `x=599.2`
+ * forces a tiny extra jog before an otherwise straight mandatory run.
+ */
+private fun alignedMandatoryPoints(
+    sourceStub: DiagramPoint,
+    sourceSide: DiagramNodeSide?,
+    waypoints: List<DiagramPoint>,
+    targetStub: DiagramPoint,
+    targetSide: DiagramNodeSide?,
+): List<DiagramPoint> {
+    if (waypoints.isEmpty()) return dedupePoints(listOf(sourceStub, targetStub))
+    val authored = listOf(sourceStub) + waypoints + listOf(targetStub)
+    val aligned = authored.toMutableList()
+    for (index in 1 until aligned.lastIndex) {
+        val point = aligned[index]
+        val previous = aligned[index - 1]
+        val next = authored[index + 1]
+        val x = when {
+            abs(point.x - previous.x) <= WAYPOINT_ALIGNMENT_TOLERANCE -> previous.x
+            abs(point.x - next.x) <= WAYPOINT_ALIGNMENT_TOLERANCE -> next.x
+            else -> point.x
+        }
+        val y = when {
+            abs(point.y - previous.y) <= WAYPOINT_ALIGNMENT_TOLERANCE -> previous.y
+            abs(point.y - next.y) <= WAYPOINT_ALIGNMENT_TOLERANCE -> next.y
+            else -> point.y
+        }
+        aligned[index] = DiagramPoint(x, y)
+    }
+
+    if (waypoints.size >= 2) {
+        // With two or more waypoints, the endpoint-adjacent points are the corners
+        // where the route leaves/enters a side port. Keep those legs perpendicular
+        // to the node face even when a node was resized after authoring; otherwise a
+        // stale coordinate becomes a short dangling jog. A lone waypoint remains an
+        // exact mandatory pass-through point because it may intentionally define both
+        // endpoint bends.
+        aligned[1] = alignWaypointToPort(aligned[1], sourceStub, sourceSide)
+        aligned[aligned.lastIndex - 1] = alignWaypointToPort(
+            aligned[aligned.lastIndex - 1],
+            targetStub,
+            targetSide,
+        )
+    }
+    return dedupePoints(aligned)
+}
+
+private fun alignWaypointToPort(
+    waypoint: DiagramPoint,
+    stub: DiagramPoint,
+    side: DiagramNodeSide?,
+): DiagramPoint = when (side) {
+    DiagramNodeSide.LEFT,
+    DiagramNodeSide.RIGHT,
+    -> waypoint.copy(y = stub.y)
+    DiagramNodeSide.TOP,
+    DiagramNodeSide.BOTTOM,
+    -> waypoint.copy(x = stub.x)
+    null -> waypoint
+}
+
 private fun dedupePoints(points: List<DiagramPoint>): List<DiagramPoint> {
     val result = mutableListOf<DiagramPoint>()
     for (point in points) {
@@ -808,3 +884,5 @@ internal fun simplifyPolyline(points: List<DiagramPoint>): List<DiagramPoint> {
 
 private fun atLeastTwo(points: List<DiagramPoint>): List<DiagramPoint> =
     if (points.size >= 2) points else List(2) { points.firstOrNull() ?: DiagramPoint.Zero }
+
+private const val WAYPOINT_ALIGNMENT_TOLERANCE = 1.0

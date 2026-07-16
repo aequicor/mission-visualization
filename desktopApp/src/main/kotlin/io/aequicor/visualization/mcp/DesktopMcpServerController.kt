@@ -38,6 +38,10 @@ class DesktopMcpServerController(
     override var projectVerification: McpProjectVerification? by mutableStateOf(null)
         private set
 
+    init {
+        if (store.getString(AutoStartKey)?.toBooleanStrictOrNull() == true) start()
+    }
+
     override val endpoint: String
         get() = "http://127.0.0.1:${port.toIntOrNull() ?: DefaultPort}/mcp"
 
@@ -131,6 +135,7 @@ class DesktopMcpServerController(
                 if (synchronized(lifecycleLock) { closed || host !== startedHost }) return@onSuccess
                 store.putString(PortKey, parsedPort.toString())
                 store.putString(RootKey, allowedFolder)
+                store.putString(AutoStartKey, true.toString())
                 status = McpServerStatus.Running
             }.onFailure { failure ->
                 if (!synchronized(lifecycleLock) { closed }) fail(friendlyStartError(failure))
@@ -139,6 +144,7 @@ class DesktopMcpServerController(
     }
 
     override fun stop() {
+        store.remove(AutoStartKey)
         val running = synchronized(lifecycleLock) { host.also { host = null } } ?: run {
             status = McpServerStatus.Stopped
             projectVerification = null
@@ -265,6 +271,7 @@ class DesktopMcpServerController(
 
     private companion object {
         const val DefaultPort = 7331
+        const val AutoStartKey = "mcp-server-autostart-enabled"
         const val PortKey = "mcp-server-port"
         const val RootKey = "mcp-server-root"
     }

@@ -608,6 +608,16 @@ sealed interface DesignEditorIntent {
         val annotationId: String,
     ) : DesignEditorIntent
 
+    /**
+     * Escape from annotation authoring: returns to the Select tool and closes the
+     * composer. If [annotationId] still points to an empty draft marker, the reducer
+     * removes it from its source instead of leaving an orphan badge behind.
+     */
+    data class CancelAnnotationAuthoring(
+        val screenFileName: String,
+        val annotationId: String,
+    ) : DesignEditorIntent
+
     // --- Annotations (view; handled by reduceAnnotationWorkspace) ----------
 
     /** Collapses/expands the annotation card. View state, never the document. */

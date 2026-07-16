@@ -32,7 +32,7 @@ internal const val FLOW_DASH_OFF = 6f
 private const val SEQUENCE_MESSAGE_LABEL_LIFT = 9.0
 
 /**
- * Draws one routed edge: the (possibly jumped/rounded) line, arrowheads at both ends,
+ * Draws one routed edge: the rounded line, arrowheads at both ends,
  * the connection mode (LINE / double-stroke LINK / thick ARROW band), the optional
  * flow animation, and up to three labels.
  *
@@ -42,7 +42,6 @@ private const val SEQUENCE_MESSAGE_LABEL_LIFT = 9.0
 internal fun DrawScope.drawDiagramEdge(
     edge: DiagramEdge,
     routed: RoutedEdge,
-    allRoutes: List<RoutedEdge>,
     colors: DiagramCanvasColors,
     measurer: ComposeTypographyMeasurer,
     flowPhase: Float? = null,
@@ -69,8 +68,6 @@ internal fun DrawScope.drawDiagramEdge(
     val linePath = routedEdgeToPath(
         routed = shortened,
         style = style,
-        lineJumps = edge.lineJumps,
-        otherEdges = allRoutes,
     ).let { if (style.sketch) it.sketched(seed) else it }
     val composePath = linePath.toComposePath()
 

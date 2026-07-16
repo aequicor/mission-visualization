@@ -5,11 +5,14 @@ import io.aequicor.visualization.editor.domain.annotationSidecarCompileResult
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.domain.editorSlmCompileOptions
 import io.aequicor.visualization.editor.domain.annotationSidecarFileName
+import io.aequicor.visualization.editor.domain.diagramAnnotationTargetId
 import io.aequicor.visualization.editor.domain.normalizeAnnotationSidecarContent
+import io.aequicor.visualization.editor.domain.parseDiagramAnnotationTargetId
 import io.aequicor.visualization.editor.domain.screenFileNameForSidecar
 import io.aequicor.visualization.engine.ir.layout.DesignLayoutEngine
 import io.aequicor.visualization.engine.ir.layout.LayoutBox
 import io.aequicor.visualization.engine.ir.model.DesignDocument
+import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.resolve.DesignResolver
 import io.aequicor.visualization.engine.frontend.compileSlm
 import io.aequicor.visualization.subsystems.annotations.Annotation
@@ -24,6 +27,7 @@ import io.aequicor.visualization.subsystems.annotations.detachAnnotationsFromNod
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmParser
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationLayoutComments
 import io.aequicor.visualization.subsystems.annotations.slm.AnnotationSlmPatcher
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 
 /**
  * Annotation editing over [DesignEditorState]: every document-side annotation intent
@@ -240,6 +244,54 @@ fun annotationNodeVisualBounds(layout: LayoutBox?, nodeId: String): AnnotationRe
     return AnnotationRect.fromSize(bounds.x, bounds.y, bounds.width, bounds.height)
 }
 
+/**
+ * Visual bounds for either a regular design node id or a scoped node inside an embedded
+ * diagram. Diagram coordinates are local to their owning design node; both the element's
+ * rotation and every design-node rotation above it are composed before taking the visual AABB.
+ */
+fun annotationTargetVisualBounds(
+    layout: LayoutBox?,
+    document: DesignDocument?,
+    targetId: String,
+): AnnotationRect? {
+    if (document?.nodeById(targetId) != null) return annotationNodeVisualBounds(layout, targetId)
+    val diagramTarget = parseDiagramAnnotationTargetId(targetId)
+        ?: return annotationNodeVisualBounds(layout, targetId)
+    val path = layout?.pathToSource(diagramTarget.diagramNodeId) ?: return null
+    val diagramBox = path.last()
+    val graph = (document?.nodeById(diagramTarget.diagramNodeId)?.kind as? DesignNodeKind.Diagram)?.graph
+        ?: return null
+    val element = graph.nodeById(DiagramNodeId(diagramTarget.elementId)) ?: return null
+    val localBox = BoundsBox(
+        x = diagramBox.x + element.x,
+        y = diagramBox.y + element.y,
+        width = element.width,
+        height = element.height,
+    )
+    val designRotations = buildList {
+        diagramBox.node.rotation.takeIf { it != 0.0 }?.let { degrees ->
+            add(
+                AncestorRotation(
+                    center = GeoPoint(diagramBox.x + diagramBox.width / 2.0, diagramBox.y + diagramBox.height / 2.0),
+                    degrees = degrees,
+                ),
+            )
+        }
+        path.dropLast(1).asReversed().forEach { box ->
+            box.node.rotation.takeIf { it != 0.0 }?.let { degrees ->
+                add(AncestorRotation(GeoPoint(box.x + box.width / 2.0, box.y + box.height / 2.0), degrees))
+            }
+        }
+    }
+    val transform = effectiveTransform(localBox, element.rotation, designRotations)
+    val bounds = if (transform.rotation == 0.0) {
+        transform.box
+    } else {
+        axisAlignedBounds(rotatedCorners(transform.box, transform.rotation))
+    }
+    return AnnotationRect.fromSize(bounds.x, bounds.y, bounds.width, bounds.height)
+}
+
 /** Path of layout boxes from this (root) box down to the node with [sourceId], inclusive. */
 private fun LayoutBox.pathToSource(sourceId: String): List<LayoutBox>? {
     if (node.sourceId == sourceId) return listOf(this)
@@ -265,16 +317,20 @@ internal fun DesignEditorState.detachAnnotationsForNodeDelete(deletedIds: Set<St
     val pageIdByScreen = screenFileNamesByPageId().entries.associate { (pageId, screen) -> screen to pageId }
     var state = this
     annotationLayers.forEach { (screenFileName, layer) ->
-        val affected = layer.annotations.any { (it.anchor as? AnnotationAnchor.NodeAnchor)?.nodeId in goneIds }
-        if (!affected) return@forEach
+        val affectedTargetIds = layer.annotations.mapNotNullTo(mutableSetOf()) { annotation ->
+            val targetId = (annotation.anchor as? AnnotationAnchor.NodeAnchor)?.nodeId ?: return@mapNotNullTo null
+            val diagramOwnerId = parseDiagramAnnotationTargetId(targetId)?.diagramNodeId
+            targetId.takeIf { it in goneIds || diagramOwnerId in goneIds }
+        }
+        if (affectedTargetIds.isEmpty()) return@forEach
         // Pre-delete layout of the owning page, computed once per affected screen with
         // the same pure resolve+layout pipeline the artboard uses.
         val layout = pageIdByScreen[screenFileName]?.let { pageId -> pageLayoutFor(document, pageId) }
         state = state.writeBackAnnotations(screenFileName) { current ->
-            current.detachAnnotationsFromNodes(goneIds) { annotation ->
+            current.detachAnnotationsFromNodes(affectedTargetIds) { annotation ->
                 val anchor = annotation.anchor as? AnnotationAnchor.NodeAnchor
                     ?: return@detachAnnotationsFromNodes null
-                annotationNodeVisualBounds(layout, anchor.nodeId)?.let { bounds ->
+                annotationTargetVisualBounds(layout, document, anchor.nodeId)?.let { bounds ->
                     annotationBadgePosition(anchor, bounds)
                 }
             }
@@ -293,7 +349,7 @@ private fun pageLayoutFor(document: DesignDocument, pageId: String): LayoutBox? 
 /**
  * Pure workspace-side reducer for the annotation view intents (expansion, selection,
  * tool). Annotations split document/view like everything else in the editor: the
- * document intents go through [reduceDesignEditor], these three only ever touch
+ * document intents go through [reduceDesignEditor], these intents only ever touch
  * [EditorWorkspaceState]. [DesignEditorIntent.DeleteAnnotation] additionally prunes
  * the deleted id from the view state; every other intent returns [workspace] as is.
  */
@@ -309,11 +365,69 @@ fun reduceAnnotationWorkspace(
         },
     )
     is DesignEditorIntent.SelectAnnotation -> workspace.copy(selectedAnnotationId = intent.annotationId)
-    is DesignEditorIntent.SetAnnotationTool -> workspace.copy(annotationTool = intent.tool)
+    is DesignEditorIntent.SetAnnotationTool -> if (intent.tool == AnnotationTool.None) {
+        workspace.copy(annotationTool = AnnotationTool.None)
+    } else {
+        // Diagram/vector edit overlays are full-canvas pointer owners. Leaving either edit
+        // session active here would keep that overlay above the annotation gesture surface,
+        // so a press on an edited element would never reach annotation placement.
+        workspace.copy(
+            tool = EditorTool.Select,
+            annotationTool = intent.tool,
+            vectorEditNodeId = "",
+            vectorSelectedPoint = null,
+            vectorSelectedVertex = null,
+            vectorPaintBucket = false,
+            diagramEditNodeId = "",
+            diagramTool = DiagramTool.Select,
+            diagramSelection = DiagramSelection.Empty,
+            diagramTextEditRequest = null,
+            diagramPaletteDrag = null,
+        )
+    }
     is DesignEditorIntent.DeleteAnnotation -> workspace.copy(
         expandedAnnotationIds = workspace.expandedAnnotationIds - intent.annotationId,
         selectedAnnotationId = if (workspace.selectedAnnotationId == intent.annotationId) "" else workspace.selectedAnnotationId,
         annotationComposerId = if (workspace.annotationComposerId == intent.annotationId) "" else workspace.annotationComposerId,
     )
+    is DesignEditorIntent.CancelAnnotationAuthoring -> workspace.copy(
+        tool = EditorTool.Select,
+        annotationTool = AnnotationTool.None,
+        annotationComposerId = "",
+        expandedAnnotationIds = workspace.expandedAnnotationIds - intent.annotationId,
+        selectedAnnotationId = if (workspace.selectedAnnotationId == intent.annotationId) "" else workspace.selectedAnnotationId,
+    )
     else -> workspace
+}
+
+/** Freezes annotations pinned to diagram nodes that are about to be removed. */
+internal fun DesignEditorState.detachAnnotationsForDiagramNodeDelete(
+    diagramNodeId: String,
+    deletedElementIds: Set<String>,
+): DesignEditorState {
+    val document = document ?: return this
+    if (deletedElementIds.isEmpty()) return this
+    val graph = (document.nodeById(diagramNodeId)?.kind as? DesignNodeKind.Diagram)?.graph ?: return this
+    val deleted = deletedElementIds.flatMapTo(mutableSetOf()) { elementId ->
+        val id = DiagramNodeId(elementId)
+        if (graph.nodeById(id) == null) emptySet() else graph.subtreeIds(id).map { it.value }
+    }
+    if (deleted.isEmpty()) return this
+    val targetIds = deleted.mapTo(mutableSetOf()) { elementId ->
+        diagramAnnotationTargetId(diagramNodeId, elementId)
+    }
+    val pageId = document.pageOfNode(diagramNodeId)?.id ?: return this
+    val screenFileName = screenFileNamesByPageId()[pageId] ?: return this
+    val layer = annotationLayers[screenFileName] ?: return this
+    if (layer.annotations.none { (it.anchor as? AnnotationAnchor.NodeAnchor)?.nodeId in targetIds }) return this
+    val layout = pageLayoutFor(document, pageId)
+    return writeBackAnnotations(screenFileName) { current ->
+        current.detachAnnotationsFromNodes(targetIds) { annotation ->
+            val anchor = annotation.anchor as? AnnotationAnchor.NodeAnchor
+                ?: return@detachAnnotationsFromNodes null
+            annotationTargetVisualBounds(layout, document, anchor.nodeId)?.let { bounds ->
+                annotationBadgePosition(anchor, bounds)
+            }
+        }
+    }
 }

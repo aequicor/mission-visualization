@@ -71,6 +71,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.aequicor.visualization.MissionEditorStateHolder
+import io.aequicor.visualization.editor.domain.annotationTargetLabel
+import io.aequicor.visualization.editor.domain.parseDiagramAnnotationTargetId
 import io.aequicor.visualization.editor.presentation.CompactLabel
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
@@ -104,7 +106,7 @@ import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
 import io.aequicor.visualization.subsystems.annotations.ExportScope
 import androidx.compose.ui.platform.LocalClipboardManager
-import io.aequicor.visualization.editor.presentation.annotationNodeVisualBounds
+import io.aequicor.visualization.editor.presentation.annotationTargetVisualBounds
 import io.aequicor.visualization.subsystems.annotations.annotationBadgePosition
 import io.aequicor.visualization.subsystems.annotations.compose.rememberAnnotationImage
 import io.aequicor.visualization.editor.ui.strings.LocalStrings
@@ -131,7 +133,6 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramStrokePattern
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramStyle
 import io.aequicor.visualization.subsystems.diagrams.model.FlowchartNodeKind
-import io.aequicor.visualization.subsystems.diagrams.model.LineJumpStyle
 import io.aequicor.visualization.subsystems.diagrams.model.TableNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityKind
 import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityNode
@@ -3972,9 +3973,19 @@ private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName
     val design = state.designState
     when (val anchor = annotation.anchor) {
         is AnnotationAnchor.NodeAnchor -> {
-            val node = design.document?.nodeById(anchor.nodeId)
+            val directNode = design.document?.nodeById(anchor.nodeId)
+            val diagramTarget = if (directNode == null) parseDiagramAnnotationTargetId(anchor.nodeId) else null
+            val targetLabel = if (directNode != null) {
+                directNode.name.ifBlank { anchor.nodeId }
+            } else if (diagramTarget != null) {
+                val graph = (design.document?.nodeById(diagramTarget.diagramNodeId)?.kind as? DesignNodeKind.Diagram)?.graph
+                graph?.nodeById(DiagramNodeId(diagramTarget.elementId))
+                    ?.let { it.annotationTargetLabel() ?: diagramTarget.elementId }
+            } else {
+                null
+            }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (node == null) {
+                if (targetLabel == null) {
                     // Dangling anchor: keep-not-lose — say exactly which node is gone while
                     // still offering detach (freeze in place) and delete below.
                     Text(
@@ -3983,13 +3994,13 @@ private fun AnnotationAnchorInfo(state: MissionEditorStateHolder, screenFileName
                         color = colors.statusWarning,
                     )
                 } else {
-                    MutedNote(strings.inspector.pinnedTo(node.name.ifBlank { anchor.nodeId }))
+                    MutedNote(strings.inspector.pinnedTo(targetLabel))
                 }
                 TinyButton(strings.inspector.detachAnchor) {
                     // Freeze the badge where it currently renders (visual, rotation-aware
                     // bounds — the same space the overlay positions badges in) so detaching
                     // is visually a no-op.
-                    val bounds = annotationNodeVisualBounds(state.artboardLayout, anchor.nodeId)
+                    val bounds = annotationTargetVisualBounds(state.artboardLayout, design.document, anchor.nodeId)
                     val point = annotationBadgePosition(anchor, bounds)
                     state.dispatch(
                         DesignEditorIntent.DetachAnnotationAnchor(screenFileName, annotation.id, point.x, point.y),
@@ -5148,21 +5159,6 @@ private fun DiagramEdgeControls(
         DiagramStrokePattern.entries.firstOrNull { strings.inspector.diagramPattern(it) == label }
             ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgePattern(nodeId, edgeId, it)) }
     }
-    Spacer(Modifier.height(8.dp))
-    CompactLabeledSelectField(
-        strings.inspector.lineJumps,
-        strings.inspector.diagramLineJump(edge.lineJumps),
-        LineJumpStyle.entries.map { strings.inspector.diagramLineJump(it) },
-        enabled = !locked,
-        leadingContent = { DiagramLineJumpPreview(edge.lineJumps) },
-        optionLeadingContent = { label ->
-            LineJumpStyle.entries.firstOrNull { strings.inspector.diagramLineJump(it) == label }
-                ?.let { DiagramLineJumpPreview(it) }
-        },
-    ) { label ->
-        LineJumpStyle.entries.firstOrNull { strings.inspector.diagramLineJump(it) == label }
-            ?.let { state.dispatch(DiagramEditorIntent.SetDiagramEdgeLineJumps(nodeId, edgeId, it)) }
-    }
     Spacer(Modifier.height(10.dp))
     InspectorSubLabel(strings.inspector.labels)
     DiagramEdgeLabelPosition.entries.forEach { position ->
@@ -5412,40 +5408,6 @@ internal fun DiagramRoutingPreview(style: DiagramRoutingStyle, modifier: Modifie
                     lineTo(6f, h - 4f)
                     lineTo(w - 6f, 4f)
                     lineTo(w - 2f, 4f)
-                }
-            }
-        }
-        drawPath(path, colors.controlInk, style = Stroke(1.5f))
-    }
-}
-
-@Composable
-private fun DiagramLineJumpPreview(style: LineJumpStyle, modifier: Modifier = Modifier.size(18.dp)) {
-    val colors = LocalEditorColors.current
-    Canvas(modifier) {
-        val y = size.height / 2f
-        val cx = size.width / 2f
-        // The crossed (vertical) edge.
-        drawLine(colors.mutedInk, Offset(cx, 2f), Offset(cx, size.height - 2f), strokeWidth = 1.2f)
-        val path = Path().apply {
-            moveTo(1.5f, y)
-            when (style) {
-                LineJumpStyle.NONE -> lineTo(size.width - 1.5f, y)
-                LineJumpStyle.ARC -> {
-                    lineTo(cx - 3.5f, y)
-                    quadraticTo(cx, y - 6f, cx + 3.5f, y)
-                    lineTo(size.width - 1.5f, y)
-                }
-                LineJumpStyle.GAP -> {
-                    lineTo(cx - 3.5f, y)
-                    moveTo(cx + 3.5f, y)
-                    lineTo(size.width - 1.5f, y)
-                }
-                LineJumpStyle.SHARP -> {
-                    lineTo(cx - 3.5f, y)
-                    lineTo(cx, y - 5f)
-                    lineTo(cx + 3.5f, y)
-                    lineTo(size.width - 1.5f, y)
                 }
             }
         }
