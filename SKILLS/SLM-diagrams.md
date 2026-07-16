@@ -88,7 +88,7 @@ The basic type words are `rectangle`, `rounded-rectangle`, `ellipse`, `text`,
 `cloud`. They have no payload fields; use `label` for the caption.
 
 ```md
-Node rounded-rectangle card 220 by 120 position 40 40 style (fill #F4F7FB corners rounded) label «Draft card»
+Node rounded-rectangle card 220 by 120 position 40 40 style (fill #F4F7FB corners sharp) label «Draft card»
 Node flowchart valid decision 140 by 80 position 320 60 label «Valid?»
 ```
 
@@ -182,8 +182,8 @@ style ([fill #hex] [stroke #hex] [weight N]
        [corners sharp|rounded|curved] [sketch] [shadow])
 ```
 
-Default weight 1, solid pattern, opacity 1, and sharp corners are omitted. A fully
-default style group is omitted.
+Default weight 1, solid pattern, opacity 1, and rounded corners are omitted
+(`corners sharp` opts back into hard bends). A fully default style group is omitted.
 
 ## Edges
 
@@ -191,7 +191,7 @@ default style group is omitted.
 Edge <id> from <endpoint> to <endpoint>
      [relation <relation>] [routing <routing>] {via (x y)} {label <label>}
      [style (...)] [arrow source <arrowhead>] [arrow target <arrowhead>]
-     [jumps arc|gap|sharp] [mode link|arrow] [animated yes] [layer <id>]
+     [jumps none|arc|gap|sharp] [mode link|arrow] [animated yes] [layer <id>]
 ```
 
 Endpoint forms:
@@ -227,6 +227,9 @@ A short label is `label «text»`. The grouped form is
 `label («text» [markdown] [at source|target] [dx N] [dy N])`; use at most one label
 per source/middle/target position.
 
+Line jumps at crossings with lower edges default to `arc` (omitted in canonical
+form); `jumps none` turns them off.
+
 Arrowheads are `none`, `open`, `block`, `block-filled`, `diamond`,
 `diamond-filled`, `triangle`, `triangle-filled`, `oval`, `oval-filled`, `cross`,
 `dash`, `er-one`, `er-many`, `er-one-or-many`, `er-zero-or-one`, or
@@ -237,7 +240,7 @@ Edge extends from circle to shape relation generalization
 Edge owns from drawing to circle relation composition label «owns»
 Edge places from customer to order relation er one to zero-or-many label («places» at source dx 4 dy -6)
 Edge fixed from gateway.out to service.in routing straight via (420 160) via (420 240)
-Edge flow from intake to review relation transition jumps arc mode link animated yes layer wiring
+Edge flow from intake to review relation transition jumps none mode link animated yes layer wiring
 ```
 
 ## Groups

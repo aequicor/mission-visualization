@@ -96,6 +96,7 @@ import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramNodeHitPart
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramResizeHandle
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
 import io.aequicor.visualization.subsystems.diagrams.hittest.hitTest
 import io.aequicor.visualization.subsystems.diagrams.hittest.pointAlongPolyline
 import io.aequicor.visualization.subsystems.diagrams.hittest.resolveConnectTarget
@@ -781,6 +782,10 @@ internal fun DiagramEditOverlay(
                                 return@awaitEachGesture
                             }
                             val route = routedPoints[hit.edgeId] ?: return@awaitEachGesture
+                            // Drag base deliberately uses the UNSHIFTED anchor (no crossing-slide
+                            // context): the moment the drag mints a non-zero offset the label is
+                            // rendered relative to the center fraction, so offset = pointer - center
+                            // keeps it under the pointer; a slid base would displace the whole drag.
                             val anchor = edgeLabelAnchorPoint(route, label)
                             val base = DiagramPoint(anchor.x - label.offsetX, anchor.y - label.offsetY)
                             val moved = dragDiagramFrames(state, down) { position ->
@@ -1869,7 +1874,7 @@ private fun diagramTextEditRect(
         } else {
             val label = edge.labels.firstOrNull { it.position == target.position }
             val anchor = if (label != null) {
-                edgeLabelAnchorPoint(route, label)
+                edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id))
             } else {
                 route[route.size / 2]
             }

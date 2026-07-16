@@ -4,13 +4,12 @@ import io.aequicor.visualization.subsystems.diagrams.arrows.ArrowheadGeometry
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadsForRelation
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
-import io.aequicor.visualization.subsystems.diagrams.hittest.EDGE_LABEL_LINE_GAP
-import io.aequicor.visualization.subsystems.diagrams.hittest.selfLoopTopAnchor
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramColor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLayerId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
@@ -84,7 +83,10 @@ fun diagramToSvg(
     val nodes = zOrderedNodes(graph).filter { it.visible && layerVisible(it.layerId) }
     val allRouted = routed ?: routeAllEdges(graph, options.routing)
     val routedById = allRouted.associateBy { it.edgeId }
-    val edges = graph.edges.filter { layerVisible(it.layerId) && routedById.containsKey(it.id) }
+    // Layer-grouped draw order (implicit default layer first, then explicit layers
+    // bottom->top) — must match the canvas so line jumps land on the same edge of a
+    // crossing pair in both surfaces.
+    val edges = zOrderedEdges(graph).filter { layerVisible(it.layerId) && routedById.containsKey(it.id) }
 
     val bounds = contentBounds(nodes, edges.mapNotNull { routedById[it.id] }, options.padding)
     val svg = StringBuilder()
@@ -103,7 +105,25 @@ fun diagramToSvg(
             .append("\" fill=\"").append(background.toSvgHex()).append("\"/>\n")
     }
     for (node in nodes) svg.appendNode(node, options)
-    for (edge in edges) svg.appendEdge(edge, routedById.getValue(edge.id), options)
+    // Edges accumulate in draw order so each edge line-jumps only over lines below it
+    // (matches the on-canvas renderer).
+    val routePoints = routedById.mapValues { it.value.points }
+    val drawnRoutes = mutableListOf<RoutedEdge>()
+    for (edge in edges) {
+        val route = routedById.getValue(edge.id)
+        svg.appendEdge(
+            edge,
+            route,
+            options,
+            jumpOverRoutes = drawnRoutes.toList(),
+            labelObstacleRoutes = if (edge.labels.isEmpty()) {
+                emptyList()
+            } else {
+                edgeLabelObstacleRoutes(graph, routePoints, edge.id)
+            },
+        )
+        drawnRoutes += route
+    }
     svg.append("</svg>")
     return svg.toString()
 }
@@ -116,6 +136,15 @@ private fun zOrderedNodes(graph: DiagramGraph): List<DiagramNode> {
         graph.nodes.filter { it.layerId == layer.id }
     }
     return defaultLayerNodes + layeredNodes
+}
+
+private fun zOrderedEdges(graph: DiagramGraph): List<DiagramEdge> {
+    val knownLayers = graph.layers.map { it.id }.toSet()
+    val defaultLayerEdges = graph.edges.filter { it.layerId == null || it.layerId !in knownLayers }
+    val layeredEdges = graph.layers.flatMap { layer ->
+        graph.edges.filter { it.layerId == layer.id }
+    }
+    return defaultLayerEdges + layeredEdges
 }
 
 // --- bounds -------------------------------------------------------------------------------
@@ -353,6 +382,8 @@ private fun StringBuilder.appendEdge(
     edge: DiagramEdge,
     routedEdge: RoutedEdge,
     options: SvgExportOptions,
+    jumpOverRoutes: List<RoutedEdge> = emptyList(),
+    labelObstacleRoutes: List<List<DiagramPoint>> = emptyList(),
 ) {
     val notation = arrowheadsForRelation(edge.relation)
     val sourceHead = edge.sourceArrowhead.takeIf { it.kind != DiagramArrowheadKind.NONE } ?: notation.source
@@ -371,6 +402,8 @@ private fun StringBuilder.appendEdge(
     val linePath = routedEdgeToPath(
         routed = routedEdge.copy(points = trimmedPoints),
         style = edge.style,
+        lineJumps = edge.lineJumps,
+        otherEdges = jumpOverRoutes,
     )
     append("<path d=\"").append(linePath.toSvgPathData())
         .append("\" fill=\"none\" stroke=\"").append(stroke.toSvgHex())
@@ -382,23 +415,13 @@ private fun StringBuilder.appendEdge(
     appendArrowheadMarker(sourceGeometry, stroke, options)
     appendArrowheadMarker(targetGeometry, stroke, options)
 
-    val selfLoopTop = selfLoopTopAnchor(points)
     for (edgeLabel in edge.labels) {
-        // A self-message loop reads its caption above the loop's top edge, so a wide label
-        // never lands beside the loop and buries the arrow start (mirrors the on-canvas anchor).
-        val anchor = if (selfLoopTop != null) {
-            DiagramPoint(selfLoopTop.x, selfLoopTop.y - EDGE_LABEL_LINE_GAP)
-        } else {
-            val fraction = when (edgeLabel.position) {
-                DiagramEdgeLabelPosition.SOURCE -> 0.15
-                DiagramEdgeLabelPosition.MIDDLE -> 0.5
-                DiagramEdgeLabelPosition.TARGET -> 0.85
-            }
-            pointAlongPolyline(points, fraction)
-        }
+        // Shared anchor logic (self-loop caption, perpendicular lift, crossing slide,
+        // manual offsets) — the export must match the on-canvas label placement.
+        val anchor = edgeLabelAnchorPoint(points, edgeLabel, labelObstacleRoutes)
         svgText(
-            x = anchor.x + edgeLabel.offsetX,
-            y = anchor.y + edgeLabel.offsetY - options.fontSize / 2.0 - 2.0,
+            x = anchor.x,
+            y = anchor.y,
             text = edgeLabel.label.text,
             options = options,
         )
@@ -469,23 +492,6 @@ private fun distance(a: DiagramPoint, b: DiagramPoint): Double {
     return sqrt(dx * dx + dy * dy)
 }
 
-/** Point at [fraction] (0..1) of the polyline's total arc length. */
-private fun pointAlongPolyline(points: List<DiagramPoint>, fraction: Double): DiagramPoint {
-    if (points.size < 2) return points.firstOrNull() ?: DiagramPoint.Zero
-    val total = points.zipWithNext().sumOf { (a, b) -> distance(a, b) }
-    if (total < 1e-9) return points.first()
-    var remaining = total * fraction.coerceIn(0.0, 1.0)
-    for ((a, b) in points.zipWithNext()) {
-        val segment = distance(a, b)
-        if (segment >= remaining) {
-            if (segment < 1e-9) return a
-            val t = remaining / segment
-            return DiagramPoint(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
-        }
-        remaining -= segment
-    }
-    return points.last()
-}
 
 // --- primitives ------------------------------------------------------------------------------
 

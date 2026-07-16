@@ -46,7 +46,7 @@ data class DiagramStyle(
     val strokeWidth: Double = 1.0,
     val pattern: DiagramStrokePattern = DiagramStrokePattern.SOLID,
     val opacity: Double = 1.0,
-    val cornerStyle: DiagramCornerStyle = DiagramCornerStyle.SHARP,
+    val cornerStyle: DiagramCornerStyle = DiagramCornerStyle.ROUNDED,
     val sketch: Boolean = false,
     val shadow: Boolean = false,
 ) {

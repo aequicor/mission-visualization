@@ -661,13 +661,94 @@ class EdgeRoutingTest {
         }
         val routed = routeEdge(graph, graph.edges.single())
         assertAxisAligned(routed.points)
-        assertPointEquals(DiagramPoint(100.0, 30.0), routed.sourcePoint)
-        assertPointEquals(DiagramPoint(300.0, 130.0), routed.targetPoint)
+        // The wider gap is horizontal, so the route leaves/enters through the facing sides.
+        assertEquals(DiagramNodeSide.RIGHT, routed.sourceSide)
+        assertEquals(DiagramNodeSide.LEFT, routed.targetSide)
+        assertTrue(abs(routed.sourcePoint.x - 100.0) < 1e-6, "source must sit on a's right face")
+        assertTrue(abs(routed.targetPoint.x - 300.0) < 1e-6, "target must sit on b's left face")
         // First and last segments run horizontally out of the entity sides.
         val firstSegmentHorizontal = abs(routed.points[0].y - routed.points[1].y) < 1e-6
         val lastSegmentHorizontal =
             abs(routed.points[routed.points.size - 2].y - routed.points.last().y) < 1e-6
         assertTrue(firstSegmentHorizontal && lastSegmentHorizontal)
+    }
+
+    @Test
+    fun entityRelationRouteAvoidsEntityBetween() {
+        val graph = diagramGraph {
+            val a = node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0)
+            node("mid", x = 150.0, y = 0.0, width = 100.0, height = 60.0)
+            val b = node("b", x = 400.0, y = 0.0, width = 100.0, height = 60.0)
+            edge("e", from = a, to = b, routing = DiagramRoutingStyle.ENTITY_RELATION)
+        }
+        val routed = routeEdge(graph, graph.edges.single())
+        assertAxisAligned(routed.points)
+        // No segment may cross the middle entity's interior (150..250 x, 0..60 y).
+        routed.points.zipWithNext().forEach { (a, b) ->
+            val crosses = if (abs(a.y - b.y) < 1e-6) {
+                a.y > 0.0 + 1e-6 && a.y < 60.0 - 1e-6 &&
+                    maxOf(a.x, b.x) > 150.0 + 1e-6 && minOf(a.x, b.x) < 250.0 - 1e-6
+            } else {
+                a.x > 150.0 + 1e-6 && a.x < 250.0 - 1e-6 &&
+                    maxOf(a.y, b.y) > 0.0 + 1e-6 && minOf(a.y, b.y) < 60.0 - 1e-6
+            }
+            assertTrue(!crosses, "segment $a -> $b cuts through the middle entity")
+        }
+        // The route actually detours around it.
+        assertTrue(routed.points.size > 2)
+    }
+
+    @Test
+    fun entityRelationFanInSpreadsAnchors() {
+        val graph = diagramGraph {
+            val a = node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0)
+            val b = node("b", x = 300.0, y = -100.0, width = 100.0, height = 60.0)
+            val c = node("c", x = 300.0, y = 0.0, width = 100.0, height = 60.0)
+            val d = node("d", x = 300.0, y = 100.0, width = 100.0, height = 60.0)
+            edge("e1", from = b, to = a, routing = DiagramRoutingStyle.ENTITY_RELATION)
+            edge("e2", from = c, to = a, routing = DiagramRoutingStyle.ENTITY_RELATION)
+            edge("e3", from = d, to = a, routing = DiagramRoutingStyle.ENTITY_RELATION)
+        }
+        val anchors = graph.edges.map { routeEdge(graph, it).targetPoint }
+        anchors.forEach { assertTrue(abs(it.x - 100.0) < 1e-6, "anchor $it must sit on a's right face") }
+        val ys = anchors.map { it.y }
+        assertEquals(ys.toSet().size, ys.size, "fan-in anchors must not coincide: $ys")
+    }
+
+    @Test
+    fun entityRelationRouteNeverDoublesBackOnItself() {
+        // Diagonal placement whose cheapest grid route hugs the target's inflated boundary:
+        // with a stub longer than the corridor margin this used to retrace the stub as a
+        // visible whisker spur (consecutive anti-parallel segments).
+        val graph = diagramGraph {
+            val a = node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0)
+            val b = node("b", x = 130.0, y = 80.0, width = 100.0, height = 60.0)
+            edge("e", from = a, to = b, routing = DiagramRoutingStyle.ENTITY_RELATION)
+        }
+        val routed = routeEdge(graph, graph.edges.single())
+        assertAxisAligned(routed.points)
+        for (index in 0 until routed.points.size - 2) {
+            val a = routed.points[index]
+            val b = routed.points[index + 1]
+            val c = routed.points[index + 2]
+            val dot = (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y)
+            assertTrue(dot >= 0.0, "route doubles back at $b: ${routed.points}")
+        }
+    }
+
+    @Test
+    fun entityRelationRouteExitsVerticallyForStackedEntities() {
+        val graph = diagramGraph {
+            val a = node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0)
+            val b = node("b", x = 0.0, y = 200.0, width = 100.0, height = 60.0)
+            edge("e", from = a, to = b, routing = DiagramRoutingStyle.ENTITY_RELATION)
+        }
+        val routed = routeEdge(graph, graph.edges.single())
+        assertEquals(DiagramNodeSide.BOTTOM, routed.sourceSide)
+        assertEquals(DiagramNodeSide.TOP, routed.targetSide)
+        // Full projection overlap: a single straight vertical connector at the midpoint.
+        assertPointEquals(DiagramPoint(50.0, 60.0), routed.sourcePoint)
+        assertPointEquals(DiagramPoint(50.0, 200.0), routed.targetPoint)
     }
 
     @Test

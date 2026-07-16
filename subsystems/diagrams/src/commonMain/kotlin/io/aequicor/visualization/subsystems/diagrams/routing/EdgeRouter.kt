@@ -50,7 +50,9 @@ fun routeEdge(
     DiagramRoutingStyle.ORTHOGONAL -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
     DiagramRoutingStyle.SIMPLE -> routeOrthogonal(graph, edge, options, avoidObstacles = false)
     DiagramRoutingStyle.ISOMETRIC -> routeIsometric(graph, edge)
-    DiagramRoutingStyle.ENTITY_RELATION -> routeEntityRelation(graph, edge, options)
+    // ER shares the full obstacle-aware orthogonal pipeline: grid A*, joint anchor
+    // planning, and per-side anchor spreading.
+    DiagramRoutingStyle.ENTITY_RELATION -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
 }
 
 /**
@@ -251,6 +253,10 @@ private fun routeOrthogonal(
     } else {
         emptyList()
     }
+    // The stub length must equal the corridor margin: a longer stub would end outside the
+    // inflated-obstacle boundary the grid A* travels along, and a corridor-hugging arrival
+    // (whose direction the goal state does not constrain) would double back over it as a
+    // visible whisker spur.
     val sourceStub = source.side?.let {
         source.anchor + it.outwardNormal() * stubLength(source.anchor, it, margin, foreignBounds)
     } ?: source.anchor
@@ -467,7 +473,8 @@ private fun sideAttachments(
     for (candidate in graph.edges) {
         if (candidate.waypoints.isNotEmpty()) continue
         if (candidate.routing != DiagramRoutingStyle.ORTHOGONAL &&
-            candidate.routing != DiagramRoutingStyle.SIMPLE
+            candidate.routing != DiagramRoutingStyle.SIMPLE &&
+            candidate.routing != DiagramRoutingStyle.ENTITY_RELATION
         ) {
             continue
         }
@@ -732,62 +739,6 @@ private fun inflate(rect: DiagramRect, margin: Double): DiagramRect = DiagramRec
 private fun strictlyContains(rect: DiagramRect, point: DiagramPoint): Boolean =
     point.x > rect.left + GEOMETRY_EPSILON && point.x < rect.right - GEOMETRY_EPSILON &&
         point.y > rect.top + GEOMETRY_EPSILON && point.y < rect.bottom - GEOMETRY_EPSILON
-
-// --- Entity relation -----------------------------------------------------------------
-
-private fun routeEntityRelation(
-    graph: DiagramGraph,
-    edge: DiagramEdge,
-    options: RoutingOptions,
-): RoutedEdge {
-    val sourceRaw = rawEndpointPoint(graph, edge.source)
-    val targetRaw = rawEndpointPoint(graph, edge.target)
-    val source =
-        resolveEntityRelationEnd(graph, edge.source, edge.waypoints.firstOrNull() ?: targetRaw, options)
-    val target =
-        resolveEntityRelationEnd(graph, edge.target, edge.waypoints.lastOrNull() ?: sourceRaw, options)
-    val stub = options.entityRelationStub
-    val sourceStub = source.side?.let { source.anchor + it.outwardNormal() * stub } ?: source.anchor
-    val targetStub = target.side?.let { target.anchor + it.outwardNormal() * stub } ?: target.anchor
-    val mandatory = dedupePoints(listOf(sourceStub) + edge.waypoints + listOf(targetStub))
-
-    val innerPoints: List<DiagramPoint> = if (mandatory.size == 2) {
-        connectOrthogonally(mandatory[0], mandatory[1], source.side, target.side)
-    } else {
-        val points = mutableListOf(mandatory.first())
-        var seedDirection = source.side?.toGridDirection()
-        for ((from, to) in mandatory.zipWithNext()) {
-            val leg = manhattanLeg(from, to, seedDirection)
-            points += leg.drop(1)
-            seedDirection = lastSegmentDirection(leg) ?: seedDirection
-        }
-        points
-    }
-
-    val points = listOf(source.anchor) + innerPoints + listOf(target.anchor)
-    return RoutedEdge(edge.id, edge.routing, atLeastTwo(simplifyPolyline(points)), source.side, target.side)
-}
-
-/** ER ends always exit horizontally (LEFT/RIGHT) unless a fixed port dictates otherwise. */
-private fun resolveEntityRelationEnd(
-    graph: DiagramGraph,
-    endpoint: DiagramEndpoint,
-    reference: DiagramPoint,
-    options: RoutingOptions,
-): ResolvedEnd = when (endpoint) {
-    is DiagramEndpoint.FreePoint ->
-        ResolvedEnd(DiagramPoint(endpoint.x, endpoint.y), node = null, side = null)
-
-    is DiagramEndpoint.FixedPort ->
-        resolveOrthogonalEnd(graph, endpoint, reference, options)
-
-    is DiagramEndpoint.FloatingAnchor -> {
-        val node = endpointNode(graph, endpoint)!!
-        val bounds = node.bounds
-        val side = if (reference.x >= bounds.centerX) DiagramNodeSide.RIGHT else DiagramNodeSide.LEFT
-        ResolvedEnd(anchorOnSide(node, side, bounds.centerY), node, side)
-    }
-}
 
 // --- Polyline utilities --------------------------------------------------------------
 

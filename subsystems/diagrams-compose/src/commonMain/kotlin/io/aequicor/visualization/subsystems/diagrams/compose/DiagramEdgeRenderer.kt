@@ -38,6 +38,10 @@ private const val SEQUENCE_MESSAGE_LABEL_LIFT = 9.0
  *
  * @param flowPhase animated 0..1 fraction driving [DiagramEdge.flowAnimation]; `null`
  *   disables the animation (static rendering).
+ * @param jumpOverRoutes routes drawn *below* this edge; [DiagramEdge.lineJumps] jumps
+ *   are emitted where this edge crosses them (only the upper line jumps, draw.io-style).
+ * @param labelObstacleRoutes all *other* edges' routes — undragged MIDDLE labels slide
+ *   off crossings with them (must match the hit-test context, see [edgeLabelAnchorPoint]).
  */
 internal fun DrawScope.drawDiagramEdge(
     edge: DiagramEdge,
@@ -45,6 +49,8 @@ internal fun DrawScope.drawDiagramEdge(
     colors: DiagramCanvasColors,
     measurer: ComposeTypographyMeasurer,
     flowPhase: Float? = null,
+    jumpOverRoutes: List<RoutedEdge> = emptyList(),
+    labelObstacleRoutes: List<List<DiagramPoint>> = emptyList(),
 ) {
     val style = edge.style
     val ink = (style.stroke?.toComposeColor() ?: colors.edgeStroke).applyOpacity(style.opacity)
@@ -68,6 +74,8 @@ internal fun DrawScope.drawDiagramEdge(
     val linePath = routedEdgeToPath(
         routed = shortened,
         style = style,
+        lineJumps = edge.lineJumps,
+        otherEdges = jumpOverRoutes,
     ).let { if (style.sketch) it.sketched(seed) else it }
     val composePath = linePath.toComposePath()
 
@@ -111,7 +119,7 @@ internal fun DrawScope.drawDiagramEdge(
     // A sequence message's caption reads above its horizontal row rather than sitting on the line.
     val messageLabelLift = if (edge.relation is DiagramRelation.Message) SEQUENCE_MESSAGE_LABEL_LIFT else 0.0
     edge.labels.forEach { edgeLabel ->
-        val anchor = edgeLabelAnchorPoint(points, edgeLabel)
+        val anchor = edgeLabelAnchorPoint(points, edgeLabel, labelObstacleRoutes)
         drawCenteredLabel(
             measurer,
             edgeLabel.label,

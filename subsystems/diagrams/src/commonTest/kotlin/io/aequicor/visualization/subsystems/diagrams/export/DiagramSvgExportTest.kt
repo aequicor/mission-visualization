@@ -94,20 +94,57 @@ class DiagramSvgExportTest {
     }
 
     @Test
-    fun crossingsStayStraightEvenForLegacyJumpStyle() {
+    fun upperEdgeArcsOverLowerAtCrossings() {
         val graph = diagramGraph {
             edge(
                 id = "horizontal",
                 source = DiagramEndpoint.FreePoint(0.0, 50.0),
                 target = DiagramEndpoint.FreePoint(100.0, 50.0),
                 routing = DiagramRoutingStyle.STRAIGHT,
-                lineJumps = LineJumpStyle.ARC,
             )
             edge(
                 id = "vertical",
                 source = DiagramEndpoint.FreePoint(50.0, 0.0),
                 target = DiagramEndpoint.FreePoint(50.0, 100.0),
                 routing = DiagramRoutingStyle.STRAIGHT,
+            )
+        }
+        val routes = listOf(
+            RoutedEdge(
+                DiagramEdgeId("horizontal"),
+                DiagramRoutingStyle.STRAIGHT,
+                listOf(DiagramPoint(0.0, 50.0), DiagramPoint(100.0, 50.0)),
+            ),
+            RoutedEdge(
+                DiagramEdgeId("vertical"),
+                DiagramRoutingStyle.STRAIGHT,
+                listOf(DiagramPoint(50.0, 0.0), DiagramPoint(50.0, 100.0)),
+            ),
+        )
+
+        val svg = diagramToSvg(graph, routes)
+
+        // Only the edge drawn on top (later in z-order) jumps; the lower one stays straight.
+        assertTrue(svg.contains("d=\"M 0 50 L 100 50\""), svg)
+        assertTrue(svg.contains("d=\"M 50 0 L 50 44 A 6 6 0 0 1 50 56 L 50 100\""), svg)
+    }
+
+    @Test
+    fun jumpsNoneKeepsCrossingsStraight() {
+        val graph = diagramGraph {
+            edge(
+                id = "horizontal",
+                source = DiagramEndpoint.FreePoint(0.0, 50.0),
+                target = DiagramEndpoint.FreePoint(100.0, 50.0),
+                routing = DiagramRoutingStyle.STRAIGHT,
+                lineJumps = LineJumpStyle.NONE,
+            )
+            edge(
+                id = "vertical",
+                source = DiagramEndpoint.FreePoint(50.0, 0.0),
+                target = DiagramEndpoint.FreePoint(50.0, 100.0),
+                routing = DiagramRoutingStyle.STRAIGHT,
+                lineJumps = LineJumpStyle.NONE,
             )
         }
         val routes = listOf(

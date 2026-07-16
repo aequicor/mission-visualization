@@ -139,6 +139,44 @@ class AutoLayoutTest {
         assertTrue(a.y < b.y && b.y < c.y, "cycle degrades to a chain")
     }
 
+    // --- component packing ---
+
+    @Test
+    fun layeredPacksDisconnectedComponentsWithoutOverlap() {
+        val graph = diagramGraph {
+            val a = node("a")
+            val b = node("b")
+            val c = node("c")
+            edge("a-b", a, b)
+            edge("b-c", b, c)
+            node("x", x = 999.0, y = 999.0)
+            node("y", x = 500.0, y = -500.0)
+        }
+        val laid = layeredLayout(graph)
+        val chain = listOf(laid.node("a"), laid.node("b"), laid.node("c"))
+        val strays = listOf(laid.node("x"), laid.node("y"))
+
+        // The chain still layers top-down with even gaps.
+        assertTrue(chain[0].y < chain[1].y && chain[1].y < chain[2].y)
+        assertEquals(140.0, chain[1].y - chain[0].y)
+
+        // Strays no longer share layer 0's band centered against the chain: they pack
+        // beside the chain's block, outside its bounding box, and never overlap anything.
+        val chainRight = chain.maxOf { it.x + it.width }
+        strays.forEach { stray ->
+            assertTrue(stray.x >= chainRight, "stray ${stray.id.value} must pack beside the chain")
+        }
+        val all = laid.nodes
+        for (first in all.indices) {
+            for (second in first + 1 until all.size) {
+                assertTrue(
+                    !all[first].bounds.intersects(all[second].bounds),
+                    "${all[first].id.value} overlaps ${all[second].id.value}",
+                )
+            }
+        }
+    }
+
     // --- determinism ---
 
     @Test

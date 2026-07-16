@@ -14,8 +14,6 @@ data class RoutingOptions(
     val obstacleMargin: Double = 12.0,
     /** Extra path cost per 90° turn in the orthogonal router (higher = straighter routes). */
     val turnPenalty: Double = 4.0,
-    /** Length of the horizontal side stubs of [DiagramRoutingStyle.ENTITY_RELATION] routes. */
-    val entityRelationStub: Double = 20.0,
     /**
      * Minimum distance between anchors of orthogonal floating-to-floating edges attached
      * to the same node side (keeps fan-in/fan-out arrows visually separate).
@@ -25,9 +23,6 @@ data class RoutingOptions(
     init {
         require(obstacleMargin >= 0.0) { "obstacleMargin must be >= 0, got $obstacleMargin" }
         require(turnPenalty >= 0.0) { "turnPenalty must be >= 0, got $turnPenalty" }
-        require(entityRelationStub >= 0.0) {
-            "entityRelationStub must be >= 0, got $entityRelationStub"
-        }
         require(anchorSeparation >= 0.0) {
             "anchorSeparation must be >= 0, got $anchorSeparation"
         }

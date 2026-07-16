@@ -232,7 +232,7 @@ public object DiagramCnlWriter {
             if (style.strokeWidth != 1.0) add("weight ${num(style.strokeWidth)}")
             if (style.pattern != DiagramStrokePattern.SOLID) add("pattern ${style.pattern.cnlToken()}")
             if (style.opacity != 1.0) add("opacity ${num(style.opacity)}")
-            if (style.cornerStyle != DiagramCornerStyle.SHARP) add("corners ${style.cornerStyle.cnlToken()}")
+            if (style.cornerStyle != DiagramStyle.Default.cornerStyle) add("corners ${style.cornerStyle.cnlToken()}")
             if (style.sketch) add("sketch")
             if (style.shadow) add("shadow")
         }
@@ -253,7 +253,7 @@ public object DiagramCnlWriter {
         styleGroup(edge.style)?.let { add("style $it") }
         arrowheadPhrase(edge.sourceArrowhead)?.let { add("arrow source $it") }
         arrowheadPhrase(edge.targetArrowhead)?.let { add("arrow target $it") }
-        if (edge.lineJumps != LineJumpStyle.NONE) add("jumps ${edge.lineJumps.cnlToken()}")
+        if (edge.lineJumps != LineJumpStyle.ARC) add("jumps ${edge.lineJumps.cnlToken()}")
         if (edge.connectionMode != DiagramConnectionMode.LINE) add("mode ${edge.connectionMode.cnlToken()}")
         if (edge.flowAnimation) add("animated yes")
         edge.layerId?.let { add("layer ${idToken(it.value)}") }

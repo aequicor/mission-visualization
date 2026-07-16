@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.rememberTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
@@ -139,8 +140,11 @@ fun DrawScope.drawDiagramGraph(
 
     val nodesByLayer = graph.nodes.groupBy { layerKey(it.layerId) }
     val edgesByLayer = graph.edges.groupBy { layerKey(it.layerId) }
+    val routePoints = routes.mapValues { it.value.points }
 
     // Implicit default layer below all explicit layers, then explicit layers bottom->top.
+    // Edges accumulate in draw order so each edge line-jumps only over lines below it.
+    val drawnRoutes = mutableListOf<RoutedEdge>()
     val order: List<DiagramLayerId?> = listOf<DiagramLayerId?>(null) + graph.layers.map { it.id }
     order.forEach { layerId ->
         val layer = layerId?.let { graph.layerById(it) }
@@ -151,7 +155,20 @@ fun DrawScope.drawDiagramGraph(
         }
         edgesByLayer[layerId].orEmpty().forEach { edge: DiagramEdge ->
             val routed = routes[edge.id] ?: return@forEach
-            drawDiagramEdge(edge, routed, colors, measurer, flowPhase)
+            drawDiagramEdge(
+                edge,
+                routed,
+                colors,
+                measurer,
+                flowPhase,
+                jumpOverRoutes = drawnRoutes.toList(),
+                labelObstacleRoutes = if (edge.labels.isEmpty()) {
+                    emptyList()
+                } else {
+                    edgeLabelObstacleRoutes(graph, routePoints, edge.id)
+                },
+            )
+            drawnRoutes += routed
         }
     }
 }
