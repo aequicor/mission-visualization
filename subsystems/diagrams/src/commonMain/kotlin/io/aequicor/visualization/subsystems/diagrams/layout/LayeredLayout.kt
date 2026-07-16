@@ -6,19 +6,16 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.math.sqrt
 
-/** Barycenter down/up sweep rounds stop as soon as the orders stabilize, or after this many. */
-private const val MAX_BARYCENTER_ROUNDS = 8
-
 /**
  * Layered (Sugiyama) auto-layout for class/component/deployment/flowchart diagrams.
  *
  * Pipeline: undirected connected-component split → per component: DFS cycle breaking →
  * longest-path layer assignment → dummy vertices for edges spanning two or more layers
- * (they order like nodes and reserve a cross-axis corridor for the edge) → barycenter
- * ordering inside layers (seeded by BFS discovery order, down/up sweeps until stable) →
- * coordinates with even gaps, every layer centered on the common axis → shelf-packing
- * of the component blocks, so disconnected clusters and isolated nodes do not inflate
- * layer 0 of the main flow.
+ * (they order like nodes and reserve a cross-axis corridor for the edge) → crossing
+ * minimization (BFS-seeded weighted-median sweeps + exact-count transpose, keep-best;
+ * see [minimizeCrossings]) → coordinates with even gaps, every layer centered on the
+ * common axis → shelf-packing of the component blocks, so disconnected clusters and
+ * isolated nodes do not inflate layer 0 of the main flow.
  *
  * Only node positions change; edges are untouched (the router re-routes them).
  * Deterministic: identical input always yields the identical output.
@@ -154,8 +151,9 @@ private fun realPositions(layout: ComponentLayout): Map<DiagramNodeId, DiagramPo
 
 /**
  * Slot-level layered layout of one connected component: longest-path layering, dummy
- * insertion for long edges, BFS-seeded barycenter ordering, and coordinates. Dummies
- * are part of the returned positions — the seam tests use to see reserved corridors.
+ * insertion for long edges, BFS-seeded crossing minimization ([minimizeCrossings]),
+ * and coordinates. Dummies are part of the returned positions — the seam tests use to
+ * see reserved corridors.
  */
 internal fun layoutComponent(
     nodesById: Map<DiagramNodeId, DiagramNode>,
@@ -167,14 +165,14 @@ internal fun layoutComponent(
     val layerAssignments = assignLongestPathLayers(adjacency.members, predecessors)
     val layered = buildLayeredGraph(adjacency.members, links, layerAssignments)
     seedLayersByBfs(layered)
-    orderLayersByBarycenter(layered)
+    minimizeCrossings(layered)
     return ComponentLayout(layered, slotPositions(layered, nodesById, config))
 }
 
 /**
  * Reorders every layer by BFS discovery over the down links from the sources
  * (key-sorted, neighbors visited in key order): connected runs start out near each
- * other instead of scattered by id, giving the barycenter sweeps a better start.
+ * other instead of scattered by id, giving the crossing-minimization sweeps a better start.
  */
 private fun seedLayersByBfs(layered: LayeredGraph) {
     val allKeys = layered.slots.map { it.key }
@@ -198,48 +196,6 @@ private fun seedLayersByBfs(layered: LayeredGraph) {
     }
     val rank = order.withIndex().associate { (index, key) -> key to index }
     for (layer in layered.layers) layer.sortBy { rank.getValue(it.key) }
-}
-
-/**
- * Barycenter ordering: slots (real and dummy alike) chase the mean position of their
- * neighbors; slots without neighbors keep their place. Stable sort keeps ties
- * deterministic; down/up sweep rounds repeat until the orders stop changing.
- */
-private fun orderLayersByBarycenter(layered: LayeredGraph) {
-    val layers = layered.layers
-    val layerCount = layers.size
-    val indexOf = mutableMapOf<String, Int>()
-    fun reindex(layer: MutableList<LayerSlot>) {
-        layer.forEachIndexed { index, slot -> indexOf[slot.key] = index }
-    }
-    layers.forEach { reindex(it) }
-
-    fun sweep(neighborsOf: Map<String, List<String>>, layerOrder: IntProgression) {
-        for (layerIndex in layerOrder) {
-            val layer = layers[layerIndex]
-            val sorted = layer.sortedBy { slot ->
-                val neighbors = neighborsOf[slot.key].orEmpty()
-                if (neighbors.isEmpty()) {
-                    indexOf.getValue(slot.key).toDouble()
-                } else {
-                    neighbors.sumOf { indexOf.getValue(it).toDouble() } / neighbors.size
-                }
-            }
-            layer.clear()
-            layer += sorted
-            reindex(layer)
-        }
-    }
-
-    var round = 0
-    var stable = false
-    while (!stable && round < MAX_BARYCENTER_ROUNDS) {
-        val before = layers.map { it.toList() }
-        sweep(layered.up, 1 until layerCount)
-        sweep(layered.down, (layerCount - 2) downTo 0)
-        stable = layers.map { it.toList() } == before
-        round++
-    }
 }
 
 /**
