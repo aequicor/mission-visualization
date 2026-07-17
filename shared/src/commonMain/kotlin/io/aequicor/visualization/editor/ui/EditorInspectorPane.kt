@@ -4181,6 +4181,22 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
             }
         }
 
+        // Contextual properties of the selected element / edge come FIRST — draw.io's
+        // format-panel contract: selecting something surfaces its properties where the
+        // eye already is. Buried under the palette + mini-map + full outline they were
+        // ~4000px of scroll away, which reads as "edges have no properties".
+        if (editing) {
+            Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+                val selectedElement = selection.elementIds.singleOrNull()?.let { graph.nodeById(DiagramNodeId(it)) }
+                val selectedEdge = selection.edgeIds.singleOrNull()?.let { graph.edgeById(DiagramEdgeId(it)) }
+                when {
+                    selectedElement != null -> DiagramNodeControls(state, nodeId, selectedElement, locked)
+                    selectedEdge != null -> DiagramEdgeControls(state, nodeId, selectedEdge, locked)
+                    else -> MutedNote(strings.inspector.selectElementHint)
+                }
+            }
+        }
+
         // Shape palette, grouped by family; a click inserts at the canvas center.
         Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
             InspectorSubLabel(strings.inspector.shapes)
@@ -4222,17 +4238,6 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
                 }
                 Spacer(Modifier.height(4.dp))
                 DiagramLayers(state, nodeId, graph, locked)
-            }
-        }
-
-        // Contextual properties of the selected element / edge.
-        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
-            val selectedElement = selection.elementIds.singleOrNull()?.let { graph.nodeById(DiagramNodeId(it)) }
-            val selectedEdge = selection.edgeIds.singleOrNull()?.let { graph.edgeById(DiagramEdgeId(it)) }
-            when {
-                selectedElement != null -> DiagramNodeControls(state, nodeId, selectedElement, locked)
-                selectedEdge != null -> DiagramEdgeControls(state, nodeId, selectedEdge, locked)
-                else -> MutedNote(strings.inspector.selectElementHint)
             }
         }
 
