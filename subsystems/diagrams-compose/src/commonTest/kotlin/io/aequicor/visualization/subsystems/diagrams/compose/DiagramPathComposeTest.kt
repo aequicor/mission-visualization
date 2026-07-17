@@ -113,4 +113,31 @@ class DiagramPathComposeTest {
         assertEquals(10.0, shortened.first().x, absoluteTolerance = 1e-9)
         assertEquals(80.0, shortened.last().x, absoluteTolerance = 1e-9)
     }
+
+    @Test
+    fun shortenPolylineNeverCutsPastTheFirstBend() {
+        // A cut longer than the end segment used to consume the bend and carry on into the
+        // perpendicular one, leaving the line arriving on an axis the marker is not drawn
+        // along — the marker merged into the line body instead of tipping it.
+        val points = listOf(
+            io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint(0.0, 0.0),
+            io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint(0.0, 12.0),
+            io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint(100.0, 12.0),
+        )
+        val shortened = shortenPolyline(points, 20.0, 0.0)
+        assertEquals(3, shortened.size)
+        assertEquals(0.0, shortened.first().x, absoluteTolerance = 1e-9)
+        assertEquals(11.5, shortened.first().y, absoluteTolerance = 1e-9)
+    }
+
+    @Test
+    fun shortenPolylineKeepsAShortEdgeVisible() {
+        val points = listOf(
+            io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint(0.0, 0.0),
+            io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint(4.0, 0.0),
+        )
+        val shortened = shortenPolyline(points, 40.0, 0.0)
+        assertEquals(3.5, shortened.first().x, absoluteTolerance = 1e-9)
+        assertEquals(4.0, shortened.last().x, absoluteTolerance = 1e-9)
+    }
 }

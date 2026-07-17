@@ -1,5 +1,7 @@
 package io.aequicor.visualization.subsystems.diagrams.routing
 
+import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadExtent
+import io.aequicor.visualization.subsystems.diagrams.arrows.resolvedArrowheads
 import io.aequicor.visualization.subsystems.diagrams.geometry.GEOMETRY_EPSILON
 import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
 import io.aequicor.visualization.subsystems.diagrams.geometry.exitsHorizontally
@@ -11,6 +13,7 @@ import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterIntersect
 import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterSide
 import io.aequicor.visualization.subsystems.diagrams.geometry.plus
 import io.aequicor.visualization.subsystems.diagrams.geometry.times
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
@@ -73,8 +76,9 @@ fun routeAllEdges(
     return nudgeRoutedEdges(
         routes = graph.edges.map { sequence[it.id] ?: routeEdge(graph, it, options) },
         options = options,
-        pinnedEdgeIds = waypointedEdgeIds(graph) + sequence.keys,
+        pinnedEdgeIds = sequence.keys,
         obstacles = nodeObstacles(graph),
+        waypointsByEdge = authoredWaypoints(graph),
     )
 }
 
@@ -241,10 +245,14 @@ private fun routeOrthogonal(
     val sourceRaw = rawEndpointPoint(graph, edge.source)
     val targetRaw = rawEndpointPoint(graph, edge.target)
     val planned = planFloatingEnds(graph, edge, options)
-    val source = planned?.source
-        ?: resolveOrthogonalEnd(graph, edge.source, edge.waypoints.firstOrNull() ?: targetRaw, options)
-    val target = planned?.target
-        ?: resolveOrthogonalEnd(graph, edge.target, edge.waypoints.lastOrNull() ?: sourceRaw, options)
+    val source = (
+        planned?.source
+            ?: resolveOrthogonalEnd(graph, edge.source, edge.waypoints.firstOrNull() ?: targetRaw, options)
+        ).let { fannedPortEnd(graph, edge, atSource = true, end = it, options = options) }
+    val target = (
+        planned?.target
+            ?: resolveOrthogonalEnd(graph, edge.target, edge.waypoints.lastOrNull() ?: sourceRaw, options)
+        ).let { fannedPortEnd(graph, edge, atSource = false, end = it, options = options) }
     val margin = options.obstacleMargin
     val foreignBounds = if (avoidObstacles) {
         graph.nodes
@@ -256,15 +264,19 @@ private fun routeOrthogonal(
     } else {
         emptyList()
     }
-    // The stub length must equal the corridor margin: a longer stub would end outside the
-    // inflated-obstacle boundary the grid A* travels along, and a corridor-hugging arrival
-    // (whose direction the goal state does not constrain) would double back over it as a
-    // visible whisker spur.
+    // The stub length must equal the inflation of the node it leaves: a stub ending off
+    // that inflated-obstacle boundary — the one the grid A* travels along — would take a
+    // corridor-hugging arrival (whose direction the goal state does not constrain) doubling
+    // back over it as a visible whisker spur. So an end needing more room than the corridor
+    // margin (a marker longer than the margin, see [endpointReach]) grows both together.
+    val heads = resolvedArrowheads(edge)
+    val sourceReach = endpointReach(heads.source, options)
+    val targetReach = endpointReach(heads.target, options)
     val sourceStub = source.side?.let {
-        source.anchor + it.outwardNormal() * stubLength(source.anchor, it, margin, foreignBounds)
+        source.anchor + it.outwardNormal() * stubLength(source.anchor, it, sourceReach, foreignBounds)
     } ?: source.anchor
     val targetStub = target.side?.let {
-        target.anchor + it.outwardNormal() * stubLength(target.anchor, it, margin, foreignBounds)
+        target.anchor + it.outwardNormal() * stubLength(target.anchor, it, targetReach, foreignBounds)
     } ?: target.anchor
     val mandatory = alignedMandatoryPoints(
         sourceStub = sourceStub,
@@ -280,7 +292,18 @@ private fun routeOrthogonal(
         val obstacles = if (avoidObstacles) {
             graph.nodes
                 .filter { it.visible && it.width > GEOMETRY_EPSILON && it.height > GEOMETRY_EPSILON }
-                .map { it.bounds to inflate(it.bounds, margin) }
+                .map {
+                    // A node this edge attaches to is inflated to its own end's reach so
+                    // the stub still lands exactly on the boundary A* rides; every other
+                    // node keeps the shared corridor margin, leaving overall route density
+                    // untouched.
+                    val inflation = when (it.id) {
+                        source.node?.id -> sourceReach
+                        target.node?.id -> targetReach
+                        else -> margin
+                    }
+                    it.bounds to inflate(it.bounds, inflation)
+                }
         } else {
             emptyList()
         }
@@ -307,21 +330,47 @@ private fun routeOrthogonal(
     }
 
     val points = listOf(source.anchor) + innerPoints + listOf(target.anchor)
-    return RoutedEdge(edge.id, edge.routing, atLeastTwo(simplifyPolyline(points)), source.side, target.side)
+    return RoutedEdge(
+        edgeId = edge.id,
+        routing = edge.routing,
+        points = atLeastTwo(simplifyPolyline(points)),
+        sourceSide = source.side,
+        targetSide = target.side,
+        sourceReach = if (source.side == null) 0.0 else sourceReach,
+        targetReach = if (target.side == null) 0.0 else targetReach,
+    )
 }
 
 /**
- * Perpendicular exit-stub length at an anchor: [margin], shortened when a foreign node
+ * Straight run to reserve at a node-attached end: the corridor [RoutingOptions.obstacleMargin],
+ * or as much as the end's marker needs when that is longer — its full extent plus a little
+ * breathing room, so the marker's back edge does not land on the bend itself. Capped at
+ * [RoutingOptions.endpointClearance]; ends with no marker (or one shorter than the margin)
+ * are unaffected, which keeps plain and crow's-foot edges routed exactly as before.
+ */
+private fun endpointReach(head: DiagramArrowhead, options: RoutingOptions): Double {
+    val needed = arrowheadExtent(head) + MARKER_BREATHING
+    val cap = maxOf(options.obstacleMargin, options.endpointClearance)
+    return needed.coerceIn(options.obstacleMargin, cap)
+}
+
+/** Gap kept between an endpoint marker's back edge and the route's first bend. */
+private const val MARKER_BREATHING = 4.0
+
+/**
+ * Perpendicular exit-stub length at an anchor: [reach], shortened when a foreign node
  * sits closer than that so the stub ends on the node's near face instead of inside it
  * (which would force the router to drop that node as an obstacle and cut through it).
+ * A shortened stub is the one case an endpoint marker cannot get its reserved run; the
+ * renderer scales such a marker down to fit rather than let it cross the bend.
  */
 private fun stubLength(
     anchor: DiagramPoint,
     side: DiagramNodeSide,
-    margin: Double,
+    reach: Double,
     foreignBounds: List<DiagramRect>,
 ): Double {
-    var length = margin
+    var length = reach
     for (rect in foreignBounds) {
         val onAxis = if (side.exitsHorizontally) {
             anchor.y > rect.top + GEOMETRY_EPSILON && anchor.y < rect.bottom - GEOMETRY_EPSILON
@@ -358,6 +407,83 @@ private fun legObstacles(
         strictlyContains(bounds, from) || strictlyContains(bounds, to) -> null
         else -> bounds
     }
+}
+
+// --- Same-port fan-out -----------------------------------------------------------------
+
+/**
+ * Fans out edges authored into one fixed port. Multiple edges on the same port (an ER
+ * identifier row, say) would all leave or enter through the exact port point and read
+ * as a single forked line; instead their anchors spread
+ * [RoutingOptions.portFanSeparation] apart along the port's side, centered on the
+ * authored port. Slots are ordered by the angle each route heads off at (first/last via,
+ * else the other end), sweeping across the side's axis, so the fan does not cross itself
+ * right at the port. A lone edge — and an edge not present in the graph, e.g. an
+ * interactive preview — keeps the exact port point.
+ */
+private fun fannedPortEnd(
+    graph: DiagramGraph,
+    edge: DiagramEdge,
+    atSource: Boolean,
+    end: ResolvedEnd,
+    options: RoutingOptions,
+): ResolvedEnd {
+    if (options.portFanSeparation <= 0.0) return end
+    val endpoint = if (atSource) edge.source else edge.target
+    val port = endpoint as? DiagramEndpoint.FixedPort ?: return end
+    val node = end.node ?: return end
+    val side = end.side ?: return end
+
+    data class Slot(val edgeId: DiagramEdgeId, val atSource: Boolean, val heading: Double)
+
+    val slots = mutableListOf<Slot>()
+    for (candidate in graph.edges) {
+        if (!candidate.routing.routesOrthogonally) continue
+        if (candidate.source == port) {
+            slots += Slot(candidate.id, true, portHeading(graph, candidate, atSource = true, end.anchor, side))
+        }
+        if (candidate.target == port) {
+            slots += Slot(candidate.id, false, portHeading(graph, candidate, atSource = false, end.anchor, side))
+        }
+    }
+    if (slots.size <= 1) return end
+    val ordered = slots.sortedWith(
+        compareBy({ it.heading }, { it.edgeId.value }, { it.atSource }),
+    )
+    val index = ordered.indexOfFirst { it.edgeId == edge.id && it.atSource == atSource }
+    if (index < 0) return end
+    val base = if (side.exitsHorizontally) end.anchor.y else end.anchor.x
+    val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
+    val ideals = List(ordered.size) { slot ->
+        (base + options.portFanSeparation * (slot - (ordered.size - 1) / 2.0)).coerceIn(low, high)
+    }
+    val positions = spreadPositions(ideals, low, high, options.portFanSeparation)
+    return end.copy(anchor = anchorOnSide(node, side, positions[index]))
+}
+
+/**
+ * Where [edge]'s end at this port heads off to, as an angle over the port's side: 0 is
+ * straight out along the outward normal, negative leans toward the side's low corner
+ * (top/left), positive toward the high corner. Sorting a port's slots by this angle
+ * lays the fan out in the same order the routes diverge.
+ */
+private fun portHeading(
+    graph: DiagramGraph,
+    edge: DiagramEdge,
+    atSource: Boolean,
+    anchor: DiagramPoint,
+    side: DiagramNodeSide,
+): Double {
+    val reference = if (atSource) {
+        edge.waypoints.firstOrNull() ?: rawEndpointPoint(graph, edge.target)
+    } else {
+        edge.waypoints.lastOrNull() ?: rawEndpointPoint(graph, edge.source)
+    }
+    val delta = reference - anchor
+    val normal = side.outwardNormal()
+    val outward = delta.x * normal.x + delta.y * normal.y
+    val along = if (side.exitsHorizontally) delta.y else delta.x
+    return atan2(along, outward)
 }
 
 // --- Floating-pair anchor planning ----------------------------------------------------
@@ -486,13 +612,7 @@ private fun sideAttachments(
     val pending = mutableListOf<Pending>()
     for (candidate in graph.edges) {
         if (candidate.waypoints.isNotEmpty()) continue
-        if (candidate.routing != DiagramRoutingStyle.ORTHOGONAL &&
-            candidate.routing != DiagramRoutingStyle.SIMPLE &&
-            candidate.routing != DiagramRoutingStyle.ENTITY_RELATION &&
-            candidate.routing != DiagramRoutingStyle.CURVED
-        ) {
-            continue
-        }
+        if (!candidate.routing.routesOrthogonally) continue
         val sourceNodeId = candidate.source.attachedNodeId
         val targetNodeId = candidate.target.attachedNodeId
         if (sourceNodeId == null || targetNodeId == null || sourceNodeId == targetNodeId) continue
@@ -793,12 +913,15 @@ private fun alignedMandatoryPoints(
     }
 
     if (waypoints.size >= 2) {
-        // With two or more waypoints, the endpoint-adjacent points are the corners
-        // where the route leaves/enters a side port. Keep those legs perpendicular
-        // to the node face even when a node was resized after authoring; otherwise a
-        // stale coordinate becomes a short dangling jog. A lone waypoint remains an
-        // exact mandatory pass-through point because it may intentionally define both
-        // endpoint bends.
+        // With two or more waypoints, an endpoint-adjacent point NEAR the port axis is
+        // the corner where the route leaves/enters a side port. Keep that leg
+        // perpendicular to the node face even when a node was resized after authoring;
+        // otherwise a stale coordinate becomes a short dangling jog. The healing is
+        // bounded ([PORT_LEG_ALIGNMENT_LIMIT]): a via authored far off the axis is a
+        // deliberate corner elsewhere on the route, and snapping it used to erase the
+        // authored corridor and collapse deliberately separated edges onto one grid
+        // corridor. A lone waypoint remains an exact mandatory pass-through point
+        // because it may intentionally define both endpoint bends.
         aligned[1] = alignWaypointToPort(aligned[1], sourceStub, sourceSide)
         aligned[aligned.lastIndex - 1] = alignWaypointToPort(
             aligned[aligned.lastIndex - 1],
@@ -816,12 +939,19 @@ private fun alignWaypointToPort(
 ): DiagramPoint = when (side) {
     DiagramNodeSide.LEFT,
     DiagramNodeSide.RIGHT,
-    -> waypoint.copy(y = stub.y)
+    -> if (abs(waypoint.y - stub.y) <= PORT_LEG_ALIGNMENT_LIMIT) waypoint.copy(y = stub.y) else waypoint
     DiagramNodeSide.TOP,
     DiagramNodeSide.BOTTOM,
-    -> waypoint.copy(x = stub.x)
+    -> if (abs(waypoint.x - stub.x) <= PORT_LEG_ALIGNMENT_LIMIT) waypoint.copy(x = stub.x) else waypoint
     null -> waypoint
 }
+
+/**
+ * How far off the port axis an endpoint-adjacent via may sit and still be healed onto
+ * it. Covers coordinates gone stale after node moves/resizes (single-digit drift in
+ * practice) while leaving genuinely authored corners — hundreds of units away — exact.
+ */
+internal const val PORT_LEG_ALIGNMENT_LIMIT = 24.0
 
 private fun dedupePoints(points: List<DiagramPoint>): List<DiagramPoint> {
     val result = mutableListOf<DiagramPoint>()

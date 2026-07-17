@@ -2,12 +2,14 @@ package io.aequicor.visualization.subsystems.diagrams.arrows
 
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramStrokePattern
 import io.aequicor.visualization.subsystems.diagrams.model.isDashedNotation
 import io.aequicor.visualization.subsystems.diagrams.model.notationArrowheads
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPath
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPathBuilder
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramPathSegment
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.diagramPath
 import kotlin.math.sqrt
@@ -217,6 +219,44 @@ fun arrowheadPath(
 }
 
 /**
+ * How far the marker for [arrowhead] reaches back from its attachment point along the line
+ * — the straight run an edge end needs for the marker to read as a marker instead of
+ * merging into the first bend. Measured off the real geometry, so it follows any change to
+ * the marker shapes rather than restating their proportions.
+ */
+fun arrowheadExtent(arrowhead: DiagramArrowhead): Double {
+    val geometry = arrowheadPath(arrowhead, tip = DiagramPoint.Zero, direction = DiagramPoint(1.0, 0.0))
+    // Tip at the origin travelling along +x, so every marker point sits at x = -back.
+    var extent = geometry.lineShorten
+    for (segment in geometry.path.segments) {
+        val point = when (segment) {
+            is DiagramPathSegment.MoveTo -> segment.point
+            is DiagramPathSegment.LineTo -> segment.point
+            is DiagramPathSegment.QuadTo -> segment.end
+            is DiagramPathSegment.CubicTo -> segment.end
+            is DiagramPathSegment.ArcTo -> segment.end
+            DiagramPathSegment.Close -> continue
+        }
+        extent = maxOf(extent, -point.x)
+    }
+    return extent
+}
+
+/**
+ * This arrowhead scaled down so its marker fits on a [run]-long straight segment, or
+ * unchanged when it already fits. Routing reserves that run
+ * (`RoutingOptions.endpointClearance`); this is the fallback for the ends it cannot honor
+ * — nodes packed closer together than the marker is long — where a smaller marker reads
+ * better than one sliding across the first bend.
+ */
+fun DiagramArrowhead.fittedTo(run: Double): DiagramArrowhead {
+    val extent = arrowheadExtent(this)
+    if (extent <= EPSILON || extent <= run) return this
+    val scale = (run / extent).coerceAtLeast(0.0)
+    return copy(size = size * scale, inset = inset * scale)
+}
+
+/**
  * The UML/ER notation for a relation: default source/target arrowheads plus the stroke
  * pattern (dashed for dependency/realization/include/extend and return/create messages).
  */
@@ -240,6 +280,25 @@ fun arrowheadsForRelation(relation: DiagramRelation): RelationArrowheads {
         pattern = if (relation.isDashedNotation) DiagramStrokePattern.DASHED else DiagramStrokePattern.SOLID,
     )
 }
+
+/**
+ * The heads [edge] actually renders: its explicit arrowheads, each falling back to its
+ * relation's notation where the edge does not override it, plus the effective stroke
+ * pattern. Shared by the renderer and the router so the geometry that reserves room for a
+ * marker and the geometry that draws it can never disagree.
+ */
+fun resolvedArrowheads(edge: DiagramEdge): RelationArrowheads {
+    val notation = arrowheadsForRelation(edge.relation)
+    return RelationArrowheads(
+        source = edge.sourceArrowhead.orNotation(notation.source),
+        target = edge.targetArrowhead.orNotation(notation.target),
+        pattern = if (edge.style.pattern == DiagramStrokePattern.SOLID) notation.pattern else edge.style.pattern,
+    )
+}
+
+/** Explicit head, or the relation-notation head when the edge does not override. */
+private fun DiagramArrowhead.orNotation(notation: DiagramArrowhead): DiagramArrowhead =
+    if (kind == DiagramArrowheadKind.NONE && notation.kind != DiagramArrowheadKind.NONE) notation else this
 
 private const val EPSILON = 1e-9
 private const val TRIANGLE_LENGTH_FACTOR = 1.4

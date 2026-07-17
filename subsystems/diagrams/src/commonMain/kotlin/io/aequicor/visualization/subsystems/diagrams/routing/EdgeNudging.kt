@@ -3,10 +3,10 @@ package io.aequicor.visualization.subsystems.diagrams.routing
 import io.aequicor.visualization.subsystems.diagrams.geometry.GEOMETRY_EPSILON
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /** Clearance a nudged segment must keep from node bodies for the shift to be applied. */
 private const val NUDGE_CLEARANCE = 2.0
@@ -28,13 +28,20 @@ fun routeAllEdgesLenient(
     val routed = graph.edges.mapNotNull { edge ->
         sequence[edge.id] ?: runCatching { routeEdge(graph, edge, options) }.getOrNull()
     }
-    return nudgeRoutedEdges(routed, options, waypointedEdgeIds(graph) + sequence.keys, nodeObstacles(graph))
+    return nudgeRoutedEdges(routed, options, sequence.keys, nodeObstacles(graph), authoredWaypoints(graph))
         .associateBy { it.edgeId }
 }
 
-/** Edges pinned by manual waypoints — the nudge pass must not move them. */
-internal fun waypointedEdgeIds(graph: DiagramGraph): Set<DiagramEdgeId> =
-    graph.edges.asSequence().filter { it.waypoints.isNotEmpty() }.map { it.id }.toSet()
+/**
+ * Authored waypoints per edge. The nudge pass must not move a segment that carries one
+ * of its edge's vias — but the rest of a waypointed route (the legs the grid router
+ * chose between vias) spreads like any other, so co-running waypointed edges still
+ * come apart.
+ */
+internal fun authoredWaypoints(graph: DiagramGraph): Map<DiagramEdgeId, List<DiagramPoint>> =
+    graph.edges.asSequence()
+        .filter { it.waypoints.isNotEmpty() }
+        .associate { it.id to it.waypoints }
 
 /** Visible node bodies a nudged segment must not be pushed into. */
 internal fun nodeObstacles(graph: DiagramGraph): List<DiagramRect> =
@@ -48,17 +55,20 @@ internal fun nodeObstacles(graph: DiagramGraph): List<DiagramRect> =
  * apart so every line stays individually traceable. Only segments whose both endpoints
  * are interior bends move (anchors and stubs never move), but fixed endpoint segments and
  * routes in [pinnedEdgeIds] still reserve their lane so movable segments cannot disappear
- * underneath them. The per-cluster spacing is capped so no segment leaves the routing
- * margin, and a shift that would push a segment against one of the [obstacles] (node
- * bodies) is suppressed. The offset order follows how far each route continues past the
- * shared corridor, which keeps already-separated routes from crossing. Non-orthogonal
- * styles (straight/curved/isometric) pass through untouched.
+ * underneath them. Segments carrying one of their edge's authored vias
+ * ([waypointsByEdge]) are fixed the same way — the via must stay on the line — while the
+ * rest of a waypointed route stays movable. The per-cluster spacing is capped so no
+ * segment leaves the routing margin, and a shift that would push a segment against one
+ * of the [obstacles] (node bodies) is suppressed. The offset order follows how far each
+ * route continues past the shared corridor, which keeps already-separated routes from
+ * crossing. Non-orthogonal styles (straight/isometric) pass through untouched.
  */
 fun nudgeRoutedEdges(
     routes: List<RoutedEdge>,
     options: RoutingOptions = RoutingOptions.Default,
     pinnedEdgeIds: Set<DiagramEdgeId> = emptySet(),
     obstacles: List<DiagramRect> = emptyList(),
+    waypointsByEdge: Map<DiagramEdgeId, List<DiagramPoint>> = emptyMap(),
 ): List<RoutedEdge> {
     if (routes.size < 2) return routes
     val spacing = options.obstacleMargin * 2.0 / 3.0
@@ -77,13 +87,7 @@ fun nudgeRoutedEdges(
 
     fun laneSegments(horizontal: Boolean): List<LaneSegment> = buildList {
         for ((routeIndex, route) in routes.withIndex()) {
-            if (route.routing != DiagramRoutingStyle.ORTHOGONAL &&
-                route.routing != DiagramRoutingStyle.SIMPLE &&
-                route.routing != DiagramRoutingStyle.ENTITY_RELATION &&
-                route.routing != DiagramRoutingStyle.CURVED
-            ) {
-                continue
-            }
+            if (!route.routing.routesOrthogonally) continue
             val pts = points[routeIndex]
             for (index in 0 until pts.lastIndex) {
                 val a = pts[index]
@@ -107,7 +111,8 @@ fun nudgeRoutedEdges(
                         } else {
                             (previous?.x ?: a.x) + (next?.x ?: b.x)
                         },
-                        movable = route.edgeId !in pinnedEdgeIds && index > 0 && index + 2 < pts.size,
+                        movable = route.edgeId !in pinnedEdgeIds && index > 0 && index + 2 < pts.size &&
+                            waypointsByEdge[route.edgeId].orEmpty().none { pointNearSegment(it, a, b) },
                     ),
                 )
             }
@@ -212,6 +217,27 @@ fun nudgeRoutedEdges(
                     // A shift at least as long as an adjacent segment would collapse or
                     // reverse it — leave such a segment where it is.
                     if (abs(offset) >= minOf(adjacentBefore, adjacentAfter)) continue
+                    // Shifting this segment slides the bend along the adjacent one, so a
+                    // shift toward an endpoint eats into that end's stub. The stub is the
+                    // straight run the router reserved for the endpoint marker: shorten it
+                    // and the marker crosses the bend, which is exactly what the reservation
+                    // exists to prevent.
+                    val route = routes[segment.route]
+                    val shiftedCoordinate = segment.coordinate + offset
+                    val stubBefore = if (horizontal) {
+                        abs(previous.y - shiftedCoordinate)
+                    } else {
+                        abs(previous.x - shiftedCoordinate)
+                    }
+                    val stubAfter = if (horizontal) {
+                        abs(next.y - shiftedCoordinate)
+                    } else {
+                        abs(next.x - shiftedCoordinate)
+                    }
+                    if (segment.index == 1 && stubBefore < route.sourceReach - GEOMETRY_EPSILON) continue
+                    if (segment.index + 2 == pts.lastIndex && stubAfter < route.targetReach - GEOMETRY_EPSILON) {
+                        continue
+                    }
                     val a = pts[segment.index]
                     val b = pts[segment.index + 1]
                     val shiftedA: DiagramPoint
@@ -257,6 +283,31 @@ fun nudgeRoutedEdges(
     return routes.mapIndexed { index, route ->
         if (points[index] == route.points) route else route.copy(points = points[index].toList())
     }
+}
+
+/**
+ * Distance within which an authored via pins a segment against nudging. Wider than
+ * [PORT_LEG_ALIGNMENT_LIMIT] because an endpoint-adjacent via may have been healed onto
+ * the port axis up to that far from where it was authored — the raw via must still pin
+ * the segment its healed twin actually lies on. It also exceeds the largest possible
+ * shift (the routing margin), so a shift can never slide a bend past a via sitting on
+ * an adjacent segment: such a via would be near enough to pin the shifting segment too.
+ */
+private const val WAYPOINT_PIN_CLEARANCE = PORT_LEG_ALIGNMENT_LIMIT + 1.0
+
+/** Whether [point] lies within [WAYPOINT_PIN_CLEARANCE] of the segment `a..b`. */
+private fun pointNearSegment(point: DiagramPoint, a: DiagramPoint, b: DiagramPoint): Boolean {
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    val lengthSquared = dx * dx + dy * dy
+    val t = if (lengthSquared < GEOMETRY_EPSILON) {
+        0.0
+    } else {
+        (((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared).coerceIn(0.0, 1.0)
+    }
+    val nearestX = a.x + t * dx
+    val nearestY = a.y + t * dy
+    return hypot(point.x - nearestX, point.y - nearestY) <= WAYPOINT_PIN_CLEARANCE
 }
 
 /** Whether the axis-aligned segment `a..b` crosses [rect] inflated by [clearance]. */

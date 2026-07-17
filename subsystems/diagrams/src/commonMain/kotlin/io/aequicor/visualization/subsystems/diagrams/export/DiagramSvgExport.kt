@@ -2,14 +2,14 @@ package io.aequicor.visualization.subsystems.diagrams.export
 
 import io.aequicor.visualization.subsystems.diagrams.arrows.ArrowheadGeometry
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
-import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadsForRelation
+import io.aequicor.visualization.subsystems.diagrams.arrows.fittedTo
+import io.aequicor.visualization.subsystems.diagrams.arrows.resolvedArrowheads
 import io.aequicor.visualization.subsystems.diagrams.geometry.labelBox
 import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramColor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
@@ -399,13 +399,15 @@ private fun StringBuilder.appendEdge(
     labelObstacleRoutes: List<List<DiagramPoint>> = emptyList(),
     labelAvoidRects: List<DiagramRect> = emptyList(),
 ) {
-    val notation = arrowheadsForRelation(edge.relation)
-    val sourceHead = edge.sourceArrowhead.takeIf { it.kind != DiagramArrowheadKind.NONE } ?: notation.source
-    val targetHead = edge.targetArrowhead.takeIf { it.kind != DiagramArrowheadKind.NONE } ?: notation.target
-    val pattern = if (edge.style.pattern != DiagramStrokePattern.SOLID) edge.style.pattern else notation.pattern
+    val notation = resolvedArrowheads(edge)
+    val pattern = notation.pattern
     val stroke = edge.style.stroke ?: options.defaultStroke
 
     val points = routedEdge.points
+    // Markers are fitted to the straight run their end actually got, exactly as on canvas:
+    // the router reserves room for them, and an export must not draw what the canvas won't.
+    val sourceHead = notation.source.fittedTo(distance(points[0], points[1]))
+    val targetHead = notation.target.fittedTo(distance(points[points.size - 1], points[points.size - 2]))
     val sourceGeometry = arrowheadGeometryAt(sourceHead, points, atSource = true)
     val targetGeometry = arrowheadGeometryAt(targetHead, points, atSource = false)
     val trimmedPoints = if (routedEdge.isCurve) {
