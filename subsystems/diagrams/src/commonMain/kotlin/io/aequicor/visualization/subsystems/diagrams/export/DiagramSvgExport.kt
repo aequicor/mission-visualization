@@ -9,8 +9,8 @@ import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramColor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
@@ -542,8 +542,6 @@ private fun StringBuilder.appendLine(
         .append("\"/>\n")
 }
 
-private fun StringBuilder.svgText(
-    x: Double,
 /**
  * Draws [text] centered in [box], wrapped to the box width with one `<tspan>` per line.
  *
@@ -576,6 +574,8 @@ private fun StringBuilder.svgWrappedText(
     append("</text>\n")
 }
 
+private fun StringBuilder.svgText(
+    x: Double,
     y: Double,
     text: String,
     options: SvgExportOptions,
