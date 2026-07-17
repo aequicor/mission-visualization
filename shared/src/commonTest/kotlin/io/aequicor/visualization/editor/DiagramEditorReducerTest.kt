@@ -382,4 +382,43 @@ class DiagramEditorReducerTest {
             "write-back must not fall back to memory: ${next.diagnostics}",
         )
     }
+
+    @Test
+    fun setDiagramEdgeLabelWritesBackIntoOwningSource() {
+        val state = freshState()
+        val before = state.sources
+
+        val next = reduceDesignEditor(
+            state,
+            DiagramEditorIntent.SetDiagramEdgeLabel(
+                nodeId = "canvas",
+                edgeId = "e1",
+                position = DiagramEdgeLabelPosition.MIDDLE,
+                text = "sends to",
+            ),
+        )
+
+        val edge = assertNotNull(next.graphOf("canvas").edgeById(DiagramEdgeId("e1")))
+        val label = assertNotNull(
+            edge.labels.firstOrNull { it.position == DiagramEdgeLabelPosition.MIDDLE },
+            "middle label present in the graph",
+        )
+        assertEquals("sends to", label.label.text)
+
+        val content = next.sourceContent()
+        assertTrue("label («sends to»)" in content, "edge label persisted as a CNL phrase:\n$content")
+        assertTrue("label («src» at source)" in content, "existing source label survives:\n$content")
+        assertTrue("label («dst» at target)" in content, "existing target label survives:\n$content")
+        assertEquals(listOf(before), next.previousSources, "source undo captured the pre-edit sources")
+        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error }, "${next.diagnostics}")
+        assertTrue(
+            next.diagnostics.none { "kept in memory" in it.message },
+            "write-back must not fall back to memory: ${next.diagnostics}",
+        )
+
+        val recompiled = compileMissionDocuments(next.sources)
+        val recompiledGraph =
+            assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
+        assertEquals(next.graphOf("canvas"), recompiledGraph, "in-memory graph == recompiled-source graph")
+    }
 }

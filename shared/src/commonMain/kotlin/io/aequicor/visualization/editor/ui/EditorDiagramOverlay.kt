@@ -760,17 +760,28 @@ internal fun DiagramEditOverlay(
                     // Shared double-click detection (draw.io modal-free text): a node opens its label,
                     // an edge opens/creates a mid-line label, empty canvas creates a shape with a caret.
                     val tapNow = TimeSource.Monotonic.markNow()
-                    val tapKey = when (hit) {
-                        is DiagramHit.Node -> "node:${hit.nodeId.value}"
-                        is DiagramHit.Edge -> "edge:${hit.edgeId.value}"
-                        is DiagramHit.LabelHandle -> "label:${hit.edgeId.value}:${hit.position}"
-                        null -> "empty"
+                    // Selection-independent label probe. The first tap on a label selects its edge,
+                    // which exposes waypoint/endpoint handles that outrank labels in hitTest — so the
+                    // second tap would hit a handle, key as "other" and never open the editor (UML
+                    // multiplicity labels sit exactly on the endpoint rings). Probing with empty
+                    // selections keeps the tap key stable across the pair.
+                    val labelHit = hitTest(live, routedPoints, point, tolerance) as? DiagramHit.LabelHandle
+                    val tapKey = when {
+                        labelHit != null -> "label:${labelHit.edgeId.value}:${labelHit.position}"
+                        hit is DiagramHit.Node -> "node:${hit.nodeId.value}"
+                        hit is DiagramHit.Edge -> "edge:${hit.edgeId.value}"
+                        hit == null -> "empty"
                         else -> "other"
                     }
                     val doubleClick = tapKey != "other" && lastTapKey == tapKey &&
                         (lastTapMark?.let { (tapNow - it).inWholeMilliseconds < 320 } ?: false)
                     lastTapMark = tapNow
                     lastTapKey = tapKey
+
+                    if (doubleClick && labelHit != null && !additiveSelectionHeld) {
+                        textEdit = DiagramTextEditTarget.EdgeLabel(labelHit.edgeId.value, labelHit.position)
+                        return@awaitEachGesture
+                    }
 
                     when (hit) {
                         is DiagramHit.ResizeHandle -> {
@@ -819,10 +830,6 @@ internal fun DiagramEditOverlay(
                             // no prior selection needed. Double-click edits it; press+drag moves it;
                             // a plain click selects the owning edge.
                             val edge = live.edgeById(hit.edgeId) ?: return@awaitEachGesture
-                            if (doubleClick && !additiveSelectionHeld) {
-                                textEdit = DiagramTextEditTarget.EdgeLabel(hit.edgeId.value, hit.position)
-                                return@awaitEachGesture
-                            }
                             val label = edge.labels.firstOrNull { it.position == hit.position } ?: return@awaitEachGesture
                             val route = routedPoints[hit.edgeId] ?: return@awaitEachGesture
                             // Drag base deliberately uses the UNSHIFTED anchor (no crossing-slide
