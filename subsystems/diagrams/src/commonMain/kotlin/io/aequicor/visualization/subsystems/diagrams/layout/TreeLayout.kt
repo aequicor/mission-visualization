@@ -20,7 +20,7 @@ import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 fun treeLayout(
     graph: DiagramGraph,
     config: DiagramLayoutConfig = DiagramLayoutConfig.Default,
-): DiagramGraph = layoutHierarchically(graph, config) { nodesById, adjacency ->
+): DiagramGraph = layoutHierarchically(graph, config) { _, nodesById, adjacency ->
     treePositions(nodesById, adjacency, config)
 }
 

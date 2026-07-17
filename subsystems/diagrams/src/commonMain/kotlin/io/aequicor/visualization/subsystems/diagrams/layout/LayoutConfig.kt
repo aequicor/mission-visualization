@@ -1,15 +1,37 @@
 package io.aequicor.visualization.subsystems.diagrams.layout
 
-/** Which auto-layout algorithm [autoLayout] applies. */
-enum class LayoutKind {
-    /** Pick automatically: [TREE] when the graph is a forest, [LAYERED] for DAGs/cycles. */
-    AUTO,
+/**
+ * Locked spacing presets for [autoLayout] — a couple of tuned combinations instead of
+ * exposing every knob (untested combinations stay impossible).
+ */
+enum class DiagramLayoutPreset {
+    /** The stock spacing ([DiagramLayoutConfig.Default]). */
+    DEFAULT,
 
-    /** Layered (Sugiyama-lite) layout — class/component/deployment/flowchart diagrams. */
-    LAYERED,
+    /** Publication air: wider layer/node gaps and edge corridors — paper-figure spacing. */
+    PUBLICATION,
 
-    /** Tidy-tree layout — state/activity/use-case diagrams. */
-    TREE,
+    /** Dense overview: tightened gaps for large graphs on small screens. */
+    COMPACT,
+}
+
+/** The tuned [DiagramLayoutConfig] behind a preset, flowing along [direction]. */
+fun DiagramLayoutPreset.toLayoutConfig(
+    direction: LayoutDirection = LayoutDirection.TOP_DOWN,
+): DiagramLayoutConfig = when (this) {
+    DiagramLayoutPreset.DEFAULT -> DiagramLayoutConfig(direction = direction)
+    DiagramLayoutPreset.PUBLICATION -> DiagramLayoutConfig(
+        direction = direction,
+        layerGap = 112.0,
+        nodeGap = 56.0,
+        dummySize = 16.0,
+    )
+    DiagramLayoutPreset.COMPACT -> DiagramLayoutConfig(
+        direction = direction,
+        layerGap = 56.0,
+        nodeGap = 24.0,
+        dummySize = 10.0,
+    )
 }
 
 /** Main flow direction of an auto-layout. */

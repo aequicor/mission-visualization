@@ -4,7 +4,6 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
-import kotlin.math.sqrt
 
 /**
  * Layered (Sugiyama) auto-layout for class/component/deployment/flowchart diagrams.
@@ -23,7 +22,7 @@ import kotlin.math.sqrt
 fun layeredLayout(
     graph: DiagramGraph,
     config: DiagramLayoutConfig = DiagramLayoutConfig.Default,
-): DiagramGraph = layoutHierarchically(graph, config) { nodesById, adjacency ->
+): DiagramGraph = layoutHierarchically(graph, config) { _, nodesById, adjacency ->
     layeredPositions(nodesById, adjacency, config)
 }
 
@@ -39,16 +38,10 @@ internal fun layeredPositions(
 
     val horizontalFlow = config.direction == LayoutDirection.LEFT_RIGHT
 
-    data class PlacedComponent(
-        val positions: Map<DiagramNodeId, DiagramPoint>,
-        val mainExtent: Double,
-        val crossExtent: Double,
-    )
-
     // Extents are measured over ALL slots — a trailing dummy corridor is part of the
     // component's block, otherwise the next packed component would sit in the lane
     // reserved for a long edge.
-    val placed = components.map { component ->
+    val blocks = components.map { component ->
         val layout = layoutComponent(nodesById, component, config)
         var mainMax = 0.0
         var crossMax = 0.0
@@ -60,78 +53,9 @@ internal fun layeredPositions(
             mainMax = maxOf(mainMax, if (horizontalFlow) point.x + width else point.y + height)
             crossMax = maxOf(crossMax, if (horizontalFlow) point.y + height else point.x + width)
         }
-        PlacedComponent(realPositions(layout), mainMax, crossMax)
+        ComponentBlock(realPositions(layout), mainMax, crossMax)
     }
-
-    // Shelf packing: component blocks flow across the cross axis and wrap into a new band
-    // when a row would outgrow the largest block (or a near-square target), so a main flow
-    // plus strays reads as one tidy block instead of a single long strip.
-    val gap = config.nodeGap * 2.0
-    val totalArea = placed.sumOf { (it.mainExtent + gap) * (it.crossExtent + gap) }
-    val rowLimit = maxOf(placed.maxOf { it.crossExtent }, sqrt(totalArea) * 1.5)
-    val result = mutableMapOf<DiagramNodeId, DiagramPoint>()
-    var mainOffset = 0.0
-    var rowCross = 0.0
-    var rowMainMax = 0.0
-    for (component in placed) {
-        if (rowCross > 0.0 && rowCross + component.crossExtent > rowLimit) {
-            mainOffset += rowMainMax + config.layerGap
-            rowCross = 0.0
-            rowMainMax = 0.0
-        }
-        for ((id, point) in component.positions) {
-            result[id] = if (horizontalFlow) {
-                DiagramPoint(x = mainOffset + point.x, y = rowCross + point.y)
-            } else {
-                DiagramPoint(x = rowCross + point.x, y = mainOffset + point.y)
-            }
-        }
-        rowCross += component.crossExtent + gap
-        rowMainMax = maxOf(rowMainMax, component.mainExtent)
-    }
-    return result
-}
-
-/**
- * Undirected connected components, largest first (ties by first member id). Members and
- * links keep their id-sorted order within each component.
- */
-private fun ScopeAdjacency.connectedComponents(): List<ScopeAdjacency> {
-    val neighbors = mutableMapOf<DiagramNodeId, MutableList<DiagramNodeId>>()
-    for (link in links) {
-        neighbors.getOrPut(link.from) { mutableListOf() } += link.to
-        neighbors.getOrPut(link.to) { mutableListOf() } += link.from
-    }
-    val componentOf = mutableMapOf<DiagramNodeId, Int>()
-    var count = 0
-    for (member in members) {
-        if (member in componentOf) continue
-        val stack = ArrayDeque<DiagramNodeId>()
-        stack += member
-        componentOf[member] = count
-        while (stack.isNotEmpty()) {
-            val current = stack.removeLast()
-            for (next in neighbors[current].orEmpty()) {
-                if (next !in componentOf) {
-                    componentOf[next] = count
-                    stack += next
-                }
-            }
-        }
-        count++
-    }
-    if (count == 1) return listOf(this)
-    return (0 until count)
-        .map { index ->
-            ScopeAdjacency(
-                members = members.filter { componentOf.getValue(it) == index },
-                links = links.filter { componentOf.getValue(it.from) == index },
-            )
-        }
-        .sortedWith(
-            compareByDescending<ScopeAdjacency> { it.members.size }
-                .thenBy { it.members.first().value },
-        )
+    return packComponentBlocks(blocks, config)
 }
 
 /** Layered positions of one connected component, local coordinates starting at (0,0). */

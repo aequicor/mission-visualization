@@ -15,6 +15,7 @@ import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
+import io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramCornerStyle
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
@@ -244,6 +245,7 @@ interface InspectorStrings {
     val reverseDirection: String
     val diagramActions: String
     val autoLayoutAction: String
+    val tidyAlignAction: String
     val insertTemplate: String
     val importText: String
     val importMermaid: String
@@ -276,6 +278,7 @@ interface InspectorStrings {
     fun umlVisibility(visibility: UmlVisibility): String
     fun diagramEdgeLabelPositionTitle(position: DiagramEdgeLabelPosition): String
     fun diagramFamily(family: String): String
+    fun layoutPreset(preset: DiagramLayoutPreset): String
 }
 
 object InspectorStringsEn : InspectorStrings {
@@ -477,6 +480,7 @@ object InspectorStringsEn : InspectorStrings {
     override val reverseDirection = "Reverse direction"
     override val diagramActions = "Diagram"
     override val autoLayoutAction = "Auto-layout"
+    override val tidyAlignAction = "Tidy up"
     override val insertTemplate = "Insert template"
     override val importText = "Import text"
     override val importMermaid = "Import Mermaid"
@@ -682,6 +686,12 @@ object InspectorStringsEn : InspectorStrings {
     }
 
     override fun diagramFamily(family: String) = family
+
+    override fun layoutPreset(preset: DiagramLayoutPreset) = when (preset) {
+        DiagramLayoutPreset.DEFAULT -> "Default"
+        DiagramLayoutPreset.PUBLICATION -> "Publication"
+        DiagramLayoutPreset.COMPACT -> "Compact"
+    }
 }
 
 object InspectorStringsRu : InspectorStrings {
@@ -883,6 +893,7 @@ object InspectorStringsRu : InspectorStrings {
     override val reverseDirection = "Обратить направление"
     override val diagramActions = "Диаграмма"
     override val autoLayoutAction = "Авто-раскладка"
+    override val tidyAlignAction = "Выровнять"
     override val insertTemplate = "Вставить шаблон"
     override val importText = "Импорт текста"
     override val importMermaid = "Импорт Mermaid"
@@ -1092,5 +1103,11 @@ object InspectorStringsRu : InspectorStrings {
         "Structure" -> "Структура"
         "Basic" -> "Базовые"
         else -> family
+    }
+
+    override fun layoutPreset(preset: DiagramLayoutPreset) = when (preset) {
+        DiagramLayoutPreset.DEFAULT -> "Обычная"
+        DiagramLayoutPreset.PUBLICATION -> "Публикация"
+        DiagramLayoutPreset.COMPACT -> "Компактная"
     }
 }

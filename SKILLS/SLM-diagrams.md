@@ -313,6 +313,15 @@ To see the findings on a real file, run the audit loop:
 `SLM_AUDIT_FILE=<file> SLM_AUDIT_OUT=<dir> ./gradlew :subsystems:diagrams-slm:jvmTest --tests "*.SlmDiagramAuditTool"`
 renders each diagram to SVG and writes the warnings to `lint.txt`.
 
+When starting a diagram from scratch, prefer generating coordinates with the built-in
+auto-layout (`autoLayout` in `:subsystems:diagrams`) instead of hand-placing everything:
+it classifies each container scope (forest → tidy tree, DAG → layered Sugiyama,
+ER-dominated or heavily cyclic → stress majorization that reads left-to-right) and
+already respects the rules above (inheritance points up the page, overlap-free with
+`nodeGap` clearance, integer coordinates). For an almost-good manual arrangement use
+Tidy (`tidyAlign`): it only snaps near-aligned rows/columns onto shared axes and
+dissolves overlaps without re-laying anything out.
+
 ## Common failures
 
 - Unknown type or required kind missing: the entire node sentence is dropped.

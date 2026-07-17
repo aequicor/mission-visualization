@@ -1,7 +1,35 @@
 # План: читаемость UML/ER-диаграмм (публикационное качество)
 
-Статус: **P0–P3 реализованы (2026-07-16), P4–P5 впереди.** Приоритет типов диаграмм по
+Статус: **P0–P5 реализованы (P0–P3 2026-07-16, P4–P5 2026-07-17).** Приоритет типов диаграмм по
 итогам обсуждения — **все** (ER, class/UML, flowchart/activity/state, use-case; sequence не трогаем).
+
+Что вошло в P4–P5:
+- `layout/StressLayout.kt` — SMACOF stress-majorization: BFS-дистанции × идеальная длина
+  ребра → classical-MDS init (двойное центрирование, top-2 собственных вектора
+  index-seeded power-iteration — без random) → мажорация с фикс. капом 128 итераций →
+  PCA-выравнивание главной оси в горизонталь (ER читается слева-направо — это и есть
+  «LEFT_RIGHT по умолчанию для ER», `direction` FORCE-движком игнорируется) → снятие
+  перекрытий → axis-union snap (почти-коллинеарные ряды/колонки схлопываются на общие
+  оси) → integer grid-snap (битовая стабильность JVM↔wasm, решение №4). Компоненты
+  shelf-пакуются общим `packComponentBlocks` (извлечён из LayeredLayout).
+- `layout/OverlapRemoval.kt` — детерминированное снятие перекрытий (x/y-проекции VPSC):
+  раунды Gauss–Seidel по дешёвой оси + финальный монотонный вертикальный проход,
+  **гарантирующий ноль перекрытий** (любая оставшаяся пара перекрывалась бы по x и была
+  бы разведена по y).
+- `classifyTopology(graph, scope) → TREE | LAYERED | FORCE` (`AutoLayout.kt`): ER-доля
+  ≥ 50% → FORCE (правило старше forest-проверки — реляционная «звезда» не дерево);
+  лес → TREE; цикломатика > max(2, members/3) → FORCE; иначе LAYERED. `LayoutKind.AUTO`
+  классифицирует **каждый scope отдельно** (class-диаграмма с вложенным ER-контейнером
+  получает слои снаружи и stress внутри). Новый явный `LayoutKind.FORCE`.
+- **Tidy/Align** (`layout/TidyAlign.kt` + интент `ApplyDiagramTidyAlign`, кнопка в
+  инспекторе): topology-preserving уборка ручной расстановки — axis-union snap рядов и
+  колонок (полдюйма `nodeGap/2`), снятие перекрытий с четверть-зазором (жмётся к ручным
+  отступам), integer grid; полной перекладки нет (решение №6 — отдельная вторая кнопка).
+- **Пресеты** (решение №5 — пара запечённых пресетов вместо ручек): `DiagramLayoutPreset`
+  DEFAULT | PUBLICATION (layerGap 112 / nodeGap 56 / dummySize 16) | COMPACT (56/24/10);
+  дропдаун на кнопке «Авто-раскладка» с мини-превью плотности.
+- **Наследование указывает вверх**: generalization/realization в `scopeAdjacency`
+  разворачиваются (супертип получает меньший ранг) — работает и в layered, и в tree.
 
 Что вошло в P3:
 - `layout/CoordinateAssignment.kt` — Brandes–Köpf с переменными ширинами: маркировка
@@ -164,8 +192,8 @@ AUTO-классификатор `classifyTopology(graph, scope) → TREE | LAYER
 | **P1** ✅ | Ядро Sugiyama: внутренний LayeredGraph + **dummy-узлы** + детерминированный VPSC | **M** |
 | **P2** ✅ | Реальная минимизация пересечений: weighted-median + transpose + keep-best | **M** |
 | **P3** ✅ | **Brandes–Köpf** выпрямление координат (самый большой визуальный скачок) | **L** |
-| **P4** | SMACOF force-fallback для ER/циклов + AUTO-классификатор + кнопка «Tidy/Align» | **L** |
-| **P5** | Пресет «Publication», ориентация по типу связи, LEFT_RIGHT для ER, полировка | **S** |
+| **P4** ✅ | SMACOF force-fallback для ER/циклов + AUTO-классификатор + кнопка «Tidy/Align» | **L** |
+| **P5** ✅ | Пресет «Publication», ориентация по типу связи, LEFT_RIGHT для ER, полировка | **S** |
 
 ### P0 — Быстрые победы (роутер + workflow, без новой раскладки) · M
 

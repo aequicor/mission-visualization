@@ -119,6 +119,7 @@ import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramRelationPreview
 import io.aequicor.visualization.subsystems.diagrams.compose.toComposePath
+import io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramColor
@@ -5189,8 +5190,24 @@ private fun DiagramCanvasActions(state: MissionEditorStateHolder, nodeId: String
     InspectorSubLabel(strings.inspector.diagramActions)
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TinyButton(strings.inspector.autoLayoutAction, enabled = !locked) {
-            state.dispatch(DiagramEditorIntent.ApplyDiagramAutoLayout(nodeId))
+        Box {
+            var layoutExpanded by remember(nodeId) { mutableStateOf(false) }
+            TinyButton(strings.inspector.autoLayoutAction, enabled = !locked) { layoutExpanded = true }
+            EditorDropdownMenu(expanded = layoutExpanded, onDismissRequest = { layoutExpanded = false }) {
+                DiagramLayoutPreset.entries.forEach { preset ->
+                    EditorDropdownMenuItem(
+                        text = strings.inspector.layoutPreset(preset),
+                        leadingContent = { DiagramLayoutPresetPreview(preset) },
+                        onClick = {
+                            layoutExpanded = false
+                            state.dispatch(DiagramEditorIntent.ApplyDiagramAutoLayout(nodeId, preset = preset))
+                        },
+                    )
+                }
+            }
+        }
+        TinyButton(strings.inspector.tidyAlignAction, enabled = !locked) {
+            state.dispatch(DiagramEditorIntent.ApplyDiagramTidyAlign(nodeId))
         }
         Box {
             var templatesExpanded by remember(nodeId) { mutableStateOf(false) }
@@ -5318,6 +5335,30 @@ private fun UmlVisibilityPreview(visibility: UmlVisibility, modifier: Modifier =
             color = colors.accent,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+@Composable
+private fun DiagramLayoutPresetPreview(preset: DiagramLayoutPreset, modifier: Modifier = Modifier.size(18.dp)) {
+    val colors = LocalEditorColors.current
+    Canvas(modifier) {
+        // Three layer bars whose pitch mirrors the preset's spacing.
+        val gap = when (preset) {
+            DiagramLayoutPreset.DEFAULT -> 3.5f
+            DiagramLayoutPreset.PUBLICATION -> 5f
+            DiagramLayoutPreset.COMPACT -> 2f
+        }
+        val barHeight = 2.4f
+        var y = (size.height - (3 * barHeight + 2 * gap)) / 2f
+        repeat(3) {
+            drawRoundRect(
+                colors.controlInk,
+                topLeft = Offset(2f, y),
+                size = Size(size.width - 4f, barHeight),
+                cornerRadius = CornerRadius(1.2f),
+            )
+            y += barHeight + gap
+        }
     }
 }
 
