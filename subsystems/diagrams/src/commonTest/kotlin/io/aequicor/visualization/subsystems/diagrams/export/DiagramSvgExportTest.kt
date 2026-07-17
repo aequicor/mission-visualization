@@ -51,8 +51,9 @@ class DiagramSvgExportTest {
     @Test
     fun exportsLabelsAsTextElements() {
         val svg = diagramToSvg(simpleGraph())
-        assertTrue(svg.contains(">Alpha</text>"))
-        assertTrue(svg.contains(">Beta</text>"))
+        // Node captions wrap, so each line is its own <tspan>; edge labels stay single-line.
+        assertTrue(svg.contains(">Alpha</tspan>"))
+        assertTrue(svg.contains(">Beta</tspan>"))
         assertTrue(svg.contains(">flows</text>"))
     }
 

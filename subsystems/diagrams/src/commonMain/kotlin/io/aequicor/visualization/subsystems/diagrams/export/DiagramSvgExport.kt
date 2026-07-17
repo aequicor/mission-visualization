@@ -3,6 +3,8 @@ package io.aequicor.visualization.subsystems.diagrams.export
 import io.aequicor.visualization.subsystems.diagrams.arrows.ArrowheadGeometry
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadsForRelation
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelBox
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
@@ -31,6 +33,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlNoteNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlPackageNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPath
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
@@ -41,6 +44,9 @@ import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
 import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdges
 import io.aequicor.visualization.subsystems.diagrams.routing.routedEdgeToPath
+import io.aequicor.visualization.subsystems.diagrams.text.ApproximateDiagramTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.text.DiagramTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.text.DiagramTextStyle
 import kotlin.math.sqrt
 
 /** Palette and metrics for [diagramToSvg]. */
@@ -72,11 +78,14 @@ data class SvgExportOptions(
  *
  * @param routed pre-routed edges to reuse (e.g. after interactive editing); `null`
  *   routes all edges with [routeAllEdges].
+ * @param measurer wraps node captions into lines. The default approximation keeps this module
+ *   pure; a caller with real font metrics (the Compose layer) can pass its own.
  */
 fun diagramToSvg(
     graph: DiagramGraph,
     routed: List<RoutedEdge>? = null,
     options: SvgExportOptions = SvgExportOptions.Default,
+    measurer: DiagramTextMeasurer = ApproximateDiagramTextMeasurer(),
 ): String {
     val visibleLayerIds = graph.layers.filter { it.visible }.map { it.id }.toSet()
     fun layerVisible(layerId: DiagramLayerId?): Boolean = layerId == null || layerId in visibleLayerIds
@@ -105,7 +114,7 @@ fun diagramToSvg(
             .append("\" height=\"").append(fmt(bounds.height))
             .append("\" fill=\"").append(background.toSvgHex()).append("\"/>\n")
     }
-    for (node in nodes) svg.appendNode(node, options)
+    for (node in nodes) svg.appendNode(node, options, measurer)
     // Edges accumulate in draw order so each edge line-jumps only over lines below it
     // (matches the on-canvas renderer).
     val routePoints = routedById.mapValues { it.value.points }
@@ -189,7 +198,11 @@ private fun contentBounds(
 
 // --- nodes ---------------------------------------------------------------------------------
 
-private fun StringBuilder.appendNode(node: DiagramNode, options: SvgExportOptions) {
+private fun StringBuilder.appendNode(
+    node: DiagramNode,
+    options: SvgExportOptions,
+    measurer: DiagramTextMeasurer,
+) {
     val payload = node.payload
     val bounds = node.bounds
     val borderless = payload is DiagramNodePayload.BasicShape && payload.shape == DiagramShapeKind.TEXT
@@ -205,26 +218,20 @@ private fun StringBuilder.appendNode(node: DiagramNode, options: SvgExportOption
 
                 is TableNode -> appendTable(bounds, payload, options)
                 else -> nodeCenterText(node)?.let { text ->
-                    svgText(bounds.centerX, bounds.centerY, text, options)
+                    val box = node.labelBox(node.labelPadding())
+                    svgWrappedText(box, text, options, measurer)
                 }
             }
         }
     }
 }
 
-private fun nodeCenterText(node: DiagramNode): String? =
-    node.labels.firstOrNull()?.text ?: when (val payload = node.payload) {
-        is UmlStateNode -> payload.name.ifEmpty { null }
-        is UmlActivityNode -> payload.name.ifEmpty { null }
-        is UmlUseCaseNode -> payload.name
-        is UmlComponentNode -> payload.name
-        is UmlDeploymentNode -> payload.name
-        is UmlNoteNode -> payload.text
-        is UmlPackageNode -> payload.name
-        is DiagramNodePayload.ContainerNode -> payload.title?.text
-        is DiagramNodePayload.SwimlaneNode -> payload.title?.text
-        else -> null
-    }
+/**
+ * The caption the canvas draws for this node. Reads the same accessor as the renderer, rather
+ * than preferring `labels` — the old labels-first order disagreed with the canvas for every
+ * typed payload.
+ */
+private fun nodeCenterText(node: DiagramNode): String? = node.primaryText()?.ifEmpty { null }
 
 private fun StringBuilder.appendClassCompartments(
     bounds: DiagramRect,
@@ -537,6 +544,38 @@ private fun StringBuilder.appendLine(
 
 private fun StringBuilder.svgText(
     x: Double,
+/**
+ * Draws [text] centered in [box], wrapped to the box width with one `<tspan>` per line.
+ *
+ * SVG `<text>` has no wrapping of its own, so without this every caption exported as one long
+ * unbroken line — which is why the audit SVG could not show label defects at all.
+ */
+private fun StringBuilder.svgWrappedText(
+    box: DiagramRect,
+    text: String,
+    options: SvgExportOptions,
+    measurer: DiagramTextMeasurer,
+) {
+    if (text.isEmpty() || box.width <= 1.0) return
+    val style = DiagramTextStyle(fontSize = options.fontSize)
+    val measured = measurer.measure(text, style, maxWidth = box.width)
+    val lineHeight = if (measured.lines.isEmpty()) 0.0 else measured.height / measured.lines.size
+    // Center the block vertically, but never above the box top: overflow grows downward so the
+    // first line always stays readable (a centered overflow would clip the top and the bottom).
+    val blockTop = maxOf(box.top, box.centerY - measured.height / 2.0)
+    val firstBaseline = blockTop + lineHeight / 2.0
+
+    append("<text x=\"").append(fmt(box.centerX)).append("\" y=\"").append(fmt(firstBaseline))
+        .append("\" text-anchor=\"middle\" dominant-baseline=\"central\" fill=\"")
+        .append(options.textColor.toSvgHex()).append("\">")
+    measured.lines.forEachIndexed { index, line ->
+        append("<tspan x=\"").append(fmt(box.centerX))
+        if (index > 0) append("\" dy=\"").append(fmt(lineHeight))
+        append("\">").append(escapeXml(line)).append("</tspan>")
+    }
+    append("</text>\n")
+}
+
     y: Double,
     text: String,
     options: SvgExportOptions,
