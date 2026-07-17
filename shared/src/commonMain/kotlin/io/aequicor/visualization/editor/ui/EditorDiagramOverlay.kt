@@ -819,11 +819,11 @@ internal fun DiagramEditOverlay(
                             // no prior selection needed. Double-click edits it; press+drag moves it;
                             // a plain click selects the owning edge.
                             val edge = live.edgeById(hit.edgeId) ?: return@awaitEachGesture
-                            val label = edge.labels.firstOrNull { it.position == hit.position } ?: return@awaitEachGesture
                             if (doubleClick && !additiveSelectionHeld) {
                                 textEdit = DiagramTextEditTarget.EdgeLabel(hit.edgeId.value, hit.position)
                                 return@awaitEachGesture
                             }
+                            val label = edge.labels.firstOrNull { it.position == hit.position } ?: return@awaitEachGesture
                             val route = routedPoints[hit.edgeId] ?: return@awaitEachGesture
                             // Drag base deliberately uses the UNSHIFTED anchor (no crossing-slide
                             // context): the moment the drag mints a non-zero offset the label is
@@ -1341,13 +1341,6 @@ private fun hugFittedBounds(
     return fitted.bounds.takeIf { it != node.bounds }
 }
 
-    state: MissionEditorStateHolder,
-    editId: String,
-    target: DiagramTextEditTarget,
-    graph: DiagramGraph,
-    routes: Map<DiagramEdgeId, List<DiagramPoint>>,
-    box: LayoutBox,
-    viewport: CanvasViewport,
 /** Small floating text field over the edited label; text is selected on open, Enter, Escape and
  *  blur all commit (draw.io semantics — the caret is already live, just type).
  *
@@ -1355,6 +1348,13 @@ private fun hugFittedBounds(
  *  reads the draft at invocation time, so the owner always commits the current text. */
 @Composable
 private fun DiagramInlineTextEditor(
+    state: MissionEditorStateHolder,
+    editId: String,
+    target: DiagramTextEditTarget,
+    graph: DiagramGraph,
+    routes: Map<DiagramEdgeId, List<DiagramPoint>>,
+    box: LayoutBox,
+    viewport: CanvasViewport,
     zoomPx: Float,
     onRegisterCommit: ((() -> Unit)?) -> Unit,
     onDone: () -> Unit,
@@ -1372,11 +1372,6 @@ private fun DiagramInlineTextEditor(
     val diagramMeasurer = remember(textMeasurer, hugDensity, hugFontProvider) {
         ComposeDiagramTextMeasurer(ComposeTypographyMeasurer(textMeasurer, hugDensity, hugFontProvider))
     }
-        // Blur commits on every press outside the field, so skip untouched drafts: an unchanged
-        // commit would still rewrite the source and push an undo entry.
-        if (committed || text == initial.takeIf { it.isNotBlank() }?.trim()) return
-        committed = true
-        when (target) {
     val initial = diagramTextEditInitialText(target, graph)
     // Open with the existing text fully selected so the first keystroke replaces it (F2 / rename).
     var draft by remember(target) { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
@@ -1388,6 +1383,11 @@ private fun DiagramInlineTextEditor(
 
     fun dispatchCommit() {
         val text = draft.text.takeIf { it.isNotBlank() }?.trim()
+        // Blur commits on every press outside the field, so skip untouched drafts: an unchanged
+        // commit would still rewrite the source and push an undo entry.
+        if (committed || text == initial.takeIf { it.isNotBlank() }?.trim()) return
+        committed = true
+        when (target) {
             is DiagramTextEditTarget.NodeLabel -> {
                 state.dispatch(DiagramEditorIntent.SetDiagramNodeLabel(editId, target.elementId, text))
                 hugFittedBounds(graph, target.elementId, text, diagramMeasurer)?.let { fitted ->
@@ -1403,17 +1403,6 @@ private fun DiagramInlineTextEditor(
                     )
                 }
             }
-        onDone()
-    }
-
-    // Blur = commit (draw.io's invokesStopCellEditing). Two paths reach it:
-    //  - a press this overlay handles calls the published hook;
-    //  - anything that closes edit mode from OUTSIDE the overlay (a press the canvas pane
-    //    handles, Escape/Enter at canvas level, selecting another node) simply unmounts this
-    //    composable, so disposal is the only place left to save the draft. Without this the
-    //    draft vanished silently, which is precisely what blur=commit is supposed to prevent.
-    DisposableEffect(target) {
-        onRegisterCommit(::commit)
             is DiagramTextEditTarget.TableCell ->
                 state.dispatch(
                     DiagramEditorIntent.SetDiagramTableCellText(editId, target.elementId, target.row, target.column, text),
@@ -1425,6 +1414,17 @@ private fun DiagramInlineTextEditor(
 
     fun commit() {
         dispatchCommit()
+        onDone()
+    }
+
+    // Blur = commit (draw.io's invokesStopCellEditing). Two paths reach it:
+    //  - a press this overlay handles calls the published hook;
+    //  - anything that closes edit mode from OUTSIDE the overlay (a press the canvas pane
+    //    handles, Escape/Enter at canvas level, selecting another node) simply unmounts this
+    //    composable, so disposal is the only place left to save the draft. Without this the
+    //    draft vanished silently, which is precisely what blur=commit is supposed to prevent.
+    DisposableEffect(target) {
+        onRegisterCommit(::commit)
         onDispose {
             onRegisterCommit(null)
             dispatchCommit()
@@ -1472,13 +1472,6 @@ private fun DiagramInlineTextEditor(
         is UmlNoteNode -> Alignment.TopStart
         else -> Alignment.Center
     }
-    Surface(
-        modifier = Modifier
-            .offset { IntOffset((center.x - widthPx / 2f).roundToInt(), (center.y - heightPx / 2f).roundToInt()) }
-            .size(
-                width = with(density) { widthPx.toDp() },
-                height = with(density) { heightPx.toDp() },
-            ),
     val fontSizePx = (fontSizeDoc * zoomPx).toFloat()
     val widthPx = (anchorRect.width * zoomPx).toFloat().coerceAtLeast(96f)
     val heightPx = (anchorRect.height * zoomPx).toFloat().coerceAtLeast(fontSizePx + 14f)
@@ -1486,6 +1479,13 @@ private fun DiagramInlineTextEditor(
         box.x + anchorRect.x + anchorRect.width / 2.0,
         box.y + anchorRect.y + anchorRect.height / 2.0,
     )
+    Surface(
+        modifier = Modifier
+            .offset { IntOffset((center.x - widthPx / 2f).roundToInt(), (center.y - heightPx / 2f).roundToInt()) }
+            .size(
+                width = with(density) { widthPx.toDp() },
+                height = with(density) { heightPx.toDp() },
+            ),
         shape = RoundedCornerShape(3.dp),
         color = colors.raisedSurface,
         border = BorderStroke(1.dp, colors.accent),
@@ -1506,12 +1506,12 @@ private fun DiagramInlineTextEditor(
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (event.key) {
-                            Key.Enter, Key.NumPadEnter -> {
-                                if (event.isShiftPressed) {
-                                    false
                             // Enter commits, Shift+Enter inserts a line break. draw.io inherits
                             // the opposite from its HTML textarea (Enter = newline, Ctrl+Enter =
                             // commit); the modern convention this editor follows elsewhere wins.
+                            Key.Enter, Key.NumPadEnter -> {
+                                if (event.isShiftPressed) {
+                                    false
                                 } else {
                                     commit()
                                     true
@@ -2031,6 +2031,8 @@ private fun diagramTextEditRect(
     graph: DiagramGraph,
     routes: Map<DiagramEdgeId, List<DiagramPoint>>,
 ): DiagramRect? = when (target) {
+    // The same box the renderer draws the caption in, so entering edit mode does not move the
+    // text and the plate cannot swallow the shape around it.
     is DiagramTextEditTarget.NodeLabel ->
         graph.nodeById(DiagramNodeId(target.elementId))?.let { it.labelBox(it.labelPadding()) }
 
@@ -2038,8 +2040,6 @@ private fun diagramTextEditRect(
         val node = graph.nodeById(DiagramNodeId(target.elementId))
         val table = node?.payload as? TableNode
         if (node == null || table == null || table.rowCount == 0 || table.columnCount == 0) {
-    // The same box the renderer draws the caption in, so entering edit mode does not move the
-    // text and the plate cannot swallow the shape around it.
             null
         } else {
             val rowSpans = scaledTrackSpans(table.rows.map { it.height }, node.height)
