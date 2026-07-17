@@ -1,6 +1,9 @@
 package io.aequicor.visualization.subsystems.diagrams.lint
 
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
@@ -80,6 +83,33 @@ class NodeLabelFitLintTest {
         )
 
         assertEquals(emptyList(), fits(graph))
+    }
+
+    @Test
+    fun aBorderlessTextBannerIsNotOversizedButStillOverflows() {
+        // A TEXT node draws nothing but its caption: a frame-wide centered title is the
+        // author's intent, not "a huge shape around three words". Clipped text still counts.
+        val banner = DiagramGraph().withNode(
+            DiagramNode(
+                id = DiagramNodeId("title"),
+                x = 0.0, y = 0.0, width = 3160.0, height = 50.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.TEXT),
+                labels = listOf(DiagramLabel("Модель сущностей и связей")),
+            ),
+        )
+        assertEquals(emptyList(), fits(banner))
+
+        val clipped = DiagramGraph().withNode(
+            DiagramNode(
+                id = DiagramNodeId("title"),
+                x = 0.0, y = 0.0, width = 60.0, height = 16.0,
+                payload = DiagramNodePayload.BasicShape(DiagramShapeKind.TEXT),
+                labels = listOf(DiagramLabel(longLabel)),
+            ),
+        )
+        val findings = fits(clipped)
+        assertEquals(1, findings.size, "clipped text must still report: $findings")
+        assertEquals(DiagramLintFinding.NodeLabelFit.Kind.OVERFLOW, findings.single().kind)
     }
 
     @Test

@@ -19,6 +19,7 @@ import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
 import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
 import io.aequicor.visualization.subsystems.diagrams.model.TableNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlActorNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
@@ -540,6 +541,14 @@ private fun nodeLabelFitFindings(
             kind = DiagramLintFinding.NodeLabelFit.Kind.OVERFLOW,
             detail = "needs ${wrapped.height.toInt()}px of ${box.height.toInt()}px",
         )
+    }
+
+    // A borderless TEXT node draws nothing but its caption: a box far wider than the text
+    // is how a centered title banner spans its frame, not "a huge shape around three
+    // words". Overflow above still applies — clipped text is a defect on any node.
+    val payload = node.payload
+    if (payload is DiagramNodePayload.BasicShape && payload.shape == DiagramShapeKind.TEXT) {
+        return@mapNotNull null
     }
 
     val natural = options.textMeasurer.measure(text, style, maxWidth = null)
