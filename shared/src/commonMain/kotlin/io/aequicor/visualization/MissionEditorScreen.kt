@@ -512,10 +512,21 @@ class MissionEditorStateHolder(
         if (!platformSupportsFolderSync) return
         platformInitFolderSync()
         if (platformProjectLandingMode == ProjectLandingMode.Compose && platformActiveFolderId() == null) {
-            persistedWorkspaceState.lastProject
-                ?.projectId
-                ?.takeIf { it != WelcomeProjectId }
-                ?.let(::platformConnectFolderById)
+            val savedProject = persistedWorkspaceState.lastProject
+                ?.takeIf { it.projectId != WelcomeProjectId }
+            if (savedProject != null) {
+                platformConnectFolderById(savedProject.projectId)
+                // The platform may canonicalize the folder id on connect (JVM resolves the real
+                // path, e.g. macOS /var → /private/var). The live folder is still the saved
+                // project, so re-key the pointer or activateProject would silently skip
+                // restoring the saved file/page/component selection.
+                val liveProjectId = platformActiveFolderId()
+                if (liveProjectId != null && liveProjectId != savedProject.projectId) {
+                    persistedWorkspaceState = persistedWorkspaceState.copy(
+                        lastProject = savedProject.copy(projectId = liveProjectId),
+                    )
+                }
+            }
         }
         var lastRevision = -1
         while (true) {

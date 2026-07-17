@@ -4,18 +4,40 @@ import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
 import io.aequicor.visualization.editor.data.decodeProjectSnapshot
 import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
 import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class JvmFolderSyncTest {
+    // Redirects the folder-sync settings dir away from ~/.mission-visualization before any
+    // persisting connect in the test body can write the real user settings file.
+    @BeforeTest
+    fun setUp() = platformResetFolderSyncForTest()
+
     @AfterTest
     fun tearDown() = platformResetFolderSyncForTest()
+
+    @Test
+    fun persistingConnectWritesSavedRootIntoRedirectedSettingsDirNotUserHome() {
+        val root = createTempDirectory("folder-persist-redirect")
+        root.resolve("screen.layout.md").writeText("# Screen\n")
+
+        platformConnectFolderByIdForTest(root.toString())
+
+        assertEquals("watching", folderSyncStatus())
+        val savedRootFile = platformFolderSyncSavedRootFileForTest()
+        assertEquals(root.toRealPath().toString(), Files.readString(savedRootFile))
+        val realSettingsDir = Path.of(System.getProperty("user.home") ?: ".", ".mission-visualization")
+        assertNotEquals(realSettingsDir.toAbsolutePath().normalize(), savedRootFile.parent.toAbsolutePath().normalize())
+    }
 
     @Test
     fun watchesExternalChangesAndSuppressesOwnAtomicWriteEcho() {

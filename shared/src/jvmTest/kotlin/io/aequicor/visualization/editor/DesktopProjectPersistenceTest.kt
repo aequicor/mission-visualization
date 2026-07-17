@@ -27,12 +27,18 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DesktopProjectPersistenceTest {
+    // openRecentProject connects through the production persist=true path; resetting first
+    // redirects the settings dir away from the real ~/.mission-visualization.
+    @BeforeTest
+    fun setUp() = platformResetFolderSyncForTest()
+
     @Test
     fun desktopNeverLoadsOrWritesEmbeddedProjectDrafts() = runBlocking {
         val repository = RecordingDraftRepository()

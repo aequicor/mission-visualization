@@ -106,8 +106,10 @@ internal actual fun platformLandingPendingActionJson(): String? = null
 private object JvmFolderSync {
     private const val LegacyEditorStateRelativePath = ".mission-visualization/editor-state.json"
     private val stateLock = Any()
-    private val settingsDir: Path = Path.of(System.getProperty("user.home") ?: ".", ".mission-visualization")
-    private val savedRootFile: Path = settingsDir.resolve("folder-sync-root.txt")
+    @Volatile private var settingsDirOverride: Path? = null
+    private val settingsDir: Path
+        get() = settingsDirOverride ?: Path.of(System.getProperty("user.home") ?: ".", ".mission-visualization")
+    private val savedRootFile: Path get() = settingsDir.resolve("folder-sync-root.txt")
     private val expectedWrites = ConcurrentHashMap<Path, Int>()
     private val expectedDeletes = ConcurrentHashMap.newKeySet<Path>()
     private var watchService: WatchService? = null
@@ -250,6 +252,12 @@ private object JvmFolderSync {
     fun forget(id: String) {
         if (savedRoot?.toString() == id || activeFolderId == id) disconnect(forget = true)
     }
+
+    fun overrideSettingsDirForTest(directory: Path) {
+        settingsDirOverride = directory
+    }
+
+    fun savedRootFilePath(): Path = savedRootFile
 
     fun writeInitial(root: Path, source: MissionDocumentSource) {
         val canonicalRoot = root.toAbsolutePath().normalize()
@@ -528,14 +536,36 @@ private object JvmFolderSync {
     }
 }
 
-// Narrow JVM test seam; production callers use the expect/actual functions above.
-internal fun platformConnectFolderForTest(path: Path) = JvmFolderSync.connect(path, persist = false)
+// Narrow JVM test seam; production callers use the expect/actual functions above. Every entry
+// point first redirects the settings directory to one throwaway folder for the test JVM, so
+// persisting connects (connectById/createProject/reconnect) never touch the real
+// ~/.mission-visualization of the developer running the suite.
+private val testSettingsDir: Path by lazy { Files.createTempDirectory("mission-visualization-test-settings") }
 
-internal fun platformConnectFolderByIdForTest(id: String) = JvmFolderSync.connectById(id)
+private fun redirectSettingsDirForTest() = JvmFolderSync.overrideSettingsDirForTest(testSettingsDir)
+
+internal fun platformConnectFolderForTest(path: Path) {
+    redirectSettingsDirForTest()
+    JvmFolderSync.connect(path, persist = false)
+}
+
+internal fun platformConnectFolderByIdForTest(id: String) {
+    redirectSettingsDirForTest()
+    JvmFolderSync.connectById(id)
+}
 
 internal fun platformCreateFolderForTest(path: Path, sourcesJson: String) {
+    redirectSettingsDirForTest()
     val snapshot = decodeProjectSnapshot(sourcesJson) ?: error("Invalid project snapshot")
     JvmFolderSync.createProject(path, snapshot.sources)
 }
 
-internal fun platformResetFolderSyncForTest() = JvmFolderSync.disconnect(forget = false)
+internal fun platformResetFolderSyncForTest() {
+    redirectSettingsDirForTest()
+    JvmFolderSync.disconnect(forget = false)
+}
+
+internal fun platformFolderSyncSavedRootFileForTest(): Path {
+    redirectSettingsDirForTest()
+    return JvmFolderSync.savedRootFilePath()
+}

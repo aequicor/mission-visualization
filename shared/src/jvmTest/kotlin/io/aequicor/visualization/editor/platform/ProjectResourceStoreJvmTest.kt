@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
 import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -13,6 +14,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertSame
 
 class ProjectResourceStoreJvmTest {
+    // Resetting first redirects the folder-sync settings dir away from ~/.mission-visualization.
+    @BeforeTest
+    fun setUp() = platformResetFolderSyncForTest()
+
     @AfterTest
     fun tearDown() = platformResetFolderSyncForTest()
 
