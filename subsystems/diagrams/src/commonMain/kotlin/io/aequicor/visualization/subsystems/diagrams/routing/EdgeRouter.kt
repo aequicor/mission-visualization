@@ -286,31 +286,33 @@ private fun routeOrthogonal(
         targetSide = target.side,
     )
 
-    val innerPoints: List<DiagramPoint> = if (mandatory.size == 2 && !avoidObstacles) {
-        connectOrthogonally(mandatory[0], mandatory[1], source.side, target.side)
-    } else {
-        val obstacles = if (avoidObstacles) {
-            graph.nodes
-                .filter { it.visible && it.width > GEOMETRY_EPSILON && it.height > GEOMETRY_EPSILON }
-                .map {
-                    // A node this edge attaches to is inflated to its own end's reach so
-                    // the stub still lands exactly on the boundary A* rides; every other
-                    // node keeps the shared corridor margin, leaving overall route density
-                    // untouched.
-                    val inflation = when (it.id) {
-                        source.node?.id -> sourceReach
-                        target.node?.id -> targetReach
-                        else -> margin
-                    }
-                    it.bounds to inflate(it.bounds, inflation)
+    val obstacles = if (avoidObstacles) {
+        graph.nodes
+            .filter { it.visible && it.width > GEOMETRY_EPSILON && it.height > GEOMETRY_EPSILON }
+            .map {
+                // A node this edge attaches to is inflated to its own end's reach so
+                // the stub still lands exactly on the boundary A* rides; every other
+                // node keeps the shared corridor margin, leaving overall route density
+                // untouched.
+                val inflation = when (it.id) {
+                    source.node?.id -> sourceReach
+                    target.node?.id -> targetReach
+                    else -> margin
                 }
-        } else {
-            emptyList()
-        }
+                it.bounds to inflate(it.bounds, inflation)
+            }
+    } else {
+        emptyList()
+    }
+    val healedMandatory = healViasInsideObstacles(mandatory, obstacles)
+
+    val innerPoints: List<DiagramPoint> = if (healedMandatory.size == 2 && !avoidObstacles) {
+        connectOrthogonally(healedMandatory[0], healedMandatory[1], source.side, target.side)
+    } else {
         val jogThreshold = margin * 2.0
-        val points = mutableListOf(mandatory.first())
+        val points = mutableListOf(healedMandatory.first())
         var seedDirection = source.side?.toGridDirection()
-        for ((from, to) in mandatory.zipWithNext()) {
+        for ((from, to) in healedMandatory.zipWithNext()) {
             val leg = if (avoidObstacles) {
                 val legObstacles = legObstacles(obstacles, from, to)
                 if (axisAligned(from, to) && segmentClear(from, to, legObstacles)) {
@@ -952,6 +954,62 @@ private fun alignWaypointToPort(
  * practice) while leaving genuinely authored corners — hundreds of units away — exact.
  */
 internal const val PORT_LEG_ALIGNMENT_LIMIT = 24.0
+
+/**
+ * Pushes mandatory vias that sit INSIDE a node body out to that node's inflated corridor
+ * boundary. A via inside a node — stale after the node moved or grew — breaks routing
+ * outright: the A* legs that start or end inside an obstacle cannot route and fall back
+ * to straight cuts through the node (the lint's EdgeThroughNode). Only points strictly
+ * inside the RAW bounds move (a via in the margin ring is a legitimate tight corridor);
+ * they land on the inflated boundary the grid A* rides. A node that also contains BOTH
+ * neighbouring mandatory points is acting as a container (a background frame, a
+ * swimlane) — the same rule [legObstacles] applies to legs — and is not healed against.
+ * Of the axis-push candidates the one keeping the total prev → via → next manhattan
+ * length shortest wins, and ties go to the axis that keeps the via collinear with a
+ * neighbour — the authored corridor direction survives, only the broken corner moves.
+ */
+private fun healViasInsideObstacles(
+    mandatory: List<DiagramPoint>,
+    obstacles: List<Pair<DiagramRect, DiagramRect>>,
+): List<DiagramPoint> {
+    if (mandatory.size <= 2 || obstacles.isEmpty()) return mandatory
+    val healed = mandatory.toMutableList()
+    for (index in 1 until healed.lastIndex) {
+        var point = healed[index]
+        // A pushed-out via can land inside a neighbouring node; a couple of passes settle it.
+        var attempts = 0
+        while (attempts < 3) {
+            val hit = obstacles.firstOrNull { (bounds, _) ->
+                strictlyContains(bounds, point) &&
+                    !(strictlyContains(bounds, healed[index - 1]) && strictlyContains(bounds, healed[index + 1]))
+            } ?: break
+            val inflated = hit.second
+            val prev = healed[index - 1]
+            val next = healed[index + 1]
+            val candidates = listOf(
+                point.copy(x = inflated.left),
+                point.copy(x = inflated.right),
+                point.copy(y = inflated.top),
+                point.copy(y = inflated.bottom),
+            )
+            fun detour(candidate: DiagramPoint): Double =
+                abs(candidate.x - prev.x) + abs(candidate.y - prev.y) +
+                    abs(candidate.x - next.x) + abs(candidate.y - next.y)
+            fun keepsCorridor(candidate: DiagramPoint): Boolean =
+                (candidate.x == point.x && (point.x == prev.x || point.x == next.x)) ||
+                    (candidate.y == point.y && (point.y == prev.y || point.y == next.y))
+            val best = candidates.minByOrNull { detour(it) } ?: break
+            val bestScore = detour(best)
+            point = candidates
+                .filter { detour(it) <= bestScore + GEOMETRY_EPSILON && keepsCorridor(it) }
+                .minByOrNull { abs(it.x - point.x) + abs(it.y - point.y) }
+                ?: best
+            attempts++
+        }
+        healed[index] = point
+    }
+    return healed
+}
 
 private fun dedupePoints(points: List<DiagramPoint>): List<DiagramPoint> {
     val result = mutableListOf<DiagramPoint>()
