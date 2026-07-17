@@ -23,6 +23,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramLayerId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
@@ -359,6 +360,7 @@ internal object DiagramCnlReader {
         var layerId: String? = null
         var locked = false
         var visible = true
+        var sizing = DiagramNodeSizing.Fixed
 
         fun fail(message: String): DiagramCnlSentence? {
             diagnostics.error(message, line, blockPath = BLOCK_PATH)
@@ -447,6 +449,11 @@ internal object DiagramCnlReader {
                     visible = value
                     idx = next
                 }
+                // Node-level, not payload-level: any shape with a caption may hug it.
+                word == "hug" -> {
+                    sizing = DiagramNodeSizing.Hug
+                    idx++
+                }
                 word in payloadItemKeywords -> {
                     val next = payload.acceptItem(word, parts, idx, id, line, diagnostics) ?: return null
                     idx = next
@@ -474,6 +481,7 @@ internal object DiagramCnlReader {
             layerId = layerId?.let(::DiagramLayerId),
             locked = locked,
             visible = visible,
+            sizing = sizing,
         )
         // A typed payload renders the caption it carries itself (the `«…»` head phrase), so a
         // `label` on it would round-trip through the source without ever being drawn. Reject the

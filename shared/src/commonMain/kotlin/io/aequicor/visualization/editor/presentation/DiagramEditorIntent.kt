@@ -7,6 +7,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
@@ -84,6 +85,13 @@ sealed interface DiagramEditorIntent : DesignEditorIntent {
         override val nodeId: String,
         val elementId: String,
         val text: String?,
+    ) : DiagramEditorIntent
+
+    /** Switches whether edits re-fit a diagram node to its caption (draw.io hug). */
+    data class SetDiagramNodeSizing(
+        override val nodeId: String,
+        val elementId: String,
+        val sizing: DiagramNodeSizing,
     ) : DiagramEditorIntent
 
     data class SetDiagramNodeStyle(

@@ -148,6 +148,15 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlVisibility
 import io.aequicor.visualization.subsystems.diagrams.ops.UmlClassMemberKind
 import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import androidx.compose.ui.platform.LocalDensity
+import io.aequicor.visualization.subsystems.diagrams.ops.fitNodeToText
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
+import io.aequicor.visualization.subsystems.diagrams.compose.ComposeDiagramTextMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
+import androidx.compose.ui.text.rememberTextMeasurer
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.templates.diagramTemplates
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
@@ -4801,6 +4810,8 @@ private fun DiagramNodeControls(
     ) { text ->
         state.dispatch(DiagramEditorIntent.SetDiagramNodeLabel(nodeId, elementId, text.takeIf { it.isNotBlank() }))
     }
+    Spacer(Modifier.height(8.dp))
+    DiagramSizingControls(state, nodeId, element, locked)
     Spacer(Modifier.height(10.dp))
     DiagramStyleControls(state, element.style, locked, resetKey = "diagram-node-$elementId") { style ->
         state.dispatch(DiagramEditorIntent.SetDiagramNodeStyle(nodeId, elementId, style))
@@ -4812,6 +4823,74 @@ private fun DiagramNodeControls(
     (element.payload as? UmlClassNode)?.let { uml ->
         Spacer(Modifier.height(10.dp))
         DiagramClassControls(state, nodeId, elementId, uml, locked)
+    }
+}
+
+/**
+ * Node sizing: fixed geometry (draw.io's default) vs hugging the caption, plus a one-shot
+ * "fit to text". Node-only — deliberately NOT part of [DiagramStyleControls], which is shared
+ * with edges, where autosizing means nothing.
+ */
+@Composable
+private fun DiagramSizingControls(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    element: DiagramNode,
+    locked: Boolean,
+) {
+    val strings = LocalStrings.current
+    val elementId = element.id.value
+    // Reuse the editor's existing Fixed/Hug vocabulary and preview rather than inventing a
+    // second one for diagrams — the same reason the CNL word is `hug` and not `autosize`.
+    val modes = listOf(SizingMode.Fixed, SizingMode.Hug)
+    fun modeOf(sizing: DiagramNodeSizing): SizingMode =
+        if (sizing == DiagramNodeSizing.Hug) SizingMode.Hug else SizingMode.Fixed
+    // ONE resolver drives both the displayed value and the match-back, so switching the UI to
+    // Russian cannot silently break the selection (the round-trip select trap).
+    fun modeLabel(mode: SizingMode): String = strings.inspector.sizingMode(mode)
+
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val fontProvider = rememberBundledFontProvider()
+    val measurer = remember(textMeasurer, density, fontProvider) {
+        ComposeDiagramTextMeasurer(ComposeTypographyMeasurer(textMeasurer, density, fontProvider))
+    }
+
+    InspectorSubLabel(strings.inspector.sizing)
+    Spacer(Modifier.height(6.dp))
+    CompactSelectField(
+        value = modeLabel(modeOf(element.sizing)),
+        options = modes.map(::modeLabel),
+        onSelect = { label ->
+            if (locked) return@CompactSelectField
+            val picked = modes.firstOrNull { modeLabel(it) == label } ?: return@CompactSelectField
+            val sizing = if (picked == SizingMode.Hug) DiagramNodeSizing.Hug else DiagramNodeSizing.Fixed
+            if (sizing != element.sizing) {
+                state.dispatch(DiagramEditorIntent.SetDiagramNodeSizing(nodeId, elementId, sizing))
+            }
+        },
+        leadingContent = { SizingModePreview(modeOf(element.sizing)) },
+        optionLeadingContent = { label ->
+            modes.firstOrNull { modeLabel(it) == label }?.let { SizingModePreview(it) }
+        },
+    )
+    Spacer(Modifier.height(6.dp))
+    TinyButton(strings.inspector.fitToText, enabled = !locked) {
+        val id = DiagramNodeId(elementId)
+        val graph = DiagramGraph(nodes = listOf(element))
+        val fitted = graph.fitNodeToText(id, measurer, force = true).nodeById(id) ?: return@TinyButton
+        if (fitted.bounds != element.bounds) {
+            state.dispatch(
+                DiagramEditorIntent.ResizeDiagramNode(
+                    nodeId = nodeId,
+                    elementId = elementId,
+                    x = fitted.x,
+                    y = fitted.y,
+                    width = fitted.width,
+                    height = fitted.height,
+                ),
+            )
+        }
     }
 }
 

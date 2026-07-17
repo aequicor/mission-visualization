@@ -125,6 +125,9 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
     is DiagramEditorIntent.SetDiagramNodeLabel -> diagramWriteBack(intent.nodeId) {
         it.setNodeText(DiagramNodeId(intent.elementId), intent.text)
     }
+    is DiagramEditorIntent.SetDiagramNodeSizing -> diagramWriteBack(intent.nodeId) { graph ->
+        graph.updateNode(DiagramNodeId(intent.elementId)) { it.copy(sizing = intent.sizing) }
+    }
     is DiagramEditorIntent.SetDiagramNodeStyle -> diagramWriteBack(intent.nodeId) {
         it.setNodeStyle(DiagramNodeId(intent.elementId), intent.style)
     }

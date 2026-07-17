@@ -10,6 +10,7 @@ import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import kotlin.test.Test
@@ -112,6 +113,26 @@ class DiagramNodeTextReducerTest {
             "basic shapes keep carrying their caption in node.labels",
         )
         assertTrue("label «Renamed shape»" in next.sourceContent())
+    }
+
+    @Test
+    fun switchingSizingToHugIsWrittenBackToTheSource() {
+        val next = reduceDesignEditor(
+            freshState(),
+            DiagramEditorIntent.SetDiagramNodeSizing("canvas", "uc1", DiagramNodeSizing.Hug),
+        )
+
+        assertEquals(
+            DiagramNodeSizing.Hug,
+            next.graphOf("canvas").nodeById(DiagramNodeId("uc1"))?.sizing,
+        )
+        val content = next.sourceContent()
+        assertTrue("hug" in content, "hug must reach the source, not stay in memory:\n$content")
+        assertTrue("180 by 80" in content, "the size stays as the last measured result:\n$content")
+        assertTrue(
+            next.diagnostics.none { "kept in memory" in it.message },
+            "write-back must not fall back to memory: ${next.diagnostics}",
+        )
     }
 
     @Test

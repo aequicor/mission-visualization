@@ -60,6 +60,23 @@ class DiagramCnlDocExamplesTest {
         )
     }
 
+    /**
+     * Skill «Sizing text-bearing shapes»: the pair of use-case examples an author extrapolates
+     * from — a short Latin caption and a long Cyrillic one, both hugging. One example alone left
+     * the scale to guesswork, which is how a 42-character caption ended up in a 930px ellipse.
+     */
+    @Test
+    fun skillHugExamplesCompileAndRoundTrip() {
+        assertCompilesClean(
+            heading = "## Diagram: Hug Examples id hug_canvas 1000 by 600 position 0 0",
+            body = listOf(
+                "Node use-case submit «Submit mission» 180 by 80 hug position 260 220",
+                "Node use-case contacts «Вести контакты собственников и совета дома» 450 by 120 hug position 260 320",
+            ),
+            canvasId = "hug_canvas",
+        )
+    }
+
     /** Spec «Diagrams»: layer/edge/group examples (references resolve inside one canvas). */
     @Test
     fun specEdgeExamplesCompileAndRoundTrip() {
