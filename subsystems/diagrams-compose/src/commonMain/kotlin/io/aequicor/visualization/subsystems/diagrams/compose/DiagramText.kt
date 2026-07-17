@@ -14,11 +14,11 @@ import io.aequicor.visualization.subsystems.typography.compose.ComposeTypography
 import io.aequicor.visualization.subsystems.typography.compose.RichTextFill
 import io.aequicor.visualization.subsystems.typography.compose.drawRichText
 
-/** Default label font size, document px. */
-internal const val DIAGRAM_LABEL_FONT_SIZE = 13.0
+/** Default label font size, document px. Public so inline editors can match the render. */
+const val DIAGRAM_LABEL_FONT_SIZE = 13.0
 
-/** Smaller font for member rows / attributes / lane titles. */
-internal const val DIAGRAM_DETAIL_FONT_SIZE = 12.0
+/** Smaller font for member rows / attributes / lane titles / table cells. */
+const val DIAGRAM_DETAIL_FONT_SIZE = 12.0
 
 /**
  * Lowers a diagram label into typography [RichText]. When [DiagramLabel.markdown] is set,

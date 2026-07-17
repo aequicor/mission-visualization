@@ -96,6 +96,12 @@ data class EditorWorkspaceState(
      */
     val diagramTextEditRequest: String? = null,
     /**
+     * True while the diagram overlay's inline label editor is open. Canvas-level key
+     * shortcuts (Enter/Escape/Delete/arrows/space) must stand down so the text field
+     * receives them — preview key events tunnel through the canvas first.
+     */
+    val diagramTextEditing: Boolean = false,
+    /**
      * Live palette→canvas diagram-shape drag (draw.io-style), or null when idle. Window
      * coordinates because the palette (inspector pane) and the canvas are sibling
      * composables; the drop handler maps window → canvas-local → document coordinates.

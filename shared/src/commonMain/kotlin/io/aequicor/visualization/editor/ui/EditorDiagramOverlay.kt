@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,8 +54,11 @@ import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
@@ -79,6 +83,8 @@ import io.aequicor.visualization.subsystems.anchoring.MoveSnapState
 import io.aequicor.visualization.subsystems.anchoring.SnapBox
 import io.aequicor.visualization.subsystems.anchoring.SpacingBar
 import io.aequicor.visualization.subsystems.anchoring.solveMoveSnap
+import io.aequicor.visualization.subsystems.diagrams.compose.DIAGRAM_DETAIL_FONT_SIZE
+import io.aequicor.visualization.subsystems.diagrams.compose.DIAGRAM_LABEL_FONT_SIZE
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramConnectTargetOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramDirectionalArrowsOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramOverlayStyle
@@ -354,6 +360,24 @@ internal fun DiagramEditOverlay(
         if (textEditRequest != null) {
             textEdit = DiagramTextEditTarget.NodeLabel(textEditRequest)
             state.updateWorkspace { it.copy(diagramTextEditRequest = null) }
+        }
+    }
+
+    // Mirror the inline editor's presence into workspace state so the canvas preview key
+    // handler stands down (it sees Enter/Escape before the text field and would otherwise
+    // leave edit mode, dropping the draft). Cleared on dispose so the flag can't go stale
+    // when edit mode ends with the editor still open.
+    val inlineTextEditing = textEdit != null
+    LaunchedEffect(inlineTextEditing) {
+        if (state.workspace.diagramTextEditing != inlineTextEditing) {
+            state.updateWorkspace { it.copy(diagramTextEditing = inlineTextEditing) }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (state.workspace.diagramTextEditing) {
+                state.updateWorkspace { it.copy(diagramTextEditing = false) }
+            }
         }
     }
 
@@ -1312,42 +1336,74 @@ private fun DiagramInlineTextEditor(
         onDone()
     }
 
-    val topLeft = viewport.toScreen(box.x + anchorRect.x, box.y + anchorRect.y)
+    // Overlay the edited label's exact box and typeset the draft like the canvas does
+    // (canonical diagram font in document px scaled by zoom, centered both ways), so
+    // entering edit mode doesn't visually jump the text.
+    val density = LocalDensity.current
+    val fontSizeDoc = when (target) {
+        is DiagramTextEditTarget.NodeLabel -> DIAGRAM_LABEL_FONT_SIZE
+        else -> DIAGRAM_DETAIL_FONT_SIZE
+    }
+    val headerCell = (target as? DiagramTextEditTarget.TableCell)?.let { cell ->
+        val table = graph.nodeById(DiagramNodeId(cell.elementId))?.payload as? TableNode
+        table != null && (
+            table.rows.getOrNull(cell.row)?.header == true ||
+                table.columns.getOrNull(cell.column)?.header == true
+            )
+    } ?: false
+    val fontSizePx = (fontSizeDoc * zoomPx).toFloat()
     val widthPx = (anchorRect.width * zoomPx).toFloat().coerceAtLeast(96f)
-    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val heightPx = (anchorRect.height * zoomPx).toFloat().coerceAtLeast(fontSizePx + 14f)
+    val center = viewport.toScreen(
+        box.x + anchorRect.x + anchorRect.width / 2.0,
+        box.y + anchorRect.y + anchorRect.height / 2.0,
+    )
     Surface(
         modifier = Modifier
-            .offset { IntOffset(topLeft.x.roundToInt(), topLeft.y.roundToInt()) }
-            .width((widthPx / density).dp),
-        shape = RoundedCornerShape(5.dp),
+            .offset { IntOffset((center.x - widthPx / 2f).roundToInt(), (center.y - heightPx / 2f).roundToInt()) }
+            .size(
+                width = with(density) { widthPx.toDp() },
+                height = with(density) { heightPx.toDp() },
+            ),
+        shape = RoundedCornerShape(3.dp),
         color = colors.raisedSurface,
         border = BorderStroke(1.dp, colors.accent),
         shadowElevation = 4.dp,
     ) {
-        BasicTextField(
-            value = draft,
-            onValueChange = { draft = it },
-            modifier = Modifier
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-                .focusRequester(focusRequester)
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (event.key) {
-                        Key.Enter, Key.NumPadEnter -> {
-                            commit()
-                            true
+        Box(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier
+                    .width(with(density) { (widthPx - 8f).coerceAtLeast(8f).toDp() })
+                    .focusRequester(focusRequester)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.Enter, Key.NumPadEnter -> {
+                                commit()
+                                true
+                            }
+                            Key.Escape -> {
+                                commit()
+                                true
+                            }
+                            else -> false
                         }
-                        Key.Escape -> {
-                            commit()
-                            true
-                        }
-                        else -> false
-                    }
-                },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.ink),
-            cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
-        )
+                    },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    color = colors.ink,
+                    fontSize = with(density) { fontSizePx.toSp() },
+                    fontWeight = if (headerCell) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                ),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
+            )
+        }
     }
     LaunchedEffect(target) { runCatching { focusRequester.requestFocus() } }
 }

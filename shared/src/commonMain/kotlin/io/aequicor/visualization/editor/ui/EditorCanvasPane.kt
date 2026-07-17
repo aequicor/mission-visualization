@@ -675,7 +675,9 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         shiftHeld = event.isShiftPressed
                         altHeld = event.isAltPressed
                         ctrlOrMetaHeld = event.isCtrlPressed || event.isMetaPressed
-                        if (event.key == Key.Spacebar && state.designState.editingTextNodeId.isBlank()) {
+                        if (event.key == Key.Spacebar && state.designState.editingTextNodeId.isBlank() &&
+                            !state.workspace.diagramTextEditing
+                        ) {
                             spaceHeld = event.type == KeyEventType.KeyDown
                             return@onPreviewKeyEvent true
                         }
@@ -3065,6 +3067,10 @@ private fun enterEditMode(state: MissionEditorStateHolder, nodeId: String) {
 
 /** Keyboard shortcuts: nudge, big-nudge, delete, duplicate, undo/redo, select-all, escape. */
 private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Boolean, ctrl: Boolean): Boolean {
+    // The diagram overlay's inline label editor owns the keyboard while open: this handler
+    // sees preview events before the focused text field, so consuming Enter/Escape/Delete/
+    // arrows here would exit edit mode and drop the draft instead of committing it.
+    if (state.workspace.diagramTextEditing) return false
     val design = state.designState
     val selection = design.selectedNodeIds
     val step = if (shift) 10.0 else 1.0
