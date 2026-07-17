@@ -59,6 +59,43 @@ class DesktopMcpServerControllerTest {
     }
 
     @Test
+    fun restartsServerAfterAppRestartUntilUserStopsIt() {
+        runBlocking {
+            val root = createTempDirectory("mcp-controller-autostart")
+            val port = ServerSocket(0).use { it.localPort }
+            val values = mutableMapOf(
+                "mcp-server-root" to root.toString(),
+                "mcp-server-port" to port.toString(),
+            )
+            val store = MemoryStore(values)
+
+            val firstRun = DesktopMcpServerController(store)
+            firstRun.start()
+            awaitStatus(firstRun, McpServerStatus.Running)
+            assertEquals("true", values["mcp-server-autostart-enabled"])
+            firstRun.close()
+
+            val restarted = DesktopMcpServerController(store)
+            try {
+                awaitStatus(restarted, McpServerStatus.Running)
+                restarted.stop()
+                awaitStatus(restarted, McpServerStatus.Stopped)
+                assertFalse(values.containsKey("mcp-server-autostart-enabled"))
+            } finally {
+                restarted.close()
+            }
+
+            val afterManualStop = DesktopMcpServerController(store)
+            try {
+                delay(100)
+                assertEquals(McpServerStatus.Stopped, afterManualStop.status)
+            } finally {
+                afterManualStop.close()
+            }
+        }
+    }
+
+    @Test
     fun activeProjectFolderBecomesTheDefaultAllowedRoot() {
         val previous = createTempDirectory("mcp-previous")
         val project = createTempDirectory("mcp-active-project")

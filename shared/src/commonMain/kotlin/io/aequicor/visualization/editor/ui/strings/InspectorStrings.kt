@@ -14,6 +14,8 @@ import io.aequicor.visualization.engine.ir.model.TextAutoResize
 import io.aequicor.visualization.engine.ir.model.TextDecorationStyle
 import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
+import io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramCornerStyle
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
@@ -198,6 +200,8 @@ interface InspectorStrings {
     val noExtraReferences: String
     fun deletedNode(nodeId: String): String
     val addSelectedNode: String
+    val status: String
+    val createUnifiedIssuesPrompt: String
 
     // --- Diagram ---------------------------------------------------------------
     val diagramSection: CompactLabel
@@ -241,6 +245,7 @@ interface InspectorStrings {
     val reverseDirection: String
     val diagramActions: String
     val autoLayoutAction: String
+    val tidyAlignAction: String
     val insertTemplate: String
     val importText: String
     val importMermaid: String
@@ -263,6 +268,7 @@ interface InspectorStrings {
     fun handleMirror(mirror: HandleMirror): String
     fun booleanOp(operation: BooleanOperationKind): String
     fun annotationKind(kind: AnnotationKind): String
+    fun annotationStatus(status: AnnotationStatus): String
     fun diagramRelation(relation: DiagramRelation): String
     fun diagramRouting(style: DiagramRoutingStyle): String
     fun diagramPattern(pattern: DiagramStrokePattern): String
@@ -272,6 +278,7 @@ interface InspectorStrings {
     fun umlVisibility(visibility: UmlVisibility): String
     fun diagramEdgeLabelPositionTitle(position: DiagramEdgeLabelPosition): String
     fun diagramFamily(family: String): String
+    fun layoutPreset(preset: DiagramLayoutPreset): String
 }
 
 object InspectorStringsEn : InspectorStrings {
@@ -429,6 +436,8 @@ object InspectorStringsEn : InspectorStrings {
     override val noExtraReferences = "No extra node references."
     override fun deletedNode(nodeId: String) = "$nodeId (deleted)"
     override val addSelectedNode = "Add selected node"
+    override val status = "Status"
+    override val createUnifiedIssuesPrompt = "Create one AI-agent prompt from issues"
 
     override val diagramSection = CompactLabel("Diagram", "Diagram", "Dgm")
     override val editDiagram = "Edit diagram"
@@ -471,6 +480,7 @@ object InspectorStringsEn : InspectorStrings {
     override val reverseDirection = "Reverse direction"
     override val diagramActions = "Diagram"
     override val autoLayoutAction = "Auto-layout"
+    override val tidyAlignAction = "Tidy up"
     override val insertTemplate = "Insert template"
     override val importText = "Import text"
     override val importMermaid = "Import Mermaid"
@@ -583,8 +593,14 @@ object InspectorStringsEn : InspectorStrings {
     }
 
     override fun annotationKind(kind: AnnotationKind) = when (kind) {
-        AnnotationKind.Note -> "Note"
+        AnnotationKind.Note -> "Comment"
         AnnotationKind.Issue -> "Issue"
+    }
+
+    override fun annotationStatus(status: AnnotationStatus) = when (status) {
+        AnnotationStatus.Open -> "Open"
+        AnnotationStatus.InReview -> "In review"
+        AnnotationStatus.Closed -> "Closed"
     }
 
     override fun diagramRelation(relation: DiagramRelation) = when (relation) {
@@ -670,6 +686,12 @@ object InspectorStringsEn : InspectorStrings {
     }
 
     override fun diagramFamily(family: String) = family
+
+    override fun layoutPreset(preset: DiagramLayoutPreset) = when (preset) {
+        DiagramLayoutPreset.DEFAULT -> "Default"
+        DiagramLayoutPreset.PUBLICATION -> "Publication"
+        DiagramLayoutPreset.COMPACT -> "Compact"
+    }
 }
 
 object InspectorStringsRu : InspectorStrings {
@@ -827,6 +849,8 @@ object InspectorStringsRu : InspectorStrings {
     override val noExtraReferences = "Нет дополнительных ссылок на узлы."
     override fun deletedNode(nodeId: String) = "$nodeId (удалён)"
     override val addSelectedNode = "Добавить выбранный узел"
+    override val status = "Статус"
+    override val createUnifiedIssuesPrompt = "Создать единый промпт для ИИ-агента из замечаний"
 
     override val diagramSection = CompactLabel("Диаграмма", "Диагр", "Дгм")
     override val editDiagram = "Редактировать диаграмму"
@@ -869,6 +893,7 @@ object InspectorStringsRu : InspectorStrings {
     override val reverseDirection = "Обратить направление"
     override val diagramActions = "Диаграмма"
     override val autoLayoutAction = "Авто-раскладка"
+    override val tidyAlignAction = "Выровнять"
     override val insertTemplate = "Вставить шаблон"
     override val importText = "Импорт текста"
     override val importMermaid = "Импорт Mermaid"
@@ -981,8 +1006,14 @@ object InspectorStringsRu : InspectorStrings {
     }
 
     override fun annotationKind(kind: AnnotationKind) = when (kind) {
-        AnnotationKind.Note -> "Заметка"
+        AnnotationKind.Note -> "Комментарий"
         AnnotationKind.Issue -> "Замечание"
+    }
+
+    override fun annotationStatus(status: AnnotationStatus) = when (status) {
+        AnnotationStatus.Open -> "Открыто"
+        AnnotationStatus.InReview -> "Проверяется"
+        AnnotationStatus.Closed -> "Закрыто"
     }
 
     override fun diagramRelation(relation: DiagramRelation) = when (relation) {
@@ -1072,5 +1103,11 @@ object InspectorStringsRu : InspectorStrings {
         "Structure" -> "Структура"
         "Basic" -> "Базовые"
         else -> family
+    }
+
+    override fun layoutPreset(preset: DiagramLayoutPreset) = when (preset) {
+        DiagramLayoutPreset.DEFAULT -> "Обычная"
+        DiagramLayoutPreset.PUBLICATION -> "Публикация"
+        DiagramLayoutPreset.COMPACT -> "Компактная"
     }
 }

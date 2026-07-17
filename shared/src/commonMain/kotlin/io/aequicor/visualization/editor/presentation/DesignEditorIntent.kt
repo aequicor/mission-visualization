@@ -26,6 +26,7 @@ import io.aequicor.visualization.engine.ir.model.VerticalConstraint
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationImage
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 
 /**
  * Every user action against the design document flows through one of these commands
@@ -527,6 +528,21 @@ sealed interface DesignEditorIntent {
         val kind: AnnotationKind,
     ) : DesignEditorIntent
 
+    /** Changes an actionable remark's workflow state. Comments ignore this intent. */
+    data class SetAnnotationStatus(
+        val screenFileName: String,
+        val annotationId: String,
+        val status: AnnotationStatus,
+    ) : DesignEditorIntent
+
+    /** Atomically commits the on-canvas composer text and chosen kind. */
+    data class CommitAnnotation(
+        val screenFileName: String,
+        val annotationId: String,
+        val text: String,
+        val kind: AnnotationKind,
+    ) : DesignEditorIntent
+
     /** Attaches (or replaces) the annotation's embedded image. */
     data class AttachAnnotationImage(
         val screenFileName: String,
@@ -588,6 +604,16 @@ sealed interface DesignEditorIntent {
 
     /** Deletes the annotation (its sidecar section is dropped surgically). */
     data class DeleteAnnotation(
+        val screenFileName: String,
+        val annotationId: String,
+    ) : DesignEditorIntent
+
+    /**
+     * Escape from annotation authoring: returns to the Select tool and closes the
+     * composer. If [annotationId] still points to an empty draft marker, the reducer
+     * removes it from its source instead of leaving an orphan badge behind.
+     */
+    data class CancelAnnotationAuthoring(
         val screenFileName: String,
         val annotationId: String,
     ) : DesignEditorIntent

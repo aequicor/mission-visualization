@@ -22,6 +22,9 @@ interface CanvasStrings {
     val chooseAnnotationKind: String
     /** Display label of an annotation kind in the toolbar flyout (Note / Issue). */
     fun annotationKind(kind: AnnotationKind): String
+    val annotationInputPlaceholder: String
+    val createIssue: String
+    val createComment: String
 
     // Zoom controls.
     val fitScreen: String
@@ -60,9 +63,12 @@ object CanvasStringsEn : CanvasStrings {
     override val annotationTools = "Annotation tools"
     override val chooseAnnotationKind = "Choose annotation kind"
     override fun annotationKind(kind: AnnotationKind): String = when (kind) {
-        AnnotationKind.Note -> "Note"
+        AnnotationKind.Note -> "Comment"
         AnnotationKind.Issue -> "Issue"
     }
+    override val annotationInputPlaceholder = "Write a comment…"
+    override val createIssue = "Issue"
+    override val createComment = "Comment"
 
     override val fitScreen = "Fit screen"
     override val fitSelection = "Fit selection"
@@ -97,9 +103,12 @@ object CanvasStringsRu : CanvasStrings {
     override val annotationTools = "Инструменты аннотаций"
     override val chooseAnnotationKind = "Выбрать тип аннотации"
     override fun annotationKind(kind: AnnotationKind): String = when (kind) {
-        AnnotationKind.Note -> "Заметка"
+        AnnotationKind.Note -> "Комментарий"
         AnnotationKind.Issue -> "Замечание"
     }
+    override val annotationInputPlaceholder = "Введите комментарий…"
+    override val createIssue = "Замечание"
+    override val createComment = "Комментарий"
 
     override val fitScreen = "Вписать экран"
     override val fitSelection = "Вписать выделение"

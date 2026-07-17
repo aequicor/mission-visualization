@@ -54,7 +54,7 @@ class DiagramCnlDocExamplesTest {
                 "Node state s0 initial 24 by 24 position 40 40",
                 "Node swimlane pool vertical title «Fulfilment» 640 by 360 position 20 200 lane («Intake» 140) lane («Review») lane 100",
                 "Node table pricing 360 by 128 position 40 600 row (32 header) row 32 col (160 header) col 100 cell (0 0 «Plans») cell (1 1 «9€»)",
-                "Node rounded-rectangle card1 220 by 120 position 40 380 style (fill #F4F7FB corners rounded) label «Draft card»",
+                "Node rounded-rectangle card1 220 by 120 position 40 380 style (fill #F4F7FB corners sharp) label «Draft card»",
             ),
             canvasId = "nodes_canvas",
         )
@@ -81,7 +81,7 @@ class DiagramCnlDocExamplesTest {
                 "Edge e_owns from drawing to circle relation composition label «owns»",
                 "Edge e_er from customer to order relation er one to zero-or-many label («places» at source dx 4 dy -6)",
                 "Edge e_fixed from gateway.out to service.in routing straight via (420 160) via (420 240)",
-                "Edge e_flow from intake to review relation transition jumps arc mode link animated yes layer wiring",
+                "Edge e_flow from intake to review relation transition jumps none mode link animated yes layer wiring",
                 "Group g_uml «UML cluster» members (shape circle drawing)",
             ),
             canvasId = "edges_canvas",

@@ -233,6 +233,54 @@ class DiagramEditorReducerTest {
     }
 
     @Test
+    fun tidyAlignSnapsRowsAndWritesBack() {
+        // Knock `b` slightly off `a`'s row, then tidy: the near-row snaps back onto one
+        // shared axis and the snapped positions persist into the SLM source.
+        val nudged = reduceDesignEditor(
+            freshState(),
+            DiagramEditorIntent.MoveDiagramNode("canvas", "b", 0.0, 14.0),
+        )
+        val next = reduceDesignEditor(nudged, DiagramEditorIntent.ApplyDiagramTidyAlign("canvas"))
+
+        val graph = next.graphOf("canvas")
+        val a = assertNotNull(graph.nodeById(DiagramNodeId("a")))
+        val b = assertNotNull(graph.nodeById(DiagramNodeId("b")))
+        assertEquals(a.y, b.y, "near-row snaps onto one shared y")
+        assertTrue(a.x < b.x, "x order preserved")
+
+        val recompiled = compileMissionDocuments(next.sources)
+        val recompiledGraph =
+            assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
+        assertEquals(graph, recompiledGraph, "tidied positions persist into the source")
+        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error })
+    }
+
+    @Test
+    fun autoLayoutPresetChangesSpacingAndWritesBack() {
+        // PUBLICATION spreads layers wider than DEFAULT — the preset must reach the engine
+        // through the reducer, not be hardcoded, and the new coordinates must persist.
+        fun layerPitch(preset: io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset): Double {
+            val next = reduceDesignEditor(
+                freshState(),
+                DiagramEditorIntent.ApplyDiagramAutoLayout("canvas", preset = preset),
+            )
+            val graph = next.graphOf("canvas")
+            val a = assertNotNull(graph.nodeById(DiagramNodeId("a")))
+            val b = assertNotNull(graph.nodeById(DiagramNodeId("b")))
+            // Verify the write-back round-trips through a full recompile.
+            val recompiled = compileMissionDocuments(next.sources)
+            val recompiledGraph =
+                assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
+            assertEquals(graph, recompiledGraph, "laid-out positions persist into the source")
+            return kotlin.math.abs(b.bounds.centerY - a.bounds.centerY) +
+                kotlin.math.abs(b.bounds.centerX - a.bounds.centerX)
+        }
+        val default = layerPitch(io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset.DEFAULT)
+        val publication = layerPitch(io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset.PUBLICATION)
+        assertTrue(publication > default, "publication preset spreads wider ($publication vs $default)")
+    }
+
+    @Test
     fun insertTemplateMergesToTheRightWithFreshIds() {
         val state = freshState()
         val before = state.graphOf("canvas")

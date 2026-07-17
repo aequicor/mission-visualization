@@ -19,6 +19,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
+import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import kotlin.math.PI
@@ -46,11 +47,15 @@ fun routeEdge(
     options: RoutingOptions = RoutingOptions.Default,
 ): RoutedEdge = when (edge.routing) {
     DiagramRoutingStyle.STRAIGHT -> routeThroughPoints(graph, edge, curve = false)
-    DiagramRoutingStyle.CURVED -> routeThroughPoints(graph, edge, curve = true)
+    // CURVED is a smoothed obstacle-aware route (draw.io semantics): the orthogonal
+    // pipeline plans anchors and dodges nodes, the renderer splines through the bends.
+    DiagramRoutingStyle.CURVED -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
     DiagramRoutingStyle.ORTHOGONAL -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
     DiagramRoutingStyle.SIMPLE -> routeOrthogonal(graph, edge, options, avoidObstacles = false)
     DiagramRoutingStyle.ISOMETRIC -> routeIsometric(graph, edge)
-    DiagramRoutingStyle.ENTITY_RELATION -> routeEntityRelation(graph, edge, options)
+    // ER shares the full obstacle-aware orthogonal pipeline: grid A*, joint anchor
+    // planning, and per-side anchor spreading.
+    DiagramRoutingStyle.ENTITY_RELATION -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
 }
 
 /**
@@ -251,13 +256,23 @@ private fun routeOrthogonal(
     } else {
         emptyList()
     }
+    // The stub length must equal the corridor margin: a longer stub would end outside the
+    // inflated-obstacle boundary the grid A* travels along, and a corridor-hugging arrival
+    // (whose direction the goal state does not constrain) would double back over it as a
+    // visible whisker spur.
     val sourceStub = source.side?.let {
         source.anchor + it.outwardNormal() * stubLength(source.anchor, it, margin, foreignBounds)
     } ?: source.anchor
     val targetStub = target.side?.let {
         target.anchor + it.outwardNormal() * stubLength(target.anchor, it, margin, foreignBounds)
     } ?: target.anchor
-    val mandatory = dedupePoints(listOf(sourceStub) + edge.waypoints + listOf(targetStub))
+    val mandatory = alignedMandatoryPoints(
+        sourceStub = sourceStub,
+        sourceSide = source.side,
+        waypoints = edge.waypoints,
+        targetStub = targetStub,
+        targetSide = target.side,
+    )
 
     val innerPoints: List<DiagramPoint> = if (mandatory.size == 2 && !avoidObstacles) {
         connectOrthogonally(mandatory[0], mandatory[1], source.side, target.side)
@@ -275,9 +290,13 @@ private fun routeOrthogonal(
         for ((from, to) in mandatory.zipWithNext()) {
             val leg = if (avoidObstacles) {
                 val legObstacles = legObstacles(obstacles, from, to)
-                orthogonalGridRoute(from, seedDirection, to, legObstacles, options.turnPenalty)
-                    ?.let { collapseJogs(it, legObstacles, jogThreshold) }
-                    ?: manhattanLeg(from, to, seedDirection)
+                if (axisAligned(from, to) && segmentClear(from, to, legObstacles)) {
+                    listOf(from, to)
+                } else {
+                    orthogonalGridRoute(from, seedDirection, to, legObstacles, options.turnPenalty)
+                        ?.let { collapseJogs(it, legObstacles, jogThreshold) }
+                        ?: manhattanLeg(from, to, seedDirection)
+                }
             } else {
                 manhattanLeg(from, to, seedDirection)
             }
@@ -343,18 +362,19 @@ private fun legObstacles(
 
 // --- Floating-pair anchor planning ----------------------------------------------------
 
-private data class PlannedEnds(val source: ResolvedEnd, val target: ResolvedEnd)
+private data class PlannedEnds(val source: ResolvedEnd?, val target: ResolvedEnd?)
 
 /**
- * Joint anchor planning for orthogonal edges with floating anchors on both ends and no
- * manual waypoints: instead of resolving each end against the other's center (which lands
- * anchors on node corners and picks sides facing adjacent nodes), the pair of exit sides
- * is chosen together across the wider inter-node gap, anchors sit on the midpoint of the
- * nodes' projection overlap (a straight segment whenever the corridor allows), and all
- * planned attachments sharing a node side are spread apart so no two edges leave or enter
- * through the same point. Returns `null` when the plan does not apply (waypoints, ports,
- * free points, self-loops, or bounds overlapping on both axes) — callers then fall back
- * to per-end resolution.
+ * Joint anchor planning for orthogonal-family edges with floating anchors and no manual
+ * waypoints: instead of resolving each floating end against the other's center (which
+ * lands anchors on node corners and picks sides facing adjacent nodes), the exit side is
+ * chosen across the wider inter-node gap, anchors sit on the midpoint of the nodes'
+ * projection overlap (a straight segment whenever the corridor allows), and all planned
+ * attachments sharing a node side are spread apart so no two edges leave or enter
+ * through the same point. An edge with one floating end (the other on a fixed port)
+ * gets a plan for the floating end only. Returns `null` when the plan does not apply
+ * (waypoints, free points, self-loops, or bounds overlapping on both axes) — callers
+ * fall back to per-end resolution for any unplanned end.
  */
 private fun planFloatingEnds(
     graph: DiagramGraph,
@@ -362,18 +382,26 @@ private fun planFloatingEnds(
     options: RoutingOptions,
 ): PlannedEnds? {
     if (edge.waypoints.isNotEmpty()) return null
-    if (edge.source !is DiagramEndpoint.FloatingAnchor) return null
-    if (edge.target !is DiagramEndpoint.FloatingAnchor) return null
-    val sourceNode = endpointNode(graph, edge.source)!!
-    val targetNode = endpointNode(graph, edge.target)!!
-    if (sourceNode.id == targetNode.id) return null
+    val sourceNode = edge.source.attachedNodeId?.let(graph::nodeById)
+    val targetNode = edge.target.attachedNodeId?.let(graph::nodeById)
+    if (sourceNode == null || targetNode == null || sourceNode.id == targetNode.id) return null
     val sides = facingSides(sourceNode.bounds, targetNode.bounds) ?: return null
-    val sourceAnchor = plannedAnchor(graph, options, sourceNode, sides.sourceSide, targetNode, edge.id)
-    val targetAnchor = plannedAnchor(graph, options, targetNode, sides.targetSide, sourceNode, edge.id)
-    return PlannedEnds(
-        ResolvedEnd(sourceAnchor, sourceNode, sides.sourceSide),
-        ResolvedEnd(targetAnchor, targetNode, sides.targetSide),
-    )
+    val source = (edge.source as? DiagramEndpoint.FloatingAnchor)?.let {
+        ResolvedEnd(
+            plannedAnchor(graph, options, sourceNode, sides.sourceSide, targetNode, edge.id),
+            sourceNode,
+            sides.sourceSide,
+        )
+    }
+    val target = (edge.target as? DiagramEndpoint.FloatingAnchor)?.let {
+        ResolvedEnd(
+            plannedAnchor(graph, options, targetNode, sides.targetSide, sourceNode, edge.id),
+            targetNode,
+            sides.targetSide,
+        )
+    }
+    if (source == null && target == null) return null
+    return PlannedEnds(source, target)
 }
 
 private data class FacingSides(val sourceSide: DiagramNodeSide, val targetSide: DiagramNodeSide)
@@ -440,9 +468,11 @@ private data class SideAttachment(val edgeId: DiagramEdgeId, val position: Doubl
 
 /**
  * Deterministic attachment layout of one node side: every plannable edge of the graph
- * attaching to `(node, side)` gets its ideal coordinate (projection-overlap midpoint,
- * else the other node's center, clamped inside the side with a corner inset), then the
- * sorted ideals are spread to at least [RoutingOptions.anchorSeparation] apart.
+ * attaching to `(node, side)` through a floating end gets its ideal coordinate
+ * (projection-overlap midpoint, else the other node's center, clamped inside the side
+ * with a corner inset), then the sorted ideals are spread to at least
+ * [RoutingOptions.anchorSeparation] apart. Edges whose other end sits on a fixed port
+ * take part too — their floating end must not stack on the planned ones.
  */
 private fun sideAttachments(
     graph: DiagramGraph,
@@ -457,19 +487,24 @@ private fun sideAttachments(
     for (candidate in graph.edges) {
         if (candidate.waypoints.isNotEmpty()) continue
         if (candidate.routing != DiagramRoutingStyle.ORTHOGONAL &&
-            candidate.routing != DiagramRoutingStyle.SIMPLE
+            candidate.routing != DiagramRoutingStyle.SIMPLE &&
+            candidate.routing != DiagramRoutingStyle.ENTITY_RELATION &&
+            candidate.routing != DiagramRoutingStyle.CURVED
         ) {
             continue
         }
-        val candidateSource = candidate.source as? DiagramEndpoint.FloatingAnchor ?: continue
-        val candidateTarget = candidate.target as? DiagramEndpoint.FloatingAnchor ?: continue
-        if (candidateSource.nodeId == candidateTarget.nodeId) continue
-        val other = when (node.id) {
-            candidateSource.nodeId -> graph.nodeById(candidateTarget.nodeId) ?: continue
-            candidateTarget.nodeId -> graph.nodeById(candidateSource.nodeId) ?: continue
+        val sourceNodeId = candidate.source.attachedNodeId
+        val targetNodeId = candidate.target.attachedNodeId
+        if (sourceNodeId == null || targetNodeId == null || sourceNodeId == targetNodeId) continue
+        val isSourceEnd = when (node.id) {
+            sourceNodeId -> true
+            targetNodeId -> false
             else -> continue
         }
-        val candidateSide = if (node.id == candidateSource.nodeId) {
+        val thisEnd = if (isSourceEnd) candidate.source else candidate.target
+        if (thisEnd !is DiagramEndpoint.FloatingAnchor) continue
+        val other = graph.nodeById(if (isSourceEnd) targetNodeId else sourceNodeId) ?: continue
+        val candidateSide = if (isSourceEnd) {
             facingSides(node.bounds, other.bounds)?.sourceSide
         } else {
             facingSides(other.bounds, node.bounds)?.targetSide
@@ -626,6 +661,9 @@ private fun isVerticalSegment(a: DiagramPoint, b: DiagramPoint): Boolean =
 private fun isHorizontalSegment(a: DiagramPoint, b: DiagramPoint): Boolean =
     abs(a.y - b.y) < GEOMETRY_EPSILON && abs(a.x - b.x) > GEOMETRY_EPSILON
 
+private fun axisAligned(a: DiagramPoint, b: DiagramPoint): Boolean =
+    abs(a.x - b.x) < GEOMETRY_EPSILON || abs(a.y - b.y) < GEOMETRY_EPSILON
+
 /** Whether the axis-aligned segment `a..b` avoids every obstacle's strict interior. */
 private fun segmentClear(
     a: DiagramPoint,
@@ -720,63 +758,70 @@ private fun strictlyContains(rect: DiagramRect, point: DiagramPoint): Boolean =
     point.x > rect.left + GEOMETRY_EPSILON && point.x < rect.right - GEOMETRY_EPSILON &&
         point.y > rect.top + GEOMETRY_EPSILON && point.y < rect.bottom - GEOMETRY_EPSILON
 
-// --- Entity relation -----------------------------------------------------------------
-
-private fun routeEntityRelation(
-    graph: DiagramGraph,
-    edge: DiagramEdge,
-    options: RoutingOptions,
-): RoutedEdge {
-    val sourceRaw = rawEndpointPoint(graph, edge.source)
-    val targetRaw = rawEndpointPoint(graph, edge.target)
-    val source =
-        resolveEntityRelationEnd(graph, edge.source, edge.waypoints.firstOrNull() ?: targetRaw, options)
-    val target =
-        resolveEntityRelationEnd(graph, edge.target, edge.waypoints.lastOrNull() ?: sourceRaw, options)
-    val stub = options.entityRelationStub
-    val sourceStub = source.side?.let { source.anchor + it.outwardNormal() * stub } ?: source.anchor
-    val targetStub = target.side?.let { target.anchor + it.outwardNormal() * stub } ?: target.anchor
-    val mandatory = dedupePoints(listOf(sourceStub) + edge.waypoints + listOf(targetStub))
-
-    val innerPoints: List<DiagramPoint> = if (mandatory.size == 2) {
-        connectOrthogonally(mandatory[0], mandatory[1], source.side, target.side)
-    } else {
-        val points = mutableListOf(mandatory.first())
-        var seedDirection = source.side?.toGridDirection()
-        for ((from, to) in mandatory.zipWithNext()) {
-            val leg = manhattanLeg(from, to, seedDirection)
-            points += leg.drop(1)
-            seedDirection = lastSegmentDirection(leg) ?: seedDirection
-        }
-        points
-    }
-
-    val points = listOf(source.anchor) + innerPoints + listOf(target.anchor)
-    return RoutedEdge(edge.id, edge.routing, atLeastTwo(simplifyPolyline(points)), source.side, target.side)
-}
-
-/** ER ends always exit horizontally (LEFT/RIGHT) unless a fixed port dictates otherwise. */
-private fun resolveEntityRelationEnd(
-    graph: DiagramGraph,
-    endpoint: DiagramEndpoint,
-    reference: DiagramPoint,
-    options: RoutingOptions,
-): ResolvedEnd = when (endpoint) {
-    is DiagramEndpoint.FreePoint ->
-        ResolvedEnd(DiagramPoint(endpoint.x, endpoint.y), node = null, side = null)
-
-    is DiagramEndpoint.FixedPort ->
-        resolveOrthogonalEnd(graph, endpoint, reference, options)
-
-    is DiagramEndpoint.FloatingAnchor -> {
-        val node = endpointNode(graph, endpoint)!!
-        val bounds = node.bounds
-        val side = if (reference.x >= bounds.centerX) DiagramNodeSide.RIGHT else DiagramNodeSide.LEFT
-        ResolvedEnd(anchorOnSide(node, side, bounds.centerY), node, side)
-    }
-}
-
 // --- Polyline utilities --------------------------------------------------------------
+
+/**
+ * Keeps authored `via` points exact except for sub-pixel rounding against an adjacent
+ * stub/waypoint. Without this snap, e.g. a rounded `x=600` next to a port at `x=599.2`
+ * forces a tiny extra jog before an otherwise straight mandatory run.
+ */
+private fun alignedMandatoryPoints(
+    sourceStub: DiagramPoint,
+    sourceSide: DiagramNodeSide?,
+    waypoints: List<DiagramPoint>,
+    targetStub: DiagramPoint,
+    targetSide: DiagramNodeSide?,
+): List<DiagramPoint> {
+    if (waypoints.isEmpty()) return dedupePoints(listOf(sourceStub, targetStub))
+    val authored = listOf(sourceStub) + waypoints + listOf(targetStub)
+    val aligned = authored.toMutableList()
+    for (index in 1 until aligned.lastIndex) {
+        val point = aligned[index]
+        val previous = aligned[index - 1]
+        val next = authored[index + 1]
+        val x = when {
+            abs(point.x - previous.x) <= WAYPOINT_ALIGNMENT_TOLERANCE -> previous.x
+            abs(point.x - next.x) <= WAYPOINT_ALIGNMENT_TOLERANCE -> next.x
+            else -> point.x
+        }
+        val y = when {
+            abs(point.y - previous.y) <= WAYPOINT_ALIGNMENT_TOLERANCE -> previous.y
+            abs(point.y - next.y) <= WAYPOINT_ALIGNMENT_TOLERANCE -> next.y
+            else -> point.y
+        }
+        aligned[index] = DiagramPoint(x, y)
+    }
+
+    if (waypoints.size >= 2) {
+        // With two or more waypoints, the endpoint-adjacent points are the corners
+        // where the route leaves/enters a side port. Keep those legs perpendicular
+        // to the node face even when a node was resized after authoring; otherwise a
+        // stale coordinate becomes a short dangling jog. A lone waypoint remains an
+        // exact mandatory pass-through point because it may intentionally define both
+        // endpoint bends.
+        aligned[1] = alignWaypointToPort(aligned[1], sourceStub, sourceSide)
+        aligned[aligned.lastIndex - 1] = alignWaypointToPort(
+            aligned[aligned.lastIndex - 1],
+            targetStub,
+            targetSide,
+        )
+    }
+    return dedupePoints(aligned)
+}
+
+private fun alignWaypointToPort(
+    waypoint: DiagramPoint,
+    stub: DiagramPoint,
+    side: DiagramNodeSide?,
+): DiagramPoint = when (side) {
+    DiagramNodeSide.LEFT,
+    DiagramNodeSide.RIGHT,
+    -> waypoint.copy(y = stub.y)
+    DiagramNodeSide.TOP,
+    DiagramNodeSide.BOTTOM,
+    -> waypoint.copy(x = stub.x)
+    null -> waypoint
+}
 
 private fun dedupePoints(points: List<DiagramPoint>): List<DiagramPoint> {
     val result = mutableListOf<DiagramPoint>()
@@ -808,3 +853,5 @@ internal fun simplifyPolyline(points: List<DiagramPoint>): List<DiagramPoint> {
 
 private fun atLeastTwo(points: List<DiagramPoint>): List<DiagramPoint> =
     if (points.size >= 2) points else List(2) { points.firstOrNull() ?: DiagramPoint.Zero }
+
+private const val WAYPOINT_ALIGNMENT_TOLERANCE = 1.0

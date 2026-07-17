@@ -10,7 +10,10 @@ import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
+import io.aequicor.visualization.subsystems.annotations.Annotation
+import io.aequicor.visualization.subsystems.annotations.AnnotationBody
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.slm.AnnotationLayoutComments
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -44,17 +47,20 @@ class AnnotationSidecarNormalizationTest {
     private fun DesignEditorState.sidecarContent(fileName: String): String =
         assertNotNull(sources.firstOrNull { it.fileName == fileName }, "missing sidecar $fileName").content
 
+    private fun DesignEditorState.layoutCommentText(fileName: String): String =
+        AnnotationLayoutComments.parse(
+            fileName,
+            assertNotNull(sources.firstOrNull { it.fileName == fileName }).content,
+        ).layer.annotations.single().body.text
+
     // --- Pinning synthesized ids -------------------------------------------
 
     @Test
     fun loadPinsSynthesizedIdsIntoTheSidecarSource() {
         val state = stateWithSidecars(overviewSidecar to "## note @tile_1\nOriginal body.\n")
 
-        assertEquals(
-            "## note @tile_1 {id=ann-1}\nOriginal body.\n",
-            state.sidecarContent(overviewSidecar),
-            "the synthesized id is pinned into the header at load",
-        )
+        assertEquals("", state.sidecarContent(overviewSidecar), "legacy note leaves the sidecar")
+        assertEquals("Original body.", state.layoutCommentText(overviewScreen))
         val layer = assertNotNull(state.annotationLayers[overviewScreen])
         assertEquals(listOf("ann-1"), layer.annotations.map { it.id })
         assertTrue(state.previousSources.isEmpty(), "load-time normalization records no undo history entry")
@@ -69,11 +75,8 @@ class AnnotationSidecarNormalizationTest {
             DesignEditorIntent.SetAnnotationText(overviewScreen, "ann-1", "EDITED body."),
         )
 
-        assertEquals(
-            "## note @tile_1 {id=ann-1}\nEDITED body.\n",
-            edited.sidecarContent(overviewSidecar),
-            "the unmarked section is edited in place, never duplicated",
-        )
+        assertEquals("", edited.sidecarContent(overviewSidecar))
+        assertEquals("EDITED body.", edited.layoutCommentText(overviewScreen))
         // Reload the edited sources: the edit survives the round trip.
         val reloaded = createDesignEditorState(compileMissionDocuments(edited.sources))
         assertEquals(
@@ -134,6 +137,32 @@ class AnnotationSidecarNormalizationTest {
         assertEquals(listOf("ann-3"), telemetry.annotations.map { it.id }, "fresh mint avoids ann-2 kept by the other file")
     }
 
+    @Test
+    fun embeddedCommentsAndSidecarIssuesAreSplitAndGloballyUnique() {
+        val base = annotationFixtureDocuments().sources
+        val overviewIndex = base.indexOfFirst { it.fileName == overviewScreen }
+        val embedded = AnnotationLayoutComments.upsert(
+            base[overviewIndex].content,
+            Annotation(
+                id = "ann-1",
+                kind = AnnotationKind.Note,
+                anchor = AnnotationAnchor.FreePoint(1.0, 2.0),
+                body = AnnotationBody("Comment"),
+            ),
+        )
+        val sources = base.toMutableList().apply {
+            this[overviewIndex] = this[overviewIndex].copy(content = embedded)
+            add(MissionDocumentSource(overviewSidecar, "## issue @(3,4) {id=ann-1}\nIssue.\n"))
+        }
+
+        val state = createDesignEditorState(compileMissionDocuments(sources))
+
+        val annotations = assertNotNull(state.annotationLayers[overviewScreen]).annotations
+        assertEquals(listOf(AnnotationKind.Note, AnnotationKind.Issue), annotations.map { it.kind })
+        assertEquals(2, annotations.map { it.id }.toSet().size)
+        assertTrue(state.sidecarContent(overviewSidecar).startsWith("## issue"))
+    }
+
     // --- Warnings as diagnostics -------------------------------------------
 
     @Test
@@ -148,7 +177,7 @@ class AnnotationSidecarNormalizationTest {
         )
         assertEquals(DesignSeverity.Warning, warning.severity)
         assertEquals(overviewSidecar, assertNotNull(warning.location).file)
-        assertEquals(4, assertNotNull(warning.location).line, "1-based line of the malformed header")
+        assertEquals(1, assertNotNull(warning.location).line, "line in the normalized issue-only sidecar")
     }
 
     @Test
@@ -172,7 +201,7 @@ class AnnotationSidecarNormalizationTest {
 
     @Test
     fun editSourcePinsSynthesizedIdsWithoutASourceHistoryEntry() {
-        val state = stateWithSidecars(overviewSidecar to "## note @(0,0) {id=ann-1}\nSeed.\n")
+        val state = stateWithSidecars(overviewSidecar to "## issue @(0,0) {id=ann-1}\nSeed.\n")
         val index = state.sources.indexOfFirst { it.fileName == overviewSidecar }
         val historyBefore = state.previousSources
 
@@ -194,14 +223,14 @@ class AnnotationSidecarNormalizationTest {
     @Test
     fun editSourceRemintsIdsCollidingWithOtherScreens() {
         val state = stateWithSidecars(
-            overviewSidecar to "## note @(1,1) {id=ann-1}\nOverview.\n",
-            telemetrySidecar to "## note @(2,2) {id=ann-2}\nTelemetry.\n",
+            overviewSidecar to "## issue @(1,1) {id=ann-1}\nOverview.\n",
+            telemetrySidecar to "## issue @(2,2) {id=ann-2}\nTelemetry.\n",
         )
         val index = state.sources.indexOfFirst { it.fileName == telemetrySidecar }
 
         val edited = reduceDesignEditor(
             state,
-            DesignEditorIntent.EditSource(index, "## note @(2,2) {id=ann-1}\nTelemetry now clashes.\n"),
+            DesignEditorIntent.EditSource(index, "## issue @(2,2) {id=ann-1}\nTelemetry now clashes.\n"),
         )
 
         val telemetry = assertNotNull(edited.annotationLayers[telemetryScreen])

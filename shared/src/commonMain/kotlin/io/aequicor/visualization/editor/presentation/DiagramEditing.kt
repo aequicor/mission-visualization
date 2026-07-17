@@ -7,8 +7,9 @@ import io.aequicor.visualization.engine.ir.model.DesignDiagnostic
 import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignNodeKind
 import io.aequicor.visualization.engine.ir.model.DesignSeverity
-import io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutConfig
 import io.aequicor.visualization.subsystems.diagrams.layout.autoLayout
+import io.aequicor.visualization.subsystems.diagrams.layout.tidyAlign
+import io.aequicor.visualization.subsystems.diagrams.layout.toLayoutConfig
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabel
@@ -105,10 +106,11 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
             )
         }
     }
-    is DiagramEditorIntent.DeleteDiagramElement -> diagramWriteBack(intent.nodeId) { graph ->
-        val afterNodes = intent.elementIds.fold(graph) { g, id -> g.removeNode(DiagramNodeId(id)) }
-        intent.edgeIds.fold(afterNodes) { g, id -> g.removeEdge(DiagramEdgeId(id)) }
-    }
+    is DiagramEditorIntent.DeleteDiagramElement ->
+        detachAnnotationsForDiagramNodeDelete(intent.nodeId, intent.elementIds).diagramWriteBack(intent.nodeId) { graph ->
+            val afterNodes = intent.elementIds.fold(graph) { g, id -> g.removeNode(DiagramNodeId(id)) }
+            intent.edgeIds.fold(afterNodes) { g, id -> g.removeEdge(DiagramEdgeId(id)) }
+        }
     is DiagramEditorIntent.MoveDiagramNode -> diagramWriteBack(intent.nodeId) {
         it.moveNode(DiagramNodeId(intent.elementId), intent.dx, intent.dy)
     }
@@ -302,7 +304,10 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
 
     // --- Generation ---
     is DiagramEditorIntent.ApplyDiagramAutoLayout -> diagramWriteBack(intent.nodeId) {
-        autoLayout(it, intent.kind, DiagramLayoutConfig(direction = intent.direction))
+        autoLayout(it, intent.kind, intent.preset.toLayoutConfig(intent.direction))
+    }
+    is DiagramEditorIntent.ApplyDiagramTidyAlign -> diagramWriteBack(intent.nodeId) {
+        tidyAlign(it)
     }
     is DiagramEditorIntent.InsertDiagramTemplate -> diagramWriteBack(intent.nodeId) { graph ->
         val template = diagramTemplates().firstOrNull { it.id == intent.templateId }

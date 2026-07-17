@@ -1,5 +1,6 @@
 package io.aequicor.visualization.editor.presentation
 
+import io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset
 import io.aequicor.visualization.subsystems.diagrams.layout.LayoutDirection
 import io.aequicor.visualization.subsystems.diagrams.layout.LayoutKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
@@ -393,6 +394,16 @@ sealed interface DiagramEditorIntent : DesignEditorIntent {
         override val nodeId: String,
         val kind: LayoutKind = LayoutKind.AUTO,
         val direction: LayoutDirection = LayoutDirection.TOP_DOWN,
+        val preset: DiagramLayoutPreset = DiagramLayoutPreset.DEFAULT,
+    ) : DiagramEditorIntent
+
+    /**
+     * Tidies the manual arrangement without re-laying it out: near-aligned rows/columns
+     * snap onto shared axes, overlapping nodes separate, coordinates land on the grid
+     * (topology-preserving, see [io.aequicor.visualization.subsystems.diagrams.layout.tidyAlign]).
+     */
+    data class ApplyDiagramTidyAlign(
+        override val nodeId: String,
     ) : DiagramEditorIntent
 
     /**

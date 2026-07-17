@@ -15,12 +15,17 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
 import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class DesktopSlmPersistenceIntegrationTest {
+    // Resetting first redirects the folder-sync settings dir away from ~/.mission-visualization.
+    @BeforeTest
+    fun setUp() = platformResetFolderSyncForTest()
+
     @AfterTest
     fun tearDown() = platformResetFolderSyncForTest()
 

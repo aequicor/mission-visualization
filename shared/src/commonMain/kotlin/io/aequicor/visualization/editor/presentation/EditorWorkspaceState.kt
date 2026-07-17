@@ -73,6 +73,8 @@ data class EditorWorkspaceState(
     val selectedAnnotationId: String = "",
     /** Active annotation authoring tool; a canvas press then creates that kind. */
     val annotationTool: AnnotationTool = AnnotationTool.None,
+    /** Newly placed annotation whose on-canvas text composer is open. */
+    val annotationComposerId: String = "",
     /**
      * IR node id of the diagram currently in edit mode (double-click / diagram toolbar),
      * or "" when no diagram is being edited. Mirrors [vectorEditNodeId]: while set, the

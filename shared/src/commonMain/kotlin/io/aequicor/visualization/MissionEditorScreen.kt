@@ -52,6 +52,7 @@ import io.aequicor.visualization.editor.data.DefaultRecentProjectsRepository
 import io.aequicor.visualization.editor.data.FolderPendingStorageKey
 import io.aequicor.visualization.editor.data.LanguagePreference
 import io.aequicor.visualization.editor.data.ProjectSnapshot
+import io.aequicor.visualization.editor.data.WorkspaceStateRepository
 import io.aequicor.visualization.editor.data.createKeyValueStore
 import io.aequicor.visualization.editor.data.decodeProjectSnapshot
 import io.aequicor.visualization.editor.data.encodeProjectSourcesJson
@@ -59,6 +60,7 @@ import io.aequicor.visualization.editor.domain.AppLanguage
 import io.aequicor.visualization.editor.domain.RecentProject
 import io.aequicor.visualization.editor.domain.RecentProjectKind
 import io.aequicor.visualization.editor.domain.RecentProjectsRepository
+import io.aequicor.visualization.editor.domain.WelcomeProjectId
 import io.aequicor.visualization.editor.domain.ClearDraftUseCase
 import io.aequicor.visualization.editor.domain.LoadDesignDocumentUseCase
 import io.aequicor.visualization.editor.domain.ExportIssuesPromptUseCase
@@ -73,11 +75,16 @@ import io.aequicor.visualization.editor.presentation.DraftController
 import io.aequicor.visualization.editor.presentation.EditorWorkspaceState
 import io.aequicor.visualization.editor.presentation.FocusMode
 import io.aequicor.visualization.editor.presentation.InspectorSection
+import io.aequicor.visualization.editor.presentation.PersistedWorkspaceState
 import io.aequicor.visualization.editor.presentation.WorkspaceLimits
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.projectDisplayName
+import io.aequicor.visualization.editor.presentation.persistedLayout
+import io.aequicor.visualization.editor.presentation.persistedProjectWorkspace
 import io.aequicor.visualization.editor.presentation.reduceAnnotationWorkspace
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
+import io.aequicor.visualization.editor.presentation.restoreProjectWorkspace
+import io.aequicor.visualization.editor.presentation.restoreWorkspace
 import io.aequicor.visualization.editor.presentation.screenFileNamesByPageId
 import io.aequicor.visualization.subsystems.annotations.ExportScope
 import io.aequicor.visualization.editor.platform.CanvasExportBounds
@@ -138,7 +145,7 @@ import io.aequicor.visualization.mcp.NoMcpServerController
 
 /**
  * Presentation holder for the Mission Editor: keeps the design-document state
- * ([designState]) separate from the ephemeral workspace/view state ([workspace]) per
+ * ([designState]) separate from the user-local workspace/view state ([workspace]) per
  * the design book. Document actions flow through [dispatch] into the pure reducer;
  * workspace changes go through [updateWorkspace] and never touch the document.
  */
@@ -170,11 +177,29 @@ class MissionEditorStateHolder(
     private val folderPending: DraftController? = null,
     private val languagePreference: LanguagePreference? = null,
     private val recentProjects: RecentProjectsRepository? = null,
+    private val workspaceStateRepository: WorkspaceStateRepository? = null,
     val mcpServer: McpServerController = NoMcpServerController,
 ) {
     private val defaultDocuments = loadDesignDocument()
 
-    var designState by mutableStateOf(createDesignEditorState(defaultDocuments))
+    private val restoredWorkspaceState = workspaceStateRepository?.load() ?: PersistedWorkspaceState()
+
+    private var persistedWorkspaceState = restoredWorkspaceState
+
+    private var activeProjectId: String = WelcomeProjectId
+
+    /** Prevents the bundled placeholder document from overwriting a not-yet-restored last project. */
+    private var workspacePersistenceReady: Boolean =
+        restoredWorkspaceState.lastProject?.projectId.let { it == null || it == WelcomeProjectId }
+
+    var designState by mutableStateOf(
+        createDesignEditorState(defaultDocuments).let { initial ->
+            restoredWorkspaceState.lastProject
+                ?.takeIf { it.projectId == WelcomeProjectId }
+                ?.let(initial::restoreProjectWorkspace)
+                ?: initial
+        },
+    )
         private set
 
     /** Active UI language; restored from the local store and persisted on every change. */
@@ -198,7 +223,10 @@ class MissionEditorStateHolder(
     private var isWelcomeProject = true
 
     /** Native Compose project screen; the web owns its equivalent DOM overlay. */
-    var projectLandingVisible by mutableStateOf(platformProjectLandingMode == ProjectLandingMode.Compose)
+    var projectLandingVisible by mutableStateOf(
+        platformProjectLandingMode == ProjectLandingMode.Compose &&
+            restoredWorkspaceState.lastProject?.projectId != WelcomeProjectId,
+    )
         private set
 
     var projectLandingError by mutableStateOf<String?>(null)
@@ -249,6 +277,7 @@ class MissionEditorStateHolder(
         persistenceEnabled = true
         projectCreationPromptVisible = false
         platformSetActiveProjectId(projectId)
+        activateProject(projectId)
         draft.saveNow(designState.sources, displayProjectName, projectId = projectId)
     }
 
@@ -329,7 +358,7 @@ class MissionEditorStateHolder(
     val displayProjectName: String
         get() = projectDisplayName(projectName, designState.document?.name, designState.sources)
 
-    var workspace by mutableStateOf(EditorWorkspaceState())
+    var workspace by mutableStateOf(restoredWorkspaceState.layout.restoreWorkspace())
         private set
 
     /** Node currently hovered on the canvas or in Layers; separated from workspace to avoid full workbench recomposition on pointer moves. */
@@ -390,6 +419,7 @@ class MissionEditorStateHolder(
         // Annotation view intents (expand/select/tool) live in workspace state, and a
         // deleted annotation prunes its view entries; every other intent is a no-op here.
         updateWorkspace { reduceAnnotationWorkspace(it, intent) }
+        persistWorkspaceState()
     }
 
     private val exportIssuesPromptUseCase = ExportIssuesPromptUseCase()
@@ -413,12 +443,22 @@ class MissionEditorStateHolder(
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     suspend fun runPersistence() {
         val embeddedDraft = draft.takeIf { usesEmbeddedDraftProjects }
-        embeddedDraft?.restore()?.takeIf { it.folderId == null }?.let { restored ->
-            browserProjectId = restored.projectId
+        val restoredDraft = embeddedDraft?.restore()?.takeIf { it.folderId == null }
+        restoredDraft?.let { restored ->
+            val projectId = restored.projectId ?: ensureBrowserProjectId()
+            browserProjectId = projectId
             isWelcomeProject = false
             persistenceEnabled = true
             projectName = restored.projectName
             designState = createDesignEditorState(compileMissionDocuments(restored.files))
+            platformSetActiveProjectId(projectId)
+            activateProject(projectId)
+            if (restored.projectId == null) {
+                embeddedDraft.saveNow(restored.files, restored.projectName, projectId = projectId)
+            }
+        }
+        if (restoredDraft == null && platformProjectLandingMode == ProjectLandingMode.None) {
+            activateProject(WelcomeProjectId)
         }
         // Source write-back is tracked separately from the full desktop document snapshot.
         // drop(1) skips the just-restored value so restore does not immediately re-save. The gate sits inside collect
@@ -471,6 +511,23 @@ class MissionEditorStateHolder(
     suspend fun runFolderSync() {
         if (!platformSupportsFolderSync) return
         platformInitFolderSync()
+        if (platformProjectLandingMode == ProjectLandingMode.Compose && platformActiveFolderId() == null) {
+            val savedProject = persistedWorkspaceState.lastProject
+                ?.takeIf { it.projectId != WelcomeProjectId }
+            if (savedProject != null) {
+                platformConnectFolderById(savedProject.projectId)
+                // The platform may canonicalize the folder id on connect (JVM resolves the real
+                // path, e.g. macOS /var → /private/var). The live folder is still the saved
+                // project, so re-key the pointer or activateProject would silently skip
+                // restoring the saved file/page/component selection.
+                val liveProjectId = platformActiveFolderId()
+                if (liveProjectId != null && liveProjectId != savedProject.projectId) {
+                    persistedWorkspaceState = persistedWorkspaceState.copy(
+                        lastProject = savedProject.copy(projectId = liveProjectId),
+                    )
+                }
+            }
+        }
         var lastRevision = -1
         while (true) {
             val rawStatus = folderSyncStatus() ?: "idle"
@@ -541,6 +598,7 @@ class MissionEditorStateHolder(
             browserProjectId = null
             projectName = snapshot.projectName
             designState = editorStateFrom(docs, incomingDocument)
+            platformActiveFolderId()?.let(::activateProject)
             lastSyncedSources = snapshot.sources
             lastSyncedDocument = designState.document
             folderConflictBackup = null
@@ -593,6 +651,7 @@ class MissionEditorStateHolder(
         if (userEditedLocally) folderConflictBackup = current
         lastSyncedSources = incoming
         lastSyncedDocument = incomingDocument
+        persistWorkspaceState()
     }
 
     private fun editorStateFrom(docs: MissionDocuments, document: DesignDocument?): DesignEditorState {
@@ -667,6 +726,7 @@ class MissionEditorStateHolder(
         lastSyncedSources = backup
         lastSyncedDocument = designState.document
         folderConflictBackup = null
+        persistWorkspaceState()
     }
 
     fun dismissFolderConflictBackup() { folderConflictBackup = null }
@@ -728,6 +788,7 @@ class MissionEditorStateHolder(
 
     /** Flushes a connected project before changing its folder, then tears down the watcher. */
     private fun prepareForProjectSwitch() {
+        persistWorkspaceState()
         if (liveFolderConnected) {
             if (writeSourcesToFolder(designState.sources)) lastSyncedDocument = designState.document
         }
@@ -788,6 +849,7 @@ class MissionEditorStateHolder(
         designState = createDesignEditorState(compileMissionDocuments(emptyList()))
         inMemoryBaselineSources = emptyList()
         platformSetActiveProjectId(projectId)
+        activateProject(projectId)
         draft?.saveNow(emptyList(), displayProjectName, projectId = projectId)
     }
 
@@ -806,6 +868,7 @@ class MissionEditorStateHolder(
             projectName = restored.projectName
             designState = createDesignEditorState(compileMissionDocuments(restored.files))
             platformSetActiveProjectId(projectId)
+            activateProject(projectId)
             if (restored.projectId == null) {
                 draft.saveNow(restored.files, restored.projectName, projectId = projectId)
             }
@@ -823,6 +886,7 @@ class MissionEditorStateHolder(
         isWelcomeProject = false
         persistenceEnabled = true
         platformSetActiveProjectId(projectId)
+        activateProject(projectId)
         draft.saveNow(designState.sources, displayProjectName, projectId = projectId)
     }
 
@@ -852,7 +916,8 @@ class MissionEditorStateHolder(
         inMemoryBaselineSources = designState.sources
         projectLandingVisible = false
         projectLandingError = null
-        platformSetActiveProjectId("welcome")
+        platformSetActiveProjectId(WelcomeProjectId)
+        activateProject(WelcomeProjectId)
     }
 
     /**
@@ -869,14 +934,16 @@ class MissionEditorStateHolder(
             designState = createDesignEditorState(loadDesignDocument())
             inMemoryBaselineSources = designState.sources
             browserProjectId = null
-            platformSetActiveProjectId("welcome")
+            platformSetActiveProjectId(WelcomeProjectId)
+            activateProject(WelcomeProjectId)
             return
         }
         draft.reset {
             designState = createDesignEditorState(loadDesignDocument())
             inMemoryBaselineSources = designState.sources
             browserProjectId = null
-            platformSetActiveProjectId("welcome")
+            platformSetActiveProjectId(WelcomeProjectId)
+            activateProject(WelcomeProjectId)
         }
         projectName = ""
     }
@@ -896,9 +963,38 @@ class MissionEditorStateHolder(
         hoveredNodeId = nodeId
     }
 
-    fun updateWorkspace(block: (EditorWorkspaceState) -> EditorWorkspaceState) {
+    fun updateWorkspace(
+        persist: Boolean = true,
+        block: (EditorWorkspaceState) -> EditorWorkspaceState,
+    ) {
         val next = block(workspace)
-        if (next != workspace) workspace = next
+        if (next != workspace) {
+            workspace = next
+            if (persist) persistWorkspaceState()
+        }
+    }
+
+    fun saveWorkspaceNow() = persistWorkspaceState()
+
+    private fun activateProject(projectId: String) {
+        if (projectId.isBlank()) return
+        activeProjectId = projectId
+        persistedWorkspaceState.lastProject
+            ?.takeIf { it.projectId == projectId }
+            ?.let { designState = designState.restoreProjectWorkspace(it) }
+        workspacePersistenceReady = true
+        persistWorkspaceState()
+    }
+
+    private fun persistWorkspaceState() {
+        if (!workspacePersistenceReady) return
+        val next = PersistedWorkspaceState(
+            layout = workspace.persistedLayout(),
+            lastProject = designState.persistedProjectWorkspace(activeProjectId),
+        )
+        if (next == persistedWorkspaceState) return
+        workspaceStateRepository?.save(next)
+        persistedWorkspaceState = next
     }
 
     fun toggleSection(section: InspectorSection) {
@@ -946,6 +1042,7 @@ fun MissionEditorApp(mcpServer: McpServerController = NoMcpServerController) {
                 ),
                 languagePreference = LanguagePreference(keyValueStore),
                 recentProjects = DefaultRecentProjectsRepository(keyValueStore),
+                workspaceStateRepository = WorkspaceStateRepository(keyValueStore),
                 mcpServer = mcpServer,
             )
         }
@@ -1043,10 +1140,11 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
             EditorSourcePane(state, Modifier.width(sourceWidthDp.dp).fillMaxHeight())
             VerticalSplitter(
                 onDeltaDp = { d ->
-                    state.updateWorkspace {
+                    state.updateWorkspace(persist = false) {
                         it.copy(sourceWidthDp = (it.sourceWidthDp + d).coerceIn(WorkspaceLimits.MinSourceDp, WorkspaceLimits.MaxSourceDp))
                     }
                 },
+                onDragFinished = state::saveWorkspaceNow,
                 onReset = { state.updateWorkspace { it.copy(sourceWidthDp = WorkspaceLimits.DefaultSourceDp) } },
             )
         }
@@ -1060,11 +1158,12 @@ private fun WorkbenchLayout(state: MissionEditorStateHolder) {
         } else {
             VerticalSplitter(
                 onDeltaDp = { d ->
-                    state.updateWorkspace {
+                    state.updateWorkspace(persist = false) {
                         // Splitter is left of the inspector, so dragging right shrinks it.
                         it.copy(inspectorWidthDp = (it.inspectorWidthDp - d).coerceIn(WorkspaceLimits.MinInspectorDp, WorkspaceLimits.MaxInspectorDp))
                     }
                 },
+                onDragFinished = state::saveWorkspaceNow,
                 onReset = { state.updateWorkspace { it.copy(inspectorWidthDp = WorkspaceLimits.DefaultInspectorDp) } },
             )
             EditorInspectorPane(state, Modifier.width(inspectorWidthDp.dp).fillMaxHeight())
@@ -1134,7 +1233,11 @@ private fun StackedLayout(state: MissionEditorStateHolder) {
  * Text is not wrapped in a `SelectionContainer`, so dragging never selects text.
  */
 @Composable
-private fun VerticalSplitter(onDeltaDp: (Float) -> Unit, onReset: () -> Unit) {
+private fun VerticalSplitter(
+    onDeltaDp: (Float) -> Unit,
+    onDragFinished: () -> Unit,
+    onReset: () -> Unit,
+) {
     val colors = LocalEditorColors.current
     val density = LocalDensity.current.density
     var active by remember { mutableStateOf(false) }
@@ -1147,8 +1250,14 @@ private fun VerticalSplitter(onDeltaDp: (Float) -> Unit, onReset: () -> Unit) {
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { active = true },
-                    onDragEnd = { active = false },
-                    onDragCancel = { active = false },
+                    onDragEnd = {
+                        active = false
+                        onDragFinished()
+                    },
+                    onDragCancel = {
+                        active = false
+                        onDragFinished()
+                    },
                 ) { change, dragAmount ->
                     change.consume()
                     onDeltaDp(dragAmount.x / density)

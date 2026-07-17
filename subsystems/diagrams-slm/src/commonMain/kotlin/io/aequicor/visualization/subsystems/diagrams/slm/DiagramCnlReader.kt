@@ -972,7 +972,7 @@ internal object DiagramCnlReader {
         var strokeWidth = 1.0
         var pattern = DiagramStrokePattern.SOLID
         var opacity = 1.0
-        var corners = DiagramCornerStyle.SHARP
+        var corners = DiagramCornerStyle.ROUNDED
         var sketch = false
         var shadow = false
         var idx = 0
@@ -1095,7 +1095,7 @@ internal object DiagramCnlReader {
         var style: DiagramStyle = DiagramStyle.Default
         var sourceArrowhead: DiagramArrowhead = DiagramArrowhead.None
         var targetArrowhead: DiagramArrowhead = DiagramArrowhead.None
-        var lineJumps = LineJumpStyle.NONE
+        var lineJumps = LineJumpStyle.ARC
         var mode = DiagramConnectionMode.LINE
         var animated = false
         var layerId: String? = null

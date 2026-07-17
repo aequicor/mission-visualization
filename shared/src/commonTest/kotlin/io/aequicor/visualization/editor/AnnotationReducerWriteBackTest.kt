@@ -4,15 +4,22 @@ import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.annotationSidecarFileName
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.AnnotationTool
+import io.aequicor.visualization.editor.presentation.DiagramSelection
+import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.EditorTool
 import io.aequicor.visualization.editor.presentation.EditorWorkspaceState
+import io.aequicor.visualization.editor.presentation.VectorPointRef
+import io.aequicor.visualization.editor.presentation.VectorVertexRef
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceAnnotationWorkspace
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationImage
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
+import io.aequicor.visualization.subsystems.annotations.slm.AnnotationLayoutComments
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -37,6 +44,11 @@ class AnnotationReducerWriteBackTest {
 
     private fun DesignEditorState.sidecarContent(): String =
         assertNotNull(sources.firstOrNull { it.fileName == sidecarFile }, "missing sidecar $sidecarFile").content
+
+    private fun DesignEditorState.layoutComments() = AnnotationLayoutComments.parse(
+        screenFile,
+        assertNotNull(sources.firstOrNull { it.fileName == screenFile }).content,
+    ).layer.annotations
 
     private fun DesignEditorState.layer() = assertNotNull(annotationLayers[screenFile], "missing layer for $screenFile")
 
@@ -87,11 +99,8 @@ class AnnotationReducerWriteBackTest {
         )
 
         assertEquals(listOf("ann-1", "ann-2"), next.layer().annotations.map { it.id })
-        assertEquals(
-            "## issue @tile_1 {id=ann-1}\n\n## note @(120,340) {id=ann-2}\n",
-            next.sidecarContent(),
-            "second section appended with one blank line between",
-        )
+        assertEquals("## issue @tile_1 {id=ann-1}\n", next.sidecarContent())
+        assertEquals(listOf("ann-2"), next.layoutComments().map { it.id }, "comment is embedded in layout.md")
     }
 
     @Test
@@ -116,7 +125,19 @@ class AnnotationReducerWriteBackTest {
         )
 
         assertEquals(AnnotationKind.Note, next.layer().annotations.single().kind)
-        assertEquals("## note @tile_1 {id=ann-1}\n", next.sidecarContent())
+        assertEquals("", next.sidecarContent(), "the issue section leaves the sidecar")
+        assertEquals(listOf("ann-1"), next.layoutComments().map { it.id }, "the comment moves into layout.md")
+    }
+
+    @Test
+    fun setIssueStatusWritesItToTheSidecar() {
+        val next = reduceDesignEditor(
+            freshState().withIssueOnTile(),
+            DesignEditorIntent.SetAnnotationStatus(screenFile, "ann-1", AnnotationStatus.InReview),
+        )
+
+        assertEquals(AnnotationStatus.InReview, next.layer().annotations.single().status)
+        assertEquals("## issue @tile_1 {id=ann-1, status=in-review}\n", next.sidecarContent())
     }
 
     @Test
@@ -203,7 +224,8 @@ class AnnotationReducerWriteBackTest {
         val next = reduceDesignEditor(two, DesignEditorIntent.DeleteAnnotation(screenFile, "ann-1"))
 
         assertEquals(listOf("ann-2"), next.layer().annotations.map { it.id })
-        assertEquals("## note @(1,2) {id=ann-2}\n", next.sidecarContent(), "only the deleted section left the file")
+        assertEquals("", next.sidecarContent(), "the deleted issue leaves the sidecar empty")
+        assertEquals(listOf("ann-2"), next.layoutComments().map { it.id }, "the layout comment remains")
     }
 
     @Test
@@ -286,6 +308,110 @@ class AnnotationReducerWriteBackTest {
     }
 
     @Test
+    fun activatingAnnotationToolExitsCanvasSubEditorsThatOwnPointerInput() {
+        val workspace = EditorWorkspaceState(
+            tool = EditorTool.Rectangle,
+            vectorEditNodeId = "vector-1",
+            vectorSelectedPoint = VectorPointRef(pathIndex = 0, pointIndex = 1),
+            vectorSelectedVertex = VectorVertexRef(vertexIndex = 2),
+            vectorPaintBucket = true,
+            diagramEditNodeId = "diagram-1",
+            diagramTool = DiagramTool.DrawEdge(),
+            diagramSelection = DiagramSelection(elementIds = setOf("step-1")),
+            diagramTextEditRequest = "step-1",
+        )
+
+        val active = reduceAnnotationWorkspace(
+            workspace,
+            DesignEditorIntent.SetAnnotationTool(AnnotationTool.Note),
+        )
+
+        assertEquals(AnnotationTool.Note, active.annotationTool)
+        assertEquals(EditorTool.Select, active.tool)
+        assertEquals("", active.vectorEditNodeId)
+        assertNull(active.vectorSelectedPoint)
+        assertNull(active.vectorSelectedVertex)
+        assertEquals(false, active.vectorPaintBucket)
+        assertEquals("", active.diagramEditNodeId)
+        assertEquals(DiagramTool.Select, active.diagramTool)
+        assertTrue(active.diagramSelection.isEmpty)
+        assertNull(active.diagramTextEditRequest)
+    }
+
+    @Test
+    fun activatingAnnotationToolExitsInlineTextEdit() {
+        val editing = freshState().copy(editingTextNodeId = "tile_1")
+
+        val active = reduceDesignEditor(
+            editing,
+            DesignEditorIntent.SetAnnotationTool(AnnotationTool.Issue),
+        )
+
+        assertEquals("", active.editingTextNodeId)
+        assertEquals(editing.document, active.document, "annotation activation does not edit the document")
+        assertSame(
+            editing,
+            reduceDesignEditor(editing, DesignEditorIntent.SetAnnotationTool(AnnotationTool.None)),
+            "turning annotation mode off does not disturb the current editor",
+        )
+    }
+
+    @Test
+    fun cancelAnnotationAuthoringDeletesOnlyAnEmptyComposerDraft() {
+        val added = reduceDesignEditor(
+            freshState(),
+            DesignEditorIntent.AddAnnotation(
+                screenFile,
+                AnnotationAnchor.FreePoint(10.0, 20.0),
+                AnnotationKind.Note,
+            ),
+        )
+        val annotationId = added.layer().annotations.single().id
+
+        val canceledEmpty = reduceDesignEditor(
+            added,
+            DesignEditorIntent.CancelAnnotationAuthoring(screenFile, annotationId),
+        )
+
+        assertTrue(canceledEmpty.layer().annotations.isEmpty())
+        assertTrue(canceledEmpty.layoutComments().isEmpty(), "empty comment is removed from layout.md")
+
+        val committed = reduceDesignEditor(
+            added,
+            DesignEditorIntent.SetAnnotationText(screenFile, annotationId, "Keep this comment"),
+        )
+        val canceledCommitted = reduceDesignEditor(
+            committed,
+            DesignEditorIntent.CancelAnnotationAuthoring(screenFile, annotationId),
+        )
+
+        assertEquals("Keep this comment", canceledCommitted.layer().annotations.single().body.text)
+        assertEquals(committed.sources, canceledCommitted.sources, "Escape does not rewrite a non-empty annotation")
+    }
+
+    @Test
+    fun cancelAnnotationAuthoringReturnsWorkspaceToSelectAndPrunesDraftViewState() {
+        val workspace = EditorWorkspaceState(
+            tool = EditorTool.Comment,
+            annotationTool = AnnotationTool.Note,
+            annotationComposerId = "ann-1",
+            selectedAnnotationId = "ann-1",
+            expandedAnnotationIds = setOf("ann-1", "ann-2"),
+        )
+
+        val canceled = reduceAnnotationWorkspace(
+            workspace,
+            DesignEditorIntent.CancelAnnotationAuthoring(screenFile, "ann-1"),
+        )
+
+        assertEquals(EditorTool.Select, canceled.tool)
+        assertEquals(AnnotationTool.None, canceled.annotationTool)
+        assertEquals("", canceled.annotationComposerId)
+        assertEquals("", canceled.selectedAnnotationId)
+        assertEquals(setOf("ann-2"), canceled.expandedAnnotationIds)
+    }
+
+    @Test
     fun deleteAnnotationPrunesTheViewStateAndDocumentIntentsLeaveItUntouched() {
         val workspace = EditorWorkspaceState(
             expandedAnnotationIds = setOf("ann-1", "ann-2"),
@@ -310,5 +436,18 @@ class AnnotationReducerWriteBackTest {
         val workspace = EditorWorkspaceState(selectedAnnotationId = "ann-1")
         val intent = DesignEditorIntent.SetAnnotationText(screenFile, "ann-1", "text")
         assertSame(workspace, reduceAnnotationWorkspace(workspace, intent))
+    }
+
+    @Test
+    fun placingAnAnnotationDoesNotDeactivateTheToolbarTool() {
+        val workspace = EditorWorkspaceState(annotationTool = AnnotationTool.Note)
+        val intent = DesignEditorIntent.AddAnnotation(
+            screenFile,
+            AnnotationAnchor.FreePoint(1.0, 2.0),
+            AnnotationKind.Note,
+        )
+
+        assertSame(workspace, reduceAnnotationWorkspace(workspace, intent))
+        assertEquals(AnnotationTool.Note, workspace.annotationTool)
     }
 }

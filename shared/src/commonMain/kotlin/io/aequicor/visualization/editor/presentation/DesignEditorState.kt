@@ -60,9 +60,9 @@ data class DesignEditorState(
     /** Final write-back commands staged during an interaction; previews are never staged. */
     val interactionPendingIntents: List<DesignEditorIntent> = emptyList(),
     /**
-     * Review layer per screen, keyed by screen file name (`*.layout.md`): a screen
-     * without a sidecar has an empty layer. Annotation edits write back to the owning
-     * `*.annotations.md` sidecar in [sources] in lock-step (see `writeBackAnnotations`).
+     * Unified comments/issues per screen, keyed by screen file name (`*.layout.md`).
+     * Comments write into the screen source and issues into `*.annotations.md`
+     * (see `writeBackAnnotations`).
      */
     val annotationLayers: Map<String, AnnotationLayer> = emptyMap(),
 ) {

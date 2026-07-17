@@ -11,6 +11,7 @@ import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 import io.aequicor.visualization.subsystems.annotations.AnnotationPoint
 import io.aequicor.visualization.subsystems.annotations.AnnotationRect
+import io.aequicor.visualization.subsystems.annotations.slm.AnnotationLayoutComments
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -69,8 +70,9 @@ class AnnotationCanvasGeometryTest {
             AnnotationAnchor.NodeAnchor("tile_1", 7.0, 3.0),
             assertNotNull(moved.annotationLayers[screenFile]).annotations.single().anchor,
         )
-        val sidecar = assertNotNull(moved.sources.firstOrNull { it.fileName == "mission-overview.annotations.md" })
-        assertEquals("## note @tile_1(7,3) {id=ann-1}\n", sidecar.content, "one surgical sidecar patch")
+        val layoutSource = assertNotNull(moved.sources.firstOrNull { it.fileName == screenFile })
+        val persisted = AnnotationLayoutComments.parse(screenFile, layoutSource.content).layer.annotations.single()
+        assertEquals(AnnotationAnchor.NodeAnchor("tile_1", 7.0, 3.0), persisted.anchor)
     }
 
     // --- Rotation-aware node bounds ------------------------------------------

@@ -25,8 +25,9 @@ public data class AnnotatedNodeRef(
 )
 
 /**
- * Builds a plain-text prompt for an AI coding agent from the **issue** annotations
- * ([AnnotationKind.Issue]); notes are never exported. Ordering is deterministic:
+ * Builds a plain-text prompt for an AI coding agent from the non-closed **issue**
+ * annotations ([AnnotationKind.Issue]); notes and closed issues are never exported.
+ * Ordering is deterministic:
  * layers sorted by screen file name, then the layer's own annotation order.
  */
 public object AnnotationPromptExporter {
@@ -40,7 +41,9 @@ public object AnnotationPromptExporter {
             .sortedBy { it.screenFileName }
             .flatMap { layer -> layer.annotations.map { layer.screenFileName to it } }
             .filter { (screen, annotation) ->
-                annotation.kind == AnnotationKind.Issue && scope.includes(screen, annotation)
+                annotation.kind == AnnotationKind.Issue &&
+                    annotation.status != AnnotationStatus.Closed &&
+                    scope.includes(screen, annotation)
             }
 
         val builder = StringBuilder()
@@ -90,6 +93,7 @@ public object AnnotationPromptExporter {
         // own fields, so a body line like "2. Screen: ..." can never masquerade as a
         // real numbered item and the body stays visually inside its item.
         val bodyLines = annotation.body.text.ifBlank { "(no text)" }.split('\n')
+        appendLine("   Status: ${annotation.status.promptToken()}")
         appendLine("   Issue: ${bodyLines.first()}")
         bodyLines.drop(1).forEach { line -> appendLine("      $line") }
         if (annotation.image != null) appendLine("   [attached image]")
@@ -115,6 +119,12 @@ public object AnnotationPromptExporter {
     private fun Double.fmt(): String {
         val truncated = toLong()
         return if (truncated.toDouble() == this) truncated.toString() else toString()
+    }
+
+    private fun AnnotationStatus.promptToken(): String = when (this) {
+        AnnotationStatus.Open -> "open"
+        AnnotationStatus.InReview -> "in review"
+        AnnotationStatus.Closed -> "closed"
     }
 
     private val PROMPT_HEADER: String = buildString {

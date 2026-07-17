@@ -6,6 +6,7 @@ import io.aequicor.visualization.subsystems.annotations.AnnotationBody
 import io.aequicor.visualization.subsystems.annotations.AnnotationImage
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
 import io.aequicor.visualization.subsystems.annotations.AnnotationLayer
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 
 /** One recoverable parse problem; [line] is 1-based in the sidecar source. */
 public data class AnnotationSlmWarning(val line: Int, val message: String)
@@ -74,6 +75,7 @@ public object AnnotationSlmParser {
                 defaultExpanded = header.expanded,
                 references = header.references,
                 author = header.author,
+                status = header.status,
             )
         }
 
@@ -149,6 +151,7 @@ public object AnnotationSlmParser {
         val expanded: Boolean,
         val id: String?,
         val author: String?,
+        val status: AnnotationStatus,
     )
 
     /** Parses a `## kind @anchor [+@ref…] [expanded] {id=…}` line; null when malformed. */
@@ -163,6 +166,7 @@ public object AnnotationSlmParser {
         var expanded = false
         var id: String? = null
         var author: String? = null
+        var status = AnnotationStatus.Open
         while (true) {
             cursor.skipSpaces()
             if (cursor.atEnd) break
@@ -181,6 +185,9 @@ public object AnnotationSlmParser {
                         when (key) {
                             AnnotationSlmFormat.ID_KEY -> id = value.takeIf { it.isNotEmpty() }
                             AnnotationSlmFormat.AUTHOR_KEY -> author = value.takeIf { it.isNotEmpty() }
+                            AnnotationSlmFormat.STATUS_KEY -> {
+                                status = AnnotationSlmFormat.statusFromToken(value) ?: return null
+                            }
                             else -> return null
                         }
                     }
@@ -188,7 +195,7 @@ public object AnnotationSlmParser {
                 else -> return null
             }
         }
-        return Header(kind, anchor, references, expanded, id, author)
+        return Header(kind, anchor, references, expanded, id, author, status)
     }
 
     private fun parseAnchor(cursor: Cursor): AnnotationAnchor? {

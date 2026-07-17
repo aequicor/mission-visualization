@@ -29,6 +29,12 @@ public fun AnnotationLayer.updateAnnotationText(id: String, text: String): Annot
 public fun AnnotationLayer.setAnnotationKind(id: String, kind: AnnotationKind): AnnotationLayer =
     mapAnnotation(id) { it.copy(kind = kind) }
 
+/** Changes the workflow state of an issue. Notes deliberately ignore status changes. */
+public fun AnnotationLayer.setAnnotationStatus(id: String, status: AnnotationStatus): AnnotationLayer =
+    mapAnnotation(id) { annotation ->
+        if (annotation.kind == AnnotationKind.Issue) annotation.copy(status = status) else annotation
+    }
+
 /** Attaches (or replaces) the embedded image of the annotation. */
 public fun AnnotationLayer.attachAnnotationImage(id: String, image: AnnotationImage): AnnotationLayer =
     mapAnnotation(id) { it.copy(image = image) }

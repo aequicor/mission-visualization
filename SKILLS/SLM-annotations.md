@@ -1,24 +1,24 @@
 ---
 name: slm-annotations
 description: >-
-  Author, edit, validate, and explain SLM annotation review sidecars
+  Author, edit, validate, and explain embedded SLM comments and annotation issue sidecars
   (`*.annotations.md`), or safely act on exported annotation issue prompts by changing
-  referenced `*.layout.md` design nodes. Use for note/issue sections, node/free-point
+  referenced `*.layout.md` design nodes. Use for comment/issue sections, node/free-point
   anchors, references, embedded images, parser warnings, id pinning, and surgical
   sidecar patching. Extends the canonical `slm` skill; a sidecar is never itself SLM.
 ---
 
 # Work with SLM annotation sidecars
 
-Follow the base SLM instructions above before changing the referenced design. An annotation layer is a
-separate sibling document:
+Follow the base SLM instructions above before changing the referenced design. Storage is split by kind:
 
 ```text
-mission.layout.md       <- SLM/CNL design
-mission.annotations.md  <- review sidecar for that design
+mission.layout.md       <- SLM/CNL design + embedded note comments
+mission.annotations.md  <- actionable issue sidecar
 ```
 
-Never treat the sidecar as SLM and never merge its sections into `.layout.md`.
+Never treat the sidecar as SLM. Only `note` comments belong to the embedded
+`visualization-comments:v1` block; `issue` sections stay in the sidecar.
 
 ## Boundary and workflows
 
@@ -201,7 +201,7 @@ Expected semantics:
 
 - Naming the sidecar `screen.layout.annotations.md`: replace `.layout.md` with
   `.annotations.md`, e.g. `screen.layout.md` → `screen.annotations.md`.
-- Placing an annotation in `.layout.md`: keep the review layer separate.
+- Placing an `issue` in `.layout.md`: move it to the sidecar; only `note` comments are embedded.
 - Missing/duplicate `{id=...}`: synth/rewrite or skipped section results.
 - Invalid kind such as `warning`: only `issue` and `note` exist.
 - Missing `@`, malformed `(x,y)`, or space-containing unquoted node id: section is skipped.
@@ -234,7 +234,7 @@ Read the entire sidecar as text and verify it without external tooling:
 - Check numeric pairs contain exactly two decimals separated by a comma; omit zero node
   offsets and avoid trailing `.0` in canonical hand-authored text.
 - Keep preamble and unrelated sections byte-for-byte unchanged during a targeted edit.
-- Confirm the sidecar remains separate from `.layout.md`, and that fixing an exported issue
+- Confirm issues remain separate from `.layout.md`, comments remain embedded, and fixing an exported issue
   changed the named design node rather than merely rewriting the issue body.
 
 Finish only when the expected section count, ordered ids, kinds, anchors, references, bodies,

@@ -88,7 +88,7 @@ The basic type words are `rectangle`, `rounded-rectangle`, `ellipse`, `text`,
 `cloud`. They have no payload fields; use `label` for the caption.
 
 ```md
-Node rounded-rectangle card 220 by 120 position 40 40 style (fill #F4F7FB corners rounded) label «Draft card»
+Node rounded-rectangle card 220 by 120 position 40 40 style (fill #F4F7FB corners sharp) label «Draft card»
 Node flowchart valid decision 140 by 80 position 320 60 label «Valid?»
 ```
 
@@ -182,8 +182,8 @@ style ([fill #hex] [stroke #hex] [weight N]
        [corners sharp|rounded|curved] [sketch] [shadow])
 ```
 
-Default weight 1, solid pattern, opacity 1, and sharp corners are omitted. A fully
-default style group is omitted.
+Default weight 1, solid pattern, opacity 1, and rounded corners are omitted
+(`corners sharp` opts back into hard bends). A fully default style group is omitted.
 
 ## Edges
 
@@ -191,7 +191,7 @@ default style group is omitted.
 Edge <id> from <endpoint> to <endpoint>
      [relation <relation>] [routing <routing>] {via (x y)} {label <label>}
      [style (...)] [arrow source <arrowhead>] [arrow target <arrowhead>]
-     [jumps arc|gap|sharp] [mode link|arrow] [animated yes] [layer <id>]
+     [jumps none|arc|gap|sharp] [mode link|arrow] [animated yes] [layer <id>]
 ```
 
 Endpoint forms:
@@ -227,6 +227,9 @@ A short label is `label «text»`. The grouped form is
 `label («text» [markdown] [at source|target] [dx N] [dy N])`; use at most one label
 per source/middle/target position.
 
+Line jumps at crossings with lower edges default to `arc` (omitted in canonical
+form); `jumps none` turns them off.
+
 Arrowheads are `none`, `open`, `block`, `block-filled`, `diamond`,
 `diamond-filled`, `triangle`, `triangle-filled`, `oval`, `oval-filled`, `cross`,
 `dash`, `er-one`, `er-many`, `er-one-or-many`, `er-zero-or-one`, or
@@ -237,7 +240,7 @@ Edge extends from circle to shape relation generalization
 Edge owns from drawing to circle relation composition label «owns»
 Edge places from customer to order relation er one to zero-or-many label («places» at source dx 4 dy -6)
 Edge fixed from gateway.out to service.in routing straight via (420 160) via (420 240)
-Edge flow from intake to review relation transition jumps arc mode link animated yes layer wiring
+Edge flow from intake to review relation transition jumps none mode link animated yes layer wiring
 ```
 
 ## Groups
@@ -277,6 +280,47 @@ Node entity customer «Customer» 220 by 140 position 40 80 attribute («id» ty
 Node entity order «Order» 220 by 140 position 460 80 attribute («id» type «UUID» pk) attribute («customerId» type «UUID» fk)
 Edge places from customer to order relation er one to zero-or-many label «places»
 ```
+
+## Layout good taste
+
+The renderer runs a vision-test lint (`lintDiagram` in `:subsystems:diagrams`) over the
+routed picture. Author coordinates so that none of its rules fire:
+
+- Never let connected nodes' bodies overlap (`NodeOverlap`). After any manual coordinate
+  shift, re-check the neighbours. Full containment is deliberate grouping and is fine;
+  partial overlap is a defect.
+- Keep at least 24 units of clear gap between neighbouring nodes — twice the router's
+  12-unit obstacle margin. Tighter gaps leave routed edges no room to spread, so they run
+  on top of each other: two edges closer than 2 units for a stretch of 12+ units are
+  flagged as `EdgeOverlap`.
+- Give an entity with 4+ edges explicit ports spread over different sides of the node.
+  Three or more endpoints landing within a 20-unit spot on one node are an `AnchorBunch`;
+  the router spreads floating anchors only 24 units apart along one side, so many edges
+  aimed at the same side still funnel.
+- Do not reach for `routing curved` as a way around a node — curved routing is
+  obstacle-aware itself. An `EdgeThroughNode` finding means the layout is too tight; fix
+  it by moving nodes apart or attaching to explicit ports, not by changing the routing
+  word.
+- In dense clusters, place labels longer than ~20 characters manually with
+  `label («…» dx N dy N)` aimed at free space. The lint sizes a label box at 7 units per
+  character by 16 units high, so a long auto-placed label ends up covering a foreign node
+  (`LabelOverNode`).
+- Avoid highways where many flows cross in one strip: 3+ crossings within a 32-unit
+  radius are a `CrossingHotspot`. Route flows between domains through separate corridors —
+  different sides and ports — instead of one shared channel.
+
+To see the findings on a real file, run the audit loop:
+`SLM_AUDIT_FILE=<file> SLM_AUDIT_OUT=<dir> ./gradlew :subsystems:diagrams-slm:jvmTest --tests "*.SlmDiagramAuditTool"`
+renders each diagram to SVG and writes the warnings to `lint.txt`.
+
+When starting a diagram from scratch, prefer generating coordinates with the built-in
+auto-layout (`autoLayout` in `:subsystems:diagrams`) instead of hand-placing everything:
+it classifies each container scope (forest → tidy tree, DAG → layered Sugiyama,
+ER-dominated or heavily cyclic → stress majorization that reads left-to-right) and
+already respects the rules above (inheritance points up the page, overlap-free with
+`nodeGap` clearance, integer coordinates). For an almost-good manual arrangement use
+Tidy (`tidyAlign`): it only snaps near-aligned rows/columns onto shared axes and
+dissolves overlaps without re-laying anything out.
 
 ## Common failures
 

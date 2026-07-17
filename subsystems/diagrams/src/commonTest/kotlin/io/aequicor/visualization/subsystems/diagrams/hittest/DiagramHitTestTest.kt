@@ -54,6 +54,32 @@ class DiagramHitTestTest {
     }
 
     @Test
+    fun middleLabelSlidesOffCrossingsWithOtherRoutes() {
+        val route = listOf(DiagramPoint(0.0, 50.0), DiagramPoint(200.0, 50.0))
+        // Another route crosses exactly at the default center anchor (fraction 0.5 = x 100).
+        val crossing = listOf(DiagramPoint(100.0, 0.0), DiagramPoint(100.0, 100.0))
+        val label = DiagramEdgeLabel(DiagramLabel("x"))
+        val anchor = edgeLabelAnchorPoint(route, label, otherRoutes = listOf(crossing))
+        // The label leaves the crossing but stays on (and lifted off) the line.
+        assertEquals(50.0 - EDGE_LABEL_LINE_GAP, anchor.y, 1e-9)
+        kotlin.test.assertTrue(
+            kotlin.math.abs(anchor.x - 100.0) >= 15.0,
+            "label must slide off the crossing, got x=${anchor.x}",
+        )
+    }
+
+    @Test
+    fun draggedMiddleLabelKeepsTheCenterFraction() {
+        val route = listOf(DiagramPoint(0.0, 50.0), DiagramPoint(200.0, 50.0))
+        val crossing = listOf(DiagramPoint(100.0, 0.0), DiagramPoint(100.0, 100.0))
+        val label = DiagramEdgeLabel(DiagramLabel("x"), offsetX = 5.0, offsetY = -3.0)
+        val anchor = edgeLabelAnchorPoint(route, label, otherRoutes = listOf(crossing))
+        // The manual offset is relative to the untouched center anchor.
+        assertEquals(105.0, anchor.x, 1e-9)
+        assertEquals(50.0 - EDGE_LABEL_LINE_GAP - 3.0, anchor.y, 1e-9)
+    }
+
+    @Test
     fun emptySpaceHitsNothing() {
         val graph = diagramGraph { node("a", x = 0.0, y = 0.0, width = 100.0, height = 100.0) }
         assertNull(hitTest(graph, emptyMap(), DiagramPoint(500.0, 500.0)))

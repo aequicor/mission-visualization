@@ -3,6 +3,7 @@ package io.aequicor.visualization.subsystems.annotations.slm
 import io.aequicor.visualization.subsystems.annotations.AnnotationAnchor
 import io.aequicor.visualization.subsystems.annotations.AnnotationImage
 import io.aequicor.visualization.subsystems.annotations.AnnotationKind
+import io.aequicor.visualization.subsystems.annotations.AnnotationStatus
 import kotlin.math.abs
 import kotlin.math.floor
 
@@ -42,6 +43,10 @@ internal object AnnotationSlmFormat {
     const val EXPANDED_FLAG: String = "[expanded]"
     const val ID_KEY: String = "id"
     const val AUTHOR_KEY: String = "author"
+    const val STATUS_KEY: String = "status"
+    const val STATUS_OPEN: String = "open"
+    const val STATUS_IN_REVIEW: String = "in-review"
+    const val STATUS_CLOSED: String = "closed"
 
     /** Characters allowed in bare (unquoted) node/annotation ids inside the header. */
     fun isIdChar(char: Char): Boolean =
@@ -61,6 +66,19 @@ internal object AnnotationSlmFormat {
     fun kindFromToken(token: String): AnnotationKind? = when (token) {
         KIND_ISSUE -> AnnotationKind.Issue
         KIND_NOTE -> AnnotationKind.Note
+        else -> null
+    }
+
+    fun statusToken(status: AnnotationStatus): String = when (status) {
+        AnnotationStatus.Open -> STATUS_OPEN
+        AnnotationStatus.InReview -> STATUS_IN_REVIEW
+        AnnotationStatus.Closed -> STATUS_CLOSED
+    }
+
+    fun statusFromToken(token: String): AnnotationStatus? = when (token) {
+        STATUS_OPEN -> AnnotationStatus.Open
+        STATUS_IN_REVIEW -> AnnotationStatus.InReview
+        STATUS_CLOSED -> AnnotationStatus.Closed
         else -> null
     }
 
