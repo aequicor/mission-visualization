@@ -49,6 +49,7 @@ import io.aequicor.visualization.subsystems.diagrams.ops.moveEdgeToLayer
 import io.aequicor.visualization.subsystems.diagrams.ops.moveNode
 import io.aequicor.visualization.subsystems.diagrams.ops.moveNodeToLayer
 import io.aequicor.visualization.subsystems.diagrams.ops.moveWaypoint
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.ops.pullOutOfContainer
 import io.aequicor.visualization.subsystems.diagrams.ops.reconnectEdge
 import io.aequicor.visualization.subsystems.diagrams.ops.removeClassMember
@@ -68,8 +69,8 @@ import io.aequicor.visualization.subsystems.diagrams.ops.setEdgeRouting
 import io.aequicor.visualization.subsystems.diagrams.ops.setEdgeStyle
 import io.aequicor.visualization.subsystems.diagrams.ops.setLayerLocked
 import io.aequicor.visualization.subsystems.diagrams.ops.setLayerVisible
-import io.aequicor.visualization.subsystems.diagrams.ops.setNodeLabel
 import io.aequicor.visualization.subsystems.diagrams.ops.setNodeStyle
+import io.aequicor.visualization.subsystems.diagrams.ops.setNodeText
 import io.aequicor.visualization.subsystems.diagrams.ops.setTableCellText
 import io.aequicor.visualization.subsystems.diagrams.ops.splitTableCell
 import io.aequicor.visualization.subsystems.diagrams.ops.ungroupNodes
@@ -122,13 +123,18 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
         )
     }
     is DiagramEditorIntent.SetDiagramNodeLabel -> diagramWriteBack(intent.nodeId) {
-        it.setNodeLabel(DiagramNodeId(intent.elementId), intent.text)
+        it.setNodeText(DiagramNodeId(intent.elementId), intent.text)
     }
     is DiagramEditorIntent.SetDiagramNodeStyle -> diagramWriteBack(intent.nodeId) {
         it.setNodeStyle(DiagramNodeId(intent.elementId), intent.style)
     }
-    is DiagramEditorIntent.SetDiagramNodePayload -> diagramWriteBack(intent.nodeId) {
-        it.updateNode(DiagramNodeId(intent.elementId)) { element -> element.copy(payload = intent.payload) }
+    is DiagramEditorIntent.SetDiagramNodePayload -> diagramWriteBack(intent.nodeId) { graph ->
+        // The new payload arrives as a palette template carrying a placeholder caption ("Use case"),
+        // so carry the authored text across the type switch instead of stamping over it.
+        val id = DiagramNodeId(intent.elementId)
+        val authored = graph.nodeById(id)?.primaryText()
+        val retyped = graph.updateNode(id) { element -> element.copy(payload = intent.payload) }
+        if (authored.isNullOrBlank()) retyped else retyped.setNodeText(id, authored)
     }
     is DiagramEditorIntent.AddDiagramPort -> diagramWriteBack(intent.nodeId) {
         it.addCustomPort(DiagramNodeId(intent.elementId), intent.port)

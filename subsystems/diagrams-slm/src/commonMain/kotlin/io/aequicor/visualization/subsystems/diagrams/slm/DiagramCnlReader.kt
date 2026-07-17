@@ -58,6 +58,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlStateKind
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlVisibility
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 
 /**
@@ -474,6 +475,16 @@ internal object DiagramCnlReader {
             locked = locked,
             visible = visible,
         )
+        // A typed payload renders the caption it carries itself (the `«…»` head phrase), so a
+        // `label` on it would round-trip through the source without ever being drawn. Reject the
+        // orphan rather than accept text the canvas will silently ignore.
+        val firstLabel = labels.firstOrNull()?.text
+        if (firstLabel != null && node.primaryText() != firstLabel) {
+            return fail(
+                "diagram node '$id' does not render `label «…»` — its caption belongs in the " +
+                    "`«…»` head phrase of the node sentence",
+            )
+        }
         return DiagramCnlSentence.NodeSentence(node, line)
     }
 

@@ -50,6 +50,35 @@ class DiagramCnlDiagnosticsTest {
     }
 
     @Test
+    fun labelOnATypedPayloadIsRejectedAsAnOrphan() {
+        val result = compileWithDiagrams(
+            document(listOf("""Node use-case uc1 «Submit» 180 by 80 position 0 0 label «orphan»""")),
+        )
+
+        val error = assertNotNull(
+            result.diagnostics.firstOrNull {
+                it.severity == DesignSeverity.Error && "does not render `label «…»`" in it.message
+            },
+            "a typed payload renders its own caption, so a node label is dead text: ${result.diagnostics}",
+        )
+        assertTrue("uc1" in error.message)
+        assertEquals(bodyLine(0), error.location?.line)
+    }
+
+    @Test
+    fun labelOnAnUntypedShapeStaysValid() {
+        val result = compileWithDiagrams(
+            document(listOf("Node rectangle a 100 by 40 position 0 0 label «caption»")),
+        )
+
+        assertTrue(
+            result.diagnostics.none { it.severity == DesignSeverity.Error },
+            "basic shapes carry their caption in `label`: ${result.diagnostics}",
+        )
+        assertEquals("caption", result.diagramGraphOf("canvas").nodes.single().labels.single().text)
+    }
+
+    @Test
     fun danglingEdgeReferenceReportsAtTheEdgeSentenceLine() {
         val result = compileWithDiagrams(
             document(

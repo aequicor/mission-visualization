@@ -147,6 +147,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlVisibility
 import io.aequicor.visualization.subsystems.diagrams.ops.UmlClassMemberKind
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.templates.diagramTemplates
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
@@ -4793,7 +4794,8 @@ private fun DiagramNodeControls(
     Spacer(Modifier.height(8.dp))
     CompactLabeledTextField(
         strings.inspector.label,
-        element.labels.firstOrNull()?.text.orEmpty(),
+        // Same accessor the canvas and the inline editor read, so the three never diverge again.
+        element.primaryText().orEmpty(),
         "diagram-label-$elementId",
         enabled = !locked,
     ) { text ->

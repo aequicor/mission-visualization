@@ -146,6 +146,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.ops.addCustomPort
 import io.aequicor.visualization.subsystems.diagrams.ops.directionalCloneOffset
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
@@ -350,6 +351,9 @@ internal fun DiagramEditOverlay(
     var snapGuides by remember(editId) { mutableStateOf<List<AnchorGuide>>(emptyList()) }
     var snapSpacing by remember(editId) { mutableStateOf<List<SpacingBar>>(emptyList()) }
     var textEdit by remember(editId) { mutableStateOf<DiagramTextEditTarget?>(null) }
+    // Commit hook published by the open inline editor so a press elsewhere commits the draft
+    // instead of discarding it (draw.io: invokesStopCellEditing = true — blur commits).
+    val inlineTextCommit = remember(editId) { mutableStateOf<(() -> Unit)?>(null) }
     var lastTapMark by remember(editId) { mutableStateOf<TimeSource.Monotonic.ValueTimeMark?>(null) }
     var lastTapKey by remember(editId) { mutableStateOf("") }
 
@@ -627,6 +631,7 @@ internal fun DiagramEditOverlay(
                     val insideBox = docX >= liveBox.x - margin && docX <= liveBox.right + margin &&
                         docY >= liveBox.y - margin && docY <= liveBox.bottom + margin
                     if (!insideBox) {
+                        inlineTextCommit.value?.invoke()
                         textEdit = null
                         val switch = if (additiveSelectionHeld) {
                             null
@@ -657,6 +662,7 @@ internal fun DiagramEditOverlay(
                         return@awaitEachGesture
                     }
                     down.consume() // diagram edit mode owns the press; never move the IR node
+                    inlineTextCommit.value?.invoke()
                     textEdit = null
 
                     // Add-node tool stamps a new element centered on the press point.
@@ -1114,6 +1120,7 @@ internal fun DiagramEditOverlay(
             box = box,
             viewport = viewport,
             zoomPx = zoomPx,
+            onRegisterCommit = { inlineTextCommit.value = it },
             onDone = { textEdit = null },
         )
     }
@@ -1297,8 +1304,11 @@ private fun DiagramEdgeToolbarDivider() {
     Box(Modifier.width(1.dp).height(20.dp).background(colors.controlStroke))
 }
 
-/** Small floating text field over the edited label; text is selected on open, Enter and Escape
- *  both commit (draw.io semantics — the caret is already live, just type). */
+/** Small floating text field over the edited label; text is selected on open, Enter, Escape and
+ *  blur all commit (draw.io semantics — the caret is already live, just type).
+ *
+ *  [onRegisterCommit] publishes the commit hook to the owner for the blur path; the callback
+ *  reads the draft at invocation time, so the owner always commits the current text. */
 @Composable
 private fun DiagramInlineTextEditor(
     state: MissionEditorStateHolder,
@@ -1309,6 +1319,7 @@ private fun DiagramInlineTextEditor(
     box: LayoutBox,
     viewport: CanvasViewport,
     zoomPx: Float,
+    onRegisterCommit: ((() -> Unit)?) -> Unit,
     onDone: () -> Unit,
 ) {
     val colors = LocalEditorColors.current
@@ -1323,6 +1334,12 @@ private fun DiagramInlineTextEditor(
 
     fun commit() {
         val text = draft.text.takeIf { it.isNotBlank() }?.trim()
+        // Blur commits on every press outside the field, so skip untouched drafts: an unchanged
+        // commit would still rewrite the source and push an undo entry.
+        if (text == initial.takeIf { it.isNotBlank() }?.trim()) {
+            onDone()
+            return
+        }
         when (target) {
             is DiagramTextEditTarget.NodeLabel ->
                 state.dispatch(DiagramEditorIntent.SetDiagramNodeLabel(editId, target.elementId, text))
@@ -1334,6 +1351,13 @@ private fun DiagramInlineTextEditor(
                 state.dispatch(DiagramEditorIntent.SetDiagramEdgeLabel(editId, target.edgeId, target.position, text))
         }
         onDone()
+    }
+
+    // Publish the hook while this editor is open; withdraw it on close so a later press outside
+    // can't re-commit a dead draft.
+    DisposableEffect(target) {
+        onRegisterCommit(::commit)
+        onDispose { onRegisterCommit(null) }
     }
 
     // Overlay the edited label's exact box and typeset the draft like the canvas does
@@ -1943,7 +1967,7 @@ private fun diagramTextEditRect(
 /** Current text of the edited label / cell, as the inline editor's initial draft. */
 private fun diagramTextEditInitialText(target: DiagramTextEditTarget, graph: DiagramGraph): String = when (target) {
     is DiagramTextEditTarget.NodeLabel ->
-        graph.nodeById(DiagramNodeId(target.elementId))?.labels?.firstOrNull()?.text.orEmpty()
+        graph.nodeById(DiagramNodeId(target.elementId))?.primaryText().orEmpty()
 
     is DiagramTextEditTarget.TableCell -> {
         val table = graph.nodeById(DiagramNodeId(target.elementId))?.payload as? TableNode
