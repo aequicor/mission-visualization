@@ -131,8 +131,11 @@ internal fun DrawScope.drawDiagramLabel(
     )
     val y = when (verticalAlign) {
         LabelVerticalAlign.TOP -> box.top
-        LabelVerticalAlign.CENTER -> box.top + (box.height - laidOut.measured.height) / 2.0
-        LabelVerticalAlign.BOTTOM -> box.bottom - laidOut.measured.height
+        // Text taller than its box anchors to the top instead of centering: a centered overflow
+        // is clipped at BOTH ends, losing the first line as well as the last.
+        LabelVerticalAlign.CENTER ->
+            maxOf(box.top, box.top + (box.height - laidOut.measured.height) / 2.0)
+        LabelVerticalAlign.BOTTOM -> maxOf(box.top, box.bottom - laidOut.measured.height)
     }
     // Clip to the label box so overflowing text never bleeds into neighboring shapes.
     clipRect(
