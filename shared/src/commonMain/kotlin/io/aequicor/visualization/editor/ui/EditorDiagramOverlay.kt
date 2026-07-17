@@ -1316,13 +1316,6 @@ private fun DiagramEdgeToolbarDivider() {
     Box(Modifier.width(1.dp).height(20.dp).background(colors.controlStroke))
 }
 
-/** Small floating text field over the edited label; text is selected on open, Enter, Escape and
- *  blur all commit (draw.io semantics — the caret is already live, just type).
- *
- *  [onRegisterCommit] publishes the commit hook to the owner for the blur path; the callback
- *  reads the draft at invocation time, so the owner always commits the current text. */
-@Composable
-private fun DiagramInlineTextEditor(
 /** Horizontal breathing room inside the edit plate, in raw px (the plate is sized in px too). */
 private const val PlateInsetPx = 4f
 
@@ -1355,6 +1348,13 @@ private fun hugFittedBounds(
     routes: Map<DiagramEdgeId, List<DiagramPoint>>,
     box: LayoutBox,
     viewport: CanvasViewport,
+/** Small floating text field over the edited label; text is selected on open, Enter, Escape and
+ *  blur all commit (draw.io semantics — the caret is already live, just type).
+ *
+ *  [onRegisterCommit] publishes the commit hook to the owner for the blur path; the callback
+ *  reads the draft at invocation time, so the owner always commits the current text. */
+@Composable
+private fun DiagramInlineTextEditor(
     zoomPx: Float,
     onRegisterCommit: ((() -> Unit)?) -> Unit,
     onDone: () -> Unit,
@@ -1364,13 +1364,6 @@ private fun hugFittedBounds(
         onDone()
         return
     }
-    val initial = diagramTextEditInitialText(target, graph)
-    // Open with the existing text fully selected so the first keystroke replaces it (F2 / rename).
-    var draft by remember(target) { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
-    val focusRequester = remember(target) { FocusRequester() }
-
-    fun commit() {
-        val text = draft.text.takeIf { it.isNotBlank() }?.trim()
     // Real font metrics for the hug fit, built exactly like the artboard's (never inside the
     // reducer: dependencies are injected, and the core must stay Compose-free).
     val textMeasurer = rememberTextMeasurer()
@@ -1381,20 +1374,22 @@ private fun hugFittedBounds(
     }
         // Blur commits on every press outside the field, so skip untouched drafts: an unchanged
         // commit would still rewrite the source and push an undo entry.
-        if (text == initial.takeIf { it.isNotBlank() }?.trim()) {
-            onDone()
-            return
-        }
+        if (committed || text == initial.takeIf { it.isNotBlank() }?.trim()) return
+        committed = true
         when (target) {
+    val initial = diagramTextEditInitialText(target, graph)
+    // Open with the existing text fully selected so the first keystroke replaces it (F2 / rename).
+    var draft by remember(target) { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
+    val focusRequester = remember(target) { FocusRequester() }
+
+    // Guards against committing the same draft twice: the editor can be closed explicitly AND
+    // then disposed, and both paths commit.
+    var committed by remember(target) { mutableStateOf(false) }
+
+    fun dispatchCommit() {
+        val text = draft.text.takeIf { it.isNotBlank() }?.trim()
             is DiagramTextEditTarget.NodeLabel -> {
                 state.dispatch(DiagramEditorIntent.SetDiagramNodeLabel(editId, target.elementId, text))
-            is DiagramTextEditTarget.TableCell ->
-                state.dispatch(
-                    DiagramEditorIntent.SetDiagramTableCellText(editId, target.elementId, target.row, target.column, text),
-                )
-            is DiagramTextEditTarget.EdgeLabel ->
-                state.dispatch(DiagramEditorIntent.SetDiagramEdgeLabel(editId, target.edgeId, target.position, text))
-        }
                 hugFittedBounds(graph, target.elementId, text, diagramMeasurer)?.let { fitted ->
                     state.dispatch(
                         DiagramEditorIntent.ResizeDiagramNode(
@@ -1411,11 +1406,29 @@ private fun hugFittedBounds(
         onDone()
     }
 
-    // Publish the hook while this editor is open; withdraw it on close so a later press outside
-    // can't re-commit a dead draft.
+    // Blur = commit (draw.io's invokesStopCellEditing). Two paths reach it:
+    //  - a press this overlay handles calls the published hook;
+    //  - anything that closes edit mode from OUTSIDE the overlay (a press the canvas pane
+    //    handles, Escape/Enter at canvas level, selecting another node) simply unmounts this
+    //    composable, so disposal is the only place left to save the draft. Without this the
+    //    draft vanished silently, which is precisely what blur=commit is supposed to prevent.
     DisposableEffect(target) {
         onRegisterCommit(::commit)
-        onDispose { onRegisterCommit(null) }
+            is DiagramTextEditTarget.TableCell ->
+                state.dispatch(
+                    DiagramEditorIntent.SetDiagramTableCellText(editId, target.elementId, target.row, target.column, text),
+                )
+            is DiagramTextEditTarget.EdgeLabel ->
+                state.dispatch(DiagramEditorIntent.SetDiagramEdgeLabel(editId, target.edgeId, target.position, text))
+        }
+    }
+
+    fun commit() {
+        dispatchCommit()
+        onDispose {
+            onRegisterCommit(null)
+            dispatchCommit()
+        }
     }
 
     // Overlay the edited label's exact box and typeset the draft like the canvas does
@@ -1440,13 +1453,6 @@ private fun hugFittedBounds(
                 table.columns.getOrNull(cell.column)?.header == true
             )
     } ?: false
-    val fontSizePx = (fontSizeDoc * zoomPx).toFloat()
-    val widthPx = (anchorRect.width * zoomPx).toFloat().coerceAtLeast(96f)
-    val heightPx = (anchorRect.height * zoomPx).toFloat().coerceAtLeast(fontSizePx + 14f)
-    val center = viewport.toScreen(
-        box.x + anchorRect.x + anchorRect.width / 2.0,
-        box.y + anchorRect.y + anchorRect.height / 2.0,
-    )
     // Match the canvas per payload, not just in font size: a note is left-aligned and top-anchored,
     // a package caption is semibold. Commit 446750a matched only the size and the outer rect, which
     // is why entering edit mode still nudged those captions.
@@ -1473,6 +1479,13 @@ private fun hugFittedBounds(
                 width = with(density) { widthPx.toDp() },
                 height = with(density) { heightPx.toDp() },
             ),
+    val fontSizePx = (fontSizeDoc * zoomPx).toFloat()
+    val widthPx = (anchorRect.width * zoomPx).toFloat().coerceAtLeast(96f)
+    val heightPx = (anchorRect.height * zoomPx).toFloat().coerceAtLeast(fontSizePx + 14f)
+    val center = viewport.toScreen(
+        box.x + anchorRect.x + anchorRect.width / 2.0,
+        box.y + anchorRect.y + anchorRect.height / 2.0,
+    )
         shape = RoundedCornerShape(3.dp),
         color = colors.raisedSurface,
         border = BorderStroke(1.dp, colors.accent),
@@ -1494,19 +1507,19 @@ private fun hugFittedBounds(
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (event.key) {
                             Key.Enter, Key.NumPadEnter -> {
-                                commit()
-                                true
-                            }
-                            Key.Escape -> {
                                 if (event.isShiftPressed) {
                                     false
+                            // Enter commits, Shift+Enter inserts a line break. draw.io inherits
+                            // the opposite from its HTML textarea (Enter = newline, Ctrl+Enter =
+                            // commit); the modern convention this editor follows elsewhere wins.
                                 } else {
                                     commit()
                                     true
                                 }
-                            // Enter commits, Shift+Enter inserts a line break. draw.io inherits
-                            // the opposite from its HTML textarea (Enter = newline, Ctrl+Enter =
-                            // commit); the modern convention this editor follows elsewhere wins.
+                            }
+                            Key.Escape -> {
+                                commit()
+                                true
                             }
                             else -> false
                         }
