@@ -1,7 +1,9 @@
 package io.aequicor.visualization.subsystems.diagrams.lint
 
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
@@ -268,8 +270,42 @@ class DiagramLintTest {
     @Test
     fun labelBuriedOnAForeignNodeIsReported() {
         val graph = diagramGraph {
-            // A connected wall spans the whole route above the line: every candidate
-            // label spot the anchor could slide to is covered.
+            // A connected wall spans the whole route above the line, and the label's
+            // authored offset parks it DEEP inside — beyond the anchor's push-out limit,
+            // so no correction can rescue it and the lint must still fire. (A shallow
+            // burial self-heals: the anchor slides its box off the node body.)
+            val wall = node("wall", x = 0.0, y = -165.0, width = 300.0, height = 160.0)
+            edge(
+                "wall-up",
+                source = DiagramEndpoint.FloatingAnchor(wall),
+                target = DiagramEndpoint.FreePoint(150.0, -240.0),
+            )
+            edge(
+                "e",
+                source = DiagramEndpoint.FreePoint(0.0, 0.0),
+                target = DiagramEndpoint.FreePoint(300.0, 0.0),
+                labels = listOf(DiagramEdgeLabel(DiagramLabel("over"), offsetY = -75.0)),
+            )
+        }
+        val routes = routesOf(
+            routed("wall-up", DiagramPoint(150.0, -165.0), DiagramPoint(150.0, -240.0)),
+            routed("e", DiagramPoint(0.0, 0.0), DiagramPoint(300.0, 0.0)),
+        )
+
+        val findings = lintDiagram(graph, routes)
+
+        assertEquals(
+            listOf(DiagramLintFinding.LabelOverNode(DiagramEdgeId("e"), DiagramNodeId("wall"))),
+            findings,
+        )
+        assertEquals("label of edge 'e' covers node 'wall'", findings.single().message)
+    }
+
+    @Test
+    fun labelClippingAForeignNodeSlidesOffAndStopsBeingReported() {
+        // The common real defect: a route moved after the label offset was authored, the
+        // box now clips a node edge by a few pixels. The anchor pushes it out; no finding.
+        val graph = diagramGraph {
             val wall = node("wall", x = 0.0, y = -45.0, width = 300.0, height = 40.0)
             edge(
                 "wall-up",
@@ -288,13 +324,7 @@ class DiagramLintTest {
             routed("e", DiagramPoint(0.0, 0.0), DiagramPoint(300.0, 0.0)),
         )
 
-        val findings = lintDiagram(graph, routes)
-
-        assertEquals(
-            listOf(DiagramLintFinding.LabelOverNode(DiagramEdgeId("e"), DiagramNodeId("wall"))),
-            findings,
-        )
-        assertEquals("label of edge 'e' covers node 'wall'", findings.single().message)
+        assertEquals(emptyList(), lintDiagram(graph, routes))
     }
 
     @Test

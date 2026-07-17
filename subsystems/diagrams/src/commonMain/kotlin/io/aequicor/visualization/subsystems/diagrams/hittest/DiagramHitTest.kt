@@ -311,10 +311,97 @@ fun edgeLabelAnchorPoint(
     }
     val base = pointAlongPolyline(route, fraction)
     val lift = edgeLabelLift(route, fraction)
-    return DiagramPoint(
+    val anchored = DiagramPoint(
         base.x + lift.x + label.offsetX,
         base.y + lift.y + label.offsetY,
     )
+    return pushedClearOfNodeBodies(anchored, label, listOf(route) + otherRoutes, avoidRects)
+}
+
+/** Estimated half extents of a label's text box (matches the lint's defaults). */
+private const val EDGE_LABEL_HALF_CHAR = 3.5
+private const val EDGE_LABEL_HALF_HEIGHT = 8.0
+
+/**
+ * Furthest a label anchor is corrected to get its box off a node body. Covers the common
+ * defect — a route moved after the label's offset was authored/dragged, so the box now
+ * clips a node body — while a label parked DEEP inside a node stays where its author put
+ * it (a teleport would be worse than the overlap, and the lint still reports it).
+ */
+private const val EDGE_LABEL_NODE_PUSH_LIMIT = 72.0
+
+/**
+ * Pushes a label anchor the shortest axis distance that takes its estimated text box out
+ * of every [avoidRects] body without landing the text on a line: a candidate whose box
+ * (inset a little — a line clipping the outermost pixel of a glyph is fine) any of
+ * [allRoutes] passes through is rejected, so escaping a node cannot bury the label on its
+ * own edge or a neighbouring one. Applied after fraction, lift and the manual offset, on
+ * every surface that reads the anchor (renderer, overlays, hit-test) — the correction is
+ * part of where the label IS.
+ */
+private fun pushedClearOfNodeBodies(
+    anchor: DiagramPoint,
+    label: DiagramEdgeLabel,
+    allRoutes: List<List<DiagramPoint>>,
+    avoidRects: List<DiagramRect>,
+): DiagramPoint {
+    if (avoidRects.isEmpty()) return anchor
+    val halfWidth = label.label.text.length * EDGE_LABEL_HALF_CHAR
+    val halfHeight = EDGE_LABEL_HALF_HEIGHT
+
+    fun overlappedRect(point: DiagramPoint): DiagramRect? = avoidRects.firstOrNull { rect ->
+        point.x + halfWidth > rect.left + 1.0 && point.x - halfWidth < rect.right - 1.0 &&
+            point.y + halfHeight > rect.top + 1.0 && point.y - halfHeight < rect.bottom - 1.0
+    }
+
+    fun lineThroughBox(point: DiagramPoint): Boolean {
+        val box = DiagramRect(
+            x = point.x - (halfWidth - 4.0).coerceAtLeast(1.0),
+            y = point.y - (halfHeight - 2.0).coerceAtLeast(1.0),
+            width = ((halfWidth - 4.0) * 2.0).coerceAtLeast(2.0),
+            height = ((halfHeight - 2.0) * 2.0).coerceAtLeast(2.0),
+        )
+        return allRoutes.any { route ->
+            route.zipWithNext().any { (a, b) -> segmentIntersectsRect(a, b, box) }
+        }
+    }
+
+    var result = anchor
+    repeat(2) {
+        val hit = overlappedRect(result) ?: return result
+        val reachable = listOf(
+            DiagramPoint(hit.left - halfWidth - 2.0, result.y),
+            DiagramPoint(hit.right + halfWidth + 2.0, result.y),
+            DiagramPoint(result.x, hit.top - halfHeight - 2.0),
+            DiagramPoint(result.x, hit.bottom + halfHeight + 2.0),
+        ).filter { abs(it.x - anchor.x) + abs(it.y - anchor.y) <= EDGE_LABEL_NODE_PUSH_LIMIT }
+        // A spot with a line through the box is still acceptable as a fallback: the
+        // renderers plate labels (85% surface behind the text), so a masked line reads
+        // far better than text over a node body. A line-free spot still wins.
+        val candidate = reachable
+            .filter { !lineThroughBox(it) }
+            .minByOrNull { abs(it.x - result.x) + abs(it.y - result.y) }
+            ?: reachable.minByOrNull { abs(it.x - result.x) + abs(it.y - result.y) }
+            ?: return anchor
+        result = candidate
+    }
+    return if (overlappedRect(result) == null) result else anchor
+}
+
+/** Whether segment `a..b` touches [rect] (endpoint inside, or crossing any side). */
+private fun segmentIntersectsRect(a: DiagramPoint, b: DiagramPoint, rect: DiagramRect): Boolean {
+    fun inside(p: DiagramPoint) =
+        p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom
+    if (inside(a) || inside(b)) return true
+    val corners = listOf(
+        DiagramPoint(rect.left, rect.top),
+        DiagramPoint(rect.right, rect.top),
+        DiagramPoint(rect.right, rect.bottom),
+        DiagramPoint(rect.left, rect.bottom),
+    )
+    return (corners + corners.first()).zipWithNext().any { (c1, c2) ->
+        segmentIntersection(a, b, c1, c2) != null
+    }
 }
 
 /**
