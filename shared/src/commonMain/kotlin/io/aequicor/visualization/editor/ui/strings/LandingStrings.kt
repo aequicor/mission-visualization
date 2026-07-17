@@ -20,6 +20,10 @@ interface LandingStrings {
     val remove: String
     val localFolder: String
     val reconnectHint: String
+    val openFailedTitle: String
+    val openFailedAccess: String
+    val openFailedRetry: String
+    val openFailedDismiss: String
     val foldersUnavailable: String
     val foldersUnavailableBrave: String
     val copyFlagAddress: String
@@ -47,6 +51,12 @@ object LandingStringsEn : LandingStrings {
     override val remove = "Remove from list"
     override val localFolder = "Local folder"
     override val reconnectHint = "Click to grant access"
+    override val openFailedTitle = "Could not open the project"
+    override val openFailedAccess =
+        "The browser did not grant access to this folder. It may have been moved or renamed, " +
+            "or the permission prompt was dismissed. Try again and allow access."
+    override val openFailedRetry = "Try again"
+    override val openFailedDismiss = "Close"
     override val foldersUnavailable = "Live local folders need Chrome or Edge — this browser " +
         "doesn't support the File System Access API. You can still work here and save to disk."
     override val foldersUnavailableBrave = "Brave hides live local folders behind an experimental " +
@@ -76,6 +86,12 @@ object LandingStringsRu : LandingStrings {
     override val remove = "Убрать из списка"
     override val localFolder = "Локальная папка"
     override val reconnectHint = "Нажмите, чтобы разрешить доступ"
+    override val openFailedTitle = "Не удалось открыть проект"
+    override val openFailedAccess =
+        "Браузер не дал доступ к этой папке. Возможно, её переместили или переименовали, " +
+            "либо запрос доступа был закрыт. Попробуйте ещё раз и разрешите доступ."
+    override val openFailedRetry = "Попробовать снова"
+    override val openFailedDismiss = "Закрыть"
     override val foldersUnavailable = "Живая синхронизация папок работает в Chrome или Edge — " +
         "этот браузер не поддерживает File System Access API. Здесь можно работать и " +
         "сохранить проект на диск."

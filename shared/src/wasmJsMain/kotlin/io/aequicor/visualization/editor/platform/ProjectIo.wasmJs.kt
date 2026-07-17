@@ -1447,6 +1447,12 @@ private fun ensureLandingInstalled() {
               ".mvl-choice-title{font-size:18px;font-weight:700;color:var(--mvl-ink);margin:0 0 14px;}" +
               ".mvl-choice-option{width:100%;display:flex;align-items:center;gap:12px;text-align:left;border:1px solid var(--mvl-stroke);background:var(--mvl-card);color:var(--mvl-ink);border-radius:11px;padding:13px 14px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;margin-top:10px;}" +
               ".mvl-choice-option:hover{background:var(--mvl-card-hover);border-color:var(--mvl-accent);}" +
+              ".mvl-choice-text{font-size:14px;line-height:1.5;color:var(--mvl-muted);margin:0 0 8px;}" +
+              ".mvl-choice-detail{font-size:12px;line-height:1.5;color:var(--mvl-muted);background:var(--mvl-card-hover);border:1px solid var(--mvl-stroke);border-radius:9px;padding:9px 10px;margin:0 0 4px;max-height:150px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}" +
+              ".mvl-choice-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;}" +
+              ".mvl-choice-btn{border:1px solid var(--mvl-stroke);background:var(--mvl-card);color:var(--mvl-ink);border-radius:9px;padding:9px 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;}" +
+              ".mvl-choice-btn:hover{background:var(--mvl-card-hover);}" +
+              ".mvl-choice-btn.mvl-primary{background:var(--mvl-accent);border-color:var(--mvl-accent);color:#fff;}" +
               "@media (max-width:520px){.mvl-title{font-size:20px;}.mvl-grid{grid-template-columns:1fr;}}";
           }
 
@@ -1565,20 +1571,60 @@ private fun ensureLandingInstalled() {
             var fs = window.__mvFolderSync;
             try { initiator(); } catch (e) { console.error(e); }
             stopFolderTimer();
-            var waited = 0, sawConnecting = false;
+            var waited = 0;
             folderTimer = setInterval(function () {
               waited += 200;
               var st = fs.status;
-              if (st === "connecting") sawConnecting = true;
-              if (st === "watching") { stopFolderTimer(); hide(); }
-              // Denied / missing handle after a connecting phase: stop polling and leave the screen
-              // open so the user can retry or pick another project (rather than spin for 120s).
-              else if (sawConnecting && (st === "idle" || st === "reconnect-needed")) { stopFolderTimer(); }
-              else if (waited > 120000) { stopFolderTimer(); }
+              if (st === "watching") { stopFolderTimer(); hide(); return; }
+              // Both connect() and connectById() set "connecting" synchronously before their first
+              // await, so a settled idle/reconnect-needed here is a real outcome and never a
+              // not-started-yet reading. Waiting to SEE the connecting phase first is what made
+              // this mute: a handle that is simply gone resolves in milliseconds — long before the
+              // first 200ms tick — so the screen just sat there, which is the whole complaint.
+              if (st === "idle" || st === "reconnect-needed" || waited > 120000) {
+                stopFolderTimer();
+                showError(STR.openFailedAccess, fs.lastError || null, function () { startConnect(initiator); });
+              }
             }, 200);
           }
           function openFolder(id) { startConnect(function () { window.__mvFolderSync.connectById(id); }); }
           function openNewFolder() { startConnect(function () { window.__mvFolderSync.connect(); }); }
+          // Failure dialog. The landing hides #compose-root, so Compose's own snackbar cannot be
+          // seen from here: a failure that is not shown in THIS overlay is not shown at all —
+          // which is exactly how "the folder just does not open, with no error" used to happen.
+          function showError(message, detail, onRetry) {
+            var old = document.getElementById("mvl-error");
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            var backdrop = el("div", "mvl-choice-backdrop"); backdrop.id = "mvl-error";
+            function close() { if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop); }
+            backdrop.addEventListener("click", function (e) { if (e.target === backdrop) close(); });
+            var dialog = el("div", "mvl-choice");
+            dialog.setAttribute("role", "alertdialog");
+            dialog.setAttribute("aria-modal", "true");
+            var title = el("div", "mvl-choice-title"); title.textContent = STR.openFailedTitle;
+            dialog.appendChild(title);
+            var text = el("p", "mvl-choice-text"); text.textContent = message; dialog.appendChild(text);
+            if (detail) {
+              var pre = el("p", "mvl-choice-detail"); pre.textContent = detail; dialog.appendChild(pre);
+            }
+            var actions = el("div", "mvl-choice-actions");
+            if (onRetry) {
+              var retry = el("button", "mvl-choice-btn mvl-primary"); retry.type = "button";
+              retry.textContent = STR.openFailedRetry;
+              retry.addEventListener("click", function (e) { e.preventDefault(); close(); onRetry(); });
+              actions.appendChild(retry);
+            }
+            var dismiss = el("button", "mvl-choice-btn"); dismiss.type = "button";
+            dismiss.textContent = STR.openFailedDismiss;
+            dismiss.addEventListener("click", function (e) { e.preventDefault(); close(); });
+            actions.appendChild(dismiss);
+            dialog.appendChild(actions);
+            backdrop.appendChild(dialog);
+            var landingRoot = document.getElementById(ROOT_ID);
+            if (landingRoot) landingRoot.appendChild(backdrop);
+            (onRetry ? retry : dismiss).focus();
+          }
+
           function showProjectChoice() {
             var old = document.getElementById("mvl-project-choice");
             if (old && old.parentNode) old.parentNode.removeChild(old);
