@@ -1115,6 +1115,7 @@ fun MissionEditorApp(mcpServer: McpServerController = NoMcpServerController) {
                     details = state.folderExternalErrorDetails,
                     onDismiss = { state.dismissFolderExternalErrorDialog() },
                     fromLanding = state.projectLandingVisible,
+                    location = state.folderName,
                 )
             }
         }
