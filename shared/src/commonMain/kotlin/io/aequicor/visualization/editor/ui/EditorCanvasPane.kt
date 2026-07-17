@@ -682,7 +682,7 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                             return@onPreviewKeyEvent true
                         }
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        handleCanvasKey(state, event.key, event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
+                        handleCanvasKey(state, canvasShortcutKey(event), event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
                     }
                     // Desktop context menu. Secondary presses are deliberately handled separately
                     // from the primary drag state machine, so opening the menu cannot begin a move.
