@@ -1106,6 +1106,17 @@ fun MissionEditorApp(mcpServer: McpServerController = NoMcpServerController) {
         }
         CompositionLocalProvider(LocalStrings provides appStringsFor(state.language)) {
             if (state.projectLandingVisible) ProjectLandingScreen(state) else MissionEditorScreen(state)
+            // Hosted HERE, not inside MissionEditorScreen: a folder that fails its compile gate
+            // early-returns before the landing is dismissed, so the landing stays on screen — and
+            // a dialog hosted in the editor branch can never compose. That made a broken project
+            // fail in total silence: the click just did nothing.
+            if (state.folderExternalErrorDialogVisible) {
+                FolderErrorDialog(
+                    details = state.folderExternalErrorDetails,
+                    onDismiss = { state.dismissFolderExternalErrorDialog() },
+                    fromLanding = state.projectLandingVisible,
+                )
+            }
         }
     }
 }
@@ -1125,16 +1136,6 @@ private fun MissionEditorScreen(state: MissionEditorStateHolder) {
         } else {
             snackbarHostState.currentSnackbarData?.dismiss()
         }
-    }
-
-    // A folder that will not compile is a dead end, not a notice: say why, with the compiler's
-    // own words, instead of leaving the user to guess (the snackbar below stays as the passive
-    // reminder once the dialog is dismissed).
-    if (state.folderExternalErrorDialogVisible) {
-        FolderErrorDialog(
-            details = state.folderExternalErrorDetails,
-            onDismiss = { state.dismissFolderExternalErrorDialog() },
-        )
     }
 
     // The editor fills the window edge-to-edge: no chrome frame, no shell margin, no

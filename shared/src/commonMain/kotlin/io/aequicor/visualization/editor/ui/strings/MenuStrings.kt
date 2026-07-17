@@ -26,6 +26,7 @@ interface MenuStrings {
     fun folderAccessRequiredDescription(name: String): String
     val folderExternalError: String
     val folderExternalErrorTitle: String
+    val folderExternalErrorOnLanding: String
     val folderExternalErrorDismiss: String
     val folderConflict: String
     val folderRestoreEdit: String
@@ -119,6 +120,8 @@ object MenuStringsEn : MenuStrings {
     override val folderExternalError =
         "The screen changed on disk but could not be compiled. The last working version is still displayed."
     override val folderExternalErrorTitle = "This project could not be opened"
+    override val folderExternalErrorOnLanding =
+        "The project's files contain errors. Fix them (the folder is being watched — the project opens by itself once the files compile), or open another project."
     override val folderExternalErrorDismiss = "Close"
     override val folderConflict = "External change loaded — your unsaved edit was kept"
     override val folderRestoreEdit = "Restore my edit"
@@ -206,6 +209,8 @@ object MenuStringsRu : MenuStrings {
     override val folderExternalError =
         "Экран изменён на диске, но не может быть скомпилирован. Показана последняя рабочая версия."
     override val folderExternalErrorTitle = "Не удалось открыть проект"
+    override val folderExternalErrorOnLanding =
+        "В файлах проекта есть ошибки. Исправьте их (папка отслеживается — проект откроется сам, как только файлы скомпилируются) или откройте другой проект."
     override val folderExternalErrorDismiss = "Закрыть"
     override val folderConflict = "Загружено внешнее изменение — ваша несохранённая правка сохранена"
     override val folderRestoreEdit = "Вернуть мою правку"

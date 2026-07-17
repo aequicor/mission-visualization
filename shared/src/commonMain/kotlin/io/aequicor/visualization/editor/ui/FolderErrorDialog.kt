@@ -36,6 +36,7 @@ import io.aequicor.visualization.editor.ui.theme.LocalEditorColors
 internal fun FolderErrorDialog(
     details: List<String>,
     onDismiss: () -> Unit,
+    fromLanding: Boolean = false,
 ) {
     val colors = LocalEditorColors.current
     val strings = LocalStrings.current.menu
@@ -59,7 +60,9 @@ internal fun FolderErrorDialog(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    strings.folderExternalError,
+                    // On the landing there is no "last working version" to fall back to — the
+                    // editor-mode copy would be lying there.
+                    if (fromLanding) strings.folderExternalErrorOnLanding else strings.folderExternalError,
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.mutedInk,
                 )
