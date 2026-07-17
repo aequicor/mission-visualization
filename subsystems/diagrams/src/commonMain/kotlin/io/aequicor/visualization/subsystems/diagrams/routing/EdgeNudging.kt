@@ -171,14 +171,16 @@ fun nudgeRoutedEdges(
     fun applyOffsets(horizontal: Boolean, laneTolerance: Double): Boolean {
         var moved = false
         for (cluster in corridorClusters(horizontal, laneTolerance)) {
-            // Two edges AUTHORED onto the same corridor (coincident vias — the reference ER
-            // file stacks two relations on one 1000-unit column) never separate under the
-            // via-pin rule alone: every co-running segment is pinned and the pair renders as
-            // one line. Exact coincidence is never authored intent, so when a cluster has no
-            // plainly movable segment but carries vias of two or more different edges, those
-            // via segments spread symmetrically around the authored lane instead. The drawn
-            // line steps a few pixels off the raw via; the via itself (and write-back) stays.
-            val spreadCoincidentVias = cluster.none { it.movable } &&
+            // Edges AUTHORED onto the same corridor (coincident vias — the reference ER
+            // file stacks two relations on one 1000-unit column, and four generalizations
+            // share one approach lane) never separate under the via-pin rule alone: every
+            // co-running pinned segment stays and the group renders as one line. Exact
+            // coincidence is never authored intent, so when a cluster carries vias of two
+            // or more different edges, those via segments spread around the authored lane
+            // too (endpoint segments stay the immovable baseline). The drawn line steps a
+            // few pixels off the raw via; the via itself (and write-back) stays. A LONE
+            // pinned segment keeps its exact lane and movable co-runners give way to it.
+            val spreadCoincidentVias =
                 cluster.filter { it.viaPinned }.map { it.route }.distinct().size >= 2
 
             fun canMove(segment: LaneSegment): Boolean =
@@ -219,8 +221,8 @@ fun nudgeRoutedEdges(
                 val clusterSpacing = minOf(spacing, maxOffset / furthestLane)
                 if (clusterSpacing < GEOMETRY_EPSILON) continue
                 for ((segment, lane) in laneAssignments) {
-                    val offset = lane * clusterSpacing
-                    if (abs(offset) < GEOMETRY_EPSILON) continue
+                    val idealOffset = lane * clusterSpacing
+                    if (abs(idealOffset) < GEOMETRY_EPSILON) continue
                     val pts = points[segment.route]
                     val previous = pts[segment.index - 1]
                     val next = pts[segment.index + 2]
@@ -234,56 +236,74 @@ fun nudgeRoutedEdges(
                     } else {
                         abs(next.x - segment.coordinate)
                     }
-                    // A shift at least as long as an adjacent segment would collapse or
-                    // reverse it — leave such a segment where it is.
-                    if (abs(offset) >= minOf(adjacentBefore, adjacentAfter)) continue
-                    // Shifting this segment slides the bend along the adjacent one, so a
-                    // shift toward an endpoint eats into that end's stub. The stub is the
-                    // straight run the router reserved for the endpoint marker: shorten it
-                    // and the marker crosses the bend, which is exactly what the reservation
-                    // exists to prevent.
                     val route = routes[segment.route]
-                    val shiftedCoordinate = segment.coordinate + offset
-                    val stubBefore = if (horizontal) {
-                        abs(previous.y - shiftedCoordinate)
-                    } else {
-                        abs(previous.x - shiftedCoordinate)
-                    }
-                    val stubAfter = if (horizontal) {
-                        abs(next.y - shiftedCoordinate)
-                    } else {
-                        abs(next.x - shiftedCoordinate)
-                    }
-                    if (segment.index == 1 && stubBefore < route.sourceReach - GEOMETRY_EPSILON) continue
-                    if (segment.index + 2 == pts.lastIndex && stubAfter < route.targetReach - GEOMETRY_EPSILON) {
-                        continue
-                    }
                     val a = pts[segment.index]
                     val b = pts[segment.index + 1]
-                    val shiftedA: DiagramPoint
-                    val shiftedB: DiagramPoint
+
+                    fun blocked(offset: Double): Boolean {
+                        // A shift at least as long as an adjacent segment would collapse or
+                        // reverse it — leave such a segment where it is.
+                        if (abs(offset) >= minOf(adjacentBefore, adjacentAfter)) return true
+                        // Shifting this segment slides the bend along the adjacent one, so a
+                        // shift toward an endpoint eats into that end's stub. The stub is the
+                        // straight run the router reserved for the endpoint marker: shorten it
+                        // and the marker crosses the bend, which is exactly what the
+                        // reservation exists to prevent.
+                        val shiftedCoordinate = segment.coordinate + offset
+                        val stubBefore = if (horizontal) {
+                            abs(previous.y - shiftedCoordinate)
+                        } else {
+                            abs(previous.x - shiftedCoordinate)
+                        }
+                        val stubAfter = if (horizontal) {
+                            abs(next.y - shiftedCoordinate)
+                        } else {
+                            abs(next.x - shiftedCoordinate)
+                        }
+                        if (segment.index == 1 && stubBefore < route.sourceReach - GEOMETRY_EPSILON) return true
+                        if (segment.index + 2 == pts.lastIndex && stubAfter < route.targetReach - GEOMETRY_EPSILON) {
+                            return true
+                        }
+                        val shiftedA: DiagramPoint
+                        val shiftedB: DiagramPoint
+                        if (horizontal) {
+                            shiftedA = DiagramPoint(a.x, a.y + offset)
+                            shiftedB = DiagramPoint(b.x, b.y + offset)
+                        } else {
+                            shiftedA = DiagramPoint(a.x + offset, a.y)
+                            shiftedB = DiagramPoint(b.x + offset, b.y)
+                        }
+                        // Never push a segment against a node body the original run kept
+                        // clear of (raw-bounds fallback legs may already touch one) — and a
+                        // boundary-hugging segment must never be pushed into the interior.
+                        return obstacles.any { rect ->
+                            (
+                                segmentNearRect(shiftedA, shiftedB, rect, NUDGE_CLEARANCE) &&
+                                    !segmentNearRect(a, b, rect, NUDGE_CLEARANCE)
+                                ) || (
+                                segmentNearRect(shiftedA, shiftedB, rect, 0.0) &&
+                                    !segmentNearRect(a, b, rect, 0.0)
+                                )
+                        }
+                    }
+
+                    // A whole side of a cluster can be unshiftable — lanes assigned toward
+                    // the ports run into every stub reservation at once (four generalization
+                    // approaches one row above their ports). The mirrored lane keeps the
+                    // separation with the ordering merely reversed, which beats staying
+                    // stacked on the shared corridor.
+                    val offset = when {
+                        !blocked(idealOffset) -> idealOffset
+                        !blocked(-idealOffset) -> -idealOffset
+                        else -> continue
+                    }
                     if (horizontal) {
-                        shiftedA = DiagramPoint(a.x, a.y + offset)
-                        shiftedB = DiagramPoint(b.x, b.y + offset)
+                        pts[segment.index] = DiagramPoint(a.x, a.y + offset)
+                        pts[segment.index + 1] = DiagramPoint(b.x, b.y + offset)
                     } else {
-                        shiftedA = DiagramPoint(a.x + offset, a.y)
-                        shiftedB = DiagramPoint(b.x + offset, b.y)
+                        pts[segment.index] = DiagramPoint(a.x + offset, a.y)
+                        pts[segment.index + 1] = DiagramPoint(b.x + offset, b.y)
                     }
-                    // Never push a segment against a node body the original run kept
-                    // clear of (raw-bounds fallback legs may already touch one) — and a
-                    // boundary-hugging segment must never be pushed into the interior.
-                    val pushedIntoNode = obstacles.any { rect ->
-                        (
-                            segmentNearRect(shiftedA, shiftedB, rect, NUDGE_CLEARANCE) &&
-                                !segmentNearRect(a, b, rect, NUDGE_CLEARANCE)
-                            ) || (
-                            segmentNearRect(shiftedA, shiftedB, rect, 0.0) &&
-                                !segmentNearRect(a, b, rect, 0.0)
-                            )
-                    }
-                    if (pushedIntoNode) continue
-                    pts[segment.index] = shiftedA
-                    pts[segment.index + 1] = shiftedB
                     moved = true
                 }
             }
