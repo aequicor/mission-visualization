@@ -50,19 +50,29 @@ class DiagramCnlDiagnosticsTest {
     }
 
     @Test
-    fun labelOnATypedPayloadIsRejectedAsAnOrphan() {
+    fun labelOnATypedPayloadWarnsButStillLoadsTheDocument() {
         val result = compileWithDiagrams(
             document(listOf("""Node use-case uc1 «Submit» 180 by 80 position 0 0 label «orphan»""")),
         )
 
-        val error = assertNotNull(
-            result.diagnostics.firstOrNull {
-                it.severity == DesignSeverity.Error && "does not render `label «…»`" in it.message
-            },
+        val warning = assertNotNull(
+            result.diagnostics.firstOrNull { "does not render `label «…»`" in it.message },
             "a typed payload renders its own caption, so a node label is dead text: ${result.diagnostics}",
         )
-        assertTrue("uc1" in error.message)
-        assertEquals(bodyLine(0), error.location?.line)
+        assertEquals(DesignSeverity.Warning, warning.severity)
+        assertTrue("uc1" in warning.message)
+        assertEquals(bodyLine(0), warning.location?.line)
+
+        // Severity matters beyond taste: the project loader compile-gates on Error
+        // (MissionDocuments.hasErrors), so erroring here would silently refuse to open a whole
+        // folder over one dead word — and these orphans are exactly what the old inline editor
+        // wrote into people's files.
+        assertTrue(
+            result.diagnostics.none { it.severity == DesignSeverity.Error },
+            "an orphaned label must never stop a document from loading: ${result.diagnostics}",
+        )
+        val node = assertNotNull(result.diagramGraphOf("canvas").nodes.singleOrNull(), "node kept")
+        assertEquals("orphan", node.labels.singleOrNull()?.text, "the author's text is not thrown away")
     }
 
     @Test

@@ -116,6 +116,35 @@ class DiagramNodeTextReducerTest {
     }
 
     @Test
+    fun aDocumentCarryingAnOrphanedLabelStillLoads() {
+        // Regression: a folder project would not open at all, with nothing shown to explain why.
+        // The old inline editor wrote `label «…»` onto typed payloads, and the reader briefly
+        // treated that as an Error — but MissionDocuments.hasErrors is a load gate, so one dead
+        // word silently cost the user the whole project.
+        val docs = compileMissionDocuments(
+            listOf(
+                MissionDocumentSource(
+                    fileName,
+                    source.replace(
+                        "Node use-case uc1 «Submit mission» 180 by 80 position 40 40",
+                        "Node use-case uc1 «Submit mission» 180 by 80 position 40 40 label «orphan»",
+                    ),
+                ),
+            ),
+        )
+
+        assertNotNull(docs.document, "the document must compile")
+        assertTrue(
+            !docs.hasErrors,
+            "hasErrors gates the folder loader; an orphaned label must not trip it: ${docs.diagnostics}",
+        )
+        assertTrue(
+            docs.diagnostics.any { "does not render `label «…»`" in it.message },
+            "the orphan is still reported, just not fatally: ${docs.diagnostics}",
+        )
+    }
+
+    @Test
     fun switchingSizingToHugIsWrittenBackToTheSource() {
         val next = reduceDesignEditor(
             freshState(),

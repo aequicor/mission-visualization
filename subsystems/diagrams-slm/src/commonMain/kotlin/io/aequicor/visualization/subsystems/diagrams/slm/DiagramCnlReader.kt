@@ -484,13 +484,21 @@ internal object DiagramCnlReader {
             sizing = sizing,
         )
         // A typed payload renders the caption it carries itself (the `«…»` head phrase), so a
-        // `label` on it would round-trip through the source without ever being drawn. Reject the
-        // orphan rather than accept text the canvas will silently ignore.
+        // `label` on it is dead text that nothing will ever draw.
+        //
+        // Deliberately a WARNING, not an error. Documents in the wild already contain these
+        // orphans — the inline editor used to write them itself, which is the bug this whole
+        // change removes — and the project's loader compile-gates on Error severity
+        // (`MissionDocuments.hasErrors`), so erroring here would stop a real folder from opening
+        // at all instead of pointing at one bad word. The node and its label are kept: the text
+        // may well be what the author meant to see, and dropping it would destroy that.
         val firstLabel = labels.firstOrNull()?.text
         if (firstLabel != null && node.primaryText() != firstLabel) {
-            return fail(
+            diagnostics.warning(
                 "diagram node '$id' does not render `label «…»` — its caption belongs in the " +
                     "`«…»` head phrase of the node sentence",
+                line,
+                blockPath = BLOCK_PATH,
             )
         }
         return DiagramCnlSentence.NodeSentence(node, line)
