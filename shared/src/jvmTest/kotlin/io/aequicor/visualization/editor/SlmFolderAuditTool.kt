@@ -55,4 +55,31 @@ class SlmFolderAuditTool {
         }
         println("=== DONE merged in ${totalMs}ms")
     }
+
+    /**
+     * The rest of the desktop folder-ADOPTION path, which the compile-only audit skips:
+     * connect → platform snapshot JSON → decode → compile → editor state. A failure at any of
+     * these stages leaves the real app stuck on the landing with no dialog (the click "does
+     * nothing"), so each stage prints and asserts separately.
+     */
+    @Test
+    fun adoption() {
+        val dir = System.getenv("SLM_FOLDER_AUDIT_DIR") ?: return
+        io.aequicor.visualization.editor.platform.platformConnectFolderByIdForTest(dir)
+        println("=== connect status=${io.aequicor.visualization.editor.platform.folderSyncStatus()} error=${io.aequicor.visualization.editor.platform.folderSyncError()}")
+        val json = io.aequicor.visualization.editor.platform.folderSyncSnapshotJson()
+        println("=== snapshot json: ${json?.length ?: "null"} chars")
+        checkNotNull(json) { "no snapshot json after connect" }
+        val snapshot = io.aequicor.visualization.editor.data.decodeProjectSnapshot(json)
+        println("=== snapshot decode: ${snapshot?.sources?.size ?: "null"} sources, name=${snapshot?.projectName}")
+        checkNotNull(snapshot) { "snapshot json did not decode" }
+        val docs = compileMissionDocuments(snapshot.sources)
+        println("=== compile hasErrors=${docs.hasErrors}")
+        val ms = measureTimeMillis {
+            val state = io.aequicor.visualization.editor.presentation.createDesignEditorState(docs)
+            println("=== editor state: pages=${state.document?.pages?.size} selected=${state.selectedPageId}")
+        }
+        println("=== DONE editor state in ${ms}ms")
+        io.aequicor.visualization.editor.platform.platformResetFolderSyncForTest()
+    }
 }

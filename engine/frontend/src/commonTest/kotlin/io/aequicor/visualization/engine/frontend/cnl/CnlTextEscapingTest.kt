@@ -76,6 +76,32 @@ class CnlTextEscapingTest {
     }
 
     @Test
+    fun balancedNestedGuillemetsParseRawAndRoundTrip() {
+        // Agents quote inside Russian prose with raw «…» — the scanner must balance them.
+        val node = textLeaf("""Text «Признак «нет» — отдельное значение» size 14""")
+        val kind = node.kind as DesignNodeKind.Text
+        assertEquals("Признак «нет» — отдельное значение", kind.content?.defaultText)
+
+        val reparsed = assertSentenceRoundTrips(CnlEmitter.emitSentence(node))
+        assertEquals(kind.content?.defaultText, (reparsed.kind as DesignNodeKind.Text).content?.defaultText)
+    }
+
+    @Test
+    fun legacyRawOpenerWithEscapedCloserStillTerminates() {
+        // Older emitter escaped only `»`: a literal could hold a raw `«` next to `\»`.
+        val node = textLeaf("""Text «a «b\» c» size 14""")
+        val kind = node.kind as DesignNodeKind.Text
+        assertEquals("a «b» c", kind.content?.defaultText)
+    }
+
+    @Test
+    fun unpairedInnerOpenerStillClosesAtLineEnd() {
+        val node = textLeaf("""Text «см. «сноску» size 14""")
+        val kind = node.kind as DesignNodeKind.Text
+        assertEquals("см. «сноску", kind.content?.defaultText)
+    }
+
+    @Test
     fun closingGuillemetInLayerNameRoundTrips() {
         val node = assertSentenceRoundTrips("""Text «Hi» name «Badge \» tail» size 14""")
         assertEquals("Badge » tail", node.name)
