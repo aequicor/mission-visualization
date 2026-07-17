@@ -13,6 +13,22 @@ import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
 import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
 import kotlin.math.abs
 import kotlin.math.hypot
+import io.aequicor.visualization.subsystems.diagrams.geometry.boundsForLabel
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelBox
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
+import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterKind
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.TableNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActorNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlLifelineNode
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
+import io.aequicor.visualization.subsystems.diagrams.text.ApproximateDiagramTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.text.DIAGRAM_LABEL_TEXT_SIZE
+import io.aequicor.visualization.subsystems.diagrams.text.DiagramTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.text.DiagramTextStyle
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramNodeDefaults
 
 /**
  * Vision-test: formalized "good taste" rules for rendered diagrams. [lintDiagram] takes
@@ -41,6 +57,14 @@ data class DiagramLintOptions(
     val labelCharWidth: Double = 7.0,
     /** Approximate label box height. */
     val labelHeight: Double = 16.0,
+    /**
+     * Area ratio, against the larger of the hugged size and the kind's default stamp, from
+     * which a shape counts as oversized. The reported 930x260 ellipse is ~12x by this measure;
+     * 4.0 leaves generous room for deliberately roomy shapes so the rule stays signal.
+     */
+    val oversizeAreaRatio: Double = 4.0,
+    /** Measures captions for the fit rule; the default keeps this module pure. */
+    val textMeasurer: DiagramTextMeasurer = ApproximateDiagramTextMeasurer(),
 ) {
     companion object {
         val Default: DiagramLintOptions = DiagramLintOptions()
@@ -108,6 +132,25 @@ sealed interface DiagramLintFinding {
         override val message: String
             get() = "label of edge '${edgeId.value}' covers node '${nodeId.value}'"
     }
+
+    /**
+     * A node's caption and its box disagree: the text does not fit, or the shape is far larger
+     * than the caption needs. This is the rule that would have caught the 930x260 ellipse drawn
+     * around a 295px label — no previous rule compared a node's label to the node's own box.
+     */
+    data class NodeLabelFit(
+        val node: DiagramNodeId,
+        val kind: Kind,
+        val detail: String,
+    ) : DiagramLintFinding {
+        enum class Kind { OVERFLOW, OVERSIZED }
+
+        override val message: String
+            get() = when (kind) {
+                Kind.OVERFLOW -> "label of '${node.value}' does not fit its shape ($detail)"
+                Kind.OVERSIZED -> "'${node.value}' is much larger than its label needs ($detail)"
+            }
+    }
 }
 
 /** Runs every vision-test rule; [routes] defaults to routing the graph leniently. */
@@ -124,6 +167,7 @@ fun lintDiagram(
         addAll(edgeOverlapFindings(ordered, options))
         addAll(crossingHotspotFindings(ordered, options))
         addAll(labelOverNodeFindings(graph, routes, options))
+        addAll(nodeLabelFitFindings(graph, options))
     }
 }
 
@@ -450,4 +494,72 @@ private fun labelOverNodeFindings(
             }
         }
     }
+}
+
+/**
+ * Compares every node's caption with the node's own box: the class of defect the vision loop
+ * used to miss entirely, because the SVG it looked at could not even wrap a label.
+ *
+ * Two directions, both real complaints:
+ * - OVERFLOW — the caption does not fit the box the renderer gives it, so it wraps into a
+ *   clip or spills toward the shape's edge.
+ * - OVERSIZED — the shape is far bigger than the caption needs, which is what "a huge ellipse
+ *   around three words" looks like to the model.
+ *
+ * Nodes whose size comes from their content (class rows, tables, lifelines) are skipped: their
+ * box is not derived from a caption at all.
+ */
+private fun nodeLabelFitFindings(
+    graph: DiagramGraph,
+    options: DiagramLintOptions,
+): List<DiagramLintFinding> = graph.nodes.filter { it.visible }.mapNotNull { node ->
+    if (!node.lintsItsCaption()) return@mapNotNull null
+    val text = node.primaryText()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+    val padding = node.labelPadding()
+    val box = node.labelBox(padding)
+    if (box.width <= 1.0 || box.height <= 1.0) return@mapNotNull null
+
+    val style = DiagramTextStyle(fontSize = DIAGRAM_LABEL_TEXT_SIZE)
+    val wrapped = options.textMeasurer.measure(text, style, maxWidth = box.width)
+    if (wrapped.height > box.height + 0.5) {
+        return@mapNotNull DiagramLintFinding.NodeLabelFit(
+            node = node.id,
+            kind = DiagramLintFinding.NodeLabelFit.Kind.OVERFLOW,
+            detail = "needs ${wrapped.height.toInt()}px of ${box.height.toInt()}px",
+        )
+    }
+
+    val natural = options.textMeasurer.measure(text, style, maxWidth = null)
+    val hugged = boundsForLabel(node.perimeterKind(), natural.width, natural.height, padding)
+    // Measure bloat against the larger of "what the caption needs" and "what this kind starts
+    // at". A short caption hugs to almost nothing, so the caption alone would condemn every
+    // ordinary 140x48 state box — noise, not signal.
+    val stamp = DiagramNodeDefaults.defaultSizeFor(node.payload)
+    val baselineWidth = maxOf(hugged.width, stamp.width)
+    val baselineHeight = maxOf(hugged.height, stamp.height)
+    val baselineArea = baselineWidth * baselineHeight
+    val area = node.width * node.height
+    if (baselineArea > 0.0 && area / baselineArea >= options.oversizeAreaRatio) {
+        return@mapNotNull DiagramLintFinding.NodeLabelFit(
+            node = node.id,
+            kind = DiagramLintFinding.NodeLabelFit.Kind.OVERSIZED,
+            detail = "${node.width.toInt()}x${node.height.toInt()} vs " +
+                "${baselineWidth.toInt()}x${baselineHeight.toInt()} needed",
+        )
+    }
+    null
+}
+
+/** Whether this node's box is supposed to follow its caption (see [nodeLabelFitFindings]). */
+private fun DiagramNode.lintsItsCaption(): Boolean = when (payload) {
+    is UmlClassNode,
+    is DiagramNodePayload.ErEntityNode,
+    is TableNode,
+    is UmlLifelineNode,
+    is UmlActorNode,
+    is DiagramNodePayload.ContainerNode,
+    is DiagramNodePayload.SwimlaneNode,
+    -> false
+
+    else -> true
 }
