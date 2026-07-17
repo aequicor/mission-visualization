@@ -45,6 +45,15 @@ data class DiagramLintOptions(
     val anchorBunchRadius: Double = 20.0,
     /** Endpoints per funnel spot from which a bunch is reported. */
     val anchorBunchLimit: Int = 3,
+    /**
+     * Average anchor-to-anchor spacing below which a chained cluster reads as ONE spot.
+     * Radius-chaining alone would flag a proper port fan too: the router fans same-port
+     * edges [RoutingOptions.portFanSeparation] (12) apart, each link chains under the
+     * 20-unit radius, yet a 60-unit-wide fan of six is exactly the readable spread the
+     * fan exists to produce. A cluster is a funnel only when its overall span is tighter
+     * than (N-1) times this spacing.
+     */
+    val anchorBunchMinSpread: Double = 10.0,
     /** Max distance between near-parallel segments that still counts as overlap. */
     val overlapDistance: Double = 2.0,
     /** Shared span (document units) from which co-running segments count as overlap. */
@@ -313,6 +322,10 @@ private fun anchorBunchFindings(
             for ((_, members) in clusters.entries.sortedBy { it.key }) {
                 if (members.size < options.anchorBunchLimit) continue
                 val points = members.map { attachments[it].at }
+                // A chained cluster wide enough for every anchor to breathe is a port fan
+                // doing its job, not a funnel.
+                val span = points.maxOf { a -> points.maxOf { b -> hypot(a.x - b.x, a.y - b.y) } }
+                if (span >= (members.size - 1) * options.anchorBunchMinSpread) continue
                 val center = DiagramPoint(
                     points.sumOf { it.x } / points.size,
                     points.sumOf { it.y } / points.size,

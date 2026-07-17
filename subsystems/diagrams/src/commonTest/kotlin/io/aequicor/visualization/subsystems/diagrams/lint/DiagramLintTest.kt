@@ -128,6 +128,29 @@ class DiagramLintTest {
     }
 
     @Test
+    fun aPortFanAtTheRouterSpacingIsNotAFunnel() {
+        // Six edges fanned portFanSeparation (12) apart chain under the 20-unit radius,
+        // but a 60-unit-wide fan is the readable spread the fan exists to produce.
+        val graph = diagramGraph {
+            val hub = node("hub", x = 200.0, y = 0.0, width = 100.0, height = 100.0)
+            repeat(6) { index ->
+                edge(
+                    "e$index",
+                    source = DiagramEndpoint.FreePoint(0.0, index * 120.0),
+                    target = DiagramEndpoint.FloatingAnchor(hub),
+                )
+            }
+        }
+        val routes = routesOf(
+            *Array(6) { index ->
+                routed("e$index", DiagramPoint(0.0, index * 120.0), DiagramPoint(200.0, 20.0 + index * 12.0))
+            },
+        )
+
+        assertEquals(emptyList(), lintDiagram(graph, routes))
+    }
+
+    @Test
     fun endpointsSpacedAtExactlyTheBunchRadiusDoNotCluster() {
         val graph = spokeAndHubGraph()
         // Neighbouring anchors sit exactly 20 apart — the radius is exclusive, so anchors
