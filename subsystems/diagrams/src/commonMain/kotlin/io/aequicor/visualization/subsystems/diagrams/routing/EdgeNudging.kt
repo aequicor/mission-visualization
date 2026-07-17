@@ -57,7 +57,10 @@ internal fun nodeObstacles(graph: DiagramGraph): List<DiagramRect> =
  * routes in [pinnedEdgeIds] still reserve their lane so movable segments cannot disappear
  * underneath them. Segments carrying one of their edge's authored vias
  * ([waypointsByEdge]) are fixed the same way — the via must stay on the line — while the
- * rest of a waypointed route stays movable. The per-cluster spacing is capped so no
+ * rest of a waypointed route stays movable. The exception is a corridor whose co-running
+ * segments ALL carry vias of two or more different edges (coincident authored corridors):
+ * those spread symmetrically around the authored lane, since exact coincidence reads as
+ * one line and is never the intent. The per-cluster spacing is capped so no
  * segment leaves the routing margin, and a shift that would push a segment against one
  * of the [obstacles] (node bodies) is suppressed. The offset order follows how far each
  * route continues past the shared corridor, which keeps already-separated routes from
@@ -83,6 +86,8 @@ fun nudgeRoutedEdges(
         val spanEnd: Double,
         val continuation: Double,
         val movable: Boolean,
+        /** Interior segment immobile ONLY because it carries one of its edge's authored vias. */
+        val viaPinned: Boolean,
     )
 
     fun laneSegments(horizontal: Boolean): List<LaneSegment> = buildList {
@@ -99,6 +104,8 @@ fun nudgeRoutedEdges(
                 if (horizontal != isHorizontal || isHorizontal == isVertical) continue
                 val previous = pts.getOrNull(index - 1)
                 val next = pts.getOrNull(index + 2)
+                val interior = route.edgeId !in pinnedEdgeIds && index > 0 && index + 2 < pts.size
+                val carriesVia = waypointsByEdge[route.edgeId].orEmpty().any { pointNearSegment(it, a, b) }
                 add(
                     LaneSegment(
                         route = routeIndex,
@@ -111,8 +118,8 @@ fun nudgeRoutedEdges(
                         } else {
                             (previous?.x ?: a.x) + (next?.x ?: b.x)
                         },
-                        movable = route.edgeId !in pinnedEdgeIds && index > 0 && index + 2 < pts.size &&
-                            waypointsByEdge[route.edgeId].orEmpty().none { pointNearSegment(it, a, b) },
+                        movable = interior && !carriesVia,
+                        viaPinned = interior && carriesVia,
                     ),
                 )
             }
@@ -164,12 +171,25 @@ fun nudgeRoutedEdges(
     fun applyOffsets(horizontal: Boolean, laneTolerance: Double): Boolean {
         var moved = false
         for (cluster in corridorClusters(horizontal, laneTolerance)) {
-            if (cluster.map { it.route }.distinct().size >= 2 && cluster.any { it.movable }) {
+            // Two edges AUTHORED onto the same corridor (coincident vias — the reference ER
+            // file stacks two relations on one 1000-unit column) never separate under the
+            // via-pin rule alone: every co-running segment is pinned and the pair renders as
+            // one line. Exact coincidence is never authored intent, so when a cluster has no
+            // plainly movable segment but carries vias of two or more different edges, those
+            // via segments spread symmetrically around the authored lane instead. The drawn
+            // line steps a few pixels off the raw via; the via itself (and write-back) stays.
+            val spreadCoincidentVias = cluster.none { it.movable } &&
+                cluster.filter { it.viaPinned }.map { it.route }.distinct().size >= 2
+
+            fun canMove(segment: LaneSegment): Boolean =
+                segment.movable || (spreadCoincidentVias && segment.viaPinned)
+
+            if (cluster.map { it.route }.distinct().size >= 2 && cluster.any(::canMove)) {
                 val ordered = cluster.sortedWith(
                     compareBy({ it.continuation }, { routes[it.route].edgeId.value }, { it.index }),
                 )
                 val laneAssignments: List<Pair<LaneSegment, Double>>
-                val fixedIndices = ordered.indices.filter { !ordered[it].movable }
+                val fixedIndices = ordered.indices.filter { !canMove(ordered[it]) }
                 if (fixedIndices.isEmpty()) {
                     laneAssignments = ordered.mapIndexed { slot, segment ->
                         segment to (slot - (ordered.size - 1) / 2.0)
@@ -180,9 +200,9 @@ fun nudgeRoutedEdges(
                     // baseline, which avoids introducing a new crossing at the adjacent legs.
                     val pivot = fixedIndices.average()
                     val lower = ordered.withIndex()
-                        .filter { (index, segment) -> segment.movable && index < pivot }
+                        .filter { (index, segment) -> canMove(segment) && index < pivot }
                     val upper = ordered.withIndex()
-                        .filter { (index, segment) -> segment.movable && index >= pivot }
+                        .filter { (index, segment) -> canMove(segment) && index >= pivot }
                     laneAssignments = buildList {
                         lower.forEachIndexed { slot, indexed ->
                             add(indexed.value to (slot - lower.size).toDouble())

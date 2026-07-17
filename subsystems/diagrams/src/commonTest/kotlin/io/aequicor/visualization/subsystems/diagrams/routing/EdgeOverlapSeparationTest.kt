@@ -240,4 +240,43 @@ class EdgeOverlapSeparationTest {
             "the movable co-runner must give way instead",
         )
     }
+
+    @Test
+    fun coincidentViaCorridorsOfDifferentEdgesSpreadApart() {
+        // Two edges AUTHORED onto the same corridor (the reference ER file stacks two
+        // relations on one 1000-unit column): with every co-running segment via-pinned
+        // the pair used to render as one line. They must spread around the authored lane.
+        val first = routed(
+            "first",
+            DiagramPoint(0.0, 0.0),
+            DiagramPoint(100.0, 0.0),
+            DiagramPoint(100.0, 400.0),
+            DiagramPoint(200.0, 400.0),
+        )
+        val second = routed(
+            "second",
+            DiagramPoint(0.0, 60.0),
+            DiagramPoint(100.0, 60.0),
+            DiagramPoint(100.0, 460.0),
+            DiagramPoint(200.0, 460.0),
+        )
+        val nudged = nudgeRoutedEdges(
+            routes = listOf(first, second),
+            waypointsByEdge = mapOf(
+                DiagramEdgeId("first") to listOf(DiagramPoint(100.0, 200.0)),
+                DiagramEdgeId("second") to listOf(DiagramPoint(100.0, 240.0)),
+            ),
+        ).associateBy { it.edgeId.value }
+        val firstX = nudged.getValue("first").points[1].x
+        val secondX = nudged.getValue("second").points[1].x
+        assertTrue(
+            abs(firstX - secondX) > 4.0,
+            "coincident via corridors must separate: first=$firstX second=$secondX",
+        )
+        // The pair spreads AROUND the authored lane rather than both fleeing one side.
+        assertTrue(
+            (firstX - 100.0) * (secondX - 100.0) < 0.0,
+            "spread must straddle the authored corridor: first=$firstX second=$secondX",
+        )
+    }
 }
