@@ -67,6 +67,11 @@ class SlmDiagramAuditTool {
                         dumpRoute(finding.first)
                         dumpRoute(finding.second)
                     }
+                    is io.aequicor.visualization.subsystems.diagrams.lint.DiagramLintFinding.CrossingHotspot ->
+                        report.appendLine(
+                            "  hotspot (${finding.at.x.toInt()},${finding.at.y.toInt()}): " +
+                                finding.edgeIds.joinToString(", ") { it.value },
+                        )
                     else -> Unit
                 }
             }

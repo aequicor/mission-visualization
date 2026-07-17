@@ -281,6 +281,38 @@ Node entity order «Order» 220 by 140 position 460 80 attribute («id» type «
 Edge places from customer to order relation er one to zero-or-many label «places»
 ```
 
+## Layout good taste
+
+The renderer runs a vision-test lint (`lintDiagram` in `:subsystems:diagrams`) over the
+routed picture. Author coordinates so that none of its rules fire:
+
+- Never let connected nodes' bodies overlap (`NodeOverlap`). After any manual coordinate
+  shift, re-check the neighbours. Full containment is deliberate grouping and is fine;
+  partial overlap is a defect.
+- Keep at least 24 units of clear gap between neighbouring nodes — twice the router's
+  12-unit obstacle margin. Tighter gaps leave routed edges no room to spread, so they run
+  on top of each other: two edges closer than 2 units for a stretch of 12+ units are
+  flagged as `EdgeOverlap`.
+- Give an entity with 4+ edges explicit ports spread over different sides of the node.
+  Three or more endpoints landing within a 20-unit spot on one node are an `AnchorBunch`;
+  the router spreads floating anchors only 24 units apart along one side, so many edges
+  aimed at the same side still funnel.
+- Do not reach for `routing curved` as a way around a node — curved routing is
+  obstacle-aware itself. An `EdgeThroughNode` finding means the layout is too tight; fix
+  it by moving nodes apart or attaching to explicit ports, not by changing the routing
+  word.
+- In dense clusters, place labels longer than ~20 characters manually with
+  `label («…» dx N dy N)` aimed at free space. The lint sizes a label box at 7 units per
+  character by 16 units high, so a long auto-placed label ends up covering a foreign node
+  (`LabelOverNode`).
+- Avoid highways where many flows cross in one strip: 3+ crossings within a 32-unit
+  radius are a `CrossingHotspot`. Route flows between domains through separate corridors —
+  different sides and ports — instead of one shared channel.
+
+To see the findings on a real file, run the audit loop:
+`SLM_AUDIT_FILE=<file> SLM_AUDIT_OUT=<dir> ./gradlew :subsystems:diagrams-slm:jvmTest --tests "*.SlmDiagramAuditTool"`
+renders each diagram to SVG and writes the warnings to `lint.txt`.
+
 ## Common failures
 
 - Unknown type or required kind missing: the entire node sentence is dropped.

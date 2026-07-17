@@ -11,6 +11,9 @@ import kotlin.math.abs
 /** Clearance a nudged segment must keep from node bodies for the shift to be applied. */
 private const val NUDGE_CLEARANCE = 2.0
 
+/** Upper bound on the re-cluster/re-spread rounds of [nudgeRoutedEdges]. */
+private const val NUDGE_PASSES = 3
+
 /**
  * Routes every edge of the graph, skipping edges whose endpoints reference missing
  * nodes/ports (they simply do not render), then separates co-running segments with
@@ -114,23 +117,48 @@ fun nudgeRoutedEdges(
     // Segments closer than this across the lane axis share one corridor: exactly
     // collinear runs AND near-misses (a couple of pixels apart read as one fat line)
     // both get spread. Kept below the spread spacing so nudged lanes never re-cluster.
-    val laneTolerance = spacing * 0.75
+    val spreadTolerance = spacing * 0.75
+    // Follow-up passes only repair pairs the first spread happened to land almost on
+    // top of each other. The tight tolerance cannot re-chain lanes a packed corridor
+    // deliberately spaced wider than that, so repairs stay local instead of
+    // reshuffling the whole picture.
+    val repairTolerance = NUDGE_CLEARANCE + 0.5
 
-    fun applyOffsets(horizontal: Boolean) {
-        val segments = laneSegments(horizontal)
-            .sortedWith(compareBy({ it.coordinate }, { it.spanStart }))
-        var clusterStart = 0
-        while (clusterStart < segments.size) {
-            var clusterEnd = clusterStart + 1
-            var reach = segments[clusterStart].spanEnd
-            while (clusterEnd < segments.size &&
-                abs(segments[clusterEnd].coordinate - segments[clusterStart].coordinate) < laneTolerance &&
-                segments[clusterEnd].spanStart < reach - GEOMETRY_EPSILON
+    fun corridorClusters(horizontal: Boolean, laneTolerance: Double): List<List<LaneSegment>> = buildList {
+        // First group by lane coordinate (chained, so a pair never straddles a band
+        // boundary), then split each band into connected components of actually
+        // overlapping spans. Sorting by coordinate alone interleaves segments from
+        // unrelated corridors across the diagram, and a single reach-based pass over
+        // that order used to chain them into one giant cluster whose spread collapsed
+        // to sub-pixel lanes.
+        val segments = laneSegments(horizontal).sortedBy { it.coordinate }
+        var bandStart = 0
+        while (bandStart < segments.size) {
+            var bandEnd = bandStart + 1
+            while (bandEnd < segments.size &&
+                segments[bandEnd].coordinate - segments[bandEnd - 1].coordinate < laneTolerance
             ) {
-                reach = maxOf(reach, segments[clusterEnd].spanEnd)
-                clusterEnd++
+                bandEnd++
             }
-            val cluster = segments.subList(clusterStart, clusterEnd)
+            val band = segments.subList(bandStart, bandEnd).sortedBy { it.spanStart }
+            var clusterStart = 0
+            while (clusterStart < band.size) {
+                var clusterEnd = clusterStart + 1
+                var reach = band[clusterStart].spanEnd
+                while (clusterEnd < band.size && band[clusterEnd].spanStart < reach - GEOMETRY_EPSILON) {
+                    reach = maxOf(reach, band[clusterEnd].spanEnd)
+                    clusterEnd++
+                }
+                add(band.subList(clusterStart, clusterEnd))
+                clusterStart = clusterEnd
+            }
+            bandStart = bandEnd
+        }
+    }
+
+    fun applyOffsets(horizontal: Boolean, laneTolerance: Double): Boolean {
+        var moved = false
+        for (cluster in corridorClusters(horizontal, laneTolerance)) {
             if (cluster.map { it.route }.distinct().size >= 2 && cluster.any { it.movable }) {
                 val ordered = cluster.sortedWith(
                     compareBy({ it.continuation }, { routes[it.route].edgeId.value }, { it.index }),
@@ -164,10 +192,7 @@ fun nudgeRoutedEdges(
                 val maxOffset = (options.obstacleMargin - NUDGE_CLEARANCE).coerceAtLeast(0.0)
                 val furthestLane = laneAssignments.maxOf { abs(it.second) }
                 val clusterSpacing = minOf(spacing, maxOffset / furthestLane)
-                if (clusterSpacing < GEOMETRY_EPSILON) {
-                    clusterStart = clusterEnd
-                    continue
-                }
+                if (clusterSpacing < GEOMETRY_EPSILON) continue
                 for ((segment, lane) in laneAssignments) {
                     val offset = lane * clusterSpacing
                     if (abs(offset) < GEOMETRY_EPSILON) continue
@@ -213,14 +238,22 @@ fun nudgeRoutedEdges(
                     if (pushedIntoNode) continue
                     pts[segment.index] = shiftedA
                     pts[segment.index + 1] = shiftedB
+                    moved = true
                 }
             }
-            clusterStart = clusterEnd
         }
+        return moved
     }
 
-    applyOffsets(horizontal = true)
-    applyOffsets(horizontal = false)
+    // Separating two corridors can land their segments almost on top of a third one,
+    // so after the full spread run bounded repair passes over the fresh co-runs.
+    applyOffsets(horizontal = true, spreadTolerance)
+    applyOffsets(horizontal = false, spreadTolerance)
+    for (pass in 1 until NUDGE_PASSES) {
+        val movedHorizontal = applyOffsets(horizontal = true, repairTolerance)
+        val movedVertical = applyOffsets(horizontal = false, repairTolerance)
+        if (!movedHorizontal && !movedVertical) break
+    }
     return routes.mapIndexed { index, route ->
         if (points[index] == route.points) route else route.copy(points = points[index].toList())
     }
