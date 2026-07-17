@@ -337,6 +337,7 @@ internal fun DiagramEditOverlay(
     viewport: CanvasViewport,
     zoomPx: Float,
     panActive: Boolean = false,
+    onCanvasFocus: () -> Unit = {},
 ) {
     val colors = LocalEditorColors.current
     val editId = state.workspace.diagramEditNodeId
@@ -593,6 +594,11 @@ internal fun DiagramEditOverlay(
             .pointerInput(editId) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
+                    // The overlay consumes this press, so the canvas pane's own press handler —
+                    // the one that moves keyboard focus onto the canvas — never sees it. Without
+                    // this hand-off every Delete/Cmd+Z after a diagram click lands in whatever
+                    // text field held focus last (the inspector label, the source editor).
+                    if (!state.workspace.diagramTextEditing) onCanvasFocus()
                     // Pan gestures (space-drag / middle-button) belong to the canvas viewport, not
                     // the diagram. The canvas pane's pan handler never sees this press (the overlay
                     // covers it as a top sibling), so the overlay drives the same viewport pan here.

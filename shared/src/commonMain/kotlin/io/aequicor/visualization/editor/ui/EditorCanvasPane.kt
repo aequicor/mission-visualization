@@ -1809,7 +1809,18 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             VectorEditOverlay(state, layout, viewport, zoomPx)
 
             // Diagram edit mode: selection/ports/waypoints overlays + element gestures.
-            DiagramEditOverlay(state, layout, viewport, zoomPx, panActive = spaceHeld)
+            DiagramEditOverlay(
+                state,
+                layout,
+                viewport,
+                zoomPx,
+                panActive = spaceHeld,
+                onCanvasFocus = {
+                    if (state.designState.editingTextNodeId.isBlank()) {
+                        runCatching { focusRequester.requestFocus() }
+                    }
+                },
+            )
 
             // Palette→canvas drag ghost (draw.io insert): shape preview under the pointer
             // plus an accent highlight of the diagram box the drop would land in.
