@@ -355,6 +355,26 @@ class StructuralWriteBackTest {
         )
     }
 
+    @Test
+    fun duplicateOfAScreenRootIsAnHonestNoOpWithAClearDiagnostic() {
+        // A screen source holds exactly ONE top-level section (a later `#` heading
+        // compiles as a child of the first), so a root's sibling copy is not expressible
+        // — the operation must refuse cleanly and point at Duplicate Screen, not
+        // half-apply in memory or fail with a generic addressing error.
+        val before = freshState()
+        assertNull(before.document?.parentNodeOf("frame_overview"), "frame really is top-level")
+
+        val next = reduceDesignEditor(before, DesignEditorIntent.DuplicateNodes(setOf("frame_overview")))
+
+        assertEquals(before.document, next.document, "document untouched")
+        assertEquals(before.sources, next.sources, "sources untouched")
+        assertEquals(before.undoStack, next.undoStack, "no history entry for a refused clone")
+        assertTrue(
+            next.diagnostics.any { it.severity == DesignSeverity.Error && "Duplicate Screen" in it.message },
+            "actionable diagnostic expected, got: ${next.diagnostics.joinToString { it.message }}",
+        )
+    }
+
     // --- Paste (canvas clipboard) --------------------------------------------------
 
     @Test
@@ -398,6 +418,35 @@ class StructuralWriteBackTest {
         // One undo removes the whole paste.
         val undone = reduceDesignEditor(next, DesignEditorIntent.Undo)
         assertNull(undone.document?.nodeById(cloneId), "single undo removes the copy")
+    }
+
+    @Test
+    fun pasteOfAScreenRootIsAnHonestNoOpWithAClearDiagnostic() {
+        // The clipboard parent of a top-level frame is the PAGE id. A screen source
+        // holds exactly one top-level section, so pasting a root beside itself is not
+        // expressible — the paste must refuse cleanly (document, sources, history and
+        // selection untouched) with an actionable message, never a silent no-op.
+        val before = freshState()
+        val frame = assertNotNull(before.document?.nodeById("frame_overview"), "top-level frame")
+        val pageId = assertNotNull(before.document?.pages?.firstOrNull()?.id, "page id")
+        assertNull(before.document?.parentNodeOf("frame_overview"), "frame really is top-level")
+
+        val next = reduceDesignEditor(
+            before,
+            DesignEditorIntent.PasteNodes(
+                nodes = listOf(frame),
+                parentIds = mapOf("frame_overview" to pageId),
+            ),
+        )
+
+        assertEquals(before.document, next.document, "document untouched")
+        assertEquals(before.sources, next.sources, "sources untouched")
+        assertEquals(before.undoStack, next.undoStack, "no history entry for a refused paste")
+        assertEquals(before.selectedNodeIds, next.selectedNodeIds, "selection untouched")
+        assertTrue(
+            next.diagnostics.any { it.severity == DesignSeverity.Error && "Duplicate Screen" in it.message },
+            "actionable diagnostic expected, got: ${next.diagnostics.joinToString { it.message }}",
+        )
     }
 
     @Test

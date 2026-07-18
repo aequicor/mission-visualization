@@ -744,6 +744,9 @@ private fun DesignEditorState.duplicateNodes(ids: Set<String>): DesignEditorStat
 private fun DesignEditorState.duplicateNodesWriteBack(ids: Set<String>): DesignEditorState {
     val plan = duplicationPlan(ids)
     if (plan.isEmpty()) return this
+    if (plan.any { step -> document?.pages?.any { it.id == step.parentId } == true }) {
+        return rejectScreenRootClone()
+    }
     val inMemory = applyDuplication(plan)
 
     // Only faithfully-expressible clones reach the patcher; the central contract turns this local
@@ -768,6 +771,22 @@ private fun DesignEditorState.duplicateNodesWriteBack(ids: Set<String>): DesignE
 }
 
 private data class PasteStep(val parentId: String, val clone: DesignNode)
+
+/**
+ * A clone landing directly on a PAGE would copy a screen ROOT beside itself. A screen
+ * source holds exactly one top-level section — any later `#` heading compiles as a
+ * child of the first — so the sibling copy is not expressible in the source; that
+ * operation is Duplicate Screen's job. Reject honestly: document, sources, history and
+ * selection all stay untouched, and the user gets an actionable message instead of a
+ * silent no-op.
+ */
+private fun DesignEditorState.rejectScreenRootClone(): DesignEditorState = copy(
+    diagnostics = diagnostics + DesignDiagnostic(
+        severity = DesignSeverity.Error,
+        message = "A screen root frame cannot be copied beside itself: a screen source " +
+            "holds exactly one top-level section. Use Duplicate Screen instead.",
+    ),
+)
 
 /**
  * Deterministic landing plan for pasting clipboard [DesignEditorIntent.PasteNodes.nodes]:
@@ -801,10 +820,11 @@ private fun DesignEditorState.pastePlan(intent: DesignEditorIntent.PasteNodes): 
 
 /**
  * Pastes clipboard snapshots ([DesignEditorIntent.PasteNodes]) and mirrors each copy into
- * its landing parent's owning source as a fresh appended child section
- * ([InsertChildSubtree]) — one undoable step, selection on the copies. Any subtree the
- * emitter cannot round-trip, a page-id / unaddressable parent, or surviving-id drift
- * keeps the in-memory paste with every source byte-identical.
+ * its landing parent's owning source as a fresh child section ([InsertChildSubtree]) —
+ * one undoable step, selection on the copies. A local `return inMemory` here is a
+ * CANDIDATE, not a published state: the central write-back contract turns a structural
+ * document change with byte-identical sources into an explicit rejection (the
+ * id-stability net), exactly as it does for duplicate.
  */
 private fun DesignEditorState.pasteNodesWriteBack(
     intent: DesignEditorIntent.PasteNodes,
@@ -812,6 +832,9 @@ private fun DesignEditorState.pasteNodesWriteBack(
     val document = document ?: return this
     val plan = pastePlan(intent)
     if (plan.isEmpty()) return this
+    if (plan.any { step -> document.pages.any { it.id == step.parentId } }) {
+        return rejectScreenRootClone()
+    }
     val working = plan.fold(document) { doc, step -> doc.insertNode(step.parentId, step.clone) }
     if (working == document) return this
     val inMemory = pushHistory(document).copy(document = working)
@@ -2129,7 +2152,13 @@ private fun DesignEditorState.candidateSourceIndices(nodeId: String): List<Int> 
 
 /** The single SLM source index that owns [nodeId]'s page, or null when it can't be resolved. */
 internal fun DesignEditorState.owningSourceIndex(nodeId: String): Int? {
-    val pageId = document?.pageOfNode(nodeId)?.id ?: return null
+    // A page id is its own owner key: structural edits may legitimately target a page
+    // as the insert parent (pasting a top-level frame), and pageOfNode only searches
+    // node trees — without this, such an edit would be rejected while the equivalent
+    // duplicate (keyed off the original node) sails through.
+    val pageId = document?.pageOfNode(nodeId)?.id
+        ?: document?.pages?.firstOrNull { it.id == nodeId }?.id
+        ?: return null
     return compiledResults.indices.firstOrNull { index ->
         val compiledDocument = compiledResults[index].document ?: return@firstOrNull false
         val screenId = compiledDocument.screen?.id.orEmpty()

@@ -3196,16 +3196,19 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             !state.workspace.diagramSelection.isEmpty ->
             diagramSelectionSnapshot(state)?.let { pasteDiagramClipboard(state, it) } ?: false
         ctrl && key == Key.D && selection.isNotEmpty() -> { state.dispatch(DesignEditorIntent.DuplicateNodes(selection)); true }
-        // Canvas-node clipboard (outside diagram edit; the diagram cases above already
-        // consumed C/V while editing a diagram): Ctrl/Cmd+C deep-snapshots the selected
+        // Canvas-node clipboard, gated OUT of diagram edit entirely: inside a diagram
+        // session C/V belong to diagram elements (an empty diagram selection must not
+        // silently snapshot the whole diagram node, nor paste a canvas subtree into the
+        // middle of a diagram workflow). Ctrl/Cmd+C deep-snapshots the selected
         // subtrees — the copies stay pasteable after the originals change or die — and V
         // pastes them with fresh ids at a growing offset, selecting the copies.
-        ctrl && key == Key.C && selection.isNotEmpty() -> {
+        ctrl && key == Key.C && state.workspace.diagramEditNodeId.isBlank() && selection.isNotEmpty() -> {
             canvasSelectionSnapshot(state)?.let { clip ->
                 state.updateWorkspace { it.copy(canvasClipboard = clip) }
             } != null
         }
-        ctrl && key == Key.V && state.workspace.canvasClipboard?.isEmpty == false ->
+        ctrl && key == Key.V && state.workspace.diagramEditNodeId.isBlank() &&
+            state.workspace.canvasClipboard?.isEmpty == false ->
             pasteCanvasClipboard(state)
         ctrl && key == Key.RightBracket -> zorder(ZOrderMove.Forward)
         ctrl && key == Key.LeftBracket -> zorder(ZOrderMove.Backward)
@@ -3304,12 +3307,15 @@ private const val CANVAS_PASTE_OFFSET = 16.0
 /**
  * Pastes the canvas clipboard with fresh ids at a cumulative offset (each successive
  * paste of the same clipboard steps another [CANVAS_PASTE_OFFSET] down-right, so copies
- * fan out as a staircase instead of stacking) and bumps the clipboard's paste counter.
+ * fan out as a staircase instead of stacking). The paste counter advances only when the
+ * paste actually landed — a write-back rejection leaves the document untouched, and
+ * deepening the offset for a paste nobody saw would displace the next successful one.
  */
 private fun pasteCanvasClipboard(state: MissionEditorStateHolder): Boolean {
     val clipboard = state.workspace.canvasClipboard ?: return false
     if (clipboard.isEmpty) return false
     val step = clipboard.pasteCount + 1
+    val documentBefore = state.designState.document
     state.dispatch(
         DesignEditorIntent.PasteNodes(
             nodes = clipboard.nodes,
@@ -3318,7 +3324,9 @@ private fun pasteCanvasClipboard(state: MissionEditorStateHolder): Boolean {
             offsetY = CANVAS_PASTE_OFFSET * step,
         ),
     )
-    state.updateWorkspace { it.copy(canvasClipboard = clipboard.copy(pasteCount = step)) }
+    if (state.designState.document != documentBefore) {
+        state.updateWorkspace { it.copy(canvasClipboard = clipboard.copy(pasteCount = step)) }
+    }
     return true
 }
 
@@ -3386,6 +3394,7 @@ private fun pasteDiagramClipboard(
     val nodeIds = clipboard.nodes.associate { it.id.value to mint("node") }
     val edgeIds = clipboard.edges.associate { it.id.value to mint("edge") }
     val (offset, advanced) = clipboard.nextPaste(PASTE_OFFSET)
+    val documentBefore = state.designState.document
     state.dispatch(
         DiagramEditorIntent.PasteDiagramElements(
             nodeId = editId,
@@ -3397,13 +3406,16 @@ private fun pasteDiagramClipboard(
             offsetY = offset,
         ),
     )
+    // The staircase counter only advances for a paste that actually landed (a rejected
+    // write-back leaves the document untouched).
+    val landed = state.designState.document != documentBefore
     state.updateWorkspace {
         it.copy(
             diagramSelection = DiagramSelection(
                 elementIds = nodeIds.values.toSet(),
                 edgeIds = edgeIds.values.toSet(),
             ),
-            diagramClipboard = if (advanceCounter) advanced else it.diagramClipboard,
+            diagramClipboard = if (advanceCounter && landed) advanced else it.diagramClipboard,
         )
     }
     return true

@@ -146,7 +146,11 @@ Shift+arrow big-nudge, aspect-ratio lock, rotation field, flip, z-order via
 reorder/Layers and canvas keyboard shortcuts (`]`/`[` bring to front / send to back,
 Cmd/Ctrl+`]`/`[` bring forward / send backward — restacking the **primary** selection, like
 the Layers per-row reorder; restacking a whole multi-selection as a block is a follow-up),
-undo/redo.
+undo/redo. Cmd/Ctrl+C/V is an internal clipboard for canvas nodes (deep subtree
+snapshots that survive edits/deletion of the originals; paste mints fresh ids, lands
+under the copy-time parent, writes back structurally and fans repeated pastes out as a
+staircase), Cmd/Ctrl+D duplicates in place; inside diagram edit the diagram-element
+clipboard takes priority with the same C/V/D semantics.
 
 **Advanced positioning preview (ch. 18)** — central anchor lines (dashed at rest, emphasized
 solid while dragging) through the selected component's center, extended to its parent frame
