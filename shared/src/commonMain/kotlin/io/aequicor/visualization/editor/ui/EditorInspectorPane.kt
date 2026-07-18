@@ -147,6 +147,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlVisibility
 import io.aequicor.visualization.subsystems.diagrams.ops.UmlClassMemberKind
+import io.aequicor.visualization.subsystems.diagrams.ops.findFreeDiagramPlacement
 import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
@@ -4429,10 +4430,11 @@ private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
 }
 
 /**
- * Stamps [entry]'s shape at the center of the VISIBLE viewport (cascading, snapped to
- * the placement grid), selects it in edit mode. A palette click used to stamp into the
- * diagram's geometric center — on a large ER surface that dropped the shape somewhere
- * deep in the busy middle, far from where the user was looking.
+ * Stamps [entry]'s shape at the center of the VISIBLE viewport, pushed to the nearest
+ * spot that is not on top of existing content ([findFreeDiagramPlacement], snapped to
+ * the placement grid), and selects it in edit mode. A palette click used to stamp into
+ * the diagram's geometric center — on a large ER surface that dropped the shape
+ * somewhere deep in the busy middle, right over whatever table was already there.
  */
 private fun insertDiagramElementFromPalette(
     state: MissionEditorStateHolder,
@@ -4442,7 +4444,6 @@ private fun insertDiagramElementFromPalette(
     val document = state.designState.document ?: return
     val node = document.nodeById(diagramNodeId) ?: return
     val graph = (node.kind as? DesignNodeKind.Diagram)?.graph ?: return
-    val cascade = (graph.nodes.size % 6) * 20.0
     val elementId = mintDiagramId(graph, "node")
     val diagramWidth = node.size.width ?: entry.width
     val diagramHeight = node.size.height ?: entry.height
@@ -4453,17 +4454,28 @@ private fun insertDiagramElementFromPalette(
         val viewport = state.workspace.viewport
         val docX = viewport.toDocumentX((bounds.width / 2.0).toFloat(), bounds.density)
         val docY = viewport.toDocumentY((bounds.height / 2.0).toFloat(), bounds.density)
-        (docX - box.x - entry.width / 2 + cascade) to (docY - box.y - entry.height / 2 + cascade)
+        (docX - box.x - entry.width / 2) to (docY - box.y - entry.height / 2)
     } else {
-        ((diagramWidth - entry.width) / 2 + cascade) to ((diagramHeight - entry.height) / 2 + cascade)
+        ((diagramWidth - entry.width) / 2) to ((diagramHeight - entry.height) / 2)
     }
+    val maxPlaceX = (diagramWidth - entry.width).coerceAtLeast(0.0)
+    val maxPlaceY = (diagramHeight - entry.height).coerceAtLeast(0.0)
+    val placed = findFreeDiagramPlacement(
+        graph = graph,
+        width = entry.width,
+        height = entry.height,
+        idealX = snapToDiagramGrid(idealX).coerceIn(0.0, maxPlaceX),
+        idealY = snapToDiagramGrid(idealY).coerceIn(0.0, maxPlaceY),
+        maxX = maxPlaceX,
+        maxY = maxPlaceY,
+    )
     state.dispatch(
         DiagramEditorIntent.AddDiagramNode(
             nodeId = diagramNodeId,
             elementId = elementId,
             payload = entry.payload,
-            x = snapToDiagramGrid(idealX).coerceIn(0.0, (diagramWidth - entry.width).coerceAtLeast(0.0)),
-            y = snapToDiagramGrid(idealY).coerceIn(0.0, (diagramHeight - entry.height).coerceAtLeast(0.0)),
+            x = placed.x,
+            y = placed.y,
             width = entry.width,
             height = entry.height,
         ),

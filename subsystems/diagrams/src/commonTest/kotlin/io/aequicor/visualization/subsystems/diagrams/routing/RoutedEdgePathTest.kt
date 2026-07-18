@@ -163,6 +163,82 @@ class RoutedEdgePathTest {
     }
 
     @Test
+    fun noJumpWhereAnotherEdgeTerminatesOnTheLine() {
+        val line = polyline(0.0 to 50.0, 100.0 to 50.0)
+        // The other edge ENDS on this line — a T-junction, not a transversal crossing.
+        val terminating = RoutedEdge(
+            edgeId = DiagramEdgeId("other"),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(DiagramPoint(50.0, 0.0), DiagramPoint(50.0, 50.0)),
+        )
+        val path = routedEdgeToPath(
+            line,
+            lineJumps = LineJumpStyle.ARC,
+            otherEdges = listOf(terminating),
+        )
+        assertTrue(path.segments.none { it is DiagramPathSegment.ArcTo })
+    }
+
+    @Test
+    fun noJumpInsideAnotherEdgesCornerZone() {
+        val line = polyline(0.0 to 50.0, 100.0 to 50.0)
+        // The other edge crosses but turns 4 units past the line: its drawn rounded
+        // corner (radius 8) deviates from the raw polyline exactly where the hop
+        // would sit, so the hop is suppressed.
+        val turning = RoutedEdge(
+            edgeId = DiagramEdgeId("other"),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(DiagramPoint(50.0, 0.0), DiagramPoint(50.0, 54.0), DiagramPoint(90.0, 54.0)),
+        )
+        val path = routedEdgeToPath(
+            line,
+            lineJumps = LineJumpStyle.ARC,
+            otherEdges = listOf(turning),
+        )
+        assertTrue(path.segments.none { it is DiagramPathSegment.ArcTo })
+    }
+
+    @Test
+    fun overlappingHopsMergeIntoOneWideHop() {
+        val line = polyline(0.0 to 50.0, 200.0 to 50.0)
+        fun vertical(id: String, x: Double) = RoutedEdge(
+            edgeId = DiagramEdgeId(id),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(DiagramPoint(x, 0.0), DiagramPoint(x, 100.0)),
+        )
+        val path = routedEdgeToPath(
+            line,
+            lineJumps = LineJumpStyle.ARC,
+            otherEdges = listOf(vertical("a", 50.0), vertical("b", 58.0)),
+        )
+        // 8 apart < 2*jumpSize: one wide half-ellipse spanning both crossings.
+        val arc = path.segments.filterIsInstance<DiagramPathSegment.ArcTo>().single()
+        assertEquals(DiagramPoint(64.0, 50.0), arc.end)
+        assertTrue(abs(arc.radiusX - 10.0) < 1e-9, "radiusX=${arc.radiusX}")
+        assertTrue(abs(arc.radiusY - 6.0) < 1e-9, "radiusY=${arc.radiusY}")
+        val before = path.segments[1] as DiagramPathSegment.LineTo
+        assertEquals(DiagramPoint(44.0, 50.0), before.point)
+    }
+
+    @Test
+    fun farApartCrossingsKeepSeparateHops() {
+        val line = polyline(0.0 to 50.0, 200.0 to 50.0)
+        fun vertical(id: String, x: Double) = RoutedEdge(
+            edgeId = DiagramEdgeId(id),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(DiagramPoint(x, 0.0), DiagramPoint(x, 100.0)),
+        )
+        val path = routedEdgeToPath(
+            line,
+            lineJumps = LineJumpStyle.ARC,
+            otherEdges = listOf(vertical("a", 50.0), vertical("b", 120.0)),
+        )
+        val arcs = path.segments.filterIsInstance<DiagramPathSegment.ArcTo>()
+        assertEquals(2, arcs.size)
+        assertTrue(arcs.all { abs(it.radiusX - 6.0) < 1e-9 })
+    }
+
+    @Test
     fun curveRouteBuildsSmoothSpline() {
         val routed = RoutedEdge(
             edgeId = DiagramEdgeId("edge"),
