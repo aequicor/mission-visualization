@@ -3191,7 +3191,7 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         }
         ctrl && key == Key.V && state.workspace.diagramEditNodeId.isNotBlank() &&
             state.workspace.diagramClipboard?.isEmpty == false ->
-            pasteDiagramClipboard(state, state.workspace.diagramClipboard!!)
+            pasteDiagramClipboard(state, state.workspace.diagramClipboard!!, advanceCounter = true)
         ctrl && key == Key.D && state.workspace.diagramEditNodeId.isNotBlank() &&
             !state.workspace.diagramSelection.isEmpty ->
             diagramSelectionSnapshot(state)?.let { pasteDiagramClipboard(state, it) } ?: false
@@ -3356,10 +3356,17 @@ private fun diagramSelectionSnapshot(state: MissionEditorStateHolder): DiagramCl
     return clipboard.takeIf { !it.isEmpty }
 }
 
-/** Pastes [clipboard] into the edited diagram with fresh ids and selects the copies. */
+/**
+ * Pastes [clipboard] into the edited diagram with fresh ids and selects the copies. The
+ * offset is cumulative over [DiagramClipboard.pasteCount], so repeated Ctrl+V fans copies
+ * out as a staircase; [advanceCounter] stores the bumped clipboard back into the
+ * workspace (Ctrl+V pasting the stored clipboard) while a one-shot paste of a fresh
+ * snapshot (Ctrl+D duplicate) leaves the stored clipboard untouched.
+ */
 private fun pasteDiagramClipboard(
     state: MissionEditorStateHolder,
     clipboard: DiagramClipboard,
+    advanceCounter: Boolean = false,
 ): Boolean {
     val editId = state.workspace.diagramEditNodeId
     val graph = diagramLiveGraph(state) ?: return false
@@ -3378,6 +3385,7 @@ private fun pasteDiagramClipboard(
 
     val nodeIds = clipboard.nodes.associate { it.id.value to mint("node") }
     val edgeIds = clipboard.edges.associate { it.id.value to mint("edge") }
+    val (offset, advanced) = clipboard.nextPaste(PASTE_OFFSET)
     state.dispatch(
         DiagramEditorIntent.PasteDiagramElements(
             nodeId = editId,
@@ -3385,8 +3393,8 @@ private fun pasteDiagramClipboard(
             edges = clipboard.edges,
             nodeIds = nodeIds,
             edgeIds = edgeIds,
-            offsetX = PASTE_OFFSET,
-            offsetY = PASTE_OFFSET,
+            offsetX = offset,
+            offsetY = offset,
         ),
     )
     state.updateWorkspace {
@@ -3395,6 +3403,7 @@ private fun pasteDiagramClipboard(
                 elementIds = nodeIds.values.toSet(),
                 edgeIds = edgeIds.values.toSet(),
             ),
+            diagramClipboard = if (advanceCounter) advanced else it.diagramClipboard,
         )
     }
     return true

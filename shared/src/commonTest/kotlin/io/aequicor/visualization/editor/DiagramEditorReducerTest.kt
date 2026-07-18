@@ -7,6 +7,7 @@ import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.DiagramClipboard
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
@@ -149,6 +150,20 @@ class DiagramEditorReducerTest {
         val recompiledGraph =
             assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
         assertEquals(pastedGraph, recompiledGraph, "paste round-trips through full recompile")
+    }
+
+    @Test
+    fun diagramClipboardPasteOffsetIsCumulative() {
+        // Repeated Ctrl+V from ONE clipboard fans copies out as a staircase: 1x, 2x, 3x
+        // the base offset. A freshly-copied clipboard starts back at 1x.
+        val clipboard = DiagramClipboard(nodes = emptyList(), edges = emptyList())
+        val (first, afterFirst) = clipboard.nextPaste(24.0)
+        assertEquals(24.0, first)
+        val (second, afterSecond) = afterFirst.nextPaste(24.0)
+        assertEquals(48.0, second)
+        val (third, _) = afterSecond.nextPaste(24.0)
+        assertEquals(72.0, third)
+        assertEquals(24.0, DiagramClipboard(emptyList(), emptyList()).nextPaste(24.0).first)
     }
 
     @Test

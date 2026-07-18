@@ -170,12 +170,24 @@ data class DiagramPaletteDrag(
 /**
  * Diagram clipboard content: deep snapshots of the copied nodes plus the edges that ran
  * between them at copy time (paste re-identifies everything; see `pasteElements`).
+ * [pasteCount] grows the visual offset of each successive paste from the same clipboard
+ * — repeated Ctrl+V lays copies out as a staircase instead of stacking them all on one
+ * spot; a fresh Copy starts a new clipboard and thereby resets the counter.
  */
 data class DiagramClipboard(
     val nodes: List<DiagramNode>,
     val edges: List<DiagramEdge>,
+    val pasteCount: Int = 0,
 ) {
     val isEmpty: Boolean get() = nodes.isEmpty() && edges.isEmpty()
+
+    /**
+     * Offset (in multiples of [step]) the NEXT paste from this clipboard should apply,
+     * paired with the clipboard to store afterwards. Pure so the staircase contract is
+     * unit-testable: 1x, 2x, 3x... per paste, reset by any freshly-copied clipboard.
+     */
+    fun nextPaste(step: Double): Pair<Double, DiagramClipboard> =
+        step * (pasteCount + 1) to copy(pasteCount = pasteCount + 1)
 }
 
 /**
