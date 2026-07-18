@@ -55,6 +55,53 @@ class EdgeLabelMarkerAvoidanceTest {
     }
 
     @Test
+    fun hiddenLayerMarkersNeitherPushLabelsNorTripTheLint() {
+        // Mirror of the avoid context: a marker on a hidden layer is not painted, so a
+        // label sitting where it would be is not a defect.
+        val graph = diagramGraph {
+            val hidden = layer("wiring", visible = false)
+            edge(
+                "marked",
+                source = DiagramEndpoint.FreePoint(28.0, 50.0),
+                target = DiagramEndpoint.FreePoint(28.0, 195.0),
+                relation = DiagramRelation.Association(directed = true),
+                layerId = hidden,
+            )
+            edge(
+                "labeled",
+                source = DiagramEndpoint.FreePoint(0.0, 206.0),
+                target = DiagramEndpoint.FreePoint(280.0, 206.0),
+                labels = listOf(
+                    DiagramEdgeLabel(DiagramLabel("abcd"), DiagramEdgeLabelPosition.SOURCE),
+                ),
+            )
+        }
+        val routes = mapOf(
+            DiagramEdgeId("marked") to RoutedEdge(
+                DiagramEdgeId("marked"),
+                io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle.ORTHOGONAL,
+                listOf(DiagramPoint(28.0, 50.0), DiagramPoint(28.0, 195.0)),
+            ),
+            DiagramEdgeId("labeled") to RoutedEdge(
+                DiagramEdgeId("labeled"),
+                io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle.ORTHOGONAL,
+                listOf(DiagramPoint(0.0, 206.0), DiagramPoint(280.0, 206.0)),
+            ),
+        )
+        val routePoints = routes.mapValues { it.value.points }
+        val forLabeled = edgeLabelAvoidRects(graph, DiagramEdgeId("labeled"), routePoints)
+        assertTrue(
+            forLabeled.none { it.containsApprox(28.0, 190.0) },
+            "hidden-layer markers must not enter the avoid context: $forLabeled",
+        )
+        val findings = lintDiagram(graph, routes)
+        assertTrue(
+            findings.none { it is DiagramLintFinding.LabelOverMarker },
+            "lint must mirror the avoid context on hidden layers: $findings",
+        )
+    }
+
+    @Test
     fun avoidRectsCarryForeignMarkersButNotOwn() {
         val (graph, routes) = graphAndRoutes()
         val routePoints = routes.mapValues { it.value.points }

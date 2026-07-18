@@ -652,6 +652,11 @@ private fun labelOverMarkerFindings(
                 val halfHeight = options.labelHeight / 2.0
                 for (other in graph.edges) {
                     if (other.id == edge.id) continue
+                    // Mirror the avoid context (edgeLabelAvoidRects): markers on hidden
+                    // layers are not painted, so a label sitting there is not a defect.
+                    // Unknown layer references behave as the implicit default layer.
+                    val layerVisible = other.layerId?.let(graph::layerById)?.visible ?: true
+                    if (!layerVisible) continue
                     val otherRoute = routes[other.id] ?: continue
                     for (zone in endpointMarkerZones(other, otherRoute, fitToRun = true)) {
                         val rect = zone.rect
