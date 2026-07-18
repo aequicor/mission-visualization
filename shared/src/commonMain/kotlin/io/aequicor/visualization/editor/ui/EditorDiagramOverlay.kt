@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -53,8 +55,11 @@ import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
@@ -79,6 +84,8 @@ import io.aequicor.visualization.subsystems.anchoring.MoveSnapState
 import io.aequicor.visualization.subsystems.anchoring.SnapBox
 import io.aequicor.visualization.subsystems.anchoring.SpacingBar
 import io.aequicor.visualization.subsystems.anchoring.solveMoveSnap
+import io.aequicor.visualization.subsystems.diagrams.compose.DIAGRAM_DETAIL_FONT_SIZE
+import io.aequicor.visualization.subsystems.diagrams.compose.DIAGRAM_LABEL_FONT_SIZE
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramConnectTargetOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramDirectionalArrowsOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramOverlayStyle
@@ -88,6 +95,8 @@ import io.aequicor.visualization.subsystems.diagrams.compose.DiagramSelectionOve
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramWaypointOverlay
 import io.aequicor.visualization.subsystems.diagrams.compose.rememberDiagramRoutes
 import io.aequicor.visualization.subsystems.diagrams.geometry.containsPoint
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelBox
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
 import io.aequicor.visualization.subsystems.diagrams.geometry.anchorPoint
 import io.aequicor.visualization.subsystems.diagrams.geometry.intersectsOutline
 import io.aequicor.visualization.subsystems.diagrams.hittest.ConnectTarget
@@ -115,6 +124,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
@@ -140,6 +150,15 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.ops.addCustomPort
 import io.aequicor.visualization.subsystems.diagrams.ops.directionalCloneOffset
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramNodeDefaults
+import io.aequicor.visualization.subsystems.diagrams.text.DiagramTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.compose.ComposeDiagramTextMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
+import androidx.compose.ui.text.rememberTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.ops.fitNodeToText
+import io.aequicor.visualization.subsystems.diagrams.ops.setNodeText
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
@@ -147,6 +166,7 @@ import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenien
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 
@@ -156,9 +176,15 @@ import kotlin.time.TimeSource
 internal data class DiagramPaletteEntry(
     val label: String,
     val payload: DiagramNodePayload,
-    val width: Double = 120.0,
-    val height: Double = 60.0,
-)
+) {
+    /**
+     * Stamp size, from the one table shared with the templates and hug's floor. The palette
+     * used to keep its own numbers, so a use case started at 150x70 here but 160x70 from a
+     * template.
+     */
+    val width: Double get() = DiagramNodeDefaults.defaultSizeFor(payload).width
+    val height: Double get() = DiagramNodeDefaults.defaultSizeFor(payload).height
+}
 
 /**
  * The node-type palette: basic shapes, table, container/swimlane, the full UML set,
@@ -169,49 +195,43 @@ internal val DiagramNodePalette: List<DiagramPaletteEntry> = listOf(
     DiagramPaletteEntry("Rounded rectangle", DiagramNodePayload.BasicShape(DiagramShapeKind.ROUNDED_RECTANGLE)),
     DiagramPaletteEntry("Ellipse", DiagramNodePayload.BasicShape(DiagramShapeKind.ELLIPSE)),
     DiagramPaletteEntry("Text", DiagramNodePayload.BasicShape(DiagramShapeKind.TEXT)),
-    DiagramPaletteEntry("Rhombus", DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS), width = 120.0, height = 80.0),
-    DiagramPaletteEntry("Triangle", DiagramNodePayload.BasicShape(DiagramShapeKind.TRIANGLE), width = 100.0, height = 80.0),
-    DiagramPaletteEntry("Hexagon", DiagramNodePayload.BasicShape(DiagramShapeKind.HEXAGON), width = 130.0, height = 70.0),
-    DiagramPaletteEntry("Parallelogram", DiagramNodePayload.BasicShape(DiagramShapeKind.PARALLELOGRAM), width = 140.0, height = 60.0),
-    DiagramPaletteEntry("Trapezoid", DiagramNodePayload.BasicShape(DiagramShapeKind.TRAPEZOID), width = 140.0, height = 60.0),
-    DiagramPaletteEntry("Cylinder", DiagramNodePayload.BasicShape(DiagramShapeKind.CYLINDER), width = 100.0, height = 80.0),
-    DiagramPaletteEntry("Cloud", DiagramNodePayload.BasicShape(DiagramShapeKind.CLOUD), width = 140.0, height = 80.0),
+    DiagramPaletteEntry("Rhombus", DiagramNodePayload.BasicShape(DiagramShapeKind.RHOMBUS)),
+    DiagramPaletteEntry("Triangle", DiagramNodePayload.BasicShape(DiagramShapeKind.TRIANGLE)),
+    DiagramPaletteEntry("Hexagon", DiagramNodePayload.BasicShape(DiagramShapeKind.HEXAGON)),
+    DiagramPaletteEntry("Parallelogram", DiagramNodePayload.BasicShape(DiagramShapeKind.PARALLELOGRAM)),
+    DiagramPaletteEntry("Trapezoid", DiagramNodePayload.BasicShape(DiagramShapeKind.TRAPEZOID)),
+    DiagramPaletteEntry("Cylinder", DiagramNodePayload.BasicShape(DiagramShapeKind.CYLINDER)),
+    DiagramPaletteEntry("Cloud", DiagramNodePayload.BasicShape(DiagramShapeKind.CLOUD)),
     DiagramPaletteEntry(
         "Table",
-        TableNode(rows = List(3) { TableRow() }, columns = List(3) { TableColumn() }),
-        width = 300.0,
-        height = 120.0,
+        TableNode(rows = List(3) { TableRow() }, columns = List(3) { TableColumn() })
     ),
-    DiagramPaletteEntry("Container", DiagramNodePayload.ContainerNode(), width = 240.0, height = 160.0),
+    DiagramPaletteEntry("Container", DiagramNodePayload.ContainerNode()),
     DiagramPaletteEntry(
         "Swimlane",
-        DiagramNodePayload.SwimlaneNode(lanes = listOf(SwimlaneLane(), SwimlaneLane())),
-        width = 360.0,
-        height = 240.0,
+        DiagramNodePayload.SwimlaneNode(lanes = listOf(SwimlaneLane(), SwimlaneLane()))
     ),
-    DiagramPaletteEntry("UML class", UmlClassNode(name = "Class"), width = 160.0, height = 108.0),
-    DiagramPaletteEntry("UML lifeline", UmlLifelineNode(name = "Object"), width = 120.0, height = 200.0),
-    DiagramPaletteEntry("UML state", UmlStateNode(name = "State"), width = 140.0, height = 56.0),
-    DiagramPaletteEntry("UML activity", UmlActivityNode(UmlActivityKind.ACTION, name = "Action"), width = 140.0, height = 56.0),
-    DiagramPaletteEntry("UML actor", UmlActorNode(name = "Actor"), width = 60.0, height = 90.0),
-    DiagramPaletteEntry("UML use case", UmlUseCaseNode(name = "Use case"), width = 150.0, height = 70.0),
-    DiagramPaletteEntry("UML component", UmlComponentNode(name = "Component"), width = 160.0, height = 80.0),
-    DiagramPaletteEntry("UML deployment", UmlDeploymentNode(name = "Node"), width = 160.0, height = 100.0),
-    DiagramPaletteEntry("UML note", UmlNoteNode(text = "Note"), width = 140.0, height = 80.0),
-    DiagramPaletteEntry("UML package", UmlPackageNode(name = "Package"), width = 160.0, height = 100.0),
-    DiagramPaletteEntry("Flowchart process", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.PROCESS), width = 140.0, height = 60.0),
-    DiagramPaletteEntry("Flowchart decision", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.DECISION), width = 130.0, height = 90.0),
-    DiagramPaletteEntry("Flowchart input/output", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.INPUT_OUTPUT), width = 150.0, height = 60.0),
-    DiagramPaletteEntry("Flowchart terminator", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.TERMINATOR), width = 140.0, height = 50.0),
+    DiagramPaletteEntry("UML class", UmlClassNode(name = "Class")),
+    DiagramPaletteEntry("UML lifeline", UmlLifelineNode(name = "Object")),
+    DiagramPaletteEntry("UML state", UmlStateNode(name = "State")),
+    DiagramPaletteEntry("UML activity", UmlActivityNode(UmlActivityKind.ACTION, name = "Action")),
+    DiagramPaletteEntry("UML actor", UmlActorNode(name = "Actor")),
+    DiagramPaletteEntry("UML use case", UmlUseCaseNode(name = "Use case")),
+    DiagramPaletteEntry("UML component", UmlComponentNode(name = "Component")),
+    DiagramPaletteEntry("UML deployment", UmlDeploymentNode(name = "Node")),
+    DiagramPaletteEntry("UML note", UmlNoteNode(text = "Note")),
+    DiagramPaletteEntry("UML package", UmlPackageNode(name = "Package")),
+    DiagramPaletteEntry("Flowchart process", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.PROCESS)),
+    DiagramPaletteEntry("Flowchart decision", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.DECISION)),
+    DiagramPaletteEntry("Flowchart input/output", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.INPUT_OUTPUT)),
+    DiagramPaletteEntry("Flowchart terminator", DiagramNodePayload.FlowchartNode(FlowchartNodeKind.TERMINATOR)),
     DiagramPaletteEntry(
         "ER entity",
-        DiagramNodePayload.ErEntityNode(name = "Entity", attributes = listOf(ErAttribute("id", "int", primaryKey = true))),
-        width = 180.0,
-        height = 100.0,
+        DiagramNodePayload.ErEntityNode(name = "Entity", attributes = listOf(ErAttribute("id", "int", primaryKey = true)))
     ),
-    DiagramPaletteEntry("BPMN task", DiagramNodePayload.BpmnNode(BpmnNodeKind.TASK), width = 140.0, height = 70.0),
-    DiagramPaletteEntry("BPMN event", DiagramNodePayload.BpmnNode(BpmnNodeKind.EVENT), width = 60.0, height = 60.0),
-    DiagramPaletteEntry("BPMN gateway", DiagramNodePayload.BpmnNode(BpmnNodeKind.GATEWAY), width = 70.0, height = 70.0),
+    DiagramPaletteEntry("BPMN task", DiagramNodePayload.BpmnNode(BpmnNodeKind.TASK)),
+    DiagramPaletteEntry("BPMN event", DiagramNodePayload.BpmnNode(BpmnNodeKind.EVENT)),
+    DiagramPaletteEntry("BPMN gateway", DiagramNodePayload.BpmnNode(BpmnNodeKind.GATEWAY)),
 )
 
 /** The palette label a payload instance falls under (drives the inspector type dropdown). */
@@ -318,6 +338,7 @@ internal fun DiagramEditOverlay(
     viewport: CanvasViewport,
     zoomPx: Float,
     panActive: Boolean = false,
+    onCanvasFocus: () -> Unit = {},
 ) {
     val colors = LocalEditorColors.current
     val editId = state.workspace.diagramEditNodeId
@@ -344,6 +365,9 @@ internal fun DiagramEditOverlay(
     var snapGuides by remember(editId) { mutableStateOf<List<AnchorGuide>>(emptyList()) }
     var snapSpacing by remember(editId) { mutableStateOf<List<SpacingBar>>(emptyList()) }
     var textEdit by remember(editId) { mutableStateOf<DiagramTextEditTarget?>(null) }
+    // Commit hook published by the open inline editor so a press elsewhere commits the draft
+    // instead of discarding it (draw.io: invokesStopCellEditing = true — blur commits).
+    val inlineTextCommit = remember(editId) { mutableStateOf<(() -> Unit)?>(null) }
     var lastTapMark by remember(editId) { mutableStateOf<TimeSource.Monotonic.ValueTimeMark?>(null) }
     var lastTapKey by remember(editId) { mutableStateOf("") }
 
@@ -354,6 +378,24 @@ internal fun DiagramEditOverlay(
         if (textEditRequest != null) {
             textEdit = DiagramTextEditTarget.NodeLabel(textEditRequest)
             state.updateWorkspace { it.copy(diagramTextEditRequest = null) }
+        }
+    }
+
+    // Mirror the inline editor's presence into workspace state so the canvas preview key
+    // handler stands down (it sees Enter/Escape before the text field and would otherwise
+    // leave edit mode, dropping the draft). Cleared on dispose so the flag can't go stale
+    // when edit mode ends with the editor still open.
+    val inlineTextEditing = textEdit != null
+    LaunchedEffect(inlineTextEditing) {
+        if (state.workspace.diagramTextEditing != inlineTextEditing) {
+            state.updateWorkspace { it.copy(diagramTextEditing = inlineTextEditing) }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (state.workspace.diagramTextEditing) {
+                state.updateWorkspace { it.copy(diagramTextEditing = false) }
+            }
         }
     }
 
@@ -553,6 +595,11 @@ internal fun DiagramEditOverlay(
             .pointerInput(editId) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
+                    // The overlay consumes this press, so the canvas pane's own press handler —
+                    // the one that moves keyboard focus onto the canvas — never sees it. Without
+                    // this hand-off every Delete/Cmd+Z after a diagram click lands in whatever
+                    // text field held focus last (the inspector label, the source editor).
+                    if (!state.workspace.diagramTextEditing) onCanvasFocus()
                     // Pan gestures (space-drag / middle-button) belong to the canvas viewport, not
                     // the diagram. The canvas pane's pan handler never sees this press (the overlay
                     // covers it as a top sibling), so the overlay drives the same viewport pan here.
@@ -603,6 +650,7 @@ internal fun DiagramEditOverlay(
                     val insideBox = docX >= liveBox.x - margin && docX <= liveBox.right + margin &&
                         docY >= liveBox.y - margin && docY <= liveBox.bottom + margin
                     if (!insideBox) {
+                        inlineTextCommit.value?.invoke()
                         textEdit = null
                         val switch = if (additiveSelectionHeld) {
                             null
@@ -633,6 +681,7 @@ internal fun DiagramEditOverlay(
                         return@awaitEachGesture
                     }
                     down.consume() // diagram edit mode owns the press; never move the IR node
+                    inlineTextCommit.value?.invoke()
                     textEdit = null
 
                     // Add-node tool stamps a new element centered on the press point.
@@ -647,8 +696,8 @@ internal fun DiagramEditOverlay(
                                 nodeId = editId,
                                 elementId = elementId,
                                 payload = tool.payload,
-                                x = point.x - width / 2,
-                                y = point.y - height / 2,
+                                x = snapToDiagramGrid(point.x - width / 2),
+                                y = snapToDiagramGrid(point.y - height / 2),
                                 width = width,
                                 height = height,
                             ),
@@ -718,17 +767,28 @@ internal fun DiagramEditOverlay(
                     // Shared double-click detection (draw.io modal-free text): a node opens its label,
                     // an edge opens/creates a mid-line label, empty canvas creates a shape with a caret.
                     val tapNow = TimeSource.Monotonic.markNow()
-                    val tapKey = when (hit) {
-                        is DiagramHit.Node -> "node:${hit.nodeId.value}"
-                        is DiagramHit.Edge -> "edge:${hit.edgeId.value}"
-                        is DiagramHit.LabelHandle -> "label:${hit.edgeId.value}:${hit.position}"
-                        null -> "empty"
+                    // Selection-independent label probe. The first tap on a label selects its edge,
+                    // which exposes waypoint/endpoint handles that outrank labels in hitTest — so the
+                    // second tap would hit a handle, key as "other" and never open the editor (UML
+                    // multiplicity labels sit exactly on the endpoint rings). Probing with empty
+                    // selections keeps the tap key stable across the pair.
+                    val labelHit = hitTest(live, routedPoints, point, tolerance) as? DiagramHit.LabelHandle
+                    val tapKey = when {
+                        labelHit != null -> "label:${labelHit.edgeId.value}:${labelHit.position}"
+                        hit is DiagramHit.Node -> "node:${hit.nodeId.value}"
+                        hit is DiagramHit.Edge -> "edge:${hit.edgeId.value}"
+                        hit == null -> "empty"
                         else -> "other"
                     }
                     val doubleClick = tapKey != "other" && lastTapKey == tapKey &&
                         (lastTapMark?.let { (tapNow - it).inWholeMilliseconds < 320 } ?: false)
                     lastTapMark = tapNow
                     lastTapKey = tapKey
+
+                    if (doubleClick && labelHit != null && !additiveSelectionHeld) {
+                        textEdit = DiagramTextEditTarget.EdgeLabel(labelHit.edgeId.value, labelHit.position)
+                        return@awaitEachGesture
+                    }
 
                     when (hit) {
                         is DiagramHit.ResizeHandle -> {
@@ -778,10 +838,6 @@ internal fun DiagramEditOverlay(
                             // a plain click selects the owning edge.
                             val edge = live.edgeById(hit.edgeId) ?: return@awaitEachGesture
                             val label = edge.labels.firstOrNull { it.position == hit.position } ?: return@awaitEachGesture
-                            if (doubleClick && !additiveSelectionHeld) {
-                                textEdit = DiagramTextEditTarget.EdgeLabel(hit.edgeId.value, hit.position)
-                                return@awaitEachGesture
-                            }
                             val route = routedPoints[hit.edgeId] ?: return@awaitEachGesture
                             // Drag base deliberately uses the UNSHIFTED anchor (no crossing-slide
                             // context): the moment the drag mints a non-zero offset the label is
@@ -965,8 +1021,8 @@ internal fun DiagramEditOverlay(
                                         nodeId = editId,
                                         elementId = newId,
                                         payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RECTANGLE),
-                                        x = point.x - width / 2,
-                                        y = point.y - height / 2,
+                                        x = snapToDiagramGrid(point.x - width / 2),
+                                        y = snapToDiagramGrid(point.y - height / 2),
                                         width = width,
                                         height = height,
                                     ),
@@ -1090,6 +1146,7 @@ internal fun DiagramEditOverlay(
             box = box,
             viewport = viewport,
             zoomPx = zoomPx,
+            onRegisterCommit = { inlineTextCommit.value = it },
             onDone = { textEdit = null },
         )
     }
@@ -1273,8 +1330,36 @@ private fun DiagramEdgeToolbarDivider() {
     Box(Modifier.width(1.dp).height(20.dp).background(colors.controlStroke))
 }
 
-/** Small floating text field over the edited label; text is selected on open, Enter and Escape
- *  both commit (draw.io semantics — the caret is already live, just type). */
+/** Horizontal breathing room inside the edit plate, in raw px (the plate is sized in px too). */
+private const val PlateInsetPx = 4f
+
+/**
+ * The bounds a hug node should take after its caption becomes [text], or `null` when the node
+ * does not hug (draw.io keeps authored geometry authoritative) or nothing would change.
+ *
+ * The fit runs through the pure [fitNodeToText] op with the injected [measurer], so the reducer
+ * stays free of platform text metrics — the UI, which already has the real ones, measures and
+ * hands the reducer plain numbers via the existing resize intent.
+ */
+private fun hugFittedBounds(
+    graph: DiagramGraph,
+    elementId: String,
+    text: String?,
+    measurer: DiagramTextMeasurer,
+): DiagramRect? {
+    if (text.isNullOrBlank()) return null
+    val id = DiagramNodeId(elementId)
+    val node = graph.nodeById(id) ?: return null
+    if (node.sizing != DiagramNodeSizing.Hug) return null
+    val fitted = graph.setNodeText(id, text).fitNodeToText(id, measurer).nodeById(id) ?: return null
+    return fitted.bounds.takeIf { it != node.bounds }
+}
+
+/** Small floating text field over the edited label; text is selected on open, Enter, Escape and
+ *  blur all commit (draw.io semantics — the caret is already live, just type).
+ *
+ *  [onRegisterCommit] publishes the commit hook to the owner for the blur path; the callback
+ *  reads the draft at invocation time, so the owner always commits the current text. */
 @Composable
 private fun DiagramInlineTextEditor(
     state: MissionEditorStateHolder,
@@ -1285,6 +1370,7 @@ private fun DiagramInlineTextEditor(
     box: LayoutBox,
     viewport: CanvasViewport,
     zoomPx: Float,
+    onRegisterCommit: ((() -> Unit)?) -> Unit,
     onDone: () -> Unit,
 ) {
     val colors = LocalEditorColors.current
@@ -1292,16 +1378,45 @@ private fun DiagramInlineTextEditor(
         onDone()
         return
     }
+    // Real font metrics for the hug fit, built exactly like the artboard's (never inside the
+    // reducer: dependencies are injected, and the core must stay Compose-free).
+    val textMeasurer = rememberTextMeasurer()
+    val hugDensity = LocalDensity.current
+    val hugFontProvider = rememberBundledFontProvider()
+    val diagramMeasurer = remember(textMeasurer, hugDensity, hugFontProvider) {
+        ComposeDiagramTextMeasurer(ComposeTypographyMeasurer(textMeasurer, hugDensity, hugFontProvider))
+    }
     val initial = diagramTextEditInitialText(target, graph)
     // Open with the existing text fully selected so the first keystroke replaces it (F2 / rename).
     var draft by remember(target) { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
     val focusRequester = remember(target) { FocusRequester() }
 
-    fun commit() {
+    // Guards against committing the same draft twice: the editor can be closed explicitly AND
+    // then disposed, and both paths commit.
+    var committed by remember(target) { mutableStateOf(false) }
+
+    fun dispatchCommit() {
         val text = draft.text.takeIf { it.isNotBlank() }?.trim()
+        // Blur commits on every press outside the field, so skip untouched drafts: an unchanged
+        // commit would still rewrite the source and push an undo entry.
+        if (committed || text == initial.takeIf { it.isNotBlank() }?.trim()) return
+        committed = true
         when (target) {
-            is DiagramTextEditTarget.NodeLabel ->
+            is DiagramTextEditTarget.NodeLabel -> {
                 state.dispatch(DiagramEditorIntent.SetDiagramNodeLabel(editId, target.elementId, text))
+                hugFittedBounds(graph, target.elementId, text, diagramMeasurer)?.let { fitted ->
+                    state.dispatch(
+                        DiagramEditorIntent.ResizeDiagramNode(
+                            nodeId = editId,
+                            elementId = target.elementId,
+                            x = fitted.x,
+                            y = fitted.y,
+                            width = fitted.width,
+                            height = fitted.height,
+                        ),
+                    )
+                }
+            }
             is DiagramTextEditTarget.TableCell ->
                 state.dispatch(
                     DiagramEditorIntent.SetDiagramTableCellText(editId, target.elementId, target.row, target.column, text),
@@ -1309,45 +1424,130 @@ private fun DiagramInlineTextEditor(
             is DiagramTextEditTarget.EdgeLabel ->
                 state.dispatch(DiagramEditorIntent.SetDiagramEdgeLabel(editId, target.edgeId, target.position, text))
         }
+    }
+
+    fun commit() {
+        dispatchCommit()
         onDone()
     }
 
-    val topLeft = viewport.toScreen(box.x + anchorRect.x, box.y + anchorRect.y)
+    // Blur = commit (draw.io's invokesStopCellEditing). Two paths reach it:
+    //  - a press this overlay handles calls the published hook;
+    //  - anything that closes edit mode from OUTSIDE the overlay (a press the canvas pane
+    //    handles, Escape/Enter at canvas level, selecting another node) simply unmounts this
+    //    composable, so disposal is the only place left to save the draft. Without this the
+    //    draft vanished silently, which is precisely what blur=commit is supposed to prevent.
+    DisposableEffect(target) {
+        onRegisterCommit(::commit)
+        onDispose {
+            onRegisterCommit(null)
+            dispatchCommit()
+        }
+    }
+
+    // Overlay the edited label's exact box and typeset the draft like the canvas does
+    // (canonical diagram font in document px scaled by zoom, centered both ways), so
+    // entering edit mode doesn't visually jump the text.
+    val density = LocalDensity.current
+    val fontSizeDoc = when (target) {
+        // A note renders at the smaller detail size, like every member/attribute row.
+        is DiagramTextEditTarget.NodeLabel ->
+            if (graph.nodeById(DiagramNodeId(target.elementId))?.payload is UmlNoteNode) {
+                DIAGRAM_DETAIL_FONT_SIZE
+            } else {
+                DIAGRAM_LABEL_FONT_SIZE
+            }
+
+        else -> DIAGRAM_DETAIL_FONT_SIZE
+    }
+    val headerCell = (target as? DiagramTextEditTarget.TableCell)?.let { cell ->
+        val table = graph.nodeById(DiagramNodeId(cell.elementId))?.payload as? TableNode
+        table != null && (
+            table.rows.getOrNull(cell.row)?.header == true ||
+                table.columns.getOrNull(cell.column)?.header == true
+            )
+    } ?: false
+    // Match the canvas per payload, not just in font size: a note is left-aligned and top-anchored,
+    // a package caption is semibold. Commit 446750a matched only the size and the outer rect, which
+    // is why entering edit mode still nudged those captions.
+    val editedPayload = (target as? DiagramTextEditTarget.NodeLabel)
+        ?.let { graph.nodeById(DiagramNodeId(it.elementId))?.payload }
+    val plateWeight = when {
+        headerCell -> FontWeight.SemiBold
+        editedPayload is UmlPackageNode -> FontWeight.SemiBold
+        editedPayload is DiagramNodePayload.ContainerNode -> FontWeight.SemiBold
+        else -> FontWeight.Normal
+    }
+    val plateAlign = when (editedPayload) {
+        is UmlNoteNode, is DiagramNodePayload.ContainerNode -> TextAlign.Left
+        else -> TextAlign.Center
+    }
+    val plateVerticalAlignment = when (editedPayload) {
+        is UmlNoteNode -> Alignment.TopStart
+        else -> Alignment.Center
+    }
+    val fontSizePx = (fontSizeDoc * zoomPx).toFloat()
     val widthPx = (anchorRect.width * zoomPx).toFloat().coerceAtLeast(96f)
-    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val heightPx = (anchorRect.height * zoomPx).toFloat().coerceAtLeast(fontSizePx + 14f)
+    val center = viewport.toScreen(
+        box.x + anchorRect.x + anchorRect.width / 2.0,
+        box.y + anchorRect.y + anchorRect.height / 2.0,
+    )
     Surface(
         modifier = Modifier
-            .offset { IntOffset(topLeft.x.roundToInt(), topLeft.y.roundToInt()) }
-            .width((widthPx / density).dp),
-        shape = RoundedCornerShape(5.dp),
+            .offset { IntOffset((center.x - widthPx / 2f).roundToInt(), (center.y - heightPx / 2f).roundToInt()) }
+            .size(
+                width = with(density) { widthPx.toDp() },
+                height = with(density) { heightPx.toDp() },
+            ),
+        shape = RoundedCornerShape(3.dp),
         color = colors.raisedSurface,
         border = BorderStroke(1.dp, colors.accent),
         shadowElevation = 4.dp,
     ) {
-        BasicTextField(
-            value = draft,
-            onValueChange = { draft = it },
-            modifier = Modifier
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-                .focusRequester(focusRequester)
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (event.key) {
-                        Key.Enter, Key.NumPadEnter -> {
-                            commit()
-                            true
+        Box(
+            // Padding in raw px like the slot itself: mixing a dp padding with a px-derived
+            // width made the field wider than its plate wherever density > 1 (wasm is 2).
+            modifier = Modifier.fillMaxSize().padding(horizontal = with(density) { PlateInsetPx.toDp() }),
+            contentAlignment = plateVerticalAlignment,
+        ) {
+            BasicTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier
+                    .width(with(density) { (widthPx - 2f * PlateInsetPx).coerceAtLeast(8f).toDp() })
+                    .focusRequester(focusRequester)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            // Enter commits, Shift+Enter inserts a line break. draw.io inherits
+                            // the opposite from its HTML textarea (Enter = newline, Ctrl+Enter =
+                            // commit); the modern convention this editor follows elsewhere wins.
+                            Key.Enter, Key.NumPadEnter -> {
+                                if (event.isShiftPressed) {
+                                    false
+                                } else {
+                                    commit()
+                                    true
+                                }
+                            }
+                            Key.Escape -> {
+                                commit()
+                                true
+                            }
+                            else -> false
                         }
-                        Key.Escape -> {
-                            commit()
-                            true
-                        }
-                        else -> false
-                    }
-                },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.ink),
-            cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
-        )
+                    },
+                singleLine = false,
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    color = colors.ink,
+                    fontSize = with(density) { fontSizePx.toSp() },
+                    fontWeight = plateWeight,
+                    textAlign = plateAlign,
+                ),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
+            )
+        }
     }
     LaunchedEffect(target) { runCatching { focusRequester.requestFocus() } }
 }
@@ -1826,6 +2026,17 @@ private fun waypointInsertionIndex(
     return waypoints.count { nearestVertex(it) <= segmentIndex }
 }
 
+/** Logical placement grid for newly created diagram elements (draw.io's default step). */
+internal const val DIAGRAM_GRID_STEP = 10.0
+
+/**
+ * Snaps a creation coordinate to the placement grid: stamped and dropped shapes land on
+ * round positions instead of writing the pointer's fractional document coordinate into
+ * the source. Moves/resizes are not snapped here — the magnet owns those gestures.
+ */
+internal fun snapToDiagramGrid(value: Double): Double =
+    round(value / DIAGRAM_GRID_STEP) * DIAGRAM_GRID_STEP
+
 /** Fresh graph-unique id `prefix-N` across nodes, edges, layers and groups. */
 internal fun mintDiagramId(graph: DiagramGraph, prefix: String): String {
     val taken = buildSet {
@@ -1845,8 +2056,10 @@ private fun diagramTextEditRect(
     graph: DiagramGraph,
     routes: Map<DiagramEdgeId, List<DiagramPoint>>,
 ): DiagramRect? = when (target) {
+    // The same box the renderer draws the caption in, so entering edit mode does not move the
+    // text and the plate cannot swallow the shape around it.
     is DiagramTextEditTarget.NodeLabel ->
-        graph.nodeById(DiagramNodeId(target.elementId))?.bounds
+        graph.nodeById(DiagramNodeId(target.elementId))?.let { it.labelBox(it.labelPadding()) }
 
     is DiagramTextEditTarget.TableCell -> {
         val node = graph.nodeById(DiagramNodeId(target.elementId))
@@ -1875,7 +2088,7 @@ private fun diagramTextEditRect(
         } else {
             val label = edge.labels.firstOrNull { it.position == target.position }
             val anchor = if (label != null) {
-                edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id))
+                edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id, routes))
             } else {
                 route[route.size / 2]
             }
@@ -1887,7 +2100,7 @@ private fun diagramTextEditRect(
 /** Current text of the edited label / cell, as the inline editor's initial draft. */
 private fun diagramTextEditInitialText(target: DiagramTextEditTarget, graph: DiagramGraph): String = when (target) {
     is DiagramTextEditTarget.NodeLabel ->
-        graph.nodeById(DiagramNodeId(target.elementId))?.labels?.firstOrNull()?.text.orEmpty()
+        graph.nodeById(DiagramNodeId(target.elementId))?.primaryText().orEmpty()
 
     is DiagramTextEditTarget.TableCell -> {
         val table = graph.nodeById(DiagramNodeId(target.elementId))?.payload as? TableNode

@@ -23,6 +23,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramLayerId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
@@ -58,6 +59,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlStateKind
 import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlVisibility
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 
 /**
@@ -358,6 +360,7 @@ internal object DiagramCnlReader {
         var layerId: String? = null
         var locked = false
         var visible = true
+        var sizing = DiagramNodeSizing.Fixed
 
         fun fail(message: String): DiagramCnlSentence? {
             diagnostics.error(message, line, blockPath = BLOCK_PATH)
@@ -446,6 +449,11 @@ internal object DiagramCnlReader {
                     visible = value
                     idx = next
                 }
+                // Node-level, not payload-level: any shape with a caption may hug it.
+                word == "hug" -> {
+                    sizing = DiagramNodeSizing.Hug
+                    idx++
+                }
                 word in payloadItemKeywords -> {
                     val next = payload.acceptItem(word, parts, idx, id, line, diagnostics) ?: return null
                     idx = next
@@ -473,7 +481,26 @@ internal object DiagramCnlReader {
             layerId = layerId?.let(::DiagramLayerId),
             locked = locked,
             visible = visible,
+            sizing = sizing,
         )
+        // A typed payload renders the caption it carries itself (the `«…»` head phrase), so a
+        // `label` on it is dead text that nothing will ever draw.
+        //
+        // Deliberately a WARNING, not an error. Documents in the wild already contain these
+        // orphans — the inline editor used to write them itself, which is the bug this whole
+        // change removes — and the project's loader compile-gates on Error severity
+        // (`MissionDocuments.hasErrors`), so erroring here would stop a real folder from opening
+        // at all instead of pointing at one bad word. The node and its label are kept: the text
+        // may well be what the author meant to see, and dropping it would destroy that.
+        val firstLabel = labels.firstOrNull()?.text
+        if (firstLabel != null && node.primaryText() != firstLabel) {
+            diagnostics.warning(
+                "diagram node '$id' does not render `label «…»` — its caption belongs in the " +
+                    "`«…»` head phrase of the node sentence",
+                line,
+                blockPath = BLOCK_PATH,
+            )
+        }
         return DiagramCnlSentence.NodeSentence(node, line)
     }
 
@@ -1095,7 +1122,7 @@ internal object DiagramCnlReader {
         var style: DiagramStyle = DiagramStyle.Default
         var sourceArrowhead: DiagramArrowhead = DiagramArrowhead.None
         var targetArrowhead: DiagramArrowhead = DiagramArrowhead.None
-        var lineJumps = LineJumpStyle.ARC
+        var lineJumps = LineJumpStyle.NONE
         var mode = DiagramConnectionMode.LINE
         var animated = false
         var layerId: String? = null

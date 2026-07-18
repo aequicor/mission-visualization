@@ -147,7 +147,7 @@ internal fun ResourceDropOverlay(dragActive: Boolean, error: IngestionError?) {
                         drawRoundRect(
                             color = colors.accent,
                             topLeft = Offset(inset, inset),
-                            size = Size(size.width - inset * 2, size.height - inset * 2),
+                            size = Size((size.width - inset * 2).coerceAtLeast(0f), (size.height - inset * 2).coerceAtLeast(0f)),
                             cornerRadius = CornerRadius(14.dp.toPx()),
                             style = Stroke(width = 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))),
                         )

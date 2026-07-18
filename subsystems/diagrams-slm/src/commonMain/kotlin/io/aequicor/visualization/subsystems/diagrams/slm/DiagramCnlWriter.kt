@@ -14,6 +14,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLayer
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramOrientation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
@@ -98,6 +99,7 @@ public object DiagramCnlWriter {
         add(idToken(node.id.value))
         addAll(payloadHead(node.payload))
         add("${num(node.width)} by ${num(node.height)}")
+        if (node.sizing == DiagramNodeSizing.Hug) add("hug")
         add("position ${num(node.x)} ${num(node.y)}")
         if (node.rotation != 0.0) add("rotate ${num(node.rotation)}")
         addAll(payloadItems(node.payload))
@@ -253,7 +255,7 @@ public object DiagramCnlWriter {
         styleGroup(edge.style)?.let { add("style $it") }
         arrowheadPhrase(edge.sourceArrowhead)?.let { add("arrow source $it") }
         arrowheadPhrase(edge.targetArrowhead)?.let { add("arrow target $it") }
-        if (edge.lineJumps != LineJumpStyle.ARC) add("jumps ${edge.lineJumps.cnlToken()}")
+        if (edge.lineJumps != LineJumpStyle.NONE) add("jumps ${edge.lineJumps.cnlToken()}")
         if (edge.connectionMode != DiagramConnectionMode.LINE) add("mode ${edge.connectionMode.cnlToken()}")
         if (edge.flowAnimation) add("animated yes")
         edge.layerId?.let { add("layer ${idToken(it.value)}") }

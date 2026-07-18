@@ -93,6 +93,40 @@ class DiagramHitTestTest {
     }
 
     @Test
+    fun aConnectionCrossBeatsTheContainerBodyBehindIt() {
+        // Inside a background frame the "empty space" around a shape belongs to the
+        // container's body — the shape's virtual crosses must still start an edge there.
+        val graph = diagramGraph {
+            node("container", x = 0.0, y = 0.0, width = 600.0, height = 400.0)
+            node("a", x = 200.0, y = 150.0, width = 100.0, height = 60.0)
+        }
+        // Just outside a's right edge, within tolerance of its right-mid cross (300, 180).
+        val hit = hitTest(graph, emptyMap(), DiagramPoint(304.0, 180.0))
+        assertEquals(DiagramHit.Port(DiagramNodeId("a"), DiagramPortId("right")), hit)
+        // Deep inside the container, far from any cross: the container body still wins.
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("container")),
+            hitTest(graph, emptyMap(), DiagramPoint(500.0, 60.0)),
+        )
+        // Inside a's own interior the body wins — its own crosses never steal the drag.
+        assertIs<DiagramHit.Node>(hitTest(graph, emptyMap(), DiagramPoint(296.0, 180.0)))
+    }
+
+    @Test
+    fun aCrossUnderACoveringBodyStaysUnreachable() {
+        // b overlaps a's right edge: a's right-mid cross (100, 30) lies under b's body,
+        // so a press there must keep hitting b — occlusion is preserved.
+        val graph = diagramGraph {
+            node("a", x = 0.0, y = 0.0, width = 100.0, height = 60.0)
+            node("b", x = 90.0, y = 0.0, width = 100.0, height = 60.0)
+        }
+        assertEquals(
+            DiagramHit.Node(DiagramNodeId("b")),
+            hitTest(graph, emptyMap(), DiagramPoint(101.0, 30.0)),
+        )
+    }
+
+    @Test
     fun shapedNodeDoesNotHitThroughItsBoundingBoxCorner() {
         val graph = diagramGraph {
             node(

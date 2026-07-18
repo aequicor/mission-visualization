@@ -217,6 +217,8 @@ interface InspectorStrings {
     val diagramNotOnPage: String
     val freeEndpoint: String
     val label: String
+    val sizing: String
+    val fitToText: String
     val style: String
     val fill: String
     val width: String
@@ -452,6 +454,8 @@ object InspectorStringsEn : InspectorStrings {
     override val diagramNotOnPage = "The diagram is not on the current page."
     override val freeEndpoint = "(free)"
     override val label = "Label"
+    override val sizing = "Sizing"
+    override val fitToText = "Fit to text"
     override val style = "Style"
     override val fill = "Fill"
     override val width = "Width"
@@ -865,6 +869,8 @@ object InspectorStringsRu : InspectorStrings {
     override val diagramNotOnPage = "Диаграмма не на текущей странице."
     override val freeEndpoint = "(свободный)"
     override val label = "Подпись"
+    override val sizing = "Размер"
+    override val fitToText = "Подогнать под текст"
     override val style = "Стиль"
     override val fill = "Заливка"
     override val width = "Ширина"

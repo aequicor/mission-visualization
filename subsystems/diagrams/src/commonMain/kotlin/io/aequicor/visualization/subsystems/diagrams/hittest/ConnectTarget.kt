@@ -13,6 +13,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
+import io.aequicor.visualization.subsystems.diagrams.model.TableNode
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.rayIntersections
 import kotlin.math.hypot
@@ -107,6 +108,9 @@ fun DiagramGraph.resolveConnectTarget(
         node.generatedPerimeterPort(pointer, portSnapRadius)?.let { (port, position) ->
             return ConnectTarget.Port(node.id, port, position)
         }
+        node.tableRowPort(pointer, from)?.let { (port, position) ->
+            return ConnectTarget.Port(node.id, port, position)
+        }
         return ConnectTarget.Floating(node.id, perimeterIntersection(node, from))
     }
 
@@ -129,6 +133,36 @@ private fun DiagramNode.nearestConnectionPort(
     .map { port -> port to anchorPoint(this, port) }
     .minByOrNull { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) }
     ?.takeIf { (_, position) -> hypot(position.x - pointer.x, position.y - pointer.y) <= portSnapRadius }
+
+/**
+ * Row-fixed attachment for a drop deep inside a table body (draw.io semantics): the edge
+ * pins to the ROW under the pointer, not the whole table — a port at the row's vertical
+ * center on the side the drag came from. Header rows (the entity title) keep the
+ * whole-table floating attachment, as does anything that is not a table. A second edge
+ * dropped on the same row and side reuses the same port id, so the pair fans out like any
+ * authored identifier-row pair. The binding is positional (side + row-center fraction):
+ * later row edits move the row, not the port.
+ */
+private fun DiagramNode.tableRowPort(
+    pointer: DiagramPoint,
+    from: DiagramPoint,
+): Pair<DiagramPort, DiagramPoint>? {
+    val table = payload as? TableNode ?: return null
+    if (width <= CONNECT_EPSILON || height <= CONNECT_EPSILON) return null
+    val heights = table.rows.map { it.height }
+    val rowIndex = trackIndex(heights, height, pointer.y - y) ?: return null
+    if (table.rows[rowIndex].header) return null
+    val scaled = scaledTrackSizes(heights, height)
+    val rowTop = scaled.take(rowIndex).sum()
+    val rawOffset = ((rowTop + scaled[rowIndex] / 2.0) / height).coerceIn(0.0, 1.0)
+    val offsetStep = round(rawOffset * GENERATED_PORT_STEPS).toInt()
+    val side = if (from.x < bounds.centerX) DiagramNodeSide.LEFT else DiagramNodeSide.RIGHT
+    val port = DiagramPort(
+        id = DiagramPortId("mv-row-$rowIndex-${side.name.lowercase()}"),
+        anchor = DiagramPortAnchor.SideOffset(side, offsetStep / GENERATED_PORT_STEPS),
+    )
+    return port to anchorPoint(this, port)
+}
 
 /**
  * Creates a deterministic virtual port at the pointer's exact place on the rendered contour.

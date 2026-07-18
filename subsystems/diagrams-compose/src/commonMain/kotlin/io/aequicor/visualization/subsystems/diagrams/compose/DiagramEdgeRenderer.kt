@@ -9,14 +9,12 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import io.aequicor.visualization.subsystems.diagrams.arrows.ArrowheadGeometry
 import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadPath
-import io.aequicor.visualization.subsystems.diagrams.arrows.arrowheadsForRelation
+import io.aequicor.visualization.subsystems.diagrams.arrows.fittedTo
+import io.aequicor.visualization.subsystems.diagrams.arrows.resolvedArrowheads
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowheadKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramConnectionMode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
-import io.aequicor.visualization.subsystems.diagrams.model.DiagramStrokePattern
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPathSegment
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
@@ -39,8 +37,9 @@ private const val SEQUENCE_MESSAGE_LABEL_LIFT = 9.0
  *
  * @param flowPhase animated 0..1 fraction driving [DiagramEdge.flowAnimation]; `null`
  *   disables the animation (static rendering).
- * @param jumpOverRoutes routes drawn *below* this edge; [DiagramEdge.lineJumps] jumps
- *   are emitted where this edge crosses them (only the upper line jumps, draw.io-style).
+ * @param jumpOverRoutes all other edges' routes; [DiagramEdge.lineJumps] jumps are
+ *   emitted where this edge crosses them (the horizontal side of a crossing hops over
+ *   the vertical one, Lucid-style — independent of z-order and travel direction).
  * @param labelObstacleRoutes all *other* edges' routes — undragged MIDDLE labels slide
  *   off crossings with them (must match the hit-test context, see [edgeLabelAnchorPoint]).
  */
@@ -60,13 +59,16 @@ internal fun DrawScope.drawDiagramEdge(
     val seed = sketchSeed(edge.id.value)
 
     // Notation fallbacks: explicit NONE heads + non-Plain relation use the UML/ER notation.
-    val notation = arrowheadsForRelation(edge.relation)
-    val sourceHead = edge.sourceArrowhead.orNotation(notation.source)
-    val targetHead = edge.targetArrowhead.orNotation(notation.target)
-    val pattern = if (style.pattern == DiagramStrokePattern.SOLID) notation.pattern else style.pattern
+    val notation = resolvedArrowheads(edge)
+    val pattern = notation.pattern
 
     // Arrowhead geometry at the untouched route endpoints; the line is then cut back.
+    // Each marker is fitted to the straight run its end actually got: the router reserves
+    // one long enough (RoutingOptions.endpointClearance), but where the layout is too tight
+    // to honor that, a marker scaled to fit reads better than one crossing the first bend.
     val points = routed.points
+    val sourceHead = notation.source.fittedTo(endpointRun(points, source = true))
+    val targetHead = notation.target.fittedTo(endpointRun(points, source = false))
     val sourceGeometry = arrowheadPath(sourceHead, tip = points.first(), direction = directionInto(points, source = true))
     val targetGeometry = arrowheadPath(targetHead, tip = points.last(), direction = directionInto(points, source = false))
     val shortened = routed.copy(
@@ -133,10 +135,6 @@ internal fun DrawScope.drawDiagramEdge(
     }
 }
 
-/** Explicit head, or the relation-notation head when the edge does not override. */
-private fun DiagramArrowhead.orNotation(notation: DiagramArrowhead): DiagramArrowhead =
-    if (kind == DiagramArrowheadKind.NONE && notation.kind != DiagramArrowheadKind.NONE) notation else this
-
 /** Marker: fill for *_FILLED kinds, surface-plated outline for hollow closed kinds, plain stroke otherwise. */
 internal fun DrawScope.drawArrowheadGeometry(
     geometry: ArrowheadGeometry,
@@ -174,9 +172,17 @@ internal fun directionInto(points: List<DiagramPoint>, source: Boolean): Diagram
     return DiagramPoint(1.0, 0.0)
 }
 
+/** Length of the end segment an endpoint marker sits on (the router's stub, where there is one). */
+internal fun endpointRun(points: List<DiagramPoint>, source: Boolean): Double {
+    if (points.size < 2) return 0.0
+    val a = if (source) points[0] else points[points.size - 1]
+    val b = if (source) points[1] else points[points.size - 2]
+    return sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y))
+}
+
 /**
- * Cuts the polyline back from both ends by the arrowheads' line-shorten amounts,
- * consuming whole segments when the cut is longer than the end segment.
+ * Cuts the polyline back from both ends by the arrowheads' line-shorten amounts, never
+ * past the first bend.
  */
 internal fun shortenPolyline(
     points: List<DiagramPoint>,
@@ -191,26 +197,21 @@ internal fun shortenPolyline(
 }
 
 private fun cutFront(points: List<DiagramPoint>, amount: Double): List<DiagramPoint> {
-    var remaining = amount
-    var index = 0
-    while (index < points.size - 1) {
-        val a = points[index]
-        val b = points[index + 1]
-        val dx = b.x - a.x
-        val dy = b.y - a.y
-        val length = sqrt(dx * dx + dy * dy)
-        if (length > remaining) {
-            val t = remaining / length
-            val start = DiagramPoint(a.x + dx * t, a.y + dy * t)
-            return listOf(start) + points.subList(index + 1, points.size)
-        }
-        // Keep at least one full segment so the route never collapses to a point.
-        if (index + 2 >= points.size) {
-            val t = ((length - 0.5) / length).coerceIn(0.0, 1.0)
-            return listOf(DiagramPoint(a.x + dx * t, a.y + dy * t), b)
-        }
-        remaining -= length
-        index++
-    }
-    return points
+    val a = points[0]
+    val b = points[1]
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    val length = sqrt(dx * dx + dy * dy)
+    // Never eat past the first bend. The marker is drawn along this segment's axis, so a cut
+    // that consumed the segment would leave the line arriving on the other axis, detached
+    // from the marker and merged into its side — and would collapse the route to a point on
+    // a two-point edge. Markers are fitted to this run, so the clamp only bites on
+    // degenerate routes.
+    val cut = amount.coerceAtMost(length - MIN_VISIBLE_RUN)
+    if (cut <= 0.0) return points
+    val t = cut / length
+    return listOf(DiagramPoint(a.x + dx * t, a.y + dy * t)) + points.subList(1, points.size)
 }
+
+/** Shortest end segment [cutFront] leaves behind, so the line keeps a direction to read. */
+private const val MIN_VISIBLE_RUN = 0.5

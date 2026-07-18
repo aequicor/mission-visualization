@@ -41,6 +41,7 @@ import io.aequicor.visualization.subsystems.diagrams.ops.addWaypoint
 import io.aequicor.visualization.subsystems.diagrams.ops.bringForward
 import io.aequicor.visualization.subsystems.diagrams.ops.bringToFront
 import io.aequicor.visualization.subsystems.diagrams.ops.cloneNodeAndConnect
+import io.aequicor.visualization.subsystems.diagrams.ops.pasteElements
 import io.aequicor.visualization.subsystems.diagrams.ops.dropIntoContainer
 import io.aequicor.visualization.subsystems.diagrams.ops.groupNodes
 import io.aequicor.visualization.subsystems.diagrams.ops.mergeTableCells
@@ -49,6 +50,7 @@ import io.aequicor.visualization.subsystems.diagrams.ops.moveEdgeToLayer
 import io.aequicor.visualization.subsystems.diagrams.ops.moveNode
 import io.aequicor.visualization.subsystems.diagrams.ops.moveNodeToLayer
 import io.aequicor.visualization.subsystems.diagrams.ops.moveWaypoint
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
 import io.aequicor.visualization.subsystems.diagrams.ops.pullOutOfContainer
 import io.aequicor.visualization.subsystems.diagrams.ops.reconnectEdge
 import io.aequicor.visualization.subsystems.diagrams.ops.removeClassMember
@@ -68,8 +70,8 @@ import io.aequicor.visualization.subsystems.diagrams.ops.setEdgeRouting
 import io.aequicor.visualization.subsystems.diagrams.ops.setEdgeStyle
 import io.aequicor.visualization.subsystems.diagrams.ops.setLayerLocked
 import io.aequicor.visualization.subsystems.diagrams.ops.setLayerVisible
-import io.aequicor.visualization.subsystems.diagrams.ops.setNodeLabel
 import io.aequicor.visualization.subsystems.diagrams.ops.setNodeStyle
+import io.aequicor.visualization.subsystems.diagrams.ops.setNodeText
 import io.aequicor.visualization.subsystems.diagrams.ops.setTableCellText
 import io.aequicor.visualization.subsystems.diagrams.ops.splitTableCell
 import io.aequicor.visualization.subsystems.diagrams.ops.ungroupNodes
@@ -122,19 +124,37 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
         )
     }
     is DiagramEditorIntent.SetDiagramNodeLabel -> diagramWriteBack(intent.nodeId) {
-        it.setNodeLabel(DiagramNodeId(intent.elementId), intent.text)
+        it.setNodeText(DiagramNodeId(intent.elementId), intent.text)
+    }
+    is DiagramEditorIntent.SetDiagramNodeSizing -> diagramWriteBack(intent.nodeId) { graph ->
+        graph.updateNode(DiagramNodeId(intent.elementId)) { it.copy(sizing = intent.sizing) }
     }
     is DiagramEditorIntent.SetDiagramNodeStyle -> diagramWriteBack(intent.nodeId) {
         it.setNodeStyle(DiagramNodeId(intent.elementId), intent.style)
     }
-    is DiagramEditorIntent.SetDiagramNodePayload -> diagramWriteBack(intent.nodeId) {
-        it.updateNode(DiagramNodeId(intent.elementId)) { element -> element.copy(payload = intent.payload) }
+    is DiagramEditorIntent.SetDiagramNodePayload -> diagramWriteBack(intent.nodeId) { graph ->
+        // The new payload arrives as a palette template carrying a placeholder caption ("Use case"),
+        // so carry the authored text across the type switch instead of stamping over it.
+        val id = DiagramNodeId(intent.elementId)
+        val authored = graph.nodeById(id)?.primaryText()
+        val retyped = graph.updateNode(id) { element -> element.copy(payload = intent.payload) }
+        if (authored.isNullOrBlank()) retyped else retyped.setNodeText(id, authored)
     }
     is DiagramEditorIntent.AddDiagramPort -> diagramWriteBack(intent.nodeId) {
         it.addCustomPort(DiagramNodeId(intent.elementId), intent.port)
     }
     is DiagramEditorIntent.RemoveDiagramPort -> diagramWriteBack(intent.nodeId) {
         it.removePort(DiagramNodeId(intent.elementId), DiagramPortId(intent.portId))
+    }
+    is DiagramEditorIntent.PasteDiagramElements -> diagramWriteBack(intent.nodeId) {
+        it.pasteElements(
+            nodes = intent.nodes,
+            edges = intent.edges,
+            nodeIds = intent.nodeIds.entries.associate { (old, new) -> DiagramNodeId(old) to DiagramNodeId(new) },
+            edgeIds = intent.edgeIds.entries.associate { (old, new) -> DiagramEdgeId(old) to DiagramEdgeId(new) },
+            offsetX = intent.offsetX,
+            offsetY = intent.offsetY,
+        )
     }
     is DiagramEditorIntent.CloneDiagramNodeAndConnect -> diagramWriteBack(intent.nodeId) {
         it.cloneNodeAndConnect(

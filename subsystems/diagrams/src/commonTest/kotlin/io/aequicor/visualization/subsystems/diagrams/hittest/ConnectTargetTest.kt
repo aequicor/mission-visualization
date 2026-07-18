@@ -6,6 +6,9 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
+import io.aequicor.visualization.subsystems.diagrams.model.TableColumn
+import io.aequicor.visualization.subsystems.diagrams.model.TableNode
+import io.aequicor.visualization.subsystems.diagrams.model.TableRow
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import kotlin.test.Test
@@ -102,6 +105,80 @@ class ConnectTargetTest {
         assertEquals(a, target.nodeId)
         assertEquals("top-left", target.port.id.value)
         assertEquals(DiagramPoint(0.0, 0.0), target.snapPoint)
+    }
+
+    @Test
+    fun aDropDeepInsideATableBodyRowPinsToTheRow() {
+        val graph = diagramGraph {
+            node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 300.0,
+                height = 200.0,
+                payload = TableNode(
+                    rows = listOf(
+                        TableRow(40.0, header = true),
+                        TableRow(40.0),
+                        TableRow(40.0),
+                        TableRow(40.0),
+                        TableRow(40.0),
+                    ),
+                    columns = listOf(TableColumn(300.0)),
+                ),
+            )
+        }
+        // Deep inside the second body row (y in 80..120), dragged from the left.
+        val fromLeft = graph.resolveConnectTarget(
+            from = DiagramPoint(-100.0, 100.0),
+            pointer = DiagramPoint(150.0, 100.0),
+        )
+        assertTrue(fromLeft is ConnectTarget.Port, "row drop must pin, got $fromLeft")
+        fromLeft as ConnectTarget.Port
+        assertEquals("mv-row-2-left", fromLeft.port.id.value)
+        assertEquals(
+            DiagramPortAnchor.SideOffset(DiagramNodeSide.LEFT, 0.5),
+            fromLeft.port.anchor,
+        )
+        assertEquals(DiagramPoint(0.0, 100.0), fromLeft.snapPoint)
+
+        // The same drop dragged from the right pins to the row's right side.
+        val fromRight = graph.resolveConnectTarget(
+            from = DiagramPoint(400.0, 100.0),
+            pointer = DiagramPoint(150.0, 100.0),
+        )
+        assertTrue(fromRight is ConnectTarget.Port)
+        fromRight as ConnectTarget.Port
+        assertEquals("mv-row-2-right", fromRight.port.id.value)
+        assertEquals(DiagramPoint(300.0, 100.0), fromRight.snapPoint)
+    }
+
+    @Test
+    fun aDropOnTheTableHeaderStaysFloating() {
+        val graph = diagramGraph {
+            node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 300.0,
+                height = 200.0,
+                payload = TableNode(
+                    rows = listOf(
+                        TableRow(40.0, header = true),
+                        TableRow(40.0),
+                        TableRow(40.0),
+                        TableRow(40.0),
+                        TableRow(40.0),
+                    ),
+                    columns = listOf(TableColumn(300.0)),
+                ),
+            )
+        }
+        val target = graph.resolveConnectTarget(
+            from = DiagramPoint(-100.0, 20.0),
+            pointer = DiagramPoint(150.0, 20.0),
+        )
+        assertTrue(target is ConnectTarget.Floating, "header drop must stay floating, got $target")
     }
 
     @Test

@@ -8,6 +8,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelBox
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
 import io.aequicor.visualization.subsystems.diagrams.model.BpmnNodeKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
@@ -98,12 +100,12 @@ private fun DrawScope.drawDiagramNodeContent(
                     strokeDiagramPath(rim, style, ink, seed)
                 }
             }
-            drawFirstLabel(node, bounds.inset(4.0), labelInk, measurer)
+            drawFirstLabel(node, node.labelBox(node.labelPadding()), labelInk, measurer)
         }
 
         is DiagramNodePayload.FlowchartNode -> {
             drawStyledPath(node.outlinePath(), style, colors, seed)
-            drawFirstLabel(node, bounds.inset(6.0), labelInk, measurer)
+            drawFirstLabel(node, node.labelBox(node.labelPadding()), labelInk, measurer)
         }
 
         is DiagramNodePayload.BpmnNode -> {
@@ -169,7 +171,7 @@ private fun DrawScope.drawDiagramNodeContent(
 
         is UmlUseCaseNode -> {
             drawStyledPath(node.outlinePath(), style, colors, seed)
-            drawDiagramLabel(measurer, DiagramLabel(payload.name), bounds.inset(8.0), labelInk)
+            drawDiagramLabel(measurer, DiagramLabel(payload.name), node.labelBox(node.labelPadding()), labelInk)
         }
 
         is UmlComponentNode -> drawUmlComponent(node, payload, colors, measurer, seed)

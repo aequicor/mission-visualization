@@ -10,9 +10,27 @@ import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
+import io.aequicor.visualization.subsystems.diagrams.routing.endpointMarkerZones
 import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
 import kotlin.math.abs
 import kotlin.math.hypot
+import io.aequicor.visualization.subsystems.diagrams.geometry.boundsForLabel
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelBox
+import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
+import io.aequicor.visualization.subsystems.diagrams.geometry.perimeterKind
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramShapeKind
+import io.aequicor.visualization.subsystems.diagrams.model.TableNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActorNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlLifelineNode
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
+import io.aequicor.visualization.subsystems.diagrams.text.ApproximateDiagramTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.text.DIAGRAM_LABEL_TEXT_SIZE
+import io.aequicor.visualization.subsystems.diagrams.text.DiagramTextMeasurer
+import io.aequicor.visualization.subsystems.diagrams.text.DiagramTextStyle
+import io.aequicor.visualization.subsystems.diagrams.ops.DiagramNodeDefaults
 
 /**
  * Vision-test: formalized "good taste" rules for rendered diagrams. [lintDiagram] takes
@@ -29,6 +47,15 @@ data class DiagramLintOptions(
     val anchorBunchRadius: Double = 20.0,
     /** Endpoints per funnel spot from which a bunch is reported. */
     val anchorBunchLimit: Int = 3,
+    /**
+     * Average anchor-to-anchor spacing below which a chained cluster reads as ONE spot.
+     * Radius-chaining alone would flag a proper port fan too: the router fans same-port
+     * edges [RoutingOptions.portFanSeparation] (12) apart, each link chains under the
+     * 20-unit radius, yet a 60-unit-wide fan of six is exactly the readable spread the
+     * fan exists to produce. A cluster is a funnel only when its overall span is tighter
+     * than (N-1) times this spacing.
+     */
+    val anchorBunchMinSpread: Double = 10.0,
     /** Max distance between near-parallel segments that still counts as overlap. */
     val overlapDistance: Double = 2.0,
     /** Shared span (document units) from which co-running segments count as overlap. */
@@ -41,6 +68,14 @@ data class DiagramLintOptions(
     val labelCharWidth: Double = 7.0,
     /** Approximate label box height. */
     val labelHeight: Double = 16.0,
+    /**
+     * Area ratio, against the larger of the hugged size and the kind's default stamp, from
+     * which a shape counts as oversized. The reported 930x260 ellipse is ~12x by this measure;
+     * 4.0 leaves generous room for deliberately roomy shapes so the rule stays signal.
+     */
+    val oversizeAreaRatio: Double = 4.0,
+    /** Measures captions for the fit rule; the default keeps this module pure. */
+    val textMeasurer: DiagramTextMeasurer = ApproximateDiagramTextMeasurer(),
 ) {
     companion object {
         val Default: DiagramLintOptions = DiagramLintOptions()
@@ -90,6 +125,36 @@ sealed interface DiagramLintFinding {
             get() = "edges '${first.value}' and '${second.value}' overlap for ${length.toInt()} units"
     }
 
+    /**
+     * A route doubles back 180° over its own lane — a dead-end whisker with zero visual
+     * information, typically left by a stale authored via after its node moved. The
+     * router's spur collapse should make this unreachable; the rule is the tripwire.
+     */
+    data class EdgeSpur(
+        val edgeId: DiagramEdgeId,
+        val at: DiagramPoint,
+    ) : DiagramLintFinding {
+        override val message: String
+            get() = "edge '${edgeId.value}' doubles back on itself " +
+                "near (${at.x.toInt()}, ${at.y.toInt()})"
+    }
+
+    /**
+     * A foreign edge's line slices through the rendered endpoint marker of another edge
+     * — a crow's foot, cardinality circle, or arrowhead with a stranger's lane across it
+     * stops reading as a glyph. The crossing-aware router prices marker boxes above
+     * plain crossings; this rule is the tripwire for the cuts that still slip through.
+     */
+    data class MarkerCovered(
+        val edgeId: DiagramEdgeId,
+        val markerEdgeId: DiagramEdgeId,
+        val at: DiagramPoint,
+    ) : DiagramLintFinding {
+        override val message: String
+            get() = "edge '${edgeId.value}' cuts the endpoint marker of '${markerEdgeId.value}' " +
+                "near (${at.x.toInt()}, ${at.y.toInt()})"
+    }
+
     /** Many crossings piled into one small area. */
     data class CrossingHotspot(
         val at: DiagramPoint,
@@ -108,6 +173,36 @@ sealed interface DiagramLintFinding {
         override val message: String
             get() = "label of edge '${edgeId.value}' covers node '${nodeId.value}'"
     }
+
+    /** An edge label sits on top of another edge's endpoint marker glyph. */
+    data class LabelOverMarker(
+        val edgeId: DiagramEdgeId,
+        val markerEdgeId: DiagramEdgeId,
+        val at: DiagramPoint,
+    ) : DiagramLintFinding {
+        override val message: String
+            get() = "label of edge '${edgeId.value}' covers the endpoint marker of " +
+                "'${markerEdgeId.value}' near (${at.x.toInt()}, ${at.y.toInt()})"
+    }
+
+    /**
+     * A node's caption and its box disagree: the text does not fit, or the shape is far larger
+     * than the caption needs. This is the rule that would have caught the 930x260 ellipse drawn
+     * around a 295px label — no previous rule compared a node's label to the node's own box.
+     */
+    data class NodeLabelFit(
+        val node: DiagramNodeId,
+        val kind: Kind,
+        val detail: String,
+    ) : DiagramLintFinding {
+        enum class Kind { OVERFLOW, OVERSIZED }
+
+        override val message: String
+            get() = when (kind) {
+                Kind.OVERFLOW -> "label of '${node.value}' does not fit its shape ($detail)"
+                Kind.OVERSIZED -> "'${node.value}' is much larger than its label needs ($detail)"
+            }
+    }
 }
 
 /** Runs every vision-test rule; [routes] defaults to routing the graph leniently. */
@@ -122,8 +217,12 @@ fun lintDiagram(
         addAll(edgeThroughNodeFindings(graph, ordered))
         addAll(anchorBunchFindings(graph, ordered, options))
         addAll(edgeOverlapFindings(ordered, options))
+        addAll(edgeSpurFindings(graph, ordered))
+        addAll(markerCoveredFindings(graph, ordered))
         addAll(crossingHotspotFindings(ordered, options))
         addAll(labelOverNodeFindings(graph, routes, options))
+        addAll(labelOverMarkerFindings(graph, routes, options))
+        addAll(nodeLabelFitFindings(graph, options))
     }
 }
 
@@ -269,6 +368,10 @@ private fun anchorBunchFindings(
             for ((_, members) in clusters.entries.sortedBy { it.key }) {
                 if (members.size < options.anchorBunchLimit) continue
                 val points = members.map { attachments[it].at }
+                // A chained cluster wide enough for every anchor to breathe is a port fan
+                // doing its job, not a funnel.
+                val span = points.maxOf { a -> points.maxOf { b -> hypot(a.x - b.x, a.y - b.y) } }
+                if (span >= (members.size - 1) * options.anchorBunchMinSpread) continue
                 val center = DiagramPoint(
                     points.sumOf { it.x } / points.size,
                     points.sumOf { it.y } / points.size,
@@ -338,6 +441,73 @@ private fun coRunLength(
     val bEnd = maxOf(alongOf(b1), alongOf(b2))
     return maxOf(0.0, minOf(aLength, bEnd) - maxOf(0.0, bStart))
 }
+
+// --- rule: route doubling back on itself --------------------------------------------------
+
+private fun edgeSpurFindings(
+    graph: DiagramGraph,
+    routes: List<RoutedEdge>,
+): List<DiagramLintFinding> = buildList {
+    for (route in routes) {
+        if (route.isCurve) continue
+        // A reversal AT an authored waypoint is an out-and-back antenna the user drew
+        // (the router protects lone-via retraces deliberately) — not a routing artifact.
+        val vias = graph.edgeById(route.edgeId)?.waypoints.orEmpty()
+        for (index in 1 until route.points.size - 1) {
+            val a = route.points[index - 1]
+            val b = route.points[index]
+            val c = route.points[index + 1]
+            if (vias.any { abs(it.x - b.x) < 1e-6 && abs(it.y - b.y) < 1e-6 }) continue
+            val horizontalReversal =
+                abs(a.y - b.y) < 1e-6 && abs(b.y - c.y) < 1e-6 && (b.x - a.x) * (c.x - b.x) < 0.0
+            val verticalReversal =
+                abs(a.x - b.x) < 1e-6 && abs(b.x - c.x) < 1e-6 && (b.y - a.y) * (c.y - b.y) < 0.0
+            if (horizontalReversal || verticalReversal) {
+                add(DiagramLintFinding.EdgeSpur(edgeId = route.edgeId, at = b))
+            }
+        }
+    }
+}
+
+// --- rule: covered endpoint markers ------------------------------------------------------
+
+private fun markerCoveredFindings(
+    graph: DiagramGraph,
+    routes: List<RoutedEdge>,
+): List<DiagramLintFinding> {
+    val edgesById = graph.edges.associateBy { it.id }
+    return buildList {
+        for (route in routes) {
+            val edge = edgesById[route.edgeId] ?: continue
+            // Fitted zones: exactly the glyphs the renderers draw, so a finding always
+            // corresponds to a visible cut.
+            for (zone in endpointMarkerZones(edge, route, fitToRun = true)) {
+                for (foreign in routes) {
+                    if (foreign.edgeId == route.edgeId) continue
+                    // Edges sharing this funnel point touch the marker legitimately —
+                    // that is AnchorBunch's domain, not a covered glyph.
+                    val sharesTip = distance(foreign.points.first(), zone.tip) < 1.0 ||
+                        distance(foreign.points.last(), zone.tip) < 1.0
+                    if (sharesTip) continue
+                    val cuts = foreign.points.zipWithNext().any { (a, b) ->
+                        segmentCrossesInterior(a, b, zone.rect)
+                    }
+                    if (cuts) {
+                        add(
+                            DiagramLintFinding.MarkerCovered(
+                                edgeId = foreign.edgeId,
+                                markerEdgeId = route.edgeId,
+                                at = zone.tip,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun distance(a: DiagramPoint, b: DiagramPoint): Double = hypot(a.x - b.x, a.y - b.y)
 
 // --- rule: crossing hotspots ------------------------------------------------------------
 
@@ -435,7 +605,7 @@ private fun labelOverNodeFindings(
             val own = setOfNotNull(edge.source.attachedNodeId, edge.target.attachedNodeId)
             for (label in edge.labels) {
                 if (label.label.text.isBlank()) continue
-                val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, edge.id), edgeLabelAvoidRects(graph, edge.id))
+                val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, edge.id), edgeLabelAvoidRects(graph, edge.id, routePoints))
                 val halfWidth = label.label.text.length * options.labelCharWidth / 2.0
                 val halfHeight = options.labelHeight / 2.0
                 for (node in obstacles) {
@@ -450,4 +620,132 @@ private fun labelOverNodeFindings(
             }
         }
     }
+}
+
+// --- rule: labels over endpoint markers -------------------------------------------------
+
+/**
+ * A label parked on another edge's endpoint marker glyph: the crow's foot (or arrow)
+ * stops reading through the text plate. Mirrors [labelOverNodeFindings] — the anchor is
+ * computed with the exact context every renderer uses, and only FOREIGN markers count
+ * (a SOURCE/TARGET label deliberately annotates its own end). Fitted zones, as drawn.
+ */
+private fun labelOverMarkerFindings(
+    graph: DiagramGraph,
+    routes: Map<DiagramEdgeId, RoutedEdge>,
+    options: DiagramLintOptions,
+): List<DiagramLintFinding> {
+    val routePoints = routes.mapValues { it.value.points }
+    return buildList {
+        for (edge in graph.edges) {
+            val route = routePoints[edge.id] ?: continue
+            if (route.size < 2) continue
+            for (label in edge.labels) {
+                if (label.label.text.isBlank()) continue
+                val anchor = edgeLabelAnchorPoint(
+                    route,
+                    label,
+                    edgeLabelObstacleRoutes(graph, routePoints, edge.id),
+                    edgeLabelAvoidRects(graph, edge.id, routePoints),
+                )
+                val halfWidth = label.label.text.length * options.labelCharWidth / 2.0
+                val halfHeight = options.labelHeight / 2.0
+                for (other in graph.edges) {
+                    if (other.id == edge.id) continue
+                    // Mirror the avoid context (edgeLabelAvoidRects): markers on hidden
+                    // layers are not painted, so a label sitting there is not a defect.
+                    // Unknown layer references behave as the implicit default layer.
+                    val layerVisible = other.layerId?.let(graph::layerById)?.visible ?: true
+                    if (!layerVisible) continue
+                    val otherRoute = routes[other.id] ?: continue
+                    for (zone in endpointMarkerZones(other, otherRoute, fitToRun = true)) {
+                        val rect = zone.rect
+                        val overlaps = anchor.x + halfWidth > rect.left + 1.0 &&
+                            anchor.x - halfWidth < rect.right - 1.0 &&
+                            anchor.y + halfHeight > rect.top + 1.0 &&
+                            anchor.y - halfHeight < rect.bottom - 1.0
+                        if (overlaps) {
+                            add(DiagramLintFinding.LabelOverMarker(edge.id, other.id, zone.tip))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compares every node's caption with the node's own box: the class of defect the vision loop
+ * used to miss entirely, because the SVG it looked at could not even wrap a label.
+ *
+ * Two directions, both real complaints:
+ * - OVERFLOW — the caption does not fit the box the renderer gives it, so it wraps into a
+ *   clip or spills toward the shape's edge.
+ * - OVERSIZED — the shape is far bigger than the caption needs, which is what "a huge ellipse
+ *   around three words" looks like to the model.
+ *
+ * Nodes whose size comes from their content (class rows, tables, lifelines) are skipped: their
+ * box is not derived from a caption at all.
+ */
+private fun nodeLabelFitFindings(
+    graph: DiagramGraph,
+    options: DiagramLintOptions,
+): List<DiagramLintFinding> = graph.nodes.filter { it.visible }.mapNotNull { node ->
+    if (!node.lintsItsCaption()) return@mapNotNull null
+    val text = node.primaryText()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+    val padding = node.labelPadding()
+    val box = node.labelBox(padding)
+    if (box.width <= 1.0 || box.height <= 1.0) return@mapNotNull null
+
+    val style = DiagramTextStyle(fontSize = DIAGRAM_LABEL_TEXT_SIZE)
+    val wrapped = options.textMeasurer.measure(text, style, maxWidth = box.width)
+    if (wrapped.height > box.height + 0.5) {
+        return@mapNotNull DiagramLintFinding.NodeLabelFit(
+            node = node.id,
+            kind = DiagramLintFinding.NodeLabelFit.Kind.OVERFLOW,
+            detail = "needs ${wrapped.height.toInt()}px of ${box.height.toInt()}px",
+        )
+    }
+
+    // A borderless TEXT node draws nothing but its caption: a box far wider than the text
+    // is how a centered title banner spans its frame, not "a huge shape around three
+    // words". Overflow above still applies — clipped text is a defect on any node.
+    val payload = node.payload
+    if (payload is DiagramNodePayload.BasicShape && payload.shape == DiagramShapeKind.TEXT) {
+        return@mapNotNull null
+    }
+
+    val natural = options.textMeasurer.measure(text, style, maxWidth = null)
+    val hugged = boundsForLabel(node.perimeterKind(), natural.width, natural.height, padding)
+    // Measure bloat against the larger of "what the caption needs" and "what this kind starts
+    // at". A short caption hugs to almost nothing, so the caption alone would condemn every
+    // ordinary 140x48 state box — noise, not signal.
+    val stamp = DiagramNodeDefaults.defaultSizeFor(node.payload)
+    val baselineWidth = maxOf(hugged.width, stamp.width)
+    val baselineHeight = maxOf(hugged.height, stamp.height)
+    val baselineArea = baselineWidth * baselineHeight
+    val area = node.width * node.height
+    if (baselineArea > 0.0 && area / baselineArea >= options.oversizeAreaRatio) {
+        return@mapNotNull DiagramLintFinding.NodeLabelFit(
+            node = node.id,
+            kind = DiagramLintFinding.NodeLabelFit.Kind.OVERSIZED,
+            detail = "${node.width.toInt()}x${node.height.toInt()} vs " +
+                "${baselineWidth.toInt()}x${baselineHeight.toInt()} needed",
+        )
+    }
+    null
+}
+
+/** Whether this node's box is supposed to follow its caption (see [nodeLabelFitFindings]). */
+private fun DiagramNode.lintsItsCaption(): Boolean = when (payload) {
+    is UmlClassNode,
+    is DiagramNodePayload.ErEntityNode,
+    is TableNode,
+    is UmlLifelineNode,
+    is UmlActorNode,
+    is DiagramNodePayload.ContainerNode,
+    is DiagramNodePayload.SwimlaneNode,
+    -> false
+
+    else -> true
 }

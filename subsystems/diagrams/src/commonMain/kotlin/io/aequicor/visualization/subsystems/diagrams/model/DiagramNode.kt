@@ -76,12 +76,29 @@ data class DiagramPort(
 }
 
 /**
+ * How a node's size relates to its caption.
+ *
+ * draw.io keeps geometry authoritative (`mxGraph.autoSizeCells = false`) and never resizes a
+ * shape behind the author's back; hugging is opt-in and only ever applied at edit time, never
+ * on load — a load-time hug would make one `.layout.md` render differently on JVM and wasm,
+ * whose font metrics differ.
+ */
+enum class DiagramNodeSizing {
+    /** The authored `<w> by <h>` wins; the caption wraps or clips inside it. */
+    Fixed,
+
+    /** Edits re-fit the node to its caption; the authored size is the last measured result. */
+    Hug,
+}
+
+/**
  * A diagram node: geometry + typed [payload] + connection [ports].
  *
  * @param x left edge in document coordinates (relative to the diagram origin, not the parent).
  * @param rotation clockwise degrees around the node center; `0.0` means unrotated.
  * @param parentId containing node (container/swimlane/group-container semantics).
  * @param layerId owning layer; `null` means the graph's implicit default layer.
+ * @param sizing whether edits re-fit this node to its caption; see [DiagramNodeSizing].
  */
 data class DiagramNode(
     val id: DiagramNodeId,
@@ -94,6 +111,7 @@ data class DiagramNode(
     val ports: List<DiagramPort> = emptyList(),
     val style: DiagramStyle = DiagramStyle.Default,
     val labels: List<DiagramLabel> = emptyList(),
+    val sizing: DiagramNodeSizing = DiagramNodeSizing.Fixed,
     val parentId: DiagramNodeId? = null,
     val layerId: DiagramLayerId? = null,
     val locked: Boolean = false,

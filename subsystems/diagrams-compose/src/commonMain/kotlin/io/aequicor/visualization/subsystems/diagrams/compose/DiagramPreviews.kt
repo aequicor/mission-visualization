@@ -66,13 +66,13 @@ fun DiagramNodePreview(
 ) {
     Canvas(modifier) {
         val stroke = Stroke(1.3f)
-        val inset = 2.5f
-        val box = DiagramRect(
-            inset.toDouble(),
-            (inset + 1f).toDouble(),
-            (size.width - 2 * inset).toDouble(),
-            (size.height - 2 * inset - 2f).toDouble(),
+        val box = diagramPreviewContentBox(
+            canvasWidth = size.width.toDouble(),
+            canvasHeight = size.height.toDouble(),
+            inset = 2.5,
+            verticalTrim = 1.0,
         )
+        if (box.isDegenerate) return@Canvas
         when (payload) {
             is UmlClassNode -> {
                 drawPreviewBody(box, style, stroke)
@@ -126,12 +126,13 @@ fun DiagramNodePreview(
             is UmlActorNode -> drawStickFigure(box, style.ink, 1.3f)
 
             is UmlUseCaseNode -> {
-                drawOval(style.fill, Offset(box.left.toFloat(), (box.top + 2).toFloat()), Size(box.width.toFloat(), (box.height - 4).toFloat()))
-                drawOval(style.ink, Offset(box.left.toFloat(), (box.top + 2).toFloat()), Size(box.width.toFloat(), (box.height - 4).toFloat()), style = stroke)
+                val oval = Size(box.width.toFloat(), (box.height - 4).coerceAtLeast(0.0).toFloat())
+                drawOval(style.fill, Offset(box.left.toFloat(), (box.top + 2).toFloat()), oval)
+                drawOval(style.ink, Offset(box.left.toFloat(), (box.top + 2).toFloat()), oval, style = stroke)
             }
 
             is UmlComponentNode -> {
-                val body = DiagramRect(box.left + 3.0, box.top, box.width - 3.0, box.height)
+                val body = DiagramRect(box.left + 3.0, box.top, (box.width - 3.0).coerceAtLeast(0.0), box.height)
                 drawPreviewBody(body, style, stroke)
                 listOf(0.3, 0.55).forEach { fraction ->
                     drawRect(
@@ -150,7 +151,12 @@ fun DiagramNodePreview(
 
             is UmlDeploymentNode -> {
                 val depth = 3.0
-                val front = DiagramRect(box.left, box.top + depth, box.width - depth, box.height - depth)
+                val front = DiagramRect(
+                    box.left,
+                    box.top + depth,
+                    (box.width - depth).coerceAtLeast(0.0),
+                    (box.height - depth).coerceAtLeast(0.0),
+                )
                 // Top and side edges of the 3D box.
                 drawLine(style.ink, Offset(front.left.toFloat(), front.top.toFloat()), Offset((front.left + depth).toFloat(), box.top.toFloat()), 1f)
                 drawLine(style.ink, Offset((front.left + depth).toFloat(), box.top.toFloat()), Offset(box.right.toFloat(), box.top.toFloat()), 1f)
@@ -221,6 +227,7 @@ fun DiagramRelationPreview(
     modifier: Modifier = Modifier.size(18.dp),
 ) {
     Canvas(modifier) {
+        if (size.minDimension <= 0f) return@Canvas
         val notation = arrowheadsForRelation(relation)
         val headSize = size.minDimension * 0.3
         val y = (size.height / 2f).toDouble()
@@ -257,12 +264,14 @@ private fun DrawScope.drawPreviewOutline(
     style: DiagramPreviewStyle,
     stroke: Stroke,
 ) {
+    // The synthetic node requires non-negative dimensions — clamp so no branch can
+    // crash the preview on a derived box, whatever the caller computed it from.
     val node = DiagramNode(
         id = PreviewNodeId,
         x = box.x,
         y = box.y,
-        width = box.width,
-        height = box.height,
+        width = box.width.coerceAtLeast(0.0),
+        height = box.height.coerceAtLeast(0.0),
         payload = payload,
     )
     val path = node.outlinePath().toComposePath()

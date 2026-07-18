@@ -147,6 +147,17 @@ import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.model.UmlVisibility
 import io.aequicor.visualization.subsystems.diagrams.ops.UmlClassMemberKind
+import io.aequicor.visualization.subsystems.diagrams.ops.findFreeDiagramPlacement
+import io.aequicor.visualization.subsystems.diagrams.ops.primaryText
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import androidx.compose.ui.platform.LocalDensity
+import io.aequicor.visualization.subsystems.diagrams.ops.fitNodeToText
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
+import io.aequicor.visualization.subsystems.diagrams.compose.ComposeDiagramTextMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.ComposeTypographyMeasurer
+import io.aequicor.visualization.subsystems.typography.compose.rememberBundledFontProvider
+import androidx.compose.ui.text.rememberTextMeasurer
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.templates.diagramTemplates
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
@@ -2574,13 +2585,14 @@ private fun SizingModePreview(mode: SizingMode, modifier: Modifier = Modifier.si
         val fill = colors.selectionFill
         when (mode) {
             SizingMode.Fixed -> {
-                drawRoundRect(fill, Offset(2f, 3f), Size(size.width - 4f, size.height - 6f), CornerRadius(2f, 2f))
-                drawRoundRect(ink, Offset(2f, 3f), Size(size.width - 4f, size.height - 6f), CornerRadius(2f, 2f), style = stroke)
+                val body = Size((size.width - 4f).coerceAtLeast(0f), (size.height - 6f).coerceAtLeast(0f))
+                drawRoundRect(fill, Offset(2f, 3f), body, CornerRadius(2f, 2f))
+                drawRoundRect(ink, Offset(2f, 3f), body, CornerRadius(2f, 2f), style = stroke)
             }
             SizingMode.Hug -> {
                 drawLine(ink, Offset(3f, 3f), Offset(3f, size.height - 3f), strokeWidth = 1.5.dp.toPx())
                 drawLine(ink, Offset(size.width - 3f, 3f), Offset(size.width - 3f, size.height - 3f), strokeWidth = 1.5.dp.toPx())
-                drawRoundRect(fill, Offset(5f, 5f), Size(size.width - 10f, size.height - 10f), CornerRadius(2f, 2f))
+                drawRoundRect(fill, Offset(5f, 5f), Size((size.width - 10f).coerceAtLeast(0f), (size.height - 10f).coerceAtLeast(0f)), CornerRadius(2f, 2f))
             }
             SizingMode.Fill -> {
                 drawLine(ink, Offset(2f, size.height / 2f), Offset(size.width - 2f, size.height / 2f), strokeWidth = 1.5.dp.toPx())
@@ -2624,8 +2636,9 @@ private fun FillKindPreview(kind: FillKind, modifier: Modifier = Modifier.size(1
             } else {
                 Brush.radialGradient(listOf(colors.accent, Color(0xFFFFB300)), radius = size.minDimension * 0.65f)
             }
-            drawRoundRect(brush, Offset(1.5f, 2.5f), Size(size.width - 3f, size.height - 5f), CornerRadius(3f, 3f))
-            drawRoundRect(colors.controlInk, Offset(1.5f, 2.5f), Size(size.width - 3f, size.height - 5f), CornerRadius(3f, 3f), style = Stroke(1.dp.toPx()))
+            val body = Size((size.width - 3f).coerceAtLeast(0f), (size.height - 5f).coerceAtLeast(0f))
+            drawRoundRect(brush, Offset(1.5f, 2.5f), body, CornerRadius(3f, 3f))
+            drawRoundRect(colors.controlInk, Offset(1.5f, 2.5f), body, CornerRadius(3f, 3f), style = Stroke(1.dp.toPx()))
         }
     }
 }
@@ -2635,9 +2648,10 @@ private fun StrokeAlignPreview(align: StrokeAlign, modifier: Modifier = Modifier
     val colors = LocalEditorColors.current
     Canvas(modifier) {
         val rectTop = 4f
-        val rectHeight = size.height - 8f
-        drawRoundRect(colors.selectionFill, Offset(3f, rectTop), Size(size.width - 6f, rectHeight), CornerRadius(2f, 2f))
-        drawRoundRect(colors.controlInk, Offset(3f, rectTop), Size(size.width - 6f, rectHeight), CornerRadius(2f, 2f), style = Stroke(1.dp.toPx()))
+        val rectHeight = (size.height - 8f).coerceAtLeast(0f)
+        val body = Size((size.width - 6f).coerceAtLeast(0f), rectHeight)
+        drawRoundRect(colors.selectionFill, Offset(3f, rectTop), body, CornerRadius(2f, 2f))
+        drawRoundRect(colors.controlInk, Offset(3f, rectTop), body, CornerRadius(2f, 2f), style = Stroke(1.dp.toPx()))
         val y = when (align) {
             StrokeAlign.Inside -> rectTop + 2f
             StrokeAlign.Center -> rectTop + rectHeight / 2f
@@ -4171,6 +4185,22 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
             }
         }
 
+        // Contextual properties of the selected element / edge come FIRST — draw.io's
+        // format-panel contract: selecting something surfaces its properties where the
+        // eye already is. Buried under the palette + mini-map + full outline they were
+        // ~4000px of scroll away, which reads as "edges have no properties".
+        if (editing) {
+            Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
+                val selectedElement = selection.elementIds.singleOrNull()?.let { graph.nodeById(DiagramNodeId(it)) }
+                val selectedEdge = selection.edgeIds.singleOrNull()?.let { graph.edgeById(DiagramEdgeId(it)) }
+                when {
+                    selectedElement != null -> DiagramNodeControls(state, nodeId, selectedElement, locked)
+                    selectedEdge != null -> DiagramEdgeControls(state, nodeId, selectedEdge, locked)
+                    else -> MutedNote(strings.inspector.selectElementHint)
+                }
+            }
+        }
+
         // Shape palette, grouped by family; a click inserts at the canvas center.
         Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
             InspectorSubLabel(strings.inspector.shapes)
@@ -4212,17 +4242,6 @@ private fun InspectorDiagramEditor(state: MissionEditorStateHolder, node: Design
                 }
                 Spacer(Modifier.height(4.dp))
                 DiagramLayers(state, nodeId, graph, locked)
-            }
-        }
-
-        // Contextual properties of the selected element / edge.
-        Column(Modifier.fillMaxWidth().border(BorderStroke(0.5.dp, colors.softStroke)).padding(horizontal = 18.dp, vertical = 12.dp)) {
-            val selectedElement = selection.elementIds.singleOrNull()?.let { graph.nodeById(DiagramNodeId(it)) }
-            val selectedEdge = selection.edgeIds.singleOrNull()?.let { graph.edgeById(DiagramEdgeId(it)) }
-            when {
-                selectedElement != null -> DiagramNodeControls(state, nodeId, selectedElement, locked)
-                selectedEdge != null -> DiagramEdgeControls(state, nodeId, selectedEdge, locked)
-                else -> MutedNote(strings.inspector.selectElementHint)
             }
         }
 
@@ -4369,8 +4388,8 @@ private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
                 nodeId = targetId,
                 elementId = elementId,
                 payload = drag.payload,
-                x = docX - target.x - drag.width / 2,
-                y = docY - target.y - drag.height / 2,
+                x = snapToDiagramGrid(docX - target.x - drag.width / 2),
+                y = snapToDiagramGrid(docY - target.y - drag.height / 2),
                 width = drag.width,
                 height = drag.height,
             ),
@@ -4389,8 +4408,8 @@ private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
             DesignEditorIntent.CreateDiagramObject(
                 parentId = layout.node.sourceId,
                 payload = drag.payload,
-                x = (docX - layout.x - NewDiagramWidth / 2).coerceAtLeast(0.0),
-                y = (docY - layout.y - NewDiagramHeight / 2).coerceAtLeast(0.0),
+                x = snapToDiagramGrid((docX - layout.x - NewDiagramWidth / 2).coerceAtLeast(0.0)),
+                y = snapToDiagramGrid((docY - layout.y - NewDiagramHeight / 2).coerceAtLeast(0.0)),
                 width = NewDiagramWidth,
                 height = NewDiagramHeight,
                 elementWidth = drag.width,
@@ -4410,7 +4429,13 @@ private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
     }
 }
 
-/** Stamps [entry]'s shape into the diagram center (cascading), selects it in edit mode. */
+/**
+ * Stamps [entry]'s shape at the center of the VISIBLE viewport, pushed to the nearest
+ * spot that is not on top of existing content ([findFreeDiagramPlacement], snapped to
+ * the placement grid), and selects it in edit mode. A palette click used to stamp into
+ * the diagram's geometric center — on a large ER surface that dropped the shape
+ * somewhere deep in the busy middle, right over whatever table was already there.
+ */
 private fun insertDiagramElementFromPalette(
     state: MissionEditorStateHolder,
     diagramNodeId: String,
@@ -4419,15 +4444,38 @@ private fun insertDiagramElementFromPalette(
     val document = state.designState.document ?: return
     val node = document.nodeById(diagramNodeId) ?: return
     val graph = (node.kind as? DesignNodeKind.Diagram)?.graph ?: return
-    val cascade = (graph.nodes.size % 6) * 24.0
     val elementId = mintDiagramId(graph, "node")
+    val diagramWidth = node.size.width ?: entry.width
+    val diagramHeight = node.size.height ?: entry.height
+    // Visible-center placement when the canvas geometry is known; diagram center otherwise.
+    val bounds = state.canvasExportBounds
+    val box = state.artboardLayout?.allBoxes()?.firstOrNull { it.node.sourceId == diagramNodeId }
+    val (idealX, idealY) = if (bounds != null && box != null) {
+        val viewport = state.workspace.viewport
+        val docX = viewport.toDocumentX((bounds.width / 2.0).toFloat(), bounds.density)
+        val docY = viewport.toDocumentY((bounds.height / 2.0).toFloat(), bounds.density)
+        (docX - box.x - entry.width / 2) to (docY - box.y - entry.height / 2)
+    } else {
+        ((diagramWidth - entry.width) / 2) to ((diagramHeight - entry.height) / 2)
+    }
+    val maxPlaceX = (diagramWidth - entry.width).coerceAtLeast(0.0)
+    val maxPlaceY = (diagramHeight - entry.height).coerceAtLeast(0.0)
+    val placed = findFreeDiagramPlacement(
+        graph = graph,
+        width = entry.width,
+        height = entry.height,
+        idealX = snapToDiagramGrid(idealX).coerceIn(0.0, maxPlaceX),
+        idealY = snapToDiagramGrid(idealY).coerceIn(0.0, maxPlaceY),
+        maxX = maxPlaceX,
+        maxY = maxPlaceY,
+    )
     state.dispatch(
         DiagramEditorIntent.AddDiagramNode(
             nodeId = diagramNodeId,
             elementId = elementId,
             payload = entry.payload,
-            x = (((node.size.width ?: entry.width) - entry.width) / 2 + cascade).coerceAtLeast(0.0),
-            y = (((node.size.height ?: entry.height) - entry.height) / 2 + cascade).coerceAtLeast(0.0),
+            x = placed.x,
+            y = placed.y,
             width = entry.width,
             height = entry.height,
         ),
@@ -4793,12 +4841,15 @@ private fun DiagramNodeControls(
     Spacer(Modifier.height(8.dp))
     CompactLabeledTextField(
         strings.inspector.label,
-        element.labels.firstOrNull()?.text.orEmpty(),
+        // Same accessor the canvas and the inline editor read, so the three never diverge again.
+        element.primaryText().orEmpty(),
         "diagram-label-$elementId",
         enabled = !locked,
     ) { text ->
         state.dispatch(DiagramEditorIntent.SetDiagramNodeLabel(nodeId, elementId, text.takeIf { it.isNotBlank() }))
     }
+    Spacer(Modifier.height(8.dp))
+    DiagramSizingControls(state, nodeId, element, locked)
     Spacer(Modifier.height(10.dp))
     DiagramStyleControls(state, element.style, locked, resetKey = "diagram-node-$elementId") { style ->
         state.dispatch(DiagramEditorIntent.SetDiagramNodeStyle(nodeId, elementId, style))
@@ -4810,6 +4861,74 @@ private fun DiagramNodeControls(
     (element.payload as? UmlClassNode)?.let { uml ->
         Spacer(Modifier.height(10.dp))
         DiagramClassControls(state, nodeId, elementId, uml, locked)
+    }
+}
+
+/**
+ * Node sizing: fixed geometry (draw.io's default) vs hugging the caption, plus a one-shot
+ * "fit to text". Node-only — deliberately NOT part of [DiagramStyleControls], which is shared
+ * with edges, where autosizing means nothing.
+ */
+@Composable
+private fun DiagramSizingControls(
+    state: MissionEditorStateHolder,
+    nodeId: String,
+    element: DiagramNode,
+    locked: Boolean,
+) {
+    val strings = LocalStrings.current
+    val elementId = element.id.value
+    // Reuse the editor's existing Fixed/Hug vocabulary and preview rather than inventing a
+    // second one for diagrams — the same reason the CNL word is `hug` and not `autosize`.
+    val modes = listOf(SizingMode.Fixed, SizingMode.Hug)
+    fun modeOf(sizing: DiagramNodeSizing): SizingMode =
+        if (sizing == DiagramNodeSizing.Hug) SizingMode.Hug else SizingMode.Fixed
+    // ONE resolver drives both the displayed value and the match-back, so switching the UI to
+    // Russian cannot silently break the selection (the round-trip select trap).
+    fun modeLabel(mode: SizingMode): String = strings.inspector.sizingMode(mode)
+
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val fontProvider = rememberBundledFontProvider()
+    val measurer = remember(textMeasurer, density, fontProvider) {
+        ComposeDiagramTextMeasurer(ComposeTypographyMeasurer(textMeasurer, density, fontProvider))
+    }
+
+    InspectorSubLabel(strings.inspector.sizing)
+    Spacer(Modifier.height(6.dp))
+    CompactSelectField(
+        value = modeLabel(modeOf(element.sizing)),
+        options = modes.map(::modeLabel),
+        onSelect = { label ->
+            if (locked) return@CompactSelectField
+            val picked = modes.firstOrNull { modeLabel(it) == label } ?: return@CompactSelectField
+            val sizing = if (picked == SizingMode.Hug) DiagramNodeSizing.Hug else DiagramNodeSizing.Fixed
+            if (sizing != element.sizing) {
+                state.dispatch(DiagramEditorIntent.SetDiagramNodeSizing(nodeId, elementId, sizing))
+            }
+        },
+        leadingContent = { SizingModePreview(modeOf(element.sizing)) },
+        optionLeadingContent = { label ->
+            modes.firstOrNull { modeLabel(it) == label }?.let { SizingModePreview(it) }
+        },
+    )
+    Spacer(Modifier.height(6.dp))
+    TinyButton(strings.inspector.fitToText, enabled = !locked) {
+        val id = DiagramNodeId(elementId)
+        val graph = DiagramGraph(nodes = listOf(element))
+        val fitted = graph.fitNodeToText(id, measurer, force = true).nodeById(id) ?: return@TinyButton
+        if (fitted.bounds != element.bounds) {
+            state.dispatch(
+                DiagramEditorIntent.ResizeDiagramNode(
+                    nodeId = nodeId,
+                    elementId = elementId,
+                    x = fitted.x,
+                    y = fitted.y,
+                    width = fitted.width,
+                    height = fitted.height,
+                ),
+            )
+        }
     }
 }
 

@@ -51,9 +51,24 @@ class DiagramSvgExportTest {
     @Test
     fun exportsLabelsAsTextElements() {
         val svg = diagramToSvg(simpleGraph())
-        assertTrue(svg.contains(">Alpha</text>"))
-        assertTrue(svg.contains(">Beta</text>"))
+        // Node captions wrap, so each line is its own <tspan>; edge labels stay single-line.
+        assertTrue(svg.contains(">Alpha</tspan>"))
+        assertTrue(svg.contains(">Beta</tspan>"))
         assertTrue(svg.contains(">flows</text>"))
+    }
+
+    @Test
+    fun edgeLabelsGetTheCanvasPlate() {
+        // The canvas draws an 85% surface plate behind every edge label so a caption
+        // crossing a line or an attached node's rows stays readable — the export must
+        // show the same picture, in document order (plate first, then the text).
+        val svg = diagramToSvg(simpleGraph())
+        val plate = Regex("<rect [^>]*fill-opacity=\"0.85\"/>").find(svg)
+        assertTrue(plate != null, "edge label must be plated: ${svg.take(400)}")
+        assertTrue(
+            svg.indexOf(plate!!.value) < svg.indexOf(">flows</text>"),
+            "plate must render underneath its label",
+        )
     }
 
     @Test
@@ -94,19 +109,21 @@ class DiagramSvgExportTest {
     }
 
     @Test
-    fun upperEdgeArcsOverLowerAtCrossings() {
+    fun horizontalEdgeArcsOverVerticalAtCrossings() {
         val graph = diagramGraph {
             edge(
                 id = "horizontal",
                 source = DiagramEndpoint.FreePoint(0.0, 50.0),
                 target = DiagramEndpoint.FreePoint(100.0, 50.0),
                 routing = DiagramRoutingStyle.STRAIGHT,
+                lineJumps = LineJumpStyle.ARC,
             )
             edge(
                 id = "vertical",
                 source = DiagramEndpoint.FreePoint(50.0, 0.0),
                 target = DiagramEndpoint.FreePoint(50.0, 100.0),
                 routing = DiagramRoutingStyle.STRAIGHT,
+                lineJumps = LineJumpStyle.ARC,
             )
         }
         val routes = listOf(
@@ -124,9 +141,10 @@ class DiagramSvgExportTest {
 
         val svg = diagramToSvg(graph, routes)
 
-        // Only the edge drawn on top (later in z-order) jumps; the lower one stays straight.
-        assertTrue(svg.contains("d=\"M 0 50 L 100 50\""), svg)
-        assertTrue(svg.contains("d=\"M 50 0 L 50 44 A 6 6 0 0 1 50 56 L 50 100\""), svg)
+        // Exactly one side of the crossing jumps, and it is the horizontal one
+        // (Lucid-style, independent of draw order); the vertical stays straight.
+        assertTrue(svg.contains("d=\"M 50 0 L 50 100\""), svg)
+        assertTrue(svg.contains("d=\"M 0 50 L 46 50 A 4 4 0 0 1 54 50 L 100 50\""), svg)
     }
 
     @Test

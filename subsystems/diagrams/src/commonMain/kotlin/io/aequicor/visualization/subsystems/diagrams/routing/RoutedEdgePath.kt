@@ -30,7 +30,7 @@ fun routedEdgeToPath(
     style: DiagramStyle = DiagramStyle.Default,
     lineJumps: LineJumpStyle = LineJumpStyle.NONE,
     otherEdges: List<RoutedEdge> = emptyList(),
-    jumpSize: Double = 6.0,
+    jumpSize: Double = 4.0,
     cornerRadius: Double = 8.0,
     curvedCornerRadius: Double = 16.0,
 ): DiagramPath {
@@ -45,7 +45,7 @@ fun routedEdgeToPath(
     val jumps = if (lineJumps == LineJumpStyle.NONE) {
         List(points.size - 1) { emptyList() }
     } else {
-        segmentJumpDistances(routed, otherEdges, jumpSize, radii)
+        segmentJumpSpans(routed, otherEdges, jumpSize, radii, otherEndClearance = maxOf(jumpSize, baseRadius))
     }
     return diagramPath {
         moveTo(points.first())
@@ -56,11 +56,11 @@ fun routedEdgeToPath(
             val segmentLength = segment.length()
             if (segmentLength < GEOMETRY_EPSILON) continue
             val direction = segment * (1.0 / segmentLength)
-            for (jumpCenter in jumps[index]) {
-                val before = start + direction * (jumpCenter - jumpSize)
-                val after = start + direction * (jumpCenter + jumpSize)
+            for (span in jumps[index]) {
+                val before = start + direction * (span.center - span.halfWidth)
+                val after = start + direction * (span.center + span.halfWidth)
                 lineTo(before)
-                emitJump(lineJumps, before, after, direction, jumpSize)
+                emitJump(lineJumps, before, after, direction, jumpSize, span.halfWidth)
             }
             val endInset = radii[index + 1]
             lineTo(end - direction * endInset)
@@ -84,14 +84,22 @@ private fun DiagramPathBuilder.emitJump(
     after: DiagramPoint,
     direction: DiagramPoint,
     jumpSize: Double,
+    halfWidth: Double,
 ) {
+    // The bump side must not depend on travel direction: two opposite-direction lines
+    // crossing the same riser otherwise bow apart into an O-shaped pill. Normalize to
+    // "up" (and "left" for vertical runs), like the reference tools.
+    val sweepNormal = DiagramPoint(direction.y, -direction.x)
+    val flip = sweepNormal.y > 0.0 || (sweepNormal.y == 0.0 && sweepNormal.x > 0.0)
     when (kind) {
         LineJumpStyle.NONE -> lineTo(after)
 
+        // radiusX equals half the chord, so a merged multi-crossing span renders as one
+        // wide half-ellipse of constant height instead of a chain of touching bumps.
         LineJumpStyle.ARC -> arcTo(
-            radiusX = jumpSize,
+            radiusX = halfWidth,
             radiusY = jumpSize,
-            sweep = true,
+            sweep = !flip,
             endX = after.x,
             endY = after.y,
         )
@@ -99,8 +107,7 @@ private fun DiagramPathBuilder.emitJump(
         LineJumpStyle.GAP -> moveTo(after)
 
         LineJumpStyle.SHARP -> {
-            // Peak perpendicular to the travel direction (deterministic side).
-            val normal = DiagramPoint(direction.y, -direction.x)
+            val normal = if (flip) sweepNormal * -1.0 else sweepNormal
             val center = DiagramPoint((before.x + after.x) / 2.0, (before.y + after.y) / 2.0)
             val apex = center + normal * jumpSize
             lineTo(apex)
@@ -121,46 +128,87 @@ private fun cornerRadii(points: List<DiagramPoint>, baseRadius: Double): DoubleA
     return radii
 }
 
+/** A hop over one or more merged crossings: center distance from the segment start. */
+private data class JumpSpan(val center: Double, val halfWidth: Double)
+
+/** A hop and its own corner curve fuse into a loop without a straight run between them. */
+private const val JUMP_CORNER_STUB = 2.0
+
 /**
- * For each segment of [routed], distances (from the segment start) of jump centers over
- * crossings with [otherEdges], sorted ascending, filtered so jumps stay clear of the
- * segment ends, rounded corner zones, and each other.
+ * For each segment of [routed], hop spans over crossings with [otherEdges], sorted
+ * ascending and kept clear of the segment ends and rounded corner zones. Crossings
+ * whose hops would overlap merge into one wide span (draw.io-style) instead of some
+ * of them silently losing their hop.
+ *
+ * Exactly ONE of the two edges hops at any crossing (Lucid-style): the horizontal
+ * segment hops over the vertical one, so bumps read consistently as "riding over
+ * risers"; equal orientations tie-break on the edge ids. Both edges hopping drew an
+ * O-shaped pill around every crossing.
  */
-private fun segmentJumpDistances(
+private fun segmentJumpSpans(
     routed: RoutedEdge,
     otherEdges: List<RoutedEdge>,
     jumpSize: Double,
     radii: DoubleArray,
-): List<List<Double>> {
+    otherEndClearance: Double,
+): List<List<JumpSpan>> {
     val points = routed.points
-    val result = mutableListOf<List<Double>>()
+    val result = mutableListOf<List<JumpSpan>>()
     for (index in 0 until points.size - 1) {
         val start = points[index]
         val end = points[index + 1]
         val segment = end - start
         val segmentLength = segment.length()
         if (segmentLength < GEOMETRY_EPSILON) {
-            result += emptyList<Double>()
+            result += emptyList<JumpSpan>()
             continue
         }
+        val myHorizontal = abs(segment.y) <= abs(segment.x)
         val crossings = mutableListOf<Double>()
         for (other in otherEdges) {
             if (other.edgeId == routed.edgeId) continue
             for ((otherStart, otherEnd) in other.points.zipWithNext()) {
-                val t = segmentCrossingParameter(start, end, otherStart, otherEnd) ?: continue
+                val otherSegment = otherEnd - otherStart
+                val otherHorizontal = abs(otherSegment.y) <= abs(otherSegment.x)
+                val jumper = when {
+                    myHorizontal != otherHorizontal -> myHorizontal
+                    else -> routed.edgeId.value < other.edgeId.value
+                }
+                if (!jumper) continue
+                val t = segmentCrossingParameter(start, end, otherStart, otherEnd, otherEndClearance)
+                    ?: continue
                 crossings += t * segmentLength
             }
         }
         crossings.sort()
-        val minCenter = radii[index] + jumpSize
-        val maxCenter = segmentLength - radii[index + 1] - jumpSize
-        val accepted = mutableListOf<Double>()
-        for (center in crossings) {
-            if (center < minCenter || center > maxCenter) continue
-            if (accepted.isNotEmpty() && center - accepted.last() < jumpSize * 2.0) continue
-            accepted += center
+        val minCenter = radii[index] + jumpSize + JUMP_CORNER_STUB
+        val maxCenter = segmentLength - radii[index + 1] - jumpSize - JUMP_CORNER_STUB
+        val inWindow = crossings.filter { it in minCenter..maxCenter }
+        val spans = mutableListOf<JumpSpan>()
+        var clusterFirst = Double.NaN
+        var clusterLast = Double.NaN
+        fun flush() {
+            if (!clusterFirst.isNaN()) {
+                spans += JumpSpan(
+                    center = (clusterFirst + clusterLast) / 2.0,
+                    halfWidth = (clusterLast - clusterFirst) / 2.0 + jumpSize,
+                )
+            }
         }
-        result += accepted
+        for (center in inWindow) {
+            if (clusterFirst.isNaN()) {
+                clusterFirst = center
+                clusterLast = center
+            } else if (center - clusterLast <= jumpSize * 2.0 + JUMP_CORNER_STUB) {
+                clusterLast = center
+            } else {
+                flush()
+                clusterFirst = center
+                clusterLast = center
+            }
+        }
+        flush()
+        result += spans
     }
     return result
 }
@@ -168,12 +216,20 @@ private fun segmentJumpDistances(
 /**
  * Parameter `t` on segment `a1..a2` of a proper interior crossing with `b1..b2`,
  * or `null` when the segments don't cross (parallel/collinear counts as no crossing).
+ *
+ * The crossing must also sit at least [otherEndClearance] away from the ends of the
+ * other segment: a hop only disambiguates a true transversal crossing. When the other
+ * edge terminates on this line (a junction) or turns right next to it, the drawn
+ * geometry there is a T-joint or the other edge's rounded corner — hopping over it
+ * reads as noise (and the raw polyline the crossing was computed against does not
+ * even match what is painted inside the corner zone).
  */
 private fun segmentCrossingParameter(
     a1: DiagramPoint,
     a2: DiagramPoint,
     b1: DiagramPoint,
     b2: DiagramPoint,
+    otherEndClearance: Double,
 ): Double? {
     val r = a2 - a1
     val s = b2 - b1
@@ -184,7 +240,9 @@ private fun segmentCrossingParameter(
     val u = (delta.x * r.y - delta.y * r.x) / denominator
     val interiorMargin = 1e-3
     if (t <= interiorMargin || t >= 1.0 - interiorMargin) return null
-    if (u < 0.0 || u > 1.0) return null
+    val otherLength = s.length()
+    val alongOther = u * otherLength
+    if (alongOther < otherEndClearance || otherLength - alongOther < otherEndClearance) return null
     return t
 }
 

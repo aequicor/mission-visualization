@@ -239,6 +239,7 @@ internal fun reduceDesignEditorUnchecked(state: DesignEditorState, intent: Desig
         ) { it.copy(name = intent.name) }
         is DesignEditorIntent.DeleteNodes -> state.deleteNodesWriteBack(intent.nodeIds)
         is DesignEditorIntent.DuplicateNodes -> state.duplicateNodesWriteBack(intent.nodeIds)
+        is DesignEditorIntent.PasteNodes -> state.pasteNodesWriteBack(intent)
         is DesignEditorIntent.GroupNodes -> state.groupNodesWriteBack(intent)
         is DesignEditorIntent.ReorderNode -> state.reorderNodeWriteBack(intent)
         is DesignEditorIntent.ReparentNode -> state.reparentNodeWriteBack(intent)
@@ -743,6 +744,9 @@ private fun DesignEditorState.duplicateNodes(ids: Set<String>): DesignEditorStat
 private fun DesignEditorState.duplicateNodesWriteBack(ids: Set<String>): DesignEditorState {
     val plan = duplicationPlan(ids)
     if (plan.isEmpty()) return this
+    if (plan.any { step -> document?.pages?.any { it.id == step.parentId } == true }) {
+        return rejectScreenRootClone()
+    }
     val inMemory = applyDuplication(plan)
 
     // Only faithfully-expressible clones reach the patcher; the central contract turns this local
@@ -764,6 +768,93 @@ private fun DesignEditorState.duplicateNodesWriteBack(ids: Set<String>): DesignE
     // sibling order the working document already reflects.
     val edits = plan.map { InsertChildSubtree(it.parentId, it.clone, afterSiblingId = it.originalId) }
     return withStructuralSource(plan.first().originalId, edits, inMemory, expected)
+}
+
+private data class PasteStep(val parentId: String, val clone: DesignNode)
+
+/**
+ * A clone landing directly on a PAGE would copy a screen ROOT beside itself. A screen
+ * source holds exactly one top-level section — any later `#` heading compiles as a
+ * child of the first — so the sibling copy is not expressible in the source; that
+ * operation is Duplicate Screen's job. Reject honestly: document, sources, history and
+ * selection all stay untouched, and the user gets an actionable message instead of a
+ * silent no-op.
+ */
+private fun DesignEditorState.rejectScreenRootClone(): DesignEditorState = copy(
+    diagnostics = diagnostics + DesignDiagnostic(
+        severity = DesignSeverity.Error,
+        message = "A screen root frame cannot be copied beside itself: a screen source " +
+            "holds exactly one top-level section. Use Duplicate Screen instead.",
+    ),
+)
+
+/**
+ * Deterministic landing plan for pasting clipboard [DesignEditorIntent.PasteNodes.nodes]:
+ * each snapshot re-lands under its copy-time parent when that parent still exists, else
+ * under the selected page's root frame (the create-object fallback). Pure in the document,
+ * so the in-memory apply and the SLM write-back edits share identical minted ids.
+ */
+private fun DesignEditorState.pastePlan(intent: DesignEditorIntent.PasteNodes): List<PasteStep> {
+    val document = document ?: return emptyList()
+    var working = document
+    return buildList {
+        intent.nodes.forEach { snapshot ->
+            val preferred = intent.parentIds[snapshot.id]?.takeIf { candidate ->
+                working.pages.any { it.id == candidate } || working.nodeById(candidate) != null
+            }
+            val parentId = preferred
+                ?: working.pageById(selectedPageId)?.children?.firstOrNull()?.id
+                ?: working.pageById(selectedPageId)?.id
+                ?: return@forEach
+            val clone = snapshot.deepCopyWithFreshIds(working)
+            val offset = clone.copy(
+                position = clone.position?.let {
+                    DesignPoint(it.x.orZero + intent.offsetX, it.y.orZero + intent.offsetY)
+                },
+            )
+            working = working.insertNode(parentId, offset)
+            add(PasteStep(parentId, offset))
+        }
+    }
+}
+
+/**
+ * Pastes clipboard snapshots ([DesignEditorIntent.PasteNodes]) and mirrors each copy into
+ * its landing parent's owning source as a fresh child section ([InsertChildSubtree]) —
+ * one undoable step, selection on the copies. A local `return inMemory` here is a
+ * CANDIDATE, not a published state: the central write-back contract turns a structural
+ * document change with byte-identical sources into an explicit rejection (the
+ * id-stability net), exactly as it does for duplicate.
+ */
+private fun DesignEditorState.pasteNodesWriteBack(
+    intent: DesignEditorIntent.PasteNodes,
+): DesignEditorState {
+    val document = document ?: return this
+    val plan = pastePlan(intent)
+    if (plan.isEmpty()) return this
+    if (plan.any { step -> document.pages.any { it.id == step.parentId } }) {
+        return rejectScreenRootClone()
+    }
+    val working = plan.fold(document) { doc, step -> doc.insertNode(step.parentId, step.clone) }
+    if (working == document) return this
+    val inMemory = pushHistory(document).copy(document = working)
+        .selectMany(plan.map { it.clone.id }.toSet())
+
+    if (plan.any { !it.clone.isStructurallyExpressible() }) return inMemory
+    // Ownership follows the LANDING parent (the originals may already be deleted).
+    val owners = plan.map { owningSourceIndex(it.parentId) }
+    if (owners.any { it == null }) return inMemory
+    if (owners.distinct().size > 1) {
+        val plans = plan.groupBy { owningSourceIndex(it.parentId)!! }.mapValues { (_, steps) ->
+            steps.map { InsertChildSubtree(it.parentId, it.clone) }
+        }
+        return withMultiSourceStructuralEdits(plans, inMemory)
+    }
+    val owner = owners.firstOrNull() ?: return inMemory
+    val ownerIds = compiledResults[owner].document?.pageTreeIds() ?: return inMemory
+    val mintedIds = plan.flatMap { step -> listOf(step.clone.id) + step.clone.allDescendants().map { it.id } }
+    val edits = plan.map { InsertChildSubtree(it.parentId, it.clone) }
+    return withStructuralSource(plan.first().parentId, edits, inMemory, ownerIds + mintedIds)
 }
 
 private data class GroupingPlan(
@@ -2061,7 +2152,13 @@ private fun DesignEditorState.candidateSourceIndices(nodeId: String): List<Int> 
 
 /** The single SLM source index that owns [nodeId]'s page, or null when it can't be resolved. */
 internal fun DesignEditorState.owningSourceIndex(nodeId: String): Int? {
-    val pageId = document?.pageOfNode(nodeId)?.id ?: return null
+    // A page id is its own owner key: structural edits may legitimately target a page
+    // as the insert parent (pasting a top-level frame), and pageOfNode only searches
+    // node trees — without this, such an edit would be rejected while the equivalent
+    // duplicate (keyed off the original node) sails through.
+    val pageId = document?.pageOfNode(nodeId)?.id
+        ?: document?.pages?.firstOrNull { it.id == nodeId }?.id
+        ?: return null
     return compiledResults.indices.firstOrNull { index ->
         val compiledDocument = compiledResults[index].document ?: return@firstOrNull false
         val screenId = compiledDocument.screen?.id.orEmpty()

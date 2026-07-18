@@ -142,6 +142,8 @@ import io.aequicor.visualization.engine.ir.model.DesignColor
 import io.aequicor.visualization.engine.ir.model.DesignDocument
 import io.aequicor.visualization.mcp.McpServerController
 import io.aequicor.visualization.mcp.NoMcpServerController
+import io.aequicor.visualization.engine.ir.model.DesignSeverity
+import io.aequicor.visualization.editor.ui.FolderErrorDialog
 
 /**
  * Presentation holder for the Mission Editor: keeps the design-document state
@@ -331,6 +333,22 @@ class MissionEditorStateHolder(
      * subsequent broken snapshot arrives without the flag ever flipping back to false.
      */
     var folderExternalErrorNonce by mutableStateOf(0)
+        private set
+
+    /**
+     * Compile diagnostics behind [folderExternalError], newest snapshot first — the reason the
+     * folder would not open. Without these the user was told a folder was broken but never what
+     * was wrong with it, which is indistinguishable from nothing happening at all.
+     */
+    var folderExternalErrorDetails by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    /** Dismisses the external-folder error dialog; the status chip keeps the flag. */
+    fun dismissFolderExternalErrorDialog() {
+        folderExternalErrorDialogVisible = false
+    }
+
+    var folderExternalErrorDialogVisible by mutableStateOf(false)
         private set
 
     /**
@@ -572,6 +590,20 @@ class MissionEditorStateHolder(
      * is adopted wholesale; later ones are compile-gated external changes that preserve the
      * viewport/selection and back up any unsaved local edit they replace.
      */
+    /** Human-readable reasons a folder snapshot would not open: file, line and message. */
+    private fun folderErrorDetails(docs: MissionDocuments): List<String> {
+        val errors = docs.diagnostics.filter { it.severity == DesignSeverity.Error }
+        val reported = errors.ifEmpty { docs.diagnostics }
+        return reported.take(8).map { diagnostic ->
+            val where = diagnostic.location?.let { location ->
+                val file = location.file?.takeIf { it.isNotBlank() }
+                val line = location.line?.let { ":$it" }.orEmpty()
+                file?.let { "$it$line" }
+            }
+            if (where != null) "$where — ${diagnostic.message}" else diagnostic.message
+        }
+    }
+
     private suspend fun onFolderSnapshot(snapshot: ProjectSnapshot) {
         val pending = if (usesEmbeddedDraftProjects && !hasAdoptedLiveFolder) {
             val activeFolderId = platformActiveFolderId()
@@ -587,10 +619,14 @@ class MissionEditorStateHolder(
         // last good canvas. An empty folder is a valid empty project and must not reveal Welcome.
         if (!isEmptyProject && incomingDocument == null) {
             folderExternalError = true
+            folderExternalErrorDetails = folderErrorDetails(docs)
+            folderExternalErrorDialogVisible = true
             folderExternalErrorNonce++
             return
         }
         folderExternalError = !isEmptyProject && (docs.document == null || docs.hasErrors)
+        folderExternalErrorDetails = if (folderExternalError) folderErrorDetails(docs) else emptyList()
+        folderExternalErrorDialogVisible = folderExternalError
         if (!hasAdoptedLiveFolder) {
             isWelcomeProject = false
             persistenceEnabled = false
@@ -707,6 +743,8 @@ class MissionEditorStateHolder(
         folderSync = FolderSyncPresence.Idle
         folderName = null
         folderExternalError = false
+        folderExternalErrorDetails = emptyList()
+        folderExternalErrorDialogVisible = false
         folderConflictBackup = null
         hasAdoptedLiveFolder = false
         lastRecordedFolderId = null
@@ -1068,6 +1106,18 @@ fun MissionEditorApp(mcpServer: McpServerController = NoMcpServerController) {
         }
         CompositionLocalProvider(LocalStrings provides appStringsFor(state.language)) {
             if (state.projectLandingVisible) ProjectLandingScreen(state) else MissionEditorScreen(state)
+            // Hosted HERE, not inside MissionEditorScreen: a folder that fails its compile gate
+            // early-returns before the landing is dismissed, so the landing stays on screen — and
+            // a dialog hosted in the editor branch can never compose. That made a broken project
+            // fail in total silence: the click just did nothing.
+            if (state.folderExternalErrorDialogVisible) {
+                FolderErrorDialog(
+                    details = state.folderExternalErrorDetails,
+                    onDismiss = { state.dismissFolderExternalErrorDialog() },
+                    fromLanding = state.projectLandingVisible,
+                    location = state.folderName,
+                )
+            }
         }
     }
 }

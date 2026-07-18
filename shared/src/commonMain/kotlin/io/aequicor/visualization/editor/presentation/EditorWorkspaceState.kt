@@ -1,6 +1,9 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignNode
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 
@@ -96,11 +99,29 @@ data class EditorWorkspaceState(
      */
     val diagramTextEditRequest: String? = null,
     /**
+     * True while the diagram overlay's inline label editor is open. Canvas-level key
+     * shortcuts (Enter/Escape/Delete/arrows/space) must stand down so the text field
+     * receives them — preview key events tunnel through the canvas first.
+     */
+    val diagramTextEditing: Boolean = false,
+    /**
      * Live palette→canvas diagram-shape drag (draw.io-style), or null when idle. Window
      * coordinates because the palette (inspector pane) and the canvas are sibling
      * composables; the drop handler maps window → canvas-local → document coordinates.
      */
     val diagramPaletteDrag: DiagramPaletteDrag? = null,
+    /**
+     * Internal diagram clipboard filled by Ctrl/Cmd+C: element snapshots (a copy stays
+     * pasteable after the originals change or die). A view concern — never part of the
+     * document, survives switching diagrams, lost with the session.
+     */
+    val diagramClipboard: DiagramClipboard? = null,
+    /**
+     * Internal clipboard for canvas nodes outside diagram edit, filled by Ctrl/Cmd+C:
+     * deep subtree snapshots that stay pasteable after the originals change or die.
+     * A view concern like [diagramClipboard] — never part of the document.
+     */
+    val canvasClipboard: CanvasClipboard? = null,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -145,6 +166,45 @@ data class DiagramPaletteDrag(
     val windowX: Float,
     val windowY: Float,
 )
+
+/**
+ * Diagram clipboard content: deep snapshots of the copied nodes plus the edges that ran
+ * between them at copy time (paste re-identifies everything; see `pasteElements`).
+ * [pasteCount] grows the visual offset of each successive paste from the same clipboard
+ * — repeated Ctrl+V lays copies out as a staircase instead of stacking them all on one
+ * spot; a fresh Copy starts a new clipboard and thereby resets the counter.
+ */
+data class DiagramClipboard(
+    val nodes: List<DiagramNode>,
+    val edges: List<DiagramEdge>,
+    val pasteCount: Int = 0,
+) {
+    val isEmpty: Boolean get() = nodes.isEmpty() && edges.isEmpty()
+
+    /**
+     * Offset (in multiples of [step]) the NEXT paste from this clipboard should apply,
+     * paired with the clipboard to store afterwards. Pure so the staircase contract is
+     * unit-testable: 1x, 2x, 3x... per paste, reset by any freshly-copied clipboard.
+     */
+    fun nextPaste(step: Double): Pair<Double, DiagramClipboard> =
+        step * (pasteCount + 1) to copy(pasteCount = pasteCount + 1)
+}
+
+/**
+ * Canvas-node clipboard content (nodes OUTSIDE diagram edit): deep snapshots of the
+ * copied subtrees plus each root's parent at copy time. Snapshots are immutable IR
+ * values, so they survive later edits and deletion of the originals; paste re-identifies
+ * everything and falls back to the selected page when a parent is gone. [pasteCount]
+ * grows the visual offset of each successive paste from the same clipboard, so repeated
+ * Ctrl+V lays copies out as a staircase instead of a stack; a fresh Copy resets it.
+ */
+data class CanvasClipboard(
+    val nodes: List<DesignNode>,
+    val parentIds: Map<String, String> = emptyMap(),
+    val pasteCount: Int = 0,
+) {
+    val isEmpty: Boolean get() = nodes.isEmpty()
+}
 
 /** Selected elements of the diagram graph being edited (ids are graph-local strings). */
 data class DiagramSelection(

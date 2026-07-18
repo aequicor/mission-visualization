@@ -195,7 +195,7 @@ data class DiagramEdge(
     val labels: List<DiagramEdgeLabel> = emptyList(),
     val sourceArrowhead: DiagramArrowhead = DiagramArrowhead.None,
     val targetArrowhead: DiagramArrowhead = DiagramArrowhead.None,
-    val lineJumps: LineJumpStyle = LineJumpStyle.ARC,
+    val lineJumps: LineJumpStyle = LineJumpStyle.NONE,
     val connectionMode: DiagramConnectionMode = DiagramConnectionMode.LINE,
     val flowAnimation: Boolean = false,
     val layerId: DiagramLayerId? = null,

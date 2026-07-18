@@ -8,6 +8,7 @@ import io.aequicor.visualization.engine.ir.model.DesignSeverity
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlNoteNode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -173,4 +174,35 @@ class DiagramCnlCompileTest {
 
     private fun collectSubtree(node: DesignNode): List<DesignNode> =
         listOf(node) + node.children.flatMap { collectSubtree(it) }
+
+    /**
+     * Real agent-authored prose quotes with raw nested «…» inside a phrase (the
+     * house-inspection ER reference file broke the whole folder open on this): the
+     * balanced scanner must accept it, and the canonical writer re-emits it escaped
+     * so the round trip is exact.
+     */
+    @Test
+    fun nestedGuillemetsInsideNotePhraseCompileAndRoundTrip() {
+        val heading = "## Diagram: Nested id nested_canvas 600 by 400 position 0 0"
+        val body = listOf(
+            "Node note rule «Признак «отверстие отсутствует» — не ноль; ключ — «квартира + обследование».» 300 by 120 position 20 20",
+        )
+        val result = compileWithDiagrams(cnlDocument(body, heading))
+        assertTrue(
+            result.diagnostics.none { it.severity == DesignSeverity.Error },
+            "nested guillemets must compile: ${result.diagnostics}",
+        )
+        val graph = result.diagramGraphOf("nested_canvas")
+        val note = assertNotNull(graph.nodes.single().payload as? UmlNoteNode)
+        assertEquals("Признак «отверстие отсутствует» — не ноль; ключ — «квартира + обследование».", note.text)
+
+        val emitted = DiagramCnlWriter.sentences(graph).single()
+        assertTrue("""\«""" in emitted && """\»""" in emitted, "canonical form escapes nesting: $emitted")
+        val reparsed = compileWithDiagrams(cnlDocument(listOf(emitted), heading))
+        assertTrue(
+            reparsed.diagnostics.none { it.severity == DesignSeverity.Error },
+            "canonical form must recompile: ${reparsed.diagnostics}",
+        )
+        assertEquals(graph, reparsed.diagramGraphOf("nested_canvas"))
+    }
 }

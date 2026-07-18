@@ -146,7 +146,11 @@ import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.CanvasClipboard
+import io.aequicor.visualization.editor.presentation.DiagramClipboard
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
+import io.aequicor.visualization.editor.presentation.parentNodeOf
+import io.aequicor.visualization.editor.presentation.topLevelOwnerPage
 import io.aequicor.visualization.editor.presentation.DiagramSelection
 import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.DocumentRect
@@ -244,7 +248,12 @@ import io.aequicor.visualization.engine.backend.compose.selectableNodeId
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
 import io.aequicor.visualization.subsystems.diagrams.hittest.hitTest as diagramHitTest
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
+import io.aequicor.visualization.subsystems.diagrams.ops.PASTE_OFFSET
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
 import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
@@ -675,12 +684,14 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
                         shiftHeld = event.isShiftPressed
                         altHeld = event.isAltPressed
                         ctrlOrMetaHeld = event.isCtrlPressed || event.isMetaPressed
-                        if (event.key == Key.Spacebar && state.designState.editingTextNodeId.isBlank()) {
+                        if (event.key == Key.Spacebar && state.designState.editingTextNodeId.isBlank() &&
+                            !state.workspace.diagramTextEditing
+                        ) {
                             spaceHeld = event.type == KeyEventType.KeyDown
                             return@onPreviewKeyEvent true
                         }
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        handleCanvasKey(state, event.key, event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
+                        handleCanvasKey(state, canvasShortcutKey(event), event.isShiftPressed, event.isCtrlPressed || event.isMetaPressed)
                     }
                     // Desktop context menu. Secondary presses are deliberately handled separately
                     // from the primary drag state machine, so opening the menu cannot begin a move.
@@ -1807,7 +1818,18 @@ private fun CanvasSurface(state: MissionEditorStateHolder) {
             VectorEditOverlay(state, layout, viewport, zoomPx)
 
             // Diagram edit mode: selection/ports/waypoints overlays + element gestures.
-            DiagramEditOverlay(state, layout, viewport, zoomPx, panActive = spaceHeld)
+            DiagramEditOverlay(
+                state,
+                layout,
+                viewport,
+                zoomPx,
+                panActive = spaceHeld,
+                onCanvasFocus = {
+                    if (state.designState.editingTextNodeId.isBlank()) {
+                        runCatching { focusRequester.requestFocus() }
+                    }
+                },
+            )
 
             // Palette→canvas drag ghost (draw.io insert): shape preview under the pointer
             // plus an accent highlight of the diagram box the drop would land in.
@@ -3065,6 +3087,10 @@ private fun enterEditMode(state: MissionEditorStateHolder, nodeId: String) {
 
 /** Keyboard shortcuts: nudge, big-nudge, delete, duplicate, undo/redo, select-all, escape. */
 private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Boolean, ctrl: Boolean): Boolean {
+    // The diagram overlay's inline label editor owns the keyboard while open: this handler
+    // sees preview events before the focused text field, so consuming Enter/Escape/Delete/
+    // arrows here would exit edit mode and drop the draft instead of committing it.
+    if (state.workspace.diagramTextEditing) return false
     val design = state.designState
     val selection = design.selectedNodeIds
     val step = if (shift) 10.0 else 1.0
@@ -3154,7 +3180,36 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             if (intent != null) state.dispatch(intent)
             intent != null
         }
+        // Diagram-selection clipboard: Ctrl/Cmd+C snapshots the selected elements (plus the
+        // edges running between them), V pastes the snapshots with fresh ids and selects the
+        // copies, D duplicates in place without touching the clipboard.
+        ctrl && key == Key.C && state.workspace.diagramEditNodeId.isNotBlank() &&
+            !state.workspace.diagramSelection.isEmpty -> {
+            diagramSelectionSnapshot(state)?.let { clip ->
+                state.updateWorkspace { it.copy(diagramClipboard = clip) }
+            } != null
+        }
+        ctrl && key == Key.V && state.workspace.diagramEditNodeId.isNotBlank() &&
+            state.workspace.diagramClipboard?.isEmpty == false ->
+            pasteDiagramClipboard(state, state.workspace.diagramClipboard!!, advanceCounter = true)
+        ctrl && key == Key.D && state.workspace.diagramEditNodeId.isNotBlank() &&
+            !state.workspace.diagramSelection.isEmpty ->
+            diagramSelectionSnapshot(state)?.let { pasteDiagramClipboard(state, it) } ?: false
         ctrl && key == Key.D && selection.isNotEmpty() -> { state.dispatch(DesignEditorIntent.DuplicateNodes(selection)); true }
+        // Canvas-node clipboard, gated OUT of diagram edit entirely: inside a diagram
+        // session C/V belong to diagram elements (an empty diagram selection must not
+        // silently snapshot the whole diagram node, nor paste a canvas subtree into the
+        // middle of a diagram workflow). Ctrl/Cmd+C deep-snapshots the selected
+        // subtrees — the copies stay pasteable after the originals change or die — and V
+        // pastes them with fresh ids at a growing offset, selecting the copies.
+        ctrl && key == Key.C && state.workspace.diagramEditNodeId.isBlank() && selection.isNotEmpty() -> {
+            canvasSelectionSnapshot(state)?.let { clip ->
+                state.updateWorkspace { it.copy(canvasClipboard = clip) }
+            } != null
+        }
+        ctrl && key == Key.V && state.workspace.diagramEditNodeId.isBlank() &&
+            state.workspace.canvasClipboard?.isEmpty == false ->
+            pasteCanvasClipboard(state)
         ctrl && key == Key.RightBracket -> zorder(ZOrderMove.Forward)
         ctrl && key == Key.LeftBracket -> zorder(ZOrderMove.Backward)
         key == Key.RightBracket -> zorder(ZOrderMove.ToFront)
@@ -3201,6 +3256,169 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         }
         else -> false
     }
+}
+
+/**
+ * Deep snapshot of the selected canvas subtrees for the internal clipboard. Nested
+ * selections collapse to their outermost roots (a copied parent already carries its
+ * children), roots keep document order, and each remembers its parent at copy time so
+ * paste lands the copy where the original lived — even after the original is edited or
+ * deleted (the paste falls back to the selected page when the parent is gone too).
+ */
+private fun canvasSelectionSnapshot(state: MissionEditorStateHolder): CanvasClipboard? {
+    val document = state.designState.document ?: return null
+    val selection = state.designState.selectedNodeIds
+    if (selection.isEmpty()) return null
+
+    fun hasSelectedAncestor(id: String): Boolean {
+        var current = document.parentNodeOf(id)?.id
+        while (current != null) {
+            if (current in selection) return true
+            current = document.parentNodeOf(current)?.id
+        }
+        return false
+    }
+
+    val roots = buildList {
+        document.pages.forEach { page ->
+            fun walk(node: io.aequicor.visualization.engine.ir.model.DesignNode) {
+                if (node.id in selection && !hasSelectedAncestor(node.id)) {
+                    add(node)
+                    return
+                }
+                node.children.forEach(::walk)
+            }
+            page.children.forEach(::walk)
+        }
+    }
+    if (roots.isEmpty()) return null
+    val parentIds = roots.mapNotNull { root ->
+        val parent = document.parentNodeOf(root.id)?.id
+            ?: document.topLevelOwnerPage(root.id)?.id
+            ?: return@mapNotNull null
+        root.id to parent
+    }.toMap()
+    return CanvasClipboard(nodes = roots, parentIds = parentIds)
+}
+
+/** Visual offset of the first paste from a canvas clipboard; grows with each repeat. */
+private const val CANVAS_PASTE_OFFSET = 16.0
+
+/**
+ * Pastes the canvas clipboard with fresh ids at a cumulative offset (each successive
+ * paste of the same clipboard steps another [CANVAS_PASTE_OFFSET] down-right, so copies
+ * fan out as a staircase instead of stacking). The paste counter advances only when the
+ * paste actually landed — a write-back rejection leaves the document untouched, and
+ * deepening the offset for a paste nobody saw would displace the next successful one.
+ */
+private fun pasteCanvasClipboard(state: MissionEditorStateHolder): Boolean {
+    val clipboard = state.workspace.canvasClipboard ?: return false
+    if (clipboard.isEmpty) return false
+    val step = clipboard.pasteCount + 1
+    val documentBefore = state.designState.document
+    state.dispatch(
+        DesignEditorIntent.PasteNodes(
+            nodes = clipboard.nodes,
+            parentIds = clipboard.parentIds,
+            offsetX = CANVAS_PASTE_OFFSET * step,
+            offsetY = CANVAS_PASTE_OFFSET * step,
+        ),
+    )
+    if (state.designState.document != documentBefore) {
+        state.updateWorkspace { it.copy(canvasClipboard = clipboard.copy(pasteCount = step)) }
+    }
+    return true
+}
+
+/** The live graph of the diagram node currently being edited, or null. */
+private fun diagramLiveGraph(state: MissionEditorStateHolder): DiagramGraph? =
+    (
+        state.designState.document?.nodeById(state.workspace.diagramEditNodeId)?.kind
+            as? DesignNodeKind.Diagram
+        )?.graph
+
+/**
+ * Deep snapshot of the current diagram selection for the clipboard: the selected nodes
+ * plus every edge whose ends all stay inside the copy (selected edges outside that set
+ * would rewire the original neighbors on paste and are dropped).
+ */
+private fun diagramSelectionSnapshot(state: MissionEditorStateHolder): DiagramClipboard? {
+    val graph = diagramLiveGraph(state) ?: return null
+    val selection = state.workspace.diagramSelection
+    val nodes = selection.elementIds.mapNotNull { graph.nodeById(DiagramNodeId(it)) }
+    val copied = nodes.map { it.id }.toSet()
+
+    fun endpointInside(endpoint: DiagramEndpoint): Boolean = when (endpoint) {
+        is DiagramEndpoint.FreePoint -> true
+        is DiagramEndpoint.FloatingAnchor -> endpoint.nodeId in copied
+        is DiagramEndpoint.FixedPort -> endpoint.nodeId in copied
+    }
+
+    val edges = graph.edges.filter { edge ->
+        val attached = listOfNotNull(edge.source.attachedNodeId, edge.target.attachedNodeId)
+        val implicit = attached.isNotEmpty() && attached.all { it in copied }
+        (implicit || edge.id.value in selection.edgeIds) &&
+            endpointInside(edge.source) && endpointInside(edge.target)
+    }
+    val clipboard = DiagramClipboard(nodes = nodes, edges = edges)
+    return clipboard.takeIf { !it.isEmpty }
+}
+
+/**
+ * Pastes [clipboard] into the edited diagram with fresh ids and selects the copies. The
+ * offset is cumulative over [DiagramClipboard.pasteCount], so repeated Ctrl+V fans copies
+ * out as a staircase; [advanceCounter] stores the bumped clipboard back into the
+ * workspace (Ctrl+V pasting the stored clipboard) while a one-shot paste of a fresh
+ * snapshot (Ctrl+D duplicate) leaves the stored clipboard untouched.
+ */
+private fun pasteDiagramClipboard(
+    state: MissionEditorStateHolder,
+    clipboard: DiagramClipboard,
+    advanceCounter: Boolean = false,
+): Boolean {
+    val editId = state.workspace.diagramEditNodeId
+    val graph = diagramLiveGraph(state) ?: return false
+    val taken = buildSet {
+        graph.nodes.forEach { add(it.id.value) }
+        graph.edges.forEach { add(it.id.value) }
+        graph.layers.forEach { add(it.id.value) }
+        graph.groups.forEach { add(it.id.value) }
+    }.toMutableSet()
+
+    fun mint(prefix: String): String {
+        var index = 1
+        while ("$prefix-$index" in taken) index++
+        return "$prefix-$index".also { taken += it }
+    }
+
+    val nodeIds = clipboard.nodes.associate { it.id.value to mint("node") }
+    val edgeIds = clipboard.edges.associate { it.id.value to mint("edge") }
+    val (offset, advanced) = clipboard.nextPaste(PASTE_OFFSET)
+    val documentBefore = state.designState.document
+    state.dispatch(
+        DiagramEditorIntent.PasteDiagramElements(
+            nodeId = editId,
+            nodes = clipboard.nodes,
+            edges = clipboard.edges,
+            nodeIds = nodeIds,
+            edgeIds = edgeIds,
+            offsetX = offset,
+            offsetY = offset,
+        ),
+    )
+    // The staircase counter only advances for a paste that actually landed (a rejected
+    // write-back leaves the document untouched).
+    val landed = state.designState.document != documentBefore
+    state.updateWorkspace {
+        it.copy(
+            diagramSelection = DiagramSelection(
+                elementIds = nodeIds.values.toSet(),
+                edgeIds = edgeIds.values.toSet(),
+            ),
+            diagramClipboard = if (advanceCounter && landed) advanced else it.diagramClipboard,
+        )
+    }
+    return true
 }
 
 /** Advances the diagram element selection to the next / previous graph node (Tab / Shift+Tab). */

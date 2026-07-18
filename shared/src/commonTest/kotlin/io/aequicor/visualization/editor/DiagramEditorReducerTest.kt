@@ -7,6 +7,7 @@ import io.aequicor.visualization.editor.domain.MissionDocumentSource
 import io.aequicor.visualization.editor.domain.compileMissionDocuments
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.DiagramClipboard
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
 import io.aequicor.visualization.editor.presentation.createDesignEditorState
 import io.aequicor.visualization.editor.presentation.reduceDesignEditor
@@ -113,6 +114,56 @@ class DiagramEditorReducerTest {
         val recompiledGraph =
             assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
         assertEquals(next.graphOf("canvas"), recompiledGraph, "in-memory graph == recompiled-source graph")
+    }
+
+    @Test
+    fun pasteDiagramElementsCopiesNodesEdgesAndWritesBack() {
+        val state = freshState()
+        val graph = state.graphOf("canvas")
+        val next = reduceDesignEditor(
+            state,
+            DiagramEditorIntent.PasteDiagramElements(
+                nodeId = "canvas",
+                nodes = listOf(
+                    assertNotNull(graph.nodeById(DiagramNodeId("a"))),
+                    assertNotNull(graph.nodeById(DiagramNodeId("b"))),
+                ),
+                edges = listOf(assertNotNull(graph.edgeById(DiagramEdgeId("e1")))),
+                nodeIds = mapOf("a" to "node-1", "b" to "node-2"),
+                edgeIds = mapOf("e1" to "edge-1"),
+                offsetX = 24.0,
+                offsetY = 24.0,
+            ),
+        )
+        val pastedGraph = next.graphOf("canvas")
+        val copyA = assertNotNull(pastedGraph.nodeById(DiagramNodeId("node-1")))
+        assertEquals(44.0, copyA.x)
+        assertEquals(44.0, copyA.y)
+        val copyEdge = assertNotNull(pastedGraph.edgeById(DiagramEdgeId("edge-1")))
+        assertEquals(DiagramEndpoint.FloatingAnchor(DiagramNodeId("node-1")), copyEdge.source)
+        assertEquals(DiagramEndpoint.FloatingAnchor(DiagramNodeId("node-2")), copyEdge.target)
+        // Originals untouched, copies persisted to the source.
+        assertEquals(20.0, assertNotNull(pastedGraph.nodeById(DiagramNodeId("a"))).x)
+        assertTrue("Edge edge-1 from node-1 to node-2" in next.sourceContent())
+
+        val recompiled = compileMissionDocuments(next.sources)
+        val recompiledGraph =
+            assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
+        assertEquals(pastedGraph, recompiledGraph, "paste round-trips through full recompile")
+    }
+
+    @Test
+    fun diagramClipboardPasteOffsetIsCumulative() {
+        // Repeated Ctrl+V from ONE clipboard fans copies out as a staircase: 1x, 2x, 3x
+        // the base offset. A freshly-copied clipboard starts back at 1x.
+        val clipboard = DiagramClipboard(nodes = emptyList(), edges = emptyList())
+        val (first, afterFirst) = clipboard.nextPaste(24.0)
+        assertEquals(24.0, first)
+        val (second, afterSecond) = afterFirst.nextPaste(24.0)
+        assertEquals(48.0, second)
+        val (third, _) = afterSecond.nextPaste(24.0)
+        assertEquals(72.0, third)
+        assertEquals(24.0, DiagramClipboard(emptyList(), emptyList()).nextPaste(24.0).first)
     }
 
     @Test
@@ -381,5 +432,44 @@ class DiagramEditorReducerTest {
             next.diagnostics.none { "kept in memory" in it.message },
             "write-back must not fall back to memory: ${next.diagnostics}",
         )
+    }
+
+    @Test
+    fun setDiagramEdgeLabelWritesBackIntoOwningSource() {
+        val state = freshState()
+        val before = state.sources
+
+        val next = reduceDesignEditor(
+            state,
+            DiagramEditorIntent.SetDiagramEdgeLabel(
+                nodeId = "canvas",
+                edgeId = "e1",
+                position = DiagramEdgeLabelPosition.MIDDLE,
+                text = "sends to",
+            ),
+        )
+
+        val edge = assertNotNull(next.graphOf("canvas").edgeById(DiagramEdgeId("e1")))
+        val label = assertNotNull(
+            edge.labels.firstOrNull { it.position == DiagramEdgeLabelPosition.MIDDLE },
+            "middle label present in the graph",
+        )
+        assertEquals("sends to", label.label.text)
+
+        val content = next.sourceContent()
+        assertTrue("label («sends to»)" in content, "edge label persisted as a CNL phrase:\n$content")
+        assertTrue("label («src» at source)" in content, "existing source label survives:\n$content")
+        assertTrue("label («dst» at target)" in content, "existing target label survives:\n$content")
+        assertEquals(listOf(before), next.previousSources, "source undo captured the pre-edit sources")
+        assertTrue(next.diagnostics.none { it.severity == DesignSeverity.Error }, "${next.diagnostics}")
+        assertTrue(
+            next.diagnostics.none { "kept in memory" in it.message },
+            "write-back must not fall back to memory: ${next.diagnostics}",
+        )
+
+        val recompiled = compileMissionDocuments(next.sources)
+        val recompiledGraph =
+            assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
+        assertEquals(next.graphOf("canvas"), recompiledGraph, "in-memory graph == recompiled-source graph")
     }
 }

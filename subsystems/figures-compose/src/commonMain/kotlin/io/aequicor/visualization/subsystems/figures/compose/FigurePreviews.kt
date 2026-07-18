@@ -38,13 +38,16 @@ fun FigureShapePreview(
         val fill = style.fill
         when (shape) {
             ShapeType.Rectangle -> {
-                val rect = Size(size.width - 5f, size.height - 7f)
+                // A degenerate canvas (first layout frame, cramped dropdown rows) makes
+                // the inset subtraction negative — clamp instead of drawing garbage.
+                val rect = Size((size.width - 5f).coerceAtLeast(0f), (size.height - 7f).coerceAtLeast(0f))
                 drawRoundRect(fill, topLeft = Offset(2.5f, 3.5f), size = rect, cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()))
                 drawRoundRect(ink, topLeft = Offset(2.5f, 3.5f), size = rect, cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()), style = stroke)
             }
             ShapeType.Ellipse -> {
-                drawOval(fill, topLeft = Offset(2.5f, 3f), size = Size(size.width - 5f, size.height - 6f))
-                drawOval(ink, topLeft = Offset(2.5f, 3f), size = Size(size.width - 5f, size.height - 6f), style = stroke)
+                val oval = Size((size.width - 5f).coerceAtLeast(0f), (size.height - 6f).coerceAtLeast(0f))
+                drawOval(fill, topLeft = Offset(2.5f, 3f), size = oval)
+                drawOval(ink, topLeft = Offset(2.5f, 3f), size = oval, style = stroke)
             }
             ShapeType.Polygon -> {
                 val path = Path().apply {

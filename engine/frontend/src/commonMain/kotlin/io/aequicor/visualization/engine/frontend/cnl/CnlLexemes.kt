@@ -10,7 +10,7 @@ public object CnlLexemes {
     /** Canonical number rendering: drop a trailing `.0`. */
     public fun num(value: Double): String = CnlGrammar.num(value)
 
-    /** Escapes a raw string for a `«…»` text literal (`\\`, `\»`, `\n`, `\r`). */
+    /** Escapes a raw string for a `«…»` text literal (`\\`, `\«`, `\»`, `\n`, `\r`). */
     public fun escapeText(value: String): String = CnlGrammar.escapeText(value)
 
     /** Renders a `«…»` text literal with [escapeText] applied. */
@@ -21,7 +21,8 @@ public object CnlLexemes {
 
     /**
      * Scans a `«…»`/`"…"` literal body starting at [start] (the index just after the opener),
-     * honoring backslash escapes (`\<close>`, `\\`, `\n`, `\r`).
+     * honoring backslash escapes (`\«`, `\<close>`, `\\`, `\n`, `\r`) and balanced raw
+     * `«…»` nesting inside guillemet literals.
      */
     public fun scanTextLiteral(line: String, start: Int, close: Char): TextScan {
         val scan = CnlGrammar.scanTextLiteral(line, start, close)

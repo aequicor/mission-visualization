@@ -46,6 +46,10 @@ internal fun orthogonalGridRoute(
     goal: DiagramPoint,
     obstacles: List<DiagramRect>,
     turnPenalty: Double,
+    crossings: RouteCrossingIndex? = null,
+    crossingPenalty: Double = 0.0,
+    markerPenalty: Double = 0.0,
+    crowdPenalty: Double = 0.0,
 ): List<DiagramPoint>? {
     if (start.x == goal.x && start.y == goal.y) return listOf(start)
     val xs = gridCoordinates(
@@ -158,7 +162,45 @@ internal fun orthogonalGridRoute(
             if (blocked) continue
             val stepLength = if (dir.isHorizontal) abs(xs[ni] - xs[i]) else abs(ys[nj] - ys[j])
             val turnCost = if (dir != currentDir) turnPenalty else 0.0
-            val nextG = currentG + stepLength + turnCost
+            // Each already-routed line this step would properly cross taxes the move, so
+            // the search trades a bounded detour for a cleaner weave. Grid steps tile a
+            // lane without overlap, hence every crossing is charged exactly once.
+            val crossingCost = if (crossings != null && crossingPenalty > 0.0) {
+                val count = if (dir.isHorizontal) {
+                    crossings.crossingsOfHorizontal(ys[j], minOf(xs[i], xs[ni]), maxOf(xs[i], xs[ni]))
+                } else {
+                    crossings.crossingsOfVertical(xs[i], minOf(ys[j], ys[nj]), maxOf(ys[j], ys[nj]))
+                }
+                count * crossingPenalty
+            } else {
+                0.0
+            }
+            // Slicing through another end's marker glyph reads worse than a plain
+            // crossing, so marker boxes carry their own (higher) toll.
+            val markerCost = if (crossings != null && markerPenalty > 0.0) {
+                val cuts = if (dir.isHorizontal) {
+                    crossings.markerCutsOfHorizontal(ys[j], minOf(xs[i], xs[ni]), maxOf(xs[i], xs[ni]))
+                } else {
+                    crossings.markerCutsOfVertical(xs[i], minOf(ys[j], ys[nj]), maxOf(ys[j], ys[nj]))
+                }
+                cuts * markerPenalty
+            } else {
+                0.0
+            }
+            // A crossing inside a crowd disc (a zone already piling up crossings) pays a
+            // surcharge on top of the plain crossing toll, so pile-ups spread out along
+            // the long spans instead of stacking into one comb.
+            val crowdCost = if (crossings != null && crowdPenalty > 0.0) {
+                val crowded = if (dir.isHorizontal) {
+                    crossings.crowdedCrossingsOfHorizontal(ys[j], minOf(xs[i], xs[ni]), maxOf(xs[i], xs[ni]))
+                } else {
+                    crossings.crowdedCrossingsOfVertical(xs[i], minOf(ys[j], ys[nj]), maxOf(ys[j], ys[nj]))
+                }
+                crowded * crowdPenalty
+            } else {
+                0.0
+            }
+            val nextG = currentG + stepLength + turnCost + crossingCost + markerCost + crowdCost
             val nextId = stateId(ni, nj, dir)
             if (nextG < bestCost[nextId] - GEOMETRY_EPSILON) {
                 bestCost[nextId] = nextG

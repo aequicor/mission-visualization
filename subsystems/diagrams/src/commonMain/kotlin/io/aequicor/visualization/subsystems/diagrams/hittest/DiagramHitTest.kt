@@ -21,6 +21,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
+import io.aequicor.visualization.subsystems.diagrams.routing.endpointMarkerZones
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -187,7 +188,7 @@ fun hitTest(
     for (edge in edgesTopDown) {
         val route = edgeRoute(graph, edge, routes) ?: continue
         edge.labels.forEach { label ->
-            val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id))
+            val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id, routes))
             val halfWidth = maxOf(label.label.text.length * 3.5, 12.0) + 4.0
             val halfHeight = 9.0
             if (abs(point.x - anchor.x) <= halfWidth && abs(point.y - anchor.y) <= halfHeight) {
@@ -230,10 +231,23 @@ fun hitTest(
     // any virtual connection point is what makes a plain click select/move the node under the
     // cursor, and it guarantees a virtual port belonging to an occluded (lower) node can never be
     // returned in front of the body that covers it.
-    for (node in nodesTopDown) {
-        if (node.containsPoint(point)) {
-            return DiagramHit.Node(node.id, nodeHitPart(node, point))
+    for ((index, node) in nodesTopDown.withIndex()) {
+        if (!node.containsPoint(point)) continue
+        // A container's body must not bury the connection crosses of the nodes stacked on
+        // top of it: inside a background frame the "empty space" around a shape belongs to
+        // the container, and without this pass an edge could only ever start from a
+        // DECLARED port there. Only nodes ABOVE the hit body are offered — the node's own
+        // interior still selects and drags it, and a cross under a covering body stays
+        // unreachable (proper occlusion).
+        for (above in 0 until index) {
+            val candidate = nodesTopDown[above]
+            candidate.connectionPorts().forEach { port ->
+                if (distance(point, anchorPoint(candidate, port)) <= tolerance) {
+                    return DiagramHit.Port(candidate.id, port.id)
+                }
+            }
         }
+        return DiagramHit.Node(node.id, nodeHitPart(node, point))
     }
 
     // With no node body under the pointer, offer the draw.io virtual connection grid so an edge
@@ -311,19 +325,114 @@ fun edgeLabelAnchorPoint(
     }
     val base = pointAlongPolyline(route, fraction)
     val lift = edgeLabelLift(route, fraction)
-    return DiagramPoint(
+    val anchored = DiagramPoint(
         base.x + lift.x + label.offsetX,
         base.y + lift.y + label.offsetY,
     )
+    return pushedClearOfNodeBodies(anchored, label, listOf(route) + otherRoutes, avoidRects)
+}
+
+/** Estimated half extents of a label's text box (matches the lint's defaults). */
+internal const val EDGE_LABEL_HALF_CHAR: Double = 3.5
+internal const val EDGE_LABEL_HALF_HEIGHT: Double = 8.0
+
+/**
+ * Furthest a label anchor is corrected to get its box off a node body. Covers the common
+ * defect — a route moved after the label's offset was authored/dragged, so the box now
+ * clips a node body — while a label parked DEEP inside a node stays where its author put
+ * it (a teleport would be worse than the overlap, and the lint still reports it).
+ */
+private const val EDGE_LABEL_NODE_PUSH_LIMIT = 72.0
+
+/**
+ * Pushes a label anchor the shortest axis distance that takes its estimated text box out
+ * of every [avoidRects] body without landing the text on a line: a candidate whose box
+ * (inset a little — a line clipping the outermost pixel of a glyph is fine) any of
+ * [allRoutes] passes through is rejected, so escaping a node cannot bury the label on its
+ * own edge or a neighbouring one. Applied after fraction, lift and the manual offset, on
+ * every surface that reads the anchor (renderer, overlays, hit-test) — the correction is
+ * part of where the label IS.
+ */
+private fun pushedClearOfNodeBodies(
+    anchor: DiagramPoint,
+    label: DiagramEdgeLabel,
+    allRoutes: List<List<DiagramPoint>>,
+    avoidRects: List<DiagramRect>,
+): DiagramPoint {
+    if (avoidRects.isEmpty()) return anchor
+    val halfWidth = label.label.text.length * EDGE_LABEL_HALF_CHAR
+    val halfHeight = EDGE_LABEL_HALF_HEIGHT
+
+    fun overlappedRect(point: DiagramPoint): DiagramRect? = avoidRects.firstOrNull { rect ->
+        point.x + halfWidth > rect.left + 1.0 && point.x - halfWidth < rect.right - 1.0 &&
+            point.y + halfHeight > rect.top + 1.0 && point.y - halfHeight < rect.bottom - 1.0
+    }
+
+    fun lineThroughBox(point: DiagramPoint): Boolean {
+        val box = DiagramRect(
+            x = point.x - (halfWidth - 4.0).coerceAtLeast(1.0),
+            y = point.y - (halfHeight - 2.0).coerceAtLeast(1.0),
+            width = ((halfWidth - 4.0) * 2.0).coerceAtLeast(2.0),
+            height = ((halfHeight - 2.0) * 2.0).coerceAtLeast(2.0),
+        )
+        return allRoutes.any { route ->
+            route.zipWithNext().any { (a, b) -> segmentIntersectsRect(a, b, box) }
+        }
+    }
+
+    var result = anchor
+    repeat(2) {
+        val hit = overlappedRect(result) ?: return result
+        val reachable = listOf(
+            DiagramPoint(hit.left - halfWidth - 2.0, result.y),
+            DiagramPoint(hit.right + halfWidth + 2.0, result.y),
+            DiagramPoint(result.x, hit.top - halfHeight - 2.0),
+            DiagramPoint(result.x, hit.bottom + halfHeight + 2.0),
+        ).filter { abs(it.x - anchor.x) + abs(it.y - anchor.y) <= EDGE_LABEL_NODE_PUSH_LIMIT }
+        // A spot with a line through the box is still acceptable as a fallback: the
+        // renderers plate labels (85% surface behind the text), so a masked line reads
+        // far better than text over a node body. A line-free spot still wins.
+        val candidate = reachable
+            .filter { !lineThroughBox(it) }
+            .minByOrNull { abs(it.x - result.x) + abs(it.y - result.y) }
+            ?: reachable.minByOrNull { abs(it.x - result.x) + abs(it.y - result.y) }
+            ?: return anchor
+        result = candidate
+    }
+    return if (overlappedRect(result) == null) result else anchor
+}
+
+/** Whether segment `a..b` touches [rect] (endpoint inside, or crossing any side). */
+private fun segmentIntersectsRect(a: DiagramPoint, b: DiagramPoint, rect: DiagramRect): Boolean {
+    fun inside(p: DiagramPoint) =
+        p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom
+    if (inside(a) || inside(b)) return true
+    val corners = listOf(
+        DiagramPoint(rect.left, rect.top),
+        DiagramPoint(rect.right, rect.top),
+        DiagramPoint(rect.right, rect.bottom),
+        DiagramPoint(rect.left, rect.bottom),
+    )
+    return (corners + corners.first()).zipWithNext().any { (c1, c2) ->
+        segmentIntersection(a, b, c1, c2) != null
+    }
 }
 
 /**
- * Node bodies an edge label must stay out of — every visible node that participates in
- * an edge, except this edge's own endpoints (decorative containers with no connections
- * would otherwise swallow every candidate). The companion context to
- * [edgeLabelObstacleRoutes] for [edgeLabelAnchorPoint].
+ * Bodies an edge label must stay out of: every visible node that participates in an
+ * edge, except this edge's own endpoints (decorative containers with no connections
+ * would otherwise swallow every candidate) — plus the fitted endpoint-marker glyphs of
+ * every OTHER visible edge, so a pushed or slid label never parks on a crow's foot
+ * (this edge's own markers stay out: a SOURCE/TARGET label deliberately annotates its
+ * own end). The companion context to [edgeLabelObstacleRoutes] for
+ * [edgeLabelAnchorPoint]; every surface must pass the same [routes] map or labels and
+ * their hit areas drift apart.
  */
-fun edgeLabelAvoidRects(graph: DiagramGraph, edgeId: DiagramEdgeId): List<DiagramRect> {
+fun edgeLabelAvoidRects(
+    graph: DiagramGraph,
+    edgeId: DiagramEdgeId,
+    routes: Map<DiagramEdgeId, List<DiagramPoint>>,
+): List<DiagramRect> {
     val edge = graph.edges.firstOrNull { it.id == edgeId } ?: return emptyList()
     val own = setOfNotNull(edge.source.attachedNodeId, edge.target.attachedNodeId)
     val connected = buildSet {
@@ -332,9 +441,20 @@ fun edgeLabelAvoidRects(graph: DiagramGraph, edgeId: DiagramEdgeId): List<Diagra
             candidate.target.attachedNodeId?.let(::add)
         }
     }
-    return graph.nodes
+    val nodeRects = graph.nodes
         .filter { it.visible && it.id in connected && it.id !in own }
         .map { it.bounds }
+    val markerRects = graph.edges
+        .filter { other ->
+            other.id != edgeId &&
+                graph.effectiveLayerId(other.layerId)
+                    .let { id -> id == null || graph.layerById(id)?.visible == true }
+        }
+        .flatMap { other ->
+            val points = routes[other.id] ?: return@flatMap emptyList()
+            endpointMarkerZones(other, points, fitToRun = true).map { it.rect }
+        }
+    return nodeRects + markerRects
 }
 
 /**
@@ -593,20 +713,25 @@ private fun tableCellPart(
 }
 
 /** Index of the track containing [local], with track sizes scaled to fill [extent]. */
-private fun trackIndex(sizes: List<Double>, extent: Double, local: Double): Int? {
+internal fun trackIndex(sizes: List<Double>, extent: Double, local: Double): Int? {
     if (sizes.isEmpty()) return null
-    val sum = sizes.sum()
-    val scaled = if (sum > 0.0 && extent > 0.0) {
-        sizes.map { it * extent / sum }
-    } else {
-        List(sizes.size) { if (extent > 0.0) extent / sizes.size else 0.0 }
-    }
+    val scaled = scaledTrackSizes(sizes, extent)
     var accumulated = 0.0
     scaled.forEachIndexed { index, size ->
         accumulated += size
         if (local <= accumulated) return index
     }
     return sizes.lastIndex
+}
+
+/** Track sizes scaled so they fill [extent] exactly (equal split when the sizes sum to 0). */
+internal fun scaledTrackSizes(sizes: List<Double>, extent: Double): List<Double> {
+    val sum = sizes.sum()
+    return if (sum > 0.0 && extent > 0.0) {
+        sizes.map { it * extent / sum }
+    } else {
+        List(sizes.size) { if (extent > 0.0) extent / sizes.size else 0.0 }
+    }
 }
 
 private fun classSectionPart(

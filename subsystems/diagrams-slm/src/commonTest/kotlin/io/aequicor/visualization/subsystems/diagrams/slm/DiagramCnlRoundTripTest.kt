@@ -229,7 +229,9 @@ class DiagramCnlRoundTripTest {
             width = 100.0,
             height = 48.0,
             rotation = 3.5,
-            payload = UmlStateNode(name = "Inner"),
+            // An untyped shape: the node-level `label`s below are only grammatical on payloads
+            // that actually render them (a typed payload carries its caption in its head phrase).
+            payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RECTANGLE),
             ports = listOf(
                 DiagramPort(DiagramPortId("out"), DiagramPortAnchor.SideOffset(DiagramNodeSide.RIGHT, 0.25)),
                 DiagramPort(DiagramPortId("in"), DiagramPortAnchor.SideOffset(DiagramNodeSide.LEFT)),

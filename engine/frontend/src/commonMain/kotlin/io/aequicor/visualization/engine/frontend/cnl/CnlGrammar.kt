@@ -109,13 +109,15 @@ internal object CnlGrammar {
     }
 
     /**
-     * Escapes a raw string for a `«…»` text literal: `\\`, `\»`, `\n`, `\r`. Inverse of the
-     * escape handling in [scanTextLiteral]; every emit site that interpolates free-form text
-     * into a literal must go through [quoteText] or the sentence breaks on reparse.
+     * Escapes a raw string for a `«…»` text literal: `\\`, `\«`, `\»`, `\n`, `\r`. Inverse of
+     * the escape handling in [scanTextLiteral]; every emit site that interpolates free-form text
+     * into a literal must go through [quoteText] or the sentence breaks on reparse. `«` is
+     * escaped too so emitted literals never look nested to the balanced scanner.
      */
     fun escapeText(value: String): String = buildString(value.length) {
         for (c in value) when (c) {
             '\\' -> append("\\\\")
+            '«' -> append("\\«")
             '»' -> append("\\»")
             '\n' -> append("\\n")
             '\r' -> append("\\r")
@@ -131,19 +133,29 @@ internal object CnlGrammar {
 
     /**
      * Scans a `«…»`/`"…"` literal body starting at [start] (the index just after the opener),
-     * honoring backslash escapes (`\<close>`, `\\`, `\n`, `\r`). Shared by every CNL tokenizer
-     * so escaping stays symmetric with [escapeText].
+     * honoring backslash escapes (`\«`, `\<close>`, `\\`, `\n`, `\r`). Shared by every CNL
+     * tokenizer so escaping stays symmetric with [escapeText].
+     *
+     * Guillemet literals additionally accept BALANCED raw nesting — «Признак «нет» — …» —
+     * because that is how humans and agents naturally quote inside Russian prose. A raw `«`
+     * opens a nesting level; a `»` inside a nested level closes the literal anyway when no
+     * further unescaped `»` follows on the line, so legacy text with an unpaired inner `«`
+     * (or an emitter-escaped `\»` next to a raw `«`) still terminates where it used to.
      */
     fun scanTextLiteral(line: String, start: Int, close: Char): TextScan {
+        val opener = if (close == '»') '«' else null
         val text = StringBuilder()
+        var depth = 0
         var i = start
         while (i < line.length) {
             val c = line[i]
             if (c == '\\' && i + 1 < line.length) {
-                val decoded = when (val next = line[i + 1]) {
-                    close, '\\' -> next
-                    'n' -> '\n'
-                    'r' -> '\r'
+                val next = line[i + 1]
+                val decoded = when {
+                    next == close || next == '\\' -> next
+                    next == 'n' -> '\n'
+                    next == 'r' -> '\r'
+                    opener != null && next == opener -> next
                     else -> null
                 }
                 if (decoded != null) {
@@ -152,11 +164,28 @@ internal object CnlGrammar {
                     continue
                 }
             }
-            if (c == close) break
+            if (c == close && (depth == 0 || !hasUnescapedChar(line, i + 1, close))) break
+            if (opener != null && c == opener) depth++
+            if (c == close) depth--
             text.append(c)
             i++
         }
         return TextScan(text.toString(), i, i < line.length)
+    }
+
+    /** True when an unescaped [target] occurs in [line] at or after [from]. */
+    private fun hasUnescapedChar(line: String, from: Int, target: Char): Boolean {
+        var i = from
+        while (i < line.length) {
+            val c = line[i]
+            if (c == '\\') {
+                i += 2
+                continue
+            }
+            if (c == target) return true
+            i++
+        }
+        return false
     }
 
     /** The canonical noun for [node], or null when the node type has no CNL noun yet. */

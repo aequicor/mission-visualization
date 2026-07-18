@@ -5,13 +5,26 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramLabel
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramStyle
+import io.aequicor.visualization.subsystems.diagrams.model.TableNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActivityNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlActorNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlClassNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlComponentNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlDeploymentNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlLifelineNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlNoteNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlPackageNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlStateNode
+import io.aequicor.visualization.subsystems.diagrams.model.UmlUseCaseNode
 import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.updateNode
 import io.aequicor.visualization.subsystems.diagrams.model.withEdge
@@ -83,6 +96,81 @@ public fun DiagramGraph.resizeNode(
             }
         },
     )
+}
+
+/**
+ * The node's primary caption — the one string the canvas draws for it — regardless of which
+ * store holds it: typed payloads keep it in the payload (`name` / `text` / `title`), untyped
+ * shapes in [DiagramNode.labels]. `null` means the payload has no single caption.
+ *
+ * Editors MUST read text through this accessor rather than [DiagramNode.labels] directly:
+ * reading the wrong store is what made the inline editor open empty over a visible caption.
+ * Pair with [setNodeText].
+ */
+public fun DiagramNode.primaryText(): String? = when (val payload = payload) {
+    // Untyped shapes: the caption lives on the node (see DiagramNodePayload.BasicShape's KDoc).
+    is DiagramNodePayload.BasicShape,
+    is DiagramNodePayload.FlowchartNode,
+    is DiagramNodePayload.BpmnNode,
+    -> labels.firstOrNull()?.text
+
+    is DiagramNodePayload.ContainerNode -> payload.title?.text
+    is DiagramNodePayload.SwimlaneNode -> payload.title?.text
+    is DiagramNodePayload.ErEntityNode -> payload.name
+
+    // A table has no node-level caption; every string lives in a cell (edited via TableCell ops).
+    is TableNode -> null
+
+    is UmlClassNode -> payload.name
+    is UmlLifelineNode -> payload.name
+    is UmlStateNode -> payload.name
+    is UmlActivityNode -> payload.name
+    is UmlActorNode -> payload.name
+    is UmlUseCaseNode -> payload.name
+    is UmlComponentNode -> payload.name
+    is UmlDeploymentNode -> payload.name
+    is UmlNoteNode -> payload.text
+    is UmlPackageNode -> payload.name
+}
+
+/**
+ * Writes the node's primary caption into whichever store that payload actually renders from
+ * (the inverse of [primaryText]); `null` clears it. No-op for payloads without a single
+ * caption ([TableNode]) or when the node is missing.
+ *
+ * The `when` is deliberately exhaustive with no `else`: a new payload kind must fail to compile
+ * here rather than silently drop the user's text.
+ */
+public fun DiagramGraph.setNodeText(id: DiagramNodeId, text: String?): DiagramGraph {
+    val node = nodeById(id) ?: return this
+    return when (val payload = node.payload) {
+        is DiagramNodePayload.BasicShape,
+        is DiagramNodePayload.FlowchartNode,
+        is DiagramNodePayload.BpmnNode,
+        -> setNodeLabel(id, text)
+
+        is DiagramNodePayload.ContainerNode ->
+            updateNode(id) { it.copy(payload = payload.copy(title = text?.let(::DiagramLabel))) }
+
+        is DiagramNodePayload.SwimlaneNode ->
+            updateNode(id) { it.copy(payload = payload.copy(title = text?.let(::DiagramLabel))) }
+
+        is DiagramNodePayload.ErEntityNode ->
+            updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+
+        is TableNode -> this
+
+        is UmlClassNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlLifelineNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlStateNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlActivityNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlActorNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlUseCaseNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlComponentNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlDeploymentNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+        is UmlNoteNode -> updateNode(id) { it.copy(payload = payload.copy(text = text.orEmpty())) }
+        is UmlPackageNode -> updateNode(id) { it.copy(payload = payload.copy(name = text.orEmpty())) }
+    }
 }
 
 /** Replaces the node's primary label with [text]; `null` clears all node labels. */

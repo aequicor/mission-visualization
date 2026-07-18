@@ -840,7 +840,8 @@ private fun roundedRectPath(rect: Rect, radius: ResolvedCornerRadius, inset: Dou
         path.addRect(rect)
         return path
     }
-    val limit = min(rect.width, rect.height) / 2f
+    // Degenerate rects would flip the clamp range upside down (coerceIn throws on max < min).
+    val limit = (min(rect.width, rect.height) / 2f).coerceAtLeast(0f)
     // Inset outlines (stroke centerlines) shrink corner radii by the same amount so
     // the stroke arc stays concentric with the fill.
     fun clamp(value: Double): Float = (value - inset).toFloat().coerceIn(0f, limit)

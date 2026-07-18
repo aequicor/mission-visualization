@@ -1469,8 +1469,8 @@ private fun ScreenPresetPreview(preset: ScreenPreset, modifier: Modifier = Modif
     val colors = LocalEditorColors.current
     Canvas(modifier) {
         val ratio = (preset.width / preset.height).toFloat().coerceIn(0.35f, 1.8f)
-        val maxW = size.width - 2f
-        val maxH = size.height - 2f
+        val maxW = (size.width - 2f).coerceAtLeast(0f)
+        val maxH = (size.height - 2f).coerceAtLeast(0f)
         val w: Float
         val h: Float
         if (ratio >= 1f) {

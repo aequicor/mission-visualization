@@ -71,15 +71,44 @@ General production:
 
 ```text
 Node <type> <id> <payload-head>
-     <width> by <height> position <x> <y> [rotate <degrees>]
+     <width> by <height> [hug] position <x> <y> [rotate <degrees>]
      <payload-items>
      {port (...)} [style (...)] {label ...}
      [parent <id>] [layer <id>] [locked yes] [visible no]
 ```
 
 Size and position are required. Earlier node sentences paint behind later ones within a
-layer. `parent` must name a container node. `label «text»` is repeatable; use
+layer. `parent` must name a container node.
+
+**`label` only belongs on shapes that have no caption of their own** — the basic shapes,
+`flowchart` and `bpmn`. Every typed payload (`use-case`, `actor`, `class`, `note`, …) carries
+its caption in its own `«…»` head phrase, and the canvas draws that. A `label` on a typed
+payload is an error: nothing would ever render it. `label «text»` is repeatable; use
 `label («text» markdown)` when the label is Markdown.
+
+#### Sizing text-bearing shapes
+
+Do not guess a size around text. Write `hug` and an approximate size: `hug` tells the editor
+to re-fit the node to its caption on the next edit, and the size stays as the last measured
+result (so the file still renders identically everywhere without measuring anything).
+
+Estimate the size from the caption itself:
+
+```text
+text_width  ≈ len(caption) × font_size × 0.55        // font_size is 13 for captions
+width ≈ (text_width + 2 × padding) × shape_factor    // padding 8
+height ≈ (line_height + 2 × padding) × shape_factor  // line_height ≈ 16 for one line
+
+shape_factor: 1.0 for rectangles/notes/components   (text fills the box)
+              1.41 for use-case ellipses            (a rectangle inscribed in an ellipse
+                                                     is 1/√2 of its bounding box)
+              2.0 for rhombus/decision shapes
+```
+
+Worked example — a 42-character Russian caption in a use-case ellipse:
+`42 × 13 × 0.55 ≈ 300`; `(300 + 16) × 1.41 ≈ 445` wide, `(16 + 16) × 1.41 ≈ 45` → round the
+height up to something readable, e.g. `450 by 120`. **Not** `930 by 260`: doubling the size
+"to be safe" is the single most common authoring mistake here.
 
 ### Basic shapes
 
@@ -120,7 +149,8 @@ Node state idle «Idle» 140 by 64 position 40 40
 Node state start initial 24 by 24 position 20 60
 Node activity approve action «Approve» 140 by 64 position 240 40
 Node actor operator «Operator» 100 by 120 position 40 220
-Node use-case submit «Submit mission» 180 by 80 position 260 220
+Node use-case submit «Submit mission» 180 by 80 hug position 260 220
+Node use-case contacts «Вести контакты собственников и совета дома» 450 by 120 hug position 260 320
 Node component frontend «frontend» stereotype «engine» 170 by 56 position 60 380
 Node deployment cluster «Mission cluster» stereotype «node» 220 by 120 position 300 360
 ```
@@ -227,8 +257,11 @@ A short label is `label «text»`. The grouped form is
 `label («text» [markdown] [at source|target] [dx N] [dy N])`; use at most one label
 per source/middle/target position.
 
-Line jumps at crossings with lower edges default to `arc` (omitted in canonical
-form); `jumps none` turns them off.
+Edge crossings render plain by default (`jumps none`, omitted in canonical form).
+`jumps arc|gap|sharp` opts a single edge into crossing decor; when enabled, only
+the horizontal side of a crossing hops and the bump always bows up, so do not
+author jumps to signal direction. Prefer the plain default — dense surfaces stay
+quiet — and reserve `jumps arc` for genuinely ambiguous long parallel runs.
 
 Arrowheads are `none`, `open`, `block`, `block-filled`, `diamond`,
 `diamond-filled`, `triangle`, `triangle-filled`, `oval`, `oval-filled`, `cross`,
@@ -240,7 +273,7 @@ Edge extends from circle to shape relation generalization
 Edge owns from drawing to circle relation composition label «owns»
 Edge places from customer to order relation er one to zero-or-many label («places» at source dx 4 dy -6)
 Edge fixed from gateway.out to service.in routing straight via (420 160) via (420 240)
-Edge flow from intake to review relation transition jumps none mode link animated yes layer wiring
+Edge flow from intake to review relation transition jumps arc mode link animated yes layer wiring
 ```
 
 ## Groups

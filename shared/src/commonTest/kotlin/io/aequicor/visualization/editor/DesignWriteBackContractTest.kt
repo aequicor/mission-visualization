@@ -204,6 +204,12 @@ class DesignWriteBackContractTest {
             "effect" to DesignEditorIntent.EffectCommand("win_bg", EffectOp.Add(EffectType.DropShadow)),
             "create" to DesignEditorIntent.CreateObject(NewObjectKind.Rectangle, "frame_overview", 12.0, 18.0, 90.0, 44.0),
             "duplicate" to DesignEditorIntent.DuplicateNodes(setOf("win_bg")),
+            "paste" to fresh().let { seed ->
+                DesignEditorIntent.PasteNodes(
+                    nodes = listOf(seed.document!!.nodeById("win_bg")!!),
+                    parentIds = mapOf("win_bg" to seed.document!!.parentNodeOf("win_bg")!!.id),
+                )
+            },
             "delete" to DesignEditorIntent.DeleteNodes(setOf("win_bg")),
             "reorder" to DesignEditorIntent.ReorderNode("src_panel", ZOrderMove.Forward),
         )
