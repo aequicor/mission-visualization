@@ -2584,13 +2584,14 @@ private fun SizingModePreview(mode: SizingMode, modifier: Modifier = Modifier.si
         val fill = colors.selectionFill
         when (mode) {
             SizingMode.Fixed -> {
-                drawRoundRect(fill, Offset(2f, 3f), Size(size.width - 4f, size.height - 6f), CornerRadius(2f, 2f))
-                drawRoundRect(ink, Offset(2f, 3f), Size(size.width - 4f, size.height - 6f), CornerRadius(2f, 2f), style = stroke)
+                val body = Size((size.width - 4f).coerceAtLeast(0f), (size.height - 6f).coerceAtLeast(0f))
+                drawRoundRect(fill, Offset(2f, 3f), body, CornerRadius(2f, 2f))
+                drawRoundRect(ink, Offset(2f, 3f), body, CornerRadius(2f, 2f), style = stroke)
             }
             SizingMode.Hug -> {
                 drawLine(ink, Offset(3f, 3f), Offset(3f, size.height - 3f), strokeWidth = 1.5.dp.toPx())
                 drawLine(ink, Offset(size.width - 3f, 3f), Offset(size.width - 3f, size.height - 3f), strokeWidth = 1.5.dp.toPx())
-                drawRoundRect(fill, Offset(5f, 5f), Size(size.width - 10f, size.height - 10f), CornerRadius(2f, 2f))
+                drawRoundRect(fill, Offset(5f, 5f), Size((size.width - 10f).coerceAtLeast(0f), (size.height - 10f).coerceAtLeast(0f)), CornerRadius(2f, 2f))
             }
             SizingMode.Fill -> {
                 drawLine(ink, Offset(2f, size.height / 2f), Offset(size.width - 2f, size.height / 2f), strokeWidth = 1.5.dp.toPx())
@@ -2634,8 +2635,9 @@ private fun FillKindPreview(kind: FillKind, modifier: Modifier = Modifier.size(1
             } else {
                 Brush.radialGradient(listOf(colors.accent, Color(0xFFFFB300)), radius = size.minDimension * 0.65f)
             }
-            drawRoundRect(brush, Offset(1.5f, 2.5f), Size(size.width - 3f, size.height - 5f), CornerRadius(3f, 3f))
-            drawRoundRect(colors.controlInk, Offset(1.5f, 2.5f), Size(size.width - 3f, size.height - 5f), CornerRadius(3f, 3f), style = Stroke(1.dp.toPx()))
+            val body = Size((size.width - 3f).coerceAtLeast(0f), (size.height - 5f).coerceAtLeast(0f))
+            drawRoundRect(brush, Offset(1.5f, 2.5f), body, CornerRadius(3f, 3f))
+            drawRoundRect(colors.controlInk, Offset(1.5f, 2.5f), body, CornerRadius(3f, 3f), style = Stroke(1.dp.toPx()))
         }
     }
 }
@@ -2645,9 +2647,10 @@ private fun StrokeAlignPreview(align: StrokeAlign, modifier: Modifier = Modifier
     val colors = LocalEditorColors.current
     Canvas(modifier) {
         val rectTop = 4f
-        val rectHeight = size.height - 8f
-        drawRoundRect(colors.selectionFill, Offset(3f, rectTop), Size(size.width - 6f, rectHeight), CornerRadius(2f, 2f))
-        drawRoundRect(colors.controlInk, Offset(3f, rectTop), Size(size.width - 6f, rectHeight), CornerRadius(2f, 2f), style = Stroke(1.dp.toPx()))
+        val rectHeight = (size.height - 8f).coerceAtLeast(0f)
+        val body = Size((size.width - 6f).coerceAtLeast(0f), rectHeight)
+        drawRoundRect(colors.selectionFill, Offset(3f, rectTop), body, CornerRadius(2f, 2f))
+        drawRoundRect(colors.controlInk, Offset(3f, rectTop), body, CornerRadius(2f, 2f), style = Stroke(1.dp.toPx()))
         val y = when (align) {
             StrokeAlign.Inside -> rectTop + 2f
             StrokeAlign.Center -> rectTop + rectHeight / 2f
