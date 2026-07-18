@@ -1358,14 +1358,20 @@ private fun planFloatingEnds(
     val sides = facingSides(sourceNode.bounds, targetNode.bounds) ?: return null
     val source = (edge.source as? DiagramEndpoint.FloatingAnchor)?.let {
         ResolvedEnd(
-            plannedAnchor(graph, options, sourceNode, sides.sourceSide, targetNode, edge.id),
+            plannedAnchor(
+                graph, options, sourceNode, sides.sourceSide, targetNode, edge.id,
+                farEnd = edge.target,
+            ),
             sourceNode,
             sides.sourceSide,
         )
     }
     val target = (edge.target as? DiagramEndpoint.FloatingAnchor)?.let {
         ResolvedEnd(
-            plannedAnchor(graph, options, targetNode, sides.targetSide, sourceNode, edge.id),
+            plannedAnchor(
+                graph, options, targetNode, sides.targetSide, sourceNode, edge.id,
+                farEnd = edge.source,
+            ),
             targetNode,
             sides.targetSide,
         )
@@ -1423,15 +1429,40 @@ private fun plannedAnchor(
     side: DiagramNodeSide,
     other: DiagramNode,
     edgeId: DiagramEdgeId,
+    farEnd: DiagramEndpoint,
 ): DiagramPoint {
     val coordinate = sideAttachments(graph, options, node, side)
         .firstOrNull { it.edgeId == edgeId }
         ?.position
         ?: run {
             val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
-            idealSideCoordinate(node.bounds, other.bounds, side, low, high)
+            facingFixedPortAxis(graph, farEnd, side)?.coerceIn(low, high)
+                ?: idealSideCoordinate(node.bounds, other.bounds, side, low, high)
         }
     return anchorOnSide(node, side, coordinate)
+}
+
+/**
+ * Cross-axis coordinate to aim a floating end at when the far end of its edge is a
+ * fixed port on the directly facing side: the port's own row/column. The planner's
+ * node-projection midpoint sits a few pixels off such a port whenever the two nodes are
+ * not perfectly aligned, leaving an irreducible 2-5px jog mid-corridor between two
+ * otherwise straight runs — [slideEndJogs] can only move that jog, not remove it.
+ * Aiming at the port yields the straight connector outright. A far port on any other
+ * side keeps the midpoint ideal: that connector bends by construction, so there is
+ * nothing to straighten. The port POINT is deliberately used instead of its fan lane:
+ * the fan ([coordinatedPortLanes]) consults these planned lanes right back, so aiming
+ * at lanes would make the two definitions mutually recursive.
+ */
+private fun facingFixedPortAxis(
+    graph: DiagramGraph,
+    farEnd: DiagramEndpoint,
+    side: DiagramNodeSide,
+): Double? {
+    val port = farEnd as? DiagramEndpoint.FixedPort ?: return null
+    val resolved = resolveFixedPort(graph, port) ?: return null
+    if (resolved.side != side.oppositeSide()) return null
+    return if (side.exitsHorizontally) resolved.anchor.y else resolved.anchor.x
 }
 
 private data class SideAttachment(val edgeId: DiagramEdgeId, val position: Double)
@@ -1477,6 +1508,7 @@ private fun sideAttachments(
         }
         val thisEnd = if (isSourceEnd) candidate.source else candidate.target
         if (thisEnd !is DiagramEndpoint.FloatingAnchor) continue
+        val otherEnd = if (isSourceEnd) candidate.target else candidate.source
         val other = graph.nodeById(if (isSourceEnd) targetNodeId else sourceNodeId) ?: continue
         val otherCenter = if (side.exitsHorizontally) other.bounds.centerY else other.bounds.centerX
         if (candidate.waypoints.isEmpty()) {
@@ -1488,7 +1520,8 @@ private fun sideAttachments(
             if (candidateSide != side) continue
             pending += Pending(
                 edgeId = candidate.id,
-                ideal = idealSideCoordinate(node.bounds, other.bounds, side, low, high),
+                ideal = facingFixedPortAxis(graph, otherEnd, side)?.coerceIn(low, high)
+                    ?: idealSideCoordinate(node.bounds, other.bounds, side, low, high),
                 otherCenter = otherCenter,
                 pinned = false,
             )
