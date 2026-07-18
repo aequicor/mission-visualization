@@ -4,8 +4,10 @@ import io.aequicor.visualization.subsystems.diagrams.layout.DiagramLayoutPreset
 import io.aequicor.visualization.subsystems.diagrams.layout.LayoutDirection
 import io.aequicor.visualization.subsystems.diagrams.layout.LayoutKind
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramArrowhead
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeLabelPosition
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSizing
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
@@ -119,6 +121,21 @@ sealed interface DiagramEditorIntent : DesignEditorIntent {
         override val nodeId: String,
         val elementId: String,
         val portId: String,
+    ) : DiagramEditorIntent
+
+    /**
+     * Inserts clipboard copies (paste / duplicate): [nodes]/[edges] are snapshots taken
+     * at copy time, [nodeIds]/[edgeIds] map their old ids to freshly minted ones. Edges
+     * whose endpoints are not fully inside the paste are dropped (see `pasteElements`).
+     */
+    data class PasteDiagramElements(
+        override val nodeId: String,
+        val nodes: List<DiagramNode>,
+        val edges: List<DiagramEdge>,
+        val nodeIds: Map<String, String>,
+        val edgeIds: Map<String, String>,
+        val offsetX: Double,
+        val offsetY: Double,
     ) : DiagramEditorIntent
 
     /** Clones [sourceElementId] (drag-out clone-and-connect) and links original -> clone. */

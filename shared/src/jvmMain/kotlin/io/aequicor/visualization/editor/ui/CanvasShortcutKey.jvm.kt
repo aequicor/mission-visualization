@@ -12,6 +12,8 @@ import androidx.compose.ui.input.key.key
  */
 private val cyrillicShortcutKeys: Map<Char, Key> = mapOf(
     'я' to Key.Z,
+    'с' to Key.C,
+    'м' to Key.V,
     'в' to Key.D,
     'ф' to Key.A,
     'п' to Key.G,

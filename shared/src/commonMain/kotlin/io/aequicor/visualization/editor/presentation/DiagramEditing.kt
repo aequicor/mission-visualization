@@ -41,6 +41,7 @@ import io.aequicor.visualization.subsystems.diagrams.ops.addWaypoint
 import io.aequicor.visualization.subsystems.diagrams.ops.bringForward
 import io.aequicor.visualization.subsystems.diagrams.ops.bringToFront
 import io.aequicor.visualization.subsystems.diagrams.ops.cloneNodeAndConnect
+import io.aequicor.visualization.subsystems.diagrams.ops.pasteElements
 import io.aequicor.visualization.subsystems.diagrams.ops.dropIntoContainer
 import io.aequicor.visualization.subsystems.diagrams.ops.groupNodes
 import io.aequicor.visualization.subsystems.diagrams.ops.mergeTableCells
@@ -144,6 +145,16 @@ internal fun DesignEditorState.reduceDiagramIntent(intent: DiagramEditorIntent):
     }
     is DiagramEditorIntent.RemoveDiagramPort -> diagramWriteBack(intent.nodeId) {
         it.removePort(DiagramNodeId(intent.elementId), DiagramPortId(intent.portId))
+    }
+    is DiagramEditorIntent.PasteDiagramElements -> diagramWriteBack(intent.nodeId) {
+        it.pasteElements(
+            nodes = intent.nodes,
+            edges = intent.edges,
+            nodeIds = intent.nodeIds.entries.associate { (old, new) -> DiagramNodeId(old) to DiagramNodeId(new) },
+            edgeIds = intent.edgeIds.entries.associate { (old, new) -> DiagramEdgeId(old) to DiagramEdgeId(new) },
+            offsetX = intent.offsetX,
+            offsetY = intent.offsetY,
+        )
     }
     is DiagramEditorIntent.CloneDiagramNodeAndConnect -> diagramWriteBack(intent.nodeId) {
         it.cloneNodeAndConnect(

@@ -146,6 +146,7 @@ import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.DiagramClipboard
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
 import io.aequicor.visualization.editor.presentation.DiagramSelection
 import io.aequicor.visualization.editor.presentation.DiagramTool
@@ -244,7 +245,12 @@ import io.aequicor.visualization.engine.backend.compose.selectableNodeId
 import io.aequicor.visualization.subsystems.diagrams.compose.DiagramNodePreview
 import io.aequicor.visualization.subsystems.diagrams.hittest.DiagramHit
 import io.aequicor.visualization.subsystems.diagrams.hittest.hitTest as diagramHitTest
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
+import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
+import io.aequicor.visualization.subsystems.diagrams.ops.PASTE_OFFSET
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutingOptions
 import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
@@ -3171,6 +3177,21 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             if (intent != null) state.dispatch(intent)
             intent != null
         }
+        // Diagram-selection clipboard: Ctrl/Cmd+C snapshots the selected elements (plus the
+        // edges running between them), V pastes the snapshots with fresh ids and selects the
+        // copies, D duplicates in place without touching the clipboard.
+        ctrl && key == Key.C && state.workspace.diagramEditNodeId.isNotBlank() &&
+            !state.workspace.diagramSelection.isEmpty -> {
+            diagramSelectionSnapshot(state)?.let { clip ->
+                state.updateWorkspace { it.copy(diagramClipboard = clip) }
+            } != null
+        }
+        ctrl && key == Key.V && state.workspace.diagramEditNodeId.isNotBlank() &&
+            state.workspace.diagramClipboard?.isEmpty == false ->
+            pasteDiagramClipboard(state, state.workspace.diagramClipboard!!)
+        ctrl && key == Key.D && state.workspace.diagramEditNodeId.isNotBlank() &&
+            !state.workspace.diagramSelection.isEmpty ->
+            diagramSelectionSnapshot(state)?.let { pasteDiagramClipboard(state, it) } ?: false
         ctrl && key == Key.D && selection.isNotEmpty() -> { state.dispatch(DesignEditorIntent.DuplicateNodes(selection)); true }
         ctrl && key == Key.RightBracket -> zorder(ZOrderMove.Forward)
         ctrl && key == Key.LeftBracket -> zorder(ZOrderMove.Backward)
@@ -3218,6 +3239,84 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         }
         else -> false
     }
+}
+
+/** The live graph of the diagram node currently being edited, or null. */
+private fun diagramLiveGraph(state: MissionEditorStateHolder): DiagramGraph? =
+    (
+        state.designState.document?.nodeById(state.workspace.diagramEditNodeId)?.kind
+            as? DesignNodeKind.Diagram
+        )?.graph
+
+/**
+ * Deep snapshot of the current diagram selection for the clipboard: the selected nodes
+ * plus every edge whose ends all stay inside the copy (selected edges outside that set
+ * would rewire the original neighbors on paste and are dropped).
+ */
+private fun diagramSelectionSnapshot(state: MissionEditorStateHolder): DiagramClipboard? {
+    val graph = diagramLiveGraph(state) ?: return null
+    val selection = state.workspace.diagramSelection
+    val nodes = selection.elementIds.mapNotNull { graph.nodeById(DiagramNodeId(it)) }
+    val copied = nodes.map { it.id }.toSet()
+
+    fun endpointInside(endpoint: DiagramEndpoint): Boolean = when (endpoint) {
+        is DiagramEndpoint.FreePoint -> true
+        is DiagramEndpoint.FloatingAnchor -> endpoint.nodeId in copied
+        is DiagramEndpoint.FixedPort -> endpoint.nodeId in copied
+    }
+
+    val edges = graph.edges.filter { edge ->
+        val attached = listOfNotNull(edge.source.attachedNodeId, edge.target.attachedNodeId)
+        val implicit = attached.isNotEmpty() && attached.all { it in copied }
+        (implicit || edge.id.value in selection.edgeIds) &&
+            endpointInside(edge.source) && endpointInside(edge.target)
+    }
+    val clipboard = DiagramClipboard(nodes = nodes, edges = edges)
+    return clipboard.takeIf { !it.isEmpty }
+}
+
+/** Pastes [clipboard] into the edited diagram with fresh ids and selects the copies. */
+private fun pasteDiagramClipboard(
+    state: MissionEditorStateHolder,
+    clipboard: DiagramClipboard,
+): Boolean {
+    val editId = state.workspace.diagramEditNodeId
+    val graph = diagramLiveGraph(state) ?: return false
+    val taken = buildSet {
+        graph.nodes.forEach { add(it.id.value) }
+        graph.edges.forEach { add(it.id.value) }
+        graph.layers.forEach { add(it.id.value) }
+        graph.groups.forEach { add(it.id.value) }
+    }.toMutableSet()
+
+    fun mint(prefix: String): String {
+        var index = 1
+        while ("$prefix-$index" in taken) index++
+        return "$prefix-$index".also { taken += it }
+    }
+
+    val nodeIds = clipboard.nodes.associate { it.id.value to mint("node") }
+    val edgeIds = clipboard.edges.associate { it.id.value to mint("edge") }
+    state.dispatch(
+        DiagramEditorIntent.PasteDiagramElements(
+            nodeId = editId,
+            nodes = clipboard.nodes,
+            edges = clipboard.edges,
+            nodeIds = nodeIds,
+            edgeIds = edgeIds,
+            offsetX = PASTE_OFFSET,
+            offsetY = PASTE_OFFSET,
+        ),
+    )
+    state.updateWorkspace {
+        it.copy(
+            diagramSelection = DiagramSelection(
+                elementIds = nodeIds.values.toSet(),
+                edgeIds = edgeIds.values.toSet(),
+            ),
+        )
+    }
+    return true
 }
 
 /** Advances the diagram element selection to the next / previous graph node (Tab / Shift+Tab). */

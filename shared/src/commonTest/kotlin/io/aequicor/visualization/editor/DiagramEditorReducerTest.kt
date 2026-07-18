@@ -116,6 +116,42 @@ class DiagramEditorReducerTest {
     }
 
     @Test
+    fun pasteDiagramElementsCopiesNodesEdgesAndWritesBack() {
+        val state = freshState()
+        val graph = state.graphOf("canvas")
+        val next = reduceDesignEditor(
+            state,
+            DiagramEditorIntent.PasteDiagramElements(
+                nodeId = "canvas",
+                nodes = listOf(
+                    assertNotNull(graph.nodeById(DiagramNodeId("a"))),
+                    assertNotNull(graph.nodeById(DiagramNodeId("b"))),
+                ),
+                edges = listOf(assertNotNull(graph.edgeById(DiagramEdgeId("e1")))),
+                nodeIds = mapOf("a" to "node-1", "b" to "node-2"),
+                edgeIds = mapOf("e1" to "edge-1"),
+                offsetX = 24.0,
+                offsetY = 24.0,
+            ),
+        )
+        val pastedGraph = next.graphOf("canvas")
+        val copyA = assertNotNull(pastedGraph.nodeById(DiagramNodeId("node-1")))
+        assertEquals(44.0, copyA.x)
+        assertEquals(44.0, copyA.y)
+        val copyEdge = assertNotNull(pastedGraph.edgeById(DiagramEdgeId("edge-1")))
+        assertEquals(DiagramEndpoint.FloatingAnchor(DiagramNodeId("node-1")), copyEdge.source)
+        assertEquals(DiagramEndpoint.FloatingAnchor(DiagramNodeId("node-2")), copyEdge.target)
+        // Originals untouched, copies persisted to the source.
+        assertEquals(20.0, assertNotNull(pastedGraph.nodeById(DiagramNodeId("a"))).x)
+        assertTrue("Edge edge-1 from node-1 to node-2" in next.sourceContent())
+
+        val recompiled = compileMissionDocuments(next.sources)
+        val recompiledGraph =
+            assertIs<DesignNodeKind.Diagram>(assertNotNull(recompiled.document?.nodeById("canvas")).kind).graph
+        assertEquals(pastedGraph, recompiledGraph, "paste round-trips through full recompile")
+    }
+
+    @Test
     fun connectNodesAddsValidatedEdge() {
         val state = freshState()
         val next = reduceDesignEditor(

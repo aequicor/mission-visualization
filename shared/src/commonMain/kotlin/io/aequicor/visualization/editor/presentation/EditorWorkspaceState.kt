@@ -1,6 +1,8 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRelation
 
@@ -107,6 +109,12 @@ data class EditorWorkspaceState(
      * composables; the drop handler maps window → canvas-local → document coordinates.
      */
     val diagramPaletteDrag: DiagramPaletteDrag? = null,
+    /**
+     * Internal diagram clipboard filled by Ctrl/Cmd+C: element snapshots (a copy stays
+     * pasteable after the originals change or die). A view concern — never part of the
+     * document, survives switching diagrams, lost with the session.
+     */
+    val diagramClipboard: DiagramClipboard? = null,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -151,6 +159,17 @@ data class DiagramPaletteDrag(
     val windowX: Float,
     val windowY: Float,
 )
+
+/**
+ * Diagram clipboard content: deep snapshots of the copied nodes plus the edges that ran
+ * between them at copy time (paste re-identifies everything; see `pasteElements`).
+ */
+data class DiagramClipboard(
+    val nodes: List<DiagramNode>,
+    val edges: List<DiagramEdge>,
+) {
+    val isEmpty: Boolean get() = nodes.isEmpty() && edges.isEmpty()
+}
 
 /** Selected elements of the diagram graph being edited (ids are graph-local strings). */
 data class DiagramSelection(
