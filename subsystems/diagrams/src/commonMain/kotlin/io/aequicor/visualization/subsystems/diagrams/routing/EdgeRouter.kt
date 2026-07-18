@@ -463,16 +463,57 @@ private fun routeOrthogonal(
     }
 
     val points = listOf(source.anchor) + innerPoints + listOf(target.anchor)
+    // A LONE authored via is an exact mandatory pass-through by contract — an
+    // out-and-back antenna through it (a self-edge pulled out by one waypoint) is
+    // intent, not a stale artifact, so its reversal must survive the cleanup.
+    val protectedVias = if (edge.waypoints.size == 1) {
+        healedMandatory.drop(1).dropLast(1)
+    } else {
+        emptyList()
+    }
     return RoutedEdge(
         edgeId = edge.id,
         routing = edge.routing,
-        points = atLeastTwo(simplifyPolyline(collapseLoops(collapseSpurs(dedupePoints(points))))),
+        points = atLeastTwo(cleanRoutePolyline(points, protectedVias)),
         sourceSide = source.side,
         targetSide = target.side,
         sourceReach = if (source.side == null) 0.0 else sourceReach,
         targetReach = if (target.side == null) 0.0 else targetReach,
     )
 }
+
+/**
+ * Final polyline cleanup: spur collapse and loop excision iterated to a fixpoint —
+ * excising a loop can expose a NEW 180° reversal at its seam (the arrival into the
+ * revisited corner opposing the post-loop departure), which a single pass would leave
+ * as exactly the whisker the cleanup exists to remove. Two safety valves: reversals at
+ * (and loops through) [protectedVias] survive — a lone authored via is a deliberate
+ * pass-through; and when the cleanup would degenerate a drawable route to (near)
+ * nothing — a self-edge whose two ends resolve to one anchor — the original polyline
+ * wins, because an invisible, unselectable edge is strictly worse than an ugly one.
+ */
+internal fun cleanRoutePolyline(
+    points: List<DiagramPoint>,
+    protectedVias: List<DiagramPoint> = emptyList(),
+): List<DiagramPoint> {
+    val deduped = dedupePoints(points)
+    var current = deduped
+    var rounds = 0
+    while (rounds++ < MAX_CLEANUP_ROUNDS) {
+        val next = collapseLoops(collapseSpurs(current, protectedVias), protectedVias)
+        if (next == current) break
+        current = next
+    }
+    val cleaned = simplifyPolyline(current)
+    val degenerate = manhattanLength(cleaned) < 1.0 && manhattanLength(deduped) >= 1.0
+    return if (degenerate) simplifyPolyline(deduped) else cleaned
+}
+
+/** Each cleanup round strictly removes points, so this bound is never reached in practice. */
+private const val MAX_CLEANUP_ROUNDS = 16
+
+private fun manhattanLength(points: List<DiagramPoint>): Double =
+    points.zipWithNext().sumOf { (a, b) -> abs(a.x - b.x) + abs(a.y - b.y) }
 
 // --- End-jog relaxation ------------------------------------------------------------------
 
@@ -1408,7 +1449,10 @@ private fun collapseJogs(
  * difference — so no obstacle or crossing can be newly hit. Repeats until no reversal
  * remains (a collapse can bring an earlier and a later segment into a new reversal).
  */
-internal fun collapseSpurs(points: List<DiagramPoint>): List<DiagramPoint> {
+internal fun collapseSpurs(
+    points: List<DiagramPoint>,
+    protectedVias: List<DiagramPoint> = emptyList(),
+): List<DiagramPoint> {
     if (points.size < 3) return points
     val result = points.toMutableList()
     var index = 1
@@ -1419,6 +1463,10 @@ internal fun collapseSpurs(points: List<DiagramPoint>): List<DiagramPoint> {
         val reversal =
             (isHorizontalSegment(a, b) && isHorizontalSegment(b, c) && (b.x - a.x) * (c.x - b.x) < 0.0) ||
                 (isVerticalSegment(a, b) && isVerticalSegment(b, c) && (b.y - a.y) * (c.y - b.y) < 0.0)
+        if (reversal && protectedVias.any { it.nearlyEquals(b) }) {
+            index++
+            continue
+        }
         if (reversal) {
             result.removeAt(index)
             if (a.nearlyEquals(c)) {
@@ -1442,18 +1490,26 @@ internal fun collapseSpurs(points: List<DiagramPoint>): List<DiagramPoint> {
  * ghost of a twice-displaced via is not worth that loop. Only exact revisits collapse —
  * a U-detour never returns to the same point.
  */
-internal fun collapseLoops(points: List<DiagramPoint>): List<DiagramPoint> {
+internal fun collapseLoops(
+    points: List<DiagramPoint>,
+    protectedVias: List<DiagramPoint> = emptyList(),
+): List<DiagramPoint> {
     if (points.size < 4) return points
     val result = points.toMutableList()
     var index = 0
     while (index < result.size - 2) {
-        // The LAST revisit wins: one excision removes the largest loop through this point.
+        // The LAST excisable revisit wins: one excision removes the largest loop through
+        // this point that does not swallow a protected via (a lone authored via inside
+        // the loop makes the loop intent — see the caller).
         var revisit = -1
         for (later in result.size - 1 downTo index + 2) {
-            if (result[later].nearlyEquals(result[index])) {
-                revisit = later
-                break
+            if (!result[later].nearlyEquals(result[index])) continue
+            val loopHoldsVia = (index + 1..later).any { inside ->
+                protectedVias.any { it.nearlyEquals(result[inside]) }
             }
+            if (loopHoldsVia) continue
+            revisit = later
+            break
         }
         if (revisit > index) {
             result.subList(index + 1, revisit + 1).clear()

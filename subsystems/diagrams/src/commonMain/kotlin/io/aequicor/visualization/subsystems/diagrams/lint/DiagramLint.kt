@@ -189,7 +189,7 @@ fun lintDiagram(
         addAll(edgeThroughNodeFindings(graph, ordered))
         addAll(anchorBunchFindings(graph, ordered, options))
         addAll(edgeOverlapFindings(ordered, options))
-        addAll(edgeSpurFindings(ordered))
+        addAll(edgeSpurFindings(graph, ordered))
         addAll(crossingHotspotFindings(ordered, options))
         addAll(labelOverNodeFindings(graph, routes, options))
         addAll(nodeLabelFitFindings(graph, options))
@@ -414,13 +414,20 @@ private fun coRunLength(
 
 // --- rule: route doubling back on itself --------------------------------------------------
 
-private fun edgeSpurFindings(routes: List<RoutedEdge>): List<DiagramLintFinding> = buildList {
+private fun edgeSpurFindings(
+    graph: DiagramGraph,
+    routes: List<RoutedEdge>,
+): List<DiagramLintFinding> = buildList {
     for (route in routes) {
         if (route.isCurve) continue
+        // A reversal AT an authored waypoint is an out-and-back antenna the user drew
+        // (the router protects lone-via retraces deliberately) — not a routing artifact.
+        val vias = graph.edgeById(route.edgeId)?.waypoints.orEmpty()
         for (index in 1 until route.points.size - 1) {
             val a = route.points[index - 1]
             val b = route.points[index]
             val c = route.points[index + 1]
+            if (vias.any { abs(it.x - b.x) < 1e-6 && abs(it.y - b.y) < 1e-6 }) continue
             val horizontalReversal =
                 abs(a.y - b.y) < 1e-6 && abs(b.y - c.y) < 1e-6 && (b.x - a.x) * (c.x - b.x) < 0.0
             val verticalReversal =

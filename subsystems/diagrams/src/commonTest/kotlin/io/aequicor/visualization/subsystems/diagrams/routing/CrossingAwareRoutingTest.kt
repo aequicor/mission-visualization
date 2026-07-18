@@ -298,6 +298,47 @@ class CrossingAwareRoutingTest {
     }
 
     @Test
+    fun aSelfLoopThroughOneWaypointStaysVisible() {
+        // Both ends of a floating self-edge resolve to the SAME anchor; the lone via
+        // pulls the line out and back over one lane. That retrace is authored intent —
+        // collapsing it would leave an invisible, unselectable zero-length edge.
+        val graph = diagramGraph {
+            val n = node("n", x = 100.0, y = 100.0, width = 80.0, height = 60.0)
+            edge(
+                "self",
+                source = DiagramEndpoint.FloatingAnchor(n),
+                target = DiagramEndpoint.FloatingAnchor(n),
+                waypoints = listOf(DiagramPoint(300.0, 130.0)),
+            )
+        }
+        val route = routeEdge(graph, graph.edges.single())
+        val length = route.points.zipWithNext().sumOf { (a, b) -> abs(a.x - b.x) + abs(a.y - b.y) }
+        assertTrue(length > 1.0, "self-loop with a via must stay drawable, got ${route.points}")
+        assertTrue(
+            route.points.any { abs(it.x - 300.0) < 1e-6 },
+            "the antenna still reaches its authored via: ${route.points}",
+        )
+    }
+
+    @Test
+    fun loopExcisionSeamSpursCollapseToAFixpoint() {
+        // Excising a loop can expose a NEW reversal at the seam (arrival into the
+        // revisited corner opposes the post-loop departure); the cleanup must iterate.
+        val seam = listOf(
+            DiagramPoint(0.0, 0.0),
+            DiagramPoint(10.0, 0.0),
+            DiagramPoint(10.0, 10.0),
+            DiagramPoint(20.0, 10.0),
+            DiagramPoint(20.0, 0.0),
+            DiagramPoint(10.0, 0.0),
+            DiagramPoint(5.0, 0.0),
+        )
+        val cleaned = cleanRoutePolyline(seam)
+        assertNoSpur(cleaned)
+        assertEquals(listOf(DiagramPoint(0.0, 0.0), DiagramPoint(5.0, 0.0)), cleaned)
+    }
+
+    @Test
     fun collapseSpursTrimsPartialAndExactRetraces() {
         // Partial retrace: the route overshoots to x=100 and comes back to x=60.
         assertEquals(
