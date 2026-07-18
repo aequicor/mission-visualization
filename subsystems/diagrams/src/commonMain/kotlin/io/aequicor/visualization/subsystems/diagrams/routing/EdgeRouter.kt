@@ -30,6 +30,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
@@ -138,7 +139,7 @@ internal fun crossingAwareRoutes(
             routeOne(edge, crossings)
         }
     }
-    return graph.edges.mapIndexed { index, edge ->
+    val refined = graph.edges.mapIndexed { index, edge ->
         if (sequence[edge.id] != null) return@mapIndexed second[index]
         val aware = second[index] ?: return@mapIndexed null
         val others = second.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
@@ -166,6 +167,136 @@ internal fun crossingAwareRoutes(
         }
         best
     }
+    return dissolveCrossingHotspots(graph, options, sequence, refined, routeOne)
+}
+
+/**
+ * Hotspot-dissolve pass: crossings piled into one small area (the CrossingHotspot lint
+ * cluster — chained closer than [HOTSPOT_RADIUS], at least [HOTSPOT_MEMBER_LIMIT]
+ * members) become crowd discs, and every edge actually crossing inside one is offered a
+ * re-route in which such crossings pay [CROWDED_CROSSING_PENALTY_FACTOR] extra. A
+ * candidate is kept only when it wins on that same crowd-aware score against the
+ * others' current routes, so a relocation that merely trades one pile for a longer
+ * detour — or for a new pile — is rejected. Bounded rounds: dissolving one disc can
+ * shift the picture, but the pass never chases it more than twice.
+ */
+private fun dissolveCrossingHotspots(
+    graph: DiagramGraph,
+    options: RoutingOptions,
+    sequence: Map<DiagramEdgeId, RoutedEdge>,
+    routes: List<RoutedEdge?>,
+    routeOne: (DiagramEdge, RouteCrossingIndex?) -> RoutedEdge?,
+): List<RoutedEdge?> {
+    if (options.crossingPenalty <= 0.0) return routes
+    val result = routes.toMutableList()
+    repeat(2) {
+        val discs = crowdDiscs(result.filterNotNull())
+        if (discs.isEmpty()) return result
+        var changed = false
+        for (index in graph.edges.indices) {
+            val edge = graph.edges[index]
+            if (sequence[edge.id] != null) continue
+            val current = result[index] ?: continue
+            val others = result.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
+            if (others.isEmpty()) continue
+            val snapshot = RouteCrossingIndex.of(
+                others.map { it.points },
+                markerRectsByEdge(graph, others).values.flatten(),
+                discs,
+            )
+            val currentScore = routeScore(current.points, snapshot, options)
+            val crowdedNow = current.points.zipWithNext().sumOf { (a, b) ->
+                when {
+                    abs(a.y - b.y) < GEOMETRY_EPSILON ->
+                        snapshot.crowdedCrossingsOfHorizontal(a.y, minOf(a.x, b.x), maxOf(a.x, b.x))
+                    abs(a.x - b.x) < GEOMETRY_EPSILON ->
+                        snapshot.crowdedCrossingsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
+                    else -> 0
+                }
+            }
+            if (crowdedNow == 0) continue
+            val candidate = routeOne(edge, snapshot) ?: continue
+            if (candidate.points == current.points) continue
+            val candidateScore = routeScore(candidate.points, snapshot, options)
+            if (candidateScore < currentScore - GEOMETRY_EPSILON) {
+                result[index] = candidate
+                changed = true
+            }
+        }
+        if (!changed) return result
+    }
+    return result
+}
+
+/**
+ * Crowd discs of the current picture: pairwise route crossings clustered exactly like
+ * the CrossingHotspot lint rule, each qualifying cluster contributing a
+ * [HOTSPOT_RADIUS]-sized box around its centroid.
+ */
+private fun crowdDiscs(routes: List<RoutedEdge>): List<DiagramRect> {
+    val crossings = mutableListOf<DiagramPoint>()
+    for (first in routes.indices) {
+        for (second in first + 1 until routes.size) {
+            for ((a1, a2) in routes[first].points.zipWithNext()) {
+                for ((b1, b2) in routes[second].points.zipWithNext()) {
+                    crossings += properIntersection(a1, a2, b1, b2) ?: continue
+                }
+            }
+        }
+    }
+    if (crossings.size < HOTSPOT_MEMBER_LIMIT) return emptyList()
+    val clusterOf = IntArray(crossings.size) { it }
+    fun rootOf(index: Int): Int {
+        var current = index
+        while (clusterOf[current] != current) current = clusterOf[current]
+        return current
+    }
+    for (first in crossings.indices) {
+        for (second in first + 1 until crossings.size) {
+            val a = crossings[first]
+            val b = crossings[second]
+            if (hypot(a.x - b.x, a.y - b.y) <= HOTSPOT_RADIUS) {
+                clusterOf[rootOf(second)] = rootOf(first)
+            }
+        }
+    }
+    return buildList {
+        for ((_, members) in crossings.indices.groupBy(::rootOf)) {
+            if (members.size < HOTSPOT_MEMBER_LIMIT) continue
+            val centerX = members.sumOf { crossings[it].x } / members.size
+            val centerY = members.sumOf { crossings[it].y } / members.size
+            add(
+                DiagramRect(
+                    x = centerX - HOTSPOT_RADIUS,
+                    y = centerY - HOTSPOT_RADIUS,
+                    width = HOTSPOT_RADIUS * 2.0,
+                    height = HOTSPOT_RADIUS * 2.0,
+                ),
+            )
+        }
+    }
+}
+
+/** Strict-interior intersection of two segments (T-junctions and co-runs excluded). */
+private fun properIntersection(
+    a1: DiagramPoint,
+    a2: DiagramPoint,
+    b1: DiagramPoint,
+    b2: DiagramPoint,
+): DiagramPoint? {
+    val rx = a2.x - a1.x
+    val ry = a2.y - a1.y
+    val sx = b2.x - b1.x
+    val sy = b2.y - b1.y
+    val denominator = rx * sy - ry * sx
+    if (abs(denominator) < 1e-9) return null
+    val dx = b1.x - a1.x
+    val dy = b1.y - a1.y
+    val t = (dx * sy - dy * sx) / denominator
+    val u = (dx * ry - dy * rx) / denominator
+    val margin = 1e-3
+    if (t <= margin || t >= 1.0 - margin || u <= margin || u >= 1.0 - margin) return null
+    return DiagramPoint(a1.x + rx * t, a1.y + ry * t)
 }
 
 /**
@@ -183,6 +314,7 @@ private fun routeScore(
     var turns = 0
     var crossed = 0
     var markerCuts = 0
+    var crowded = 0
     var previousHorizontal: Boolean? = null
     for ((a, b) in points.zipWithNext()) {
         val dx = abs(a.x - b.x)
@@ -202,9 +334,15 @@ private fun routeScore(
         } else {
             crossings.markerCutsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
         }
+        crowded += if (horizontal) {
+            crossings.crowdedCrossingsOfHorizontal(a.y, minOf(a.x, b.x), maxOf(a.x, b.x))
+        } else {
+            crossings.crowdedCrossingsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
+        }
     }
     return length + turns * options.turnPenalty + crossed * options.crossingPenalty +
-        markerCuts * options.crossingPenalty * MARKER_CUT_PENALTY_FACTOR
+        markerCuts * options.crossingPenalty * MARKER_CUT_PENALTY_FACTOR +
+        crowded * options.crossingPenalty * CROWDED_CROSSING_PENALTY_FACTOR
 }
 
 /**
@@ -469,6 +607,7 @@ private fun routeOrthogonal(
                         crossings,
                         options.crossingPenalty,
                         options.crossingPenalty * MARKER_CUT_PENALTY_FACTOR,
+                        options.crossingPenalty * CROWDED_CROSSING_PENALTY_FACTOR,
                     )
                         ?.let { collapseJogs(it, legObstacles, jogThreshold) }
                         ?: manhattanLeg(from, to, seedDirection)
@@ -717,6 +856,21 @@ private const val MARKER_BREATHING = 4.0
  * plain line ever does — the router detours or crosses elsewhere instead.
  */
 private const val MARKER_CUT_PENALTY_FACTOR = 2.0
+
+/**
+ * Surcharge for a crossing inside a crowd disc (see the hotspot-dissolve pass), in
+ * crossing penalties: a crossing there costs double, so relocating it anywhere else
+ * pays for a detour up to one more crossing's worth of length.
+ */
+private const val CROWDED_CROSSING_PENALTY_FACTOR = 1.0
+
+/**
+ * Crossing pile-up clustering, mirroring the CrossingHotspot lint rule's defaults
+ * (`DiagramLintOptions.hotspotRadius` / `hotspotLimit`): crossings chained closer than
+ * the radius form one cluster, and a cluster of at least the limit is a hotspot.
+ */
+private const val HOTSPOT_RADIUS = 32.0
+private const val HOTSPOT_MEMBER_LIMIT = 3
 
 /**
  * Perpendicular exit-stub length at an anchor: [reach], shortened when a foreign node
