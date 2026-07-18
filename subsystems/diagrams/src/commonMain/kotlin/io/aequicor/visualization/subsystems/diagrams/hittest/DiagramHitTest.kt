@@ -680,20 +680,25 @@ private fun tableCellPart(
 }
 
 /** Index of the track containing [local], with track sizes scaled to fill [extent]. */
-private fun trackIndex(sizes: List<Double>, extent: Double, local: Double): Int? {
+internal fun trackIndex(sizes: List<Double>, extent: Double, local: Double): Int? {
     if (sizes.isEmpty()) return null
-    val sum = sizes.sum()
-    val scaled = if (sum > 0.0 && extent > 0.0) {
-        sizes.map { it * extent / sum }
-    } else {
-        List(sizes.size) { if (extent > 0.0) extent / sizes.size else 0.0 }
-    }
+    val scaled = scaledTrackSizes(sizes, extent)
     var accumulated = 0.0
     scaled.forEachIndexed { index, size ->
         accumulated += size
         if (local <= accumulated) return index
     }
     return sizes.lastIndex
+}
+
+/** Track sizes scaled so they fill [extent] exactly (equal split when the sizes sum to 0). */
+internal fun scaledTrackSizes(sizes: List<Double>, extent: Double): List<Double> {
+    val sum = sizes.sum()
+    return if (sum > 0.0 && extent > 0.0) {
+        sizes.map { it * extent / sum }
+    } else {
+        List(sizes.size) { if (extent > 0.0) extent / sizes.size else 0.0 }
+    }
 }
 
 private fun classSectionPart(
