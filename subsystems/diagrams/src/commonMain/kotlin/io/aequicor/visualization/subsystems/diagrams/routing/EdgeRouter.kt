@@ -21,6 +21,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
@@ -525,14 +526,15 @@ private fun routeOrthogonal(
     val sourceRaw = rawEndpointPoint(graph, edge.source)
     val targetRaw = rawEndpointPoint(graph, edge.target)
     val planned = planFloatingEnds(graph, edge, options)
-    val source = (
+    val resolvedSource = (
         planned?.source
             ?: resolveOrthogonalEnd(graph, edge.source, edge.waypoints.firstOrNull() ?: targetRaw, options)
         ).let { fannedPortEnd(graph, edge, atSource = true, end = it, options = options) }
-    val target = (
+    val resolvedTarget = (
         planned?.target
             ?: resolveOrthogonalEnd(graph, edge.target, edge.waypoints.lastOrNull() ?: sourceRaw, options)
         ).let { fannedPortEnd(graph, edge, atSource = false, end = it, options = options) }
+    val (source, target) = alignFacingPortPair(graph, edge, resolvedSource, resolvedTarget, options)
     val margin = options.obstacleMargin
     val foreignBounds = if (avoidObstacles) {
         graph.nodes
@@ -961,6 +963,97 @@ private fun fannedPortEnd(
 
 /** Minimum distance kept between endpoint lanes of ports facing each other across a corridor. */
 private const val CROSS_PORT_LANE_CLEARANCE = 8.0
+
+/**
+ * Two fixed ports of one facing connector may sit this far apart on the shared axis and
+ * still be drawn as a single straight line. Table rows of hand-positioned nodes are
+ * routinely a few pixels off across nodes; the give stays well inside a row's height.
+ */
+private const val PORT_AXIS_SNAP_TOLERANCE = 6.0
+
+/**
+ * Snaps the two ends of a port-to-port connector onto one shared axis when its fixed
+ * ports sit almost — but not exactly — on the same row/column. Both ends being fixed,
+ * no downstream pass can remove the resulting 2-6px jog ([slideEndJogs] only moves it
+ * mid-corridor), yet the ports' rows visibly "face" each other and draw.io-parity wants
+ * one calm straight line. The snap is granted only when it buys the straight segment
+ * outright: no authored waypoints, directly facing sides, the shared coordinate inside
+ * both side ranges, the straight corridor clear of foreign bodies, and the moved end
+ * keeping [CROSS_PORT_LANE_CLEARANCE] from every other lane of its face (sibling ports
+ * and planned floating anchors). A fanned end owns its lane ([coordinatedPortLanes])
+ * and never moves: lone-vs-fan moves the lone end onto the lane, fan-vs-fan stays.
+ */
+private fun alignFacingPortPair(
+    graph: DiagramGraph,
+    edge: DiagramEdge,
+    source: ResolvedEnd,
+    target: ResolvedEnd,
+    options: RoutingOptions,
+): Pair<ResolvedEnd, ResolvedEnd> {
+    val unchanged = source to target
+    if (edge.waypoints.isNotEmpty()) return unchanged
+    val sourcePort = edge.source as? DiagramEndpoint.FixedPort ?: return unchanged
+    val targetPort = edge.target as? DiagramEndpoint.FixedPort ?: return unchanged
+    val sourceNode = source.node ?: return unchanged
+    val targetNode = target.node ?: return unchanged
+    val sourceSide = source.side ?: return unchanged
+    val targetSide = target.side ?: return unchanged
+    if (targetSide != sourceSide.oppositeSide()) return unchanged
+    if (!facesAcrossCorridor(sourceNode, sourceSide, targetNode)) return unchanged
+
+    fun axisOf(point: DiagramPoint) = if (sourceSide.exitsHorizontally) point.y else point.x
+    val sourceAxis = axisOf(source.anchor)
+    val targetAxis = axisOf(target.anchor)
+    val delta = abs(sourceAxis - targetAxis)
+    if (delta <= GEOMETRY_EPSILON || delta > PORT_AXIS_SNAP_TOLERANCE) return unchanged
+    val sourceFanned = portEdgeEndCount(graph, sourcePort) > 1
+    val targetFanned = portEdgeEndCount(graph, targetPort) > 1
+    if (sourceFanned && targetFanned) return unchanged
+    val shared = when {
+        sourceFanned -> sourceAxis
+        targetFanned -> targetAxis
+        else -> (sourceAxis + targetAxis) / 2.0
+    }
+
+    fun withinSide(node: DiagramNode, side: DiagramNodeSide): Boolean {
+        val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
+        return shared >= low - GEOMETRY_EPSILON && shared <= high + GEOMETRY_EPSILON
+    }
+
+    fun faceKeepsClear(node: DiagramNode, side: DiagramNodeSide, ownPortId: DiagramPortId): Boolean {
+        val siblingsClear = node.ports.filter { it.id != ownPortId }.all { sibling ->
+            val anchor = anchorPoint(node, sibling)
+            val siblingSide = (sibling.anchor as? DiagramPortAnchor.SideOffset)?.side
+                ?: perimeterSide(node, anchor)
+            siblingSide != side || abs(axisOf(anchor) - shared) >= CROSS_PORT_LANE_CLEARANCE
+        }
+        val plannedClear = sideAttachments(graph, options, node, side)
+            .filter { it.edgeId != edge.id }
+            .all { abs(it.position - shared) >= CROSS_PORT_LANE_CLEARANCE }
+        return siblingsClear && plannedClear
+    }
+
+    if (!sourceFanned && (!withinSide(sourceNode, sourceSide) || !faceKeepsClear(sourceNode, sourceSide, sourcePort.portId))) {
+        return unchanged
+    }
+    if (!targetFanned && (!withinSide(targetNode, targetSide) || !faceKeepsClear(targetNode, targetSide, targetPort.portId))) {
+        return unchanged
+    }
+    val newSource = if (sourceFanned) source else source.copy(anchor = anchorOnSide(sourceNode, sourceSide, shared))
+    val newTarget = if (targetFanned) target else target.copy(anchor = anchorOnSide(targetNode, targetSide, shared))
+    val obstacles = graph.nodes
+        .filter {
+            it.visible && it.width > GEOMETRY_EPSILON && it.height > GEOMETRY_EPSILON &&
+                it.id != sourceNode.id && it.id != targetNode.id
+        }
+        .map { it.bounds to inflate(it.bounds, options.obstacleMargin) }
+    val clear = segmentClear(
+        newSource.anchor,
+        newTarget.anchor,
+        legObstacles(obstacles, newSource.anchor, newTarget.anchor),
+    )
+    return if (clear) newSource to newTarget else unchanged
+}
 
 /**
  * One endpoint lane of a fixed port: the edge end occupying it and its coordinate along
