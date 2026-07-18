@@ -230,10 +230,23 @@ fun hitTest(
     // any virtual connection point is what makes a plain click select/move the node under the
     // cursor, and it guarantees a virtual port belonging to an occluded (lower) node can never be
     // returned in front of the body that covers it.
-    for (node in nodesTopDown) {
-        if (node.containsPoint(point)) {
-            return DiagramHit.Node(node.id, nodeHitPart(node, point))
+    for ((index, node) in nodesTopDown.withIndex()) {
+        if (!node.containsPoint(point)) continue
+        // A container's body must not bury the connection crosses of the nodes stacked on
+        // top of it: inside a background frame the "empty space" around a shape belongs to
+        // the container, and without this pass an edge could only ever start from a
+        // DECLARED port there. Only nodes ABOVE the hit body are offered — the node's own
+        // interior still selects and drags it, and a cross under a covering body stays
+        // unreachable (proper occlusion).
+        for (above in 0 until index) {
+            val candidate = nodesTopDown[above]
+            candidate.connectionPorts().forEach { port ->
+                if (distance(point, anchorPoint(candidate, port)) <= tolerance) {
+                    return DiagramHit.Port(candidate.id, port.id)
+                }
+            }
         }
+        return DiagramHit.Node(node.id, nodeHitPart(node, point))
     }
 
     // With no node body under the pointer, offer the draw.io virtual connection grid so an edge
