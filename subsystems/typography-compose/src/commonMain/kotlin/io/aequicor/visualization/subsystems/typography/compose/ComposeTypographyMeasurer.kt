@@ -304,7 +304,8 @@ class LaidOutRichText internal constructor(
         if (paragraphs.isEmpty()) return 0
         val paragraph = paragraphs.lastOrNull { y >= it.y } ?: paragraphs.first()
         val height = paragraph.result.size.height.toDouble()
-        val clampedY = (y - paragraph.y).coerceIn(0.0, height - 0.01)
+        // A zero-height paragraph would flip the range (coerceIn throws on max < min).
+        val clampedY = (y - paragraph.y).coerceIn(0.0, (height - 0.01).coerceAtLeast(0.0))
         val local = paragraph.result.getOffsetForPosition(
             Offset((x - paragraph.x).toFloat(), clampedY.toFloat()),
         )

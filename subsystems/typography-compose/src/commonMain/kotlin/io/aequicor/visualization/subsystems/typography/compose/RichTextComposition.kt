@@ -352,7 +352,8 @@ internal data class CenteredRadialGradientBrush(
 ) : ShaderBrush() {
     override fun createShader(size: Size): Shader = RadialGradientShader(
         center = Offset(size.width / 2f, size.height / 2f),
-        radius = maxOf(size.width, size.height) / 2f,
+        // A zero-size draw target must not produce a zero radius (invalid for the shader).
+        radius = (maxOf(size.width, size.height) / 2f).coerceAtLeast(0.5f),
         colors = stops.map { it.color.toColor() },
         colorStops = stops.map { it.offset.toFloat() },
     )
