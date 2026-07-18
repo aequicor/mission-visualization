@@ -2,6 +2,7 @@ package io.aequicor.visualization.subsystems.diagrams.routing
 
 import io.aequicor.visualization.subsystems.diagrams.geometry.GEOMETRY_EPSILON
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 
 /**
  * Axis-aligned segments of already-routed edges, indexed for fast "how many lines would
@@ -16,7 +17,22 @@ internal class RouteCrossingIndex private constructor(
     private val verticalX: DoubleArray,
     private val verticalY1: DoubleArray,
     private val verticalY2: DoubleArray,
+    private val markerRects: List<DiagramRect>,
 ) {
+
+    /** Endpoint-marker boxes a horizontal run at [y] over `[x1, x2]` would slice through. */
+    fun markerCutsOfHorizontal(y: Double, x1: Double, x2: Double): Int =
+        markerRects.count { rect ->
+            y > rect.top + GEOMETRY_EPSILON && y < rect.bottom - GEOMETRY_EPSILON &&
+                x2 > rect.left + GEOMETRY_EPSILON && x1 < rect.right - GEOMETRY_EPSILON
+        }
+
+    /** Endpoint-marker boxes a vertical run at [x] over `[y1, y2]` would slice through. */
+    fun markerCutsOfVertical(x: Double, y1: Double, y2: Double): Int =
+        markerRects.count { rect ->
+            x > rect.left + GEOMETRY_EPSILON && x < rect.right - GEOMETRY_EPSILON &&
+                y2 > rect.top + GEOMETRY_EPSILON && y1 < rect.bottom - GEOMETRY_EPSILON
+        }
 
     /** Crossings a horizontal run at [y] over `[x1, x2]` would make with indexed vertical lines. */
     fun crossingsOfHorizontal(y: Double, x1: Double, x2: Double): Int =
@@ -58,7 +74,10 @@ internal class RouteCrossingIndex private constructor(
     }
 
     companion object {
-        fun of(routes: List<List<DiagramPoint>>): RouteCrossingIndex {
+        fun of(
+            routes: List<List<DiagramPoint>>,
+            markerRects: List<DiagramRect> = emptyList(),
+        ): RouteCrossingIndex {
             data class Segment(val at: Double, val from: Double, val to: Double)
 
             val horizontals = mutableListOf<Segment>()
@@ -84,6 +103,7 @@ internal class RouteCrossingIndex private constructor(
                 verticalX = DoubleArray(verticals.size) { verticals[it].at },
                 verticalY1 = DoubleArray(verticals.size) { verticals[it].from },
                 verticalY2 = DoubleArray(verticals.size) { verticals[it].to },
+                markerRects = markerRects,
             )
         }
     }

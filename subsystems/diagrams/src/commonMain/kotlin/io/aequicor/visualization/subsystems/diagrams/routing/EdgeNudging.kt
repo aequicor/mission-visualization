@@ -29,8 +29,14 @@ fun routeAllEdgesLenient(
         runCatching { routeEdgeConsidering(graph, edge, options, crossings) }.getOrNull()
     }.filterNotNull()
     val relaxed = slideEndJogs(graph, routed, options, sequence.keys)
-    return nudgeRoutedEdges(relaxed, options, sequence.keys, nodeObstacles(graph), authoredWaypoints(graph))
-        .associateBy { it.edgeId }
+    return nudgeRoutedEdges(
+        routes = relaxed,
+        options = options,
+        pinnedEdgeIds = sequence.keys,
+        obstacles = nodeObstacles(graph),
+        waypointsByEdge = authoredWaypoints(graph),
+        markerObstaclesByEdge = markerRectsByEdge(graph, relaxed),
+    ).associateBy { it.edgeId }
 }
 
 /**
@@ -73,11 +79,21 @@ fun nudgeRoutedEdges(
     pinnedEdgeIds: Set<DiagramEdgeId> = emptySet(),
     obstacles: List<DiagramRect> = emptyList(),
     waypointsByEdge: Map<DiagramEdgeId, List<DiagramPoint>> = emptyMap(),
+    markerObstaclesByEdge: Map<DiagramEdgeId, List<DiagramRect>> = emptyMap(),
 ): List<RoutedEdge> {
     if (routes.size < 2) return routes
     val spacing = options.obstacleMargin * 2.0 / 3.0
     if (spacing <= 0.0) return routes
     val points = routes.map { it.points.toMutableList() }
+    // Endpoint-marker boxes of every OTHER edge: a spread must not land a lane across
+    // someone's crow's foot/circle — the shift that would is suppressed like a node hit.
+    val foreignMarkerRects: List<List<DiagramRect>> = routes.map { route ->
+        if (markerObstaclesByEdge.isEmpty()) {
+            emptyList()
+        } else {
+            markerObstaclesByEdge.entries.filter { it.key != route.edgeId }.flatMap { it.value }
+        }
+    }
 
     data class LaneSegment(
         val route: Int,
@@ -277,14 +293,21 @@ fun nudgeRoutedEdges(
                         // Never push a segment against a node body the original run kept
                         // clear of (raw-bounds fallback legs may already touch one) — and a
                         // boundary-hugging segment must never be pushed into the interior.
-                        return obstacles.any { rect ->
-                            (
-                                segmentNearRect(shiftedA, shiftedB, rect, NUDGE_CLEARANCE) &&
-                                    !segmentNearRect(a, b, rect, NUDGE_CLEARANCE)
-                                ) || (
-                                segmentNearRect(shiftedA, shiftedB, rect, 0.0) &&
-                                    !segmentNearRect(a, b, rect, 0.0)
-                                )
+                        if (obstacles.any { rect ->
+                                (
+                                    segmentNearRect(shiftedA, shiftedB, rect, NUDGE_CLEARANCE) &&
+                                        !segmentNearRect(a, b, rect, NUDGE_CLEARANCE)
+                                    ) || (
+                                    segmentNearRect(shiftedA, shiftedB, rect, 0.0) &&
+                                        !segmentNearRect(a, b, rect, 0.0)
+                                    )
+                            }
+                        ) {
+                            return true
+                        }
+                        return foreignMarkerRects[segment.route].any { rect ->
+                            segmentNearRect(shiftedA, shiftedB, rect, 0.0) &&
+                                !segmentNearRect(a, b, rect, 0.0)
                         }
                     }
 

@@ -48,6 +48,7 @@ internal fun orthogonalGridRoute(
     turnPenalty: Double,
     crossings: RouteCrossingIndex? = null,
     crossingPenalty: Double = 0.0,
+    markerPenalty: Double = 0.0,
 ): List<DiagramPoint>? {
     if (start.x == goal.x && start.y == goal.y) return listOf(start)
     val xs = gridCoordinates(
@@ -173,7 +174,19 @@ internal fun orthogonalGridRoute(
             } else {
                 0.0
             }
-            val nextG = currentG + stepLength + turnCost + crossingCost
+            // Slicing through another end's marker glyph reads worse than a plain
+            // crossing, so marker boxes carry their own (higher) toll.
+            val markerCost = if (crossings != null && markerPenalty > 0.0) {
+                val cuts = if (dir.isHorizontal) {
+                    crossings.markerCutsOfHorizontal(ys[j], minOf(xs[i], xs[ni]), maxOf(xs[i], xs[ni]))
+                } else {
+                    crossings.markerCutsOfVertical(xs[i], minOf(ys[j], ys[nj]), maxOf(ys[j], ys[nj]))
+                }
+                cuts * markerPenalty
+            } else {
+                0.0
+            }
+            val nextG = currentG + stepLength + turnCost + crossingCost + markerCost
             val nextId = stateId(ni, nj, dir)
             if (nextG < bestCost[nextId] - GEOMETRY_EPSILON) {
                 bestCost[nextId] = nextG

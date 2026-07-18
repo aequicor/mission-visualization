@@ -94,12 +94,14 @@ fun routeAllEdges(
     val routes = crossingAwareRoutes(graph, options, sequence) { edge, crossings ->
         routeEdgeConsidering(graph, edge, options, crossings)
     }.map { requireNotNull(it) }
+    val relaxed = slideEndJogs(graph, routes, options, sequence.keys)
     return nudgeRoutedEdges(
-        routes = slideEndJogs(graph, routes, options, sequence.keys),
+        routes = relaxed,
         options = options,
         pinnedEdgeIds = sequence.keys,
         obstacles = nodeObstacles(graph),
         waypointsByEdge = authoredWaypoints(graph),
+        markerObstaclesByEdge = markerRectsByEdge(graph, relaxed),
     )
 }
 
@@ -126,13 +128,13 @@ internal fun crossingAwareRoutes(
 ): List<RoutedEdge?> {
     val placed = mutableListOf<RoutedEdge>().apply { addAll(sequence.values) }
     val first = graph.edges.map { edge ->
-        sequence[edge.id] ?: routeOne(edge, crossingIndexOf(placed, options))?.also { placed += it }
+        sequence[edge.id] ?: routeOne(edge, crossingIndexOf(graph, placed, options))?.also { placed += it }
     }
     if (options.crossingPenalty <= 0.0) return first
     val second = graph.edges.mapIndexed { index, edge ->
         sequence[edge.id] ?: run {
             val others = first.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
-            val crossings = if (others.isEmpty()) null else RouteCrossingIndex.of(others.map { it.points })
+            val crossings = if (others.isEmpty()) null else crossingIndexOf(graph, others, options)
             routeOne(edge, crossings)
         }
     }
@@ -141,7 +143,10 @@ internal fun crossingAwareRoutes(
         val aware = second[index] ?: return@mapIndexed null
         val others = second.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
         if (others.isEmpty()) return@mapIndexed aware
-        val snapshot = RouteCrossingIndex.of(others.map { it.points })
+        val snapshot = RouteCrossingIndex.of(
+            others.map { it.points },
+            markerRectsByEdge(graph, others).values.flatten(),
+        )
         // Priority order on ties: the blind route (shortest by construction), then the
         // first-pass route, then the second-pass one — a detour must strictly earn its keep.
         val candidates = buildList {
@@ -177,6 +182,7 @@ private fun routeScore(
     var length = 0.0
     var turns = 0
     var crossed = 0
+    var markerCuts = 0
     var previousHorizontal: Boolean? = null
     for ((a, b) in points.zipWithNext()) {
         val dx = abs(a.x - b.x)
@@ -191,17 +197,30 @@ private fun routeScore(
         } else {
             crossings.crossingsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
         }
+        markerCuts += if (horizontal) {
+            crossings.markerCutsOfHorizontal(a.y, minOf(a.x, b.x), maxOf(a.x, b.x))
+        } else {
+            crossings.markerCutsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
+        }
     }
-    return length + turns * options.turnPenalty + crossed * options.crossingPenalty
+    return length + turns * options.turnPenalty + crossed * options.crossingPenalty +
+        markerCuts * options.crossingPenalty * MARKER_CUT_PENALTY_FACTOR
 }
 
-/** Crossing index over the routes placed so far, or `null` when the awareness is off. */
+/**
+ * Crossing index over the routes placed so far — segment lanes plus their endpoint-marker
+ * boxes — or `null` when the awareness is off.
+ */
 internal fun crossingIndexOf(
+    graph: DiagramGraph,
     placed: List<RoutedEdge>,
     options: RoutingOptions,
 ): RouteCrossingIndex? {
     if (options.crossingPenalty <= 0.0 || placed.isEmpty()) return null
-    return RouteCrossingIndex.of(placed.map { it.points })
+    return RouteCrossingIndex.of(
+        placed.map { it.points },
+        markerRectsByEdge(graph, placed).values.flatten(),
+    )
 }
 
 // --- Endpoint resolution -------------------------------------------------------------
@@ -449,6 +468,7 @@ private fun routeOrthogonal(
                         options.turnPenalty,
                         crossings,
                         options.crossingPenalty,
+                        options.crossingPenalty * MARKER_CUT_PENALTY_FACTOR,
                     )
                         ?.let { collapseJogs(it, legObstacles, jogThreshold) }
                         ?: manhattanLeg(from, to, seedDirection)
@@ -690,6 +710,13 @@ private fun endpointReach(head: DiagramArrowhead, options: RoutingOptions): Doub
 
 /** Gap kept between an endpoint marker's back edge and the route's first bend. */
 private const val MARKER_BREATHING = 4.0
+
+/**
+ * A foreign lane through an endpoint-marker box, priced in crossings: slicing a crow's
+ * foot or circle destroys the glyph outright, so it must cost more than crossing the
+ * plain line ever does — the router detours or crosses elsewhere instead.
+ */
+private const val MARKER_CUT_PENALTY_FACTOR = 2.0
 
 /**
  * Perpendicular exit-stub length at an anchor: [reach], shortened when a foreign node
