@@ -362,6 +362,198 @@ class EdgeOverlapSeparationTest {
     }
 
     @Test
+    fun fanSlotsFollowTheTrueApproachBehindRowLevelVias() {
+        // Both corridors are authored INTO the port row (the adjacent vias carry no
+        // ordering information); the point behind them tells one comes from above and
+        // one from below. The northern arrival must take the upper slot — ids are
+        // chosen so the alphabetical tie-break would order them the wrong way round.
+        val graph = diagramGraph {
+            val a = node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 200.0,
+                height = 120.0,
+                ports = listOf(port("p", DiagramNodeSide.RIGHT, 0.5)),
+            )
+            val below = node("below", x = 800.0, y = 400.0, width = 160.0, height = 80.0)
+            val above = node("above", x = 800.0, y = -360.0, width = 160.0, height = 80.0)
+            edge(
+                "a_south",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(below),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+                waypoints = listOf(DiagramPoint(330.0, 60.0), DiagramPoint(330.0, 400.0)),
+            )
+            edge(
+                "b_north",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(above),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+                waypoints = listOf(DiagramPoint(360.0, 60.0), DiagramPoint(360.0, -300.0)),
+            )
+        }
+        val routes = routeAllEdges(graph).associateBy { it.edgeId.value }
+        assertTrue(
+            routes.getValue("b_north").sourcePoint.y < routes.getValue("a_south").sourcePoint.y,
+            "the northern corridor must take the upper slot, got " +
+                "north=${routes.getValue("b_north").sourcePoint} south=${routes.getValue("a_south").sourcePoint}",
+        )
+    }
+
+    @Test
+    fun aLoneExactViaKeepsItsSlotOrder() {
+        // A lone waypoint is an exact pass-through the healing never moves: the route
+        // really bends there, so it must stay the ordering reference even inside the
+        // healing band — ordering by the far target would put the edge on the wrong
+        // side of the fan and its whisker would hairpin across the other lane.
+        val graph = diagramGraph {
+            val a = node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 200.0,
+                height = 120.0,
+                ports = listOf(port("p", DiagramNodeSide.RIGHT, 0.5)),
+            )
+            val below = node("below", x = 800.0, y = 400.0, width = 160.0, height = 80.0)
+            val mid = node("mid", x = 800.0, y = 120.0, width = 160.0, height = 80.0)
+            edge(
+                "e_via",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(below),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+                waypoints = listOf(DiagramPoint(330.0, 40.0)),
+            )
+            edge(
+                "e_plain",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(mid),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+            )
+        }
+        val routes = routeAllEdges(graph).associateBy { it.edgeId.value }
+        assertTrue(
+            routes.getValue("e_via").sourcePoint.y < routes.getValue("e_plain").sourcePoint.y,
+            "the lone via above the row must keep the upper slot, got " +
+                "via=${routes.getValue("e_via").sourcePoint} plain=${routes.getValue("e_plain").sourcePoint}",
+        )
+    }
+
+    @Test
+    fun oppositeViaDriftFallsBackToViaOrder() {
+        // The corridors approach from the side OPPOSITE their in-band via drift: the
+        // true-approach order would hand each via a slot its healing window cannot
+        // reach (one demands shifting up, the other down — no common shift). The fan
+        // must fall back to the via-based order, which heals both by construction.
+        val graph = diagramGraph {
+            val a = node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 200.0,
+                height = 120.0,
+                ports = listOf(port("p", DiagramNodeSide.RIGHT, 0.5)),
+            )
+            val above = node("above", x = 800.0, y = -360.0, width = 160.0, height = 80.0)
+            val below = node("below", x = 800.0, y = 400.0, width = 160.0, height = 80.0)
+            edge(
+                "cross_up",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(above),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+                waypoints = listOf(DiagramPoint(330.0, 80.0), DiagramPoint(330.0, -300.0)),
+            )
+            edge(
+                "cross_down",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(below),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+                waypoints = listOf(DiagramPoint(360.0, 40.0), DiagramPoint(360.0, 400.0)),
+            )
+        }
+        val routes = routeAllEdges(graph).associateBy { it.edgeId.value }
+        val up = routes.getValue("cross_up").sourcePoint.y
+        val down = routes.getValue("cross_down").sourcePoint.y
+        assertTrue(down < up, "via order must win when heal windows conflict, got up=$up down=$down")
+        assertTrue(
+            abs(80.0 - up) <= 24.0 + 1e-6 && abs(40.0 - down) <= 24.0 + 1e-6,
+            "both vias must stay healable, got up=$up down=$down",
+        )
+    }
+
+    @Test
+    fun theFanShiftsToKeepABoundarySlotHealable() {
+        // The via row (92) sits just outside the healing window of its assigned slot
+        // (66): without the rescue shift the healing breaks and the edge's long leg
+        // runs down the authored row. The whole fan pulls up by the missing 2 units.
+        val graph = diagramGraph {
+            val a = node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 200.0,
+                height = 120.0,
+                ports = listOf(port("p", DiagramNodeSide.RIGHT, 0.5)),
+            )
+            val up = node("up", x = 800.0, y = -260.0, width = 160.0, height = 80.0)
+            val down = node("down", x = 800.0, y = 400.0, width = 160.0, height = 80.0)
+            edge(
+                "e_plain",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(up),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+            )
+            edge(
+                "e_via",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(down),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+                waypoints = listOf(DiagramPoint(330.0, 92.0), DiagramPoint(330.0, 400.0)),
+            )
+        }
+        val routes = routeAllEdges(graph).associateBy { it.edgeId.value }
+        assertEquals(56.0, routes.getValue("e_plain").sourcePoint.y, 1e-6)
+        assertEquals(68.0, routes.getValue("e_via").sourcePoint.y, 1e-6)
+    }
+
+    @Test
+    fun aDistantViaDoesNotDragTheFanOffItsPort() {
+        // The via row (260) is a deliberate corner far from the port; the healing
+        // window must not participate, or the whole fan would chase it away from the
+        // authored port.
+        val graph = diagramGraph {
+            val a = node(
+                "a",
+                x = 0.0,
+                y = 0.0,
+                width = 200.0,
+                height = 320.0,
+                ports = listOf(port("p", DiagramNodeSide.RIGHT, 0.1875)),
+            )
+            val up = node("up", x = 800.0, y = -260.0, width = 160.0, height = 80.0)
+            val down = node("down", x = 800.0, y = 500.0, width = 160.0, height = 80.0)
+            edge(
+                "e_plain",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(up),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+            )
+            edge(
+                "e_far_via",
+                source = DiagramEndpoint.FixedPort(a, DiagramPortId("p")),
+                target = DiagramEndpoint.FloatingAnchor(down),
+                routing = DiagramRoutingStyle.ENTITY_RELATION,
+                waypoints = listOf(DiagramPoint(330.0, 260.0), DiagramPoint(330.0, 500.0)),
+            )
+        }
+        val routes = routeAllEdges(graph).associateBy { it.edgeId.value }
+        // Port sits at y = 0.1875 * 320 = 60; the fan stays centered on it.
+        assertEquals(54.0, routes.getValue("e_plain").sourcePoint.y, 1e-6)
+        assertEquals(66.0, routes.getValue("e_far_via").sourcePoint.y, 1e-6)
+    }
+
+    @Test
     fun aFanDodgeAlsoClearsPlannedFloatingLanes() {
         // The facing node holds a lone fixed port AND a floating edge whose planned
         // whisker rides the corridor too. A dodge that only knew about the fixed lane

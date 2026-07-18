@@ -75,6 +75,14 @@ class SlmDiagramAuditTool {
                     else -> Unit
                 }
             }
+            val hotspotEdges = findings
+                .filterIsInstance<io.aequicor.visualization.subsystems.diagrams.lint.DiagramLintFinding.CrossingHotspot>()
+                .flatMap { it.edgeIds }
+                .toSet()
+            if (hotspotEdges.isNotEmpty()) {
+                report.appendLine("  hotspot routes:")
+                hotspotEdges.forEach(::dumpRoute)
+            }
         }
         File(out, "lint.txt").writeText(report.toString())
         println(report)

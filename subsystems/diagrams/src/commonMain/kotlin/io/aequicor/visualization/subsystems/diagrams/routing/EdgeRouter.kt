@@ -504,29 +504,28 @@ private fun coordinatedPortLanes(
     data class Slot(
         val edgeId: DiagramEdgeId,
         val atSource: Boolean,
-        val heading: Double,
+        val approachHeading: Double,
+        val viaHeading: Double,
         val viaRow: Double?,
+    )
+
+    fun slotFor(candidate: DiagramEdge, atSource: Boolean) = Slot(
+        edgeId = candidate.id,
+        atSource = atSource,
+        approachHeading = portHeading(
+            graph, candidate, atSource, resolved.anchor, resolved.side, pastHealedVia = true,
+        ),
+        viaHeading = portHeading(
+            graph, candidate, atSource, resolved.anchor, resolved.side, pastHealedVia = false,
+        ),
+        viaRow = adjacentViaRow(candidate, atSource, resolved.side),
     )
 
     val slots = mutableListOf<Slot>()
     for (candidate in graph.edges) {
         if (!candidate.routing.routesOrthogonally) continue
-        if (candidate.source == port) {
-            slots += Slot(
-                candidate.id,
-                true,
-                portHeading(graph, candidate, atSource = true, resolved.anchor, resolved.side),
-                adjacentViaRow(candidate, atSource = true, resolved.side),
-            )
-        }
-        if (candidate.target == port) {
-            slots += Slot(
-                candidate.id,
-                false,
-                portHeading(graph, candidate, atSource = false, resolved.anchor, resolved.side),
-                adjacentViaRow(candidate, atSource = false, resolved.side),
-            )
-        }
+        if (candidate.source == port) slots += slotFor(candidate, atSource = true)
+        if (candidate.target == port) slots += slotFor(candidate, atSource = false)
     }
     val base = if (resolved.side.exitsHorizontally) resolved.anchor.y else resolved.anchor.x
     if (slots.size <= 1) {
@@ -534,21 +533,45 @@ private fun coordinatedPortLanes(
         cache[port] = lanes
         return lanes
     }
-    val ordered = slots.sortedWith(
-        compareBy({ it.heading }, { it.edgeId.value }, { it.atSource }),
-    )
     val (low, high) = sideCoordinateRange(resolved.node.bounds, resolved.side, options.obstacleMargin)
-    val ideals = List(ordered.size) { slot ->
-        (base + options.portFanSeparation * (slot - (ordered.size - 1) / 2.0)).coerceIn(low, high)
-    }
-    val spread = spreadPositions(ideals, low, high, options.portFanSeparation)
-    val fanned = ordered.mapIndexed { index, slot ->
-        PortLane(
-            edgeId = slot.edgeId,
-            atSource = slot.atSource,
-            position = spread[index],
-            healRow = slot.viaRow?.takeIf { abs(it - spread[index]) <= PORT_LEG_ALIGNMENT_LIMIT },
+
+    fun assign(ordered: List<Slot>): Pair<List<PortLane>, Boolean> {
+        val ideals = List(ordered.size) { slot ->
+            (base + options.portFanSeparation * (slot - (ordered.size - 1) / 2.0)).coerceIn(low, high)
+        }
+        val (spread, healable) = healablePositions(
+            spreadPositions(ideals, low, high, options.portFanSeparation),
+            ordered.map { it.viaRow },
+            low,
+            high,
+            options,
         )
+        val lanes = ordered.mapIndexed { index, slot ->
+            PortLane(
+                edgeId = slot.edgeId,
+                atSource = slot.atSource,
+                position = spread[index],
+                healRow = slot.viaRow?.takeIf {
+                    abs(it - spread[index]) <= PORT_LEG_ALIGNMENT_LIMIT + GEOMETRY_EPSILON
+                },
+            )
+        }
+        return lanes to healable
+    }
+
+    // The true-approach order untangles the comb; when it hands vias slots their
+    // healing windows cannot all reach (opposite-signed drift inside the band), the
+    // via-based order — which matches sorted via rows to sorted slots by construction —
+    // preserves the heals instead.
+    val byApproach = assign(
+        slots.sortedWith(compareBy({ it.approachHeading }, { it.edgeId.value }, { it.atSource })),
+    )
+    val fanned = if (byApproach.second) {
+        byApproach.first
+    } else {
+        assign(
+            slots.sortedWith(compareBy({ it.viaHeading }, { it.edgeId.value }, { it.atSource })),
+        ).first
     }
     val occupied = occupiedPortLanes(graph, resolved, options, cache)
     val delta = fanAvoidanceDelta(fanned, occupied, low, high, options)
@@ -603,6 +626,39 @@ private fun occupiedPortLanes(
             .map { OccupiedLane(it.edgeId, it.position) }
     }
     return lanes
+}
+
+/**
+ * Pulls the whole spread minimally so that every slot with an authored adjacent via
+ * NEAR its lane lands inside that via's healing window ([PORT_LEG_ALIGNMENT_LIMIT]).
+ * A slot assigned a hair outside the window (a five-slot fan spans exactly the limit)
+ * breaks its healing, and the edge's long leg then runs down the authored row across
+ * the rest of the fan. Only vias within one fan step beyond the window take part: a
+ * genuinely distant via is a deliberate corner elsewhere on the route, and chasing it
+ * would drag the whole fan away from its authored port. When the windows have no
+ * common shift the spread is returned as is, flagged infeasible — the caller may try
+ * a different slot order.
+ */
+private fun healablePositions(
+    spread: List<Double>,
+    viaRows: List<Double?>,
+    low: Double,
+    high: Double,
+    options: RoutingOptions,
+): Pair<List<Double>, Boolean> {
+    if (spread.isEmpty()) return spread to true
+    val nearLimit = PORT_LEG_ALIGNMENT_LIMIT + options.portFanSeparation
+    var lo = low - spread.first()
+    var hi = high - spread.last()
+    for (index in spread.indices) {
+        val viaRow = viaRows[index] ?: continue
+        if (abs(viaRow - spread[index]) > nearLimit) continue
+        lo = maxOf(lo, viaRow - PORT_LEG_ALIGNMENT_LIMIT - spread[index])
+        hi = minOf(hi, viaRow + PORT_LEG_ALIGNMENT_LIMIT - spread[index])
+    }
+    if (lo > hi) return spread to false
+    val shift = 0.0.coerceIn(lo, hi)
+    return (if (shift == 0.0) spread else spread.map { it + shift }) to true
 }
 
 private fun portEdgeEndCount(graph: DiagramGraph, port: DiagramEndpoint.FixedPort): Int {
@@ -697,7 +753,10 @@ private fun fanAvoidanceDelta(
                 val position = it.position + delta
                 position >= low - GEOMETRY_EPSILON &&
                     position <= high + GEOMETRY_EPSILON &&
-                    (it.healRow == null || abs(it.healRow - position) <= PORT_LEG_ALIGNMENT_LIMIT)
+                    (
+                        it.healRow == null ||
+                            abs(it.healRow - position) <= PORT_LEG_ALIGNMENT_LIMIT + GEOMETRY_EPSILON
+                        )
             }
             if (!inRange) continue
             val clear = lanes.all { lane ->
@@ -718,6 +777,16 @@ private fun fanAvoidanceDelta(
  * straight out along the outward normal, negative leans toward the side's low corner
  * (top/left), positive toward the high corner. Sorting a port's slots by this angle
  * lays the fan out in the same order the routes diverge.
+ *
+ * With [pastHealedVia] the reference looks one point past an adjacent via that
+ * [alignWaypointToPort] will heal onto the lane (two or more waypoints, within
+ * [PORT_LEG_ALIGNMENT_LIMIT] of the row): authored corridors are drawn INTO the port
+ * row, so every fan member's adjacent via carries no ordering information — the point
+ * behind it tells where the corridor truly comes from (a riser from above should take
+ * a top slot, one from below a bottom slot, or the two cross every lane between their
+ * slots). A via the healing never moves — a lone exact pass-through, or one authored
+ * off the row — stays the reference: the route really bends there, and ordering by
+ * anything farther reintroduces port-face crossings.
  */
 private fun portHeading(
     graph: DiagramGraph,
@@ -725,17 +794,27 @@ private fun portHeading(
     atSource: Boolean,
     anchor: DiagramPoint,
     side: DiagramNodeSide,
+    pastHealedVia: Boolean,
 ): Double {
-    val reference = if (atSource) {
-        edge.waypoints.firstOrNull() ?: rawEndpointPoint(graph, edge.target)
+    val chain = if (atSource) {
+        edge.waypoints + rawEndpointPoint(graph, edge.target)
     } else {
-        edge.waypoints.lastOrNull() ?: rawEndpointPoint(graph, edge.source)
+        edge.waypoints.asReversed() + rawEndpointPoint(graph, edge.source)
+    }
+    fun along(point: DiagramPoint): Double =
+        if (side.exitsHorizontally) point.y - anchor.y else point.x - anchor.x
+    val reference = if (
+        pastHealedVia && edge.waypoints.size >= 2 &&
+        abs(along(chain.first())) <= PORT_LEG_ALIGNMENT_LIMIT
+    ) {
+        chain[1]
+    } else {
+        chain.first()
     }
     val delta = reference - anchor
     val normal = side.outwardNormal()
     val outward = delta.x * normal.x + delta.y * normal.y
-    val along = if (side.exitsHorizontally) delta.y else delta.x
-    return atan2(along, outward)
+    return atan2(along(reference), outward)
 }
 
 // --- Floating-pair anchor planning ----------------------------------------------------
@@ -1189,12 +1268,22 @@ private fun alignWaypointToPort(
     stub: DiagramPoint,
     side: DiagramNodeSide?,
 ): DiagramPoint = when (side) {
+    // The epsilon keeps a lane placed exactly on the window boundary (the fan's
+    // healable-shift rescue lands there) from losing its healing to float rounding.
     DiagramNodeSide.LEFT,
     DiagramNodeSide.RIGHT,
-    -> if (abs(waypoint.y - stub.y) <= PORT_LEG_ALIGNMENT_LIMIT) waypoint.copy(y = stub.y) else waypoint
+    -> if (abs(waypoint.y - stub.y) <= PORT_LEG_ALIGNMENT_LIMIT + GEOMETRY_EPSILON) {
+        waypoint.copy(y = stub.y)
+    } else {
+        waypoint
+    }
     DiagramNodeSide.TOP,
     DiagramNodeSide.BOTTOM,
-    -> if (abs(waypoint.x - stub.x) <= PORT_LEG_ALIGNMENT_LIMIT) waypoint.copy(x = stub.x) else waypoint
+    -> if (abs(waypoint.x - stub.x) <= PORT_LEG_ALIGNMENT_LIMIT + GEOMETRY_EPSILON) {
+        waypoint.copy(x = stub.x)
+    } else {
+        waypoint
+    }
     null -> waypoint
 }
 
