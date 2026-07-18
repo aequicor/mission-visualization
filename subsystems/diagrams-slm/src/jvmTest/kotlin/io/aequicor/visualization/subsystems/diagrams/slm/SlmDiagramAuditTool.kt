@@ -83,6 +83,18 @@ class SlmDiagramAuditTool {
                 report.appendLine("  hotspot routes:")
                 hotspotEdges.forEach(::dumpRoute)
             }
+            // Full route dump (SLM_AUDIT_ROUTES=1): lets an iteration diff EVERY edge's
+            // polyline against a baseline run, not just the ones lint complained about.
+            if (System.getenv("SLM_AUDIT_ROUTES") == "1") {
+                val dump = buildString {
+                    for (edge in graph.edges) {
+                        val points = routes[edge.id]?.points
+                            ?.joinToString(" ") { "(${it.x.toInt()},${it.y.toInt()})" }
+                        appendLine("${edge.id.value}: $points")
+                    }
+                }
+                File(out, "${node.id}.routes.txt").writeText(dump)
+            }
         }
         File(out, "lint.txt").writeText(report.toString())
         println(report)

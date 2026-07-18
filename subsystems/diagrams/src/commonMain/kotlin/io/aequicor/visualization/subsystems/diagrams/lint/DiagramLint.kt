@@ -124,6 +124,20 @@ sealed interface DiagramLintFinding {
             get() = "edges '${first.value}' and '${second.value}' overlap for ${length.toInt()} units"
     }
 
+    /**
+     * A route doubles back 180° over its own lane — a dead-end whisker with zero visual
+     * information, typically left by a stale authored via after its node moved. The
+     * router's spur collapse should make this unreachable; the rule is the tripwire.
+     */
+    data class EdgeSpur(
+        val edgeId: DiagramEdgeId,
+        val at: DiagramPoint,
+    ) : DiagramLintFinding {
+        override val message: String
+            get() = "edge '${edgeId.value}' doubles back on itself " +
+                "near (${at.x.toInt()}, ${at.y.toInt()})"
+    }
+
     /** Many crossings piled into one small area. */
     data class CrossingHotspot(
         val at: DiagramPoint,
@@ -175,6 +189,7 @@ fun lintDiagram(
         addAll(edgeThroughNodeFindings(graph, ordered))
         addAll(anchorBunchFindings(graph, ordered, options))
         addAll(edgeOverlapFindings(ordered, options))
+        addAll(edgeSpurFindings(ordered))
         addAll(crossingHotspotFindings(ordered, options))
         addAll(labelOverNodeFindings(graph, routes, options))
         addAll(nodeLabelFitFindings(graph, options))
@@ -395,6 +410,26 @@ private fun coRunLength(
     val bStart = minOf(alongOf(b1), alongOf(b2))
     val bEnd = maxOf(alongOf(b1), alongOf(b2))
     return maxOf(0.0, minOf(aLength, bEnd) - maxOf(0.0, bStart))
+}
+
+// --- rule: route doubling back on itself --------------------------------------------------
+
+private fun edgeSpurFindings(routes: List<RoutedEdge>): List<DiagramLintFinding> = buildList {
+    for (route in routes) {
+        if (route.isCurve) continue
+        for (index in 1 until route.points.size - 1) {
+            val a = route.points[index - 1]
+            val b = route.points[index]
+            val c = route.points[index + 1]
+            val horizontalReversal =
+                abs(a.y - b.y) < 1e-6 && abs(b.y - c.y) < 1e-6 && (b.x - a.x) * (c.x - b.x) < 0.0
+            val verticalReversal =
+                abs(a.x - b.x) < 1e-6 && abs(b.x - c.x) < 1e-6 && (b.y - a.y) * (c.y - b.y) < 0.0
+            if (horizontalReversal || verticalReversal) {
+                add(DiagramLintFinding.EdgeSpur(edgeId = route.edgeId, at = b))
+            }
+        }
+    }
 }
 
 // --- rule: crossing hotspots ------------------------------------------------------------

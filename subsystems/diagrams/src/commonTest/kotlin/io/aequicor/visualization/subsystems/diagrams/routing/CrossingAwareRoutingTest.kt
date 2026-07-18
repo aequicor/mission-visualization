@@ -1,8 +1,15 @@
 package io.aequicor.visualization.subsystems.diagrams.routing
 
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdgeId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEndpoint
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPort
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.model.diagramGraph
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -83,6 +90,194 @@ class CrossingAwareRoutingTest {
         assertTrue(
             crossingCount(routes.getValue("late").points, routes.getValue("lane").points) >= 1,
             "with the awareness off the shortest route crosses the lane, got ${routes.getValue("late").points}",
+        )
+    }
+
+    // --- regret pass: a detour must pay for itself against the final snapshot ------------
+
+    private fun routed(id: String, vararg points: DiagramPoint) = RoutedEdge(
+        edgeId = DiagramEdgeId(id),
+        routing = DiagramRoutingStyle.ORTHOGONAL,
+        points = points.toList(),
+    )
+
+    private fun probeAndLaneGraph() = diagramGraph {
+        edge(
+            "lane",
+            source = DiagramEndpoint.FreePoint(50.0, 90.0),
+            target = DiagramEndpoint.FreePoint(50.0, 110.0),
+        )
+        edge(
+            "probe",
+            source = DiagramEndpoint.FreePoint(0.0, 100.0),
+            target = DiagramEndpoint.FreePoint(100.0, 100.0),
+        )
+    }
+
+    /**
+     * Runs [crossingAwareRoutes] with canned candidate routes for the probe edge: its
+     * crossing-aware pass returns [aware], the blind calls return [blind]. The lane edge
+     * always routes to [lane].
+     */
+    private fun regretSelection(
+        lane: RoutedEdge,
+        blind: RoutedEdge,
+        aware: RoutedEdge,
+    ): RoutedEdge {
+        val graph = probeAndLaneGraph()
+        val routes = crossingAwareRoutes(graph, RoutingOptions.Default, emptyMap()) { edge, crossings ->
+            when (edge.id.value) {
+                "lane" -> lane
+                else -> if (crossings == null) blind else aware
+            }
+        }
+        return requireNotNull(routes[1])
+    }
+
+    @Test
+    fun anUnpaidSecondPassDetourFallsBackToTheBlindRoute() {
+        // The aware detour is longer and saves not a single real crossing against the
+        // lane's final position — the classic ghost dodge the Jacobi pass leaves behind.
+        val lane = routed("lane", DiagramPoint(50.0, 90.0), DiagramPoint(50.0, 110.0))
+        val blind = routed("probe", DiagramPoint(0.0, 200.0), DiagramPoint(100.0, 200.0))
+        val aware = routed(
+            "probe",
+            DiagramPoint(0.0, 200.0),
+            DiagramPoint(0.0, 260.0),
+            DiagramPoint(100.0, 260.0),
+            DiagramPoint(100.0, 200.0),
+        )
+        assertEquals(blind.points, regretSelection(lane, blind, aware).points)
+    }
+
+    @Test
+    fun aPayingDetourSurvivesTheRegretPass() {
+        // Here the blind route really crosses the lane (penalty 50) while the aware
+        // detour spends only 30 units and 2 turns to avoid it — the detour stays.
+        val lane = routed("lane", DiagramPoint(50.0, 90.0), DiagramPoint(50.0, 110.0))
+        val blind = routed("probe", DiagramPoint(0.0, 100.0), DiagramPoint(100.0, 100.0))
+        val aware = routed(
+            "probe",
+            DiagramPoint(0.0, 100.0),
+            DiagramPoint(0.0, 115.0),
+            DiagramPoint(100.0, 115.0),
+            DiagramPoint(100.0, 100.0),
+        )
+        assertEquals(aware.points, regretSelection(lane, blind, aware).points)
+    }
+
+    // --- spur collapse: stale vias must not leave dead-end whiskers ----------------------
+
+    private fun assertNoSpur(points: List<DiagramPoint>) {
+        for (index in 1 until points.size - 1) {
+            val a = points[index - 1]
+            val b = points[index]
+            val c = points[index + 1]
+            val horizontal = abs(a.y - b.y) < 1e-6 && abs(b.y - c.y) < 1e-6 &&
+                (b.x - a.x) * (c.x - b.x) < 0.0
+            val vertical = abs(a.x - b.x) < 1e-6 && abs(b.x - c.x) < 1e-6 &&
+                (b.y - a.y) * (c.y - b.y) < 0.0
+            assertTrue(!horizontal && !vertical, "route doubles back at $b: $points")
+        }
+    }
+
+    @Test
+    fun aStaleViaRetraceCollapsesInsteadOfLeavingASpur() {
+        fun port(id: String, side: DiagramNodeSide, offset: Double): DiagramPort =
+            DiagramPort(DiagramPortId(id), DiagramPortAnchor.SideOffset(side, offset))
+
+        // Both ports face LEFT; the first authored via sits far ABOVE the source port
+        // row (stale after the node moved down), so the leg into the via and the leg out
+        // retrace the same x=45 lane — the dead-end whisker seen on reference files.
+        val graph = diagramGraph {
+            val src = node(
+                "src",
+                x = 100.0,
+                y = 360.0,
+                width = 80.0,
+                height = 60.0,
+                ports = listOf(port("out", DiagramNodeSide.LEFT, 0.5)),
+            )
+            val dst = node(
+                "dst",
+                x = 100.0,
+                y = 555.0,
+                width = 80.0,
+                height = 60.0,
+                ports = listOf(port("in", DiagramNodeSide.LEFT, 0.5)),
+            )
+            edge(
+                "hook",
+                source = DiagramEndpoint.FixedPort(src, DiagramPortId("out")),
+                target = DiagramEndpoint.FixedPort(dst, DiagramPortId("in")),
+                waypoints = listOf(DiagramPoint(45.0, 280.0), DiagramPoint(45.0, 585.0)),
+            )
+        }
+        val route = routeEdge(graph, graph.edges.single())
+        assertNoSpur(route.points)
+        assertTrue(
+            route.points.none { it.y < 330.0 },
+            "the whisker to the stale via must collapse: ${route.points}",
+        )
+        assertTrue(
+            route.points.any { abs(it.x - 45.0) < 1e-6 },
+            "the authored x=45 corridor must survive the collapse: ${route.points}",
+        )
+    }
+
+    @Test
+    fun collapseLoopsExcisesALassoBackToItsRevisitPoint() {
+        // The real shape from the reference ER file: the leg out of a twice-displaced
+        // via cannot reverse onto the leg that arrived, so the A* paid a full loop
+        // around a grid cell and returned to the exact corner it had already visited.
+        val lasso = listOf(
+            DiagramPoint(2350.0, 819.0),
+            DiagramPoint(2238.0, 819.0),
+            DiagramPoint(2238.0, 2388.0),
+            DiagramPoint(2280.0, 2388.0),
+            DiagramPoint(2280.0, 2342.0),
+            DiagramPoint(2238.0, 2342.0),
+            DiagramPoint(2238.0, 2388.0),
+            DiagramPoint(1712.0, 2388.0),
+            DiagramPoint(1712.0, 2443.0),
+        )
+        assertEquals(
+            listOf(
+                DiagramPoint(2350.0, 819.0),
+                DiagramPoint(2238.0, 819.0),
+                DiagramPoint(2238.0, 2388.0),
+                DiagramPoint(1712.0, 2388.0),
+                DiagramPoint(1712.0, 2443.0),
+            ),
+            collapseLoops(lasso),
+        )
+    }
+
+    @Test
+    fun collapseSpursTrimsPartialAndExactRetraces() {
+        // Partial retrace: the route overshoots to x=100 and comes back to x=60.
+        assertEquals(
+            listOf(DiagramPoint(0.0, 0.0), DiagramPoint(60.0, 0.0), DiagramPoint(60.0, 50.0)),
+            collapseSpurs(
+                listOf(
+                    DiagramPoint(0.0, 0.0),
+                    DiagramPoint(100.0, 0.0),
+                    DiagramPoint(60.0, 0.0),
+                    DiagramPoint(60.0, 50.0),
+                ),
+            ),
+        )
+        // Exact retrace: out and back over the same span collapses to nothing.
+        assertEquals(
+            listOf(DiagramPoint(0.0, 0.0), DiagramPoint(0.0, 50.0)),
+            collapseSpurs(
+                listOf(
+                    DiagramPoint(0.0, 0.0),
+                    DiagramPoint(100.0, 0.0),
+                    DiagramPoint(0.0, 0.0),
+                    DiagramPoint(0.0, 50.0),
+                ),
+            ),
         )
     }
 }

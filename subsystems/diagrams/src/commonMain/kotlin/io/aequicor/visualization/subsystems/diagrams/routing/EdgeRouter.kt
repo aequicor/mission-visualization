@@ -107,6 +107,16 @@ fun routeAllEdges(
  * The two-pass crossing-aware batch: results align with `graph.edges` (an entry is null
  * only when [routeOne] returned null — the lenient caller's failed edges). With the
  * awareness off this is the plain single pass.
+ *
+ * A closing regret pass keeps the awareness honest. In the second (Jacobi) pass every
+ * edge dodges the FIRST-pass positions of the others — positions the others may have
+ * left in their own second pass, so a detour can outlive its reason: a long U-loop that
+ * no longer saves a single real crossing. The regret pass re-scores each edge's
+ * candidates (second-pass, first-pass, crossing-blind) against the second-pass routes of
+ * all OTHER edges — the truest deterministic snapshot available — by the router's own
+ * objective (length + turns x turnPenalty + real crossings x crossingPenalty) and keeps
+ * the cheapest, ties going to the straighter earlier candidate. A detour survives only
+ * while it actually pays for itself.
  */
 internal fun crossingAwareRoutes(
     graph: DiagramGraph,
@@ -119,13 +129,70 @@ internal fun crossingAwareRoutes(
         sequence[edge.id] ?: routeOne(edge, crossingIndexOf(placed, options))?.also { placed += it }
     }
     if (options.crossingPenalty <= 0.0) return first
-    return graph.edges.mapIndexed { index, edge ->
+    val second = graph.edges.mapIndexed { index, edge ->
         sequence[edge.id] ?: run {
             val others = first.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
             val crossings = if (others.isEmpty()) null else RouteCrossingIndex.of(others.map { it.points })
             routeOne(edge, crossings)
         }
     }
+    return graph.edges.mapIndexed { index, edge ->
+        if (sequence[edge.id] != null) return@mapIndexed second[index]
+        val aware = second[index] ?: return@mapIndexed null
+        val others = second.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
+        if (others.isEmpty()) return@mapIndexed aware
+        val snapshot = RouteCrossingIndex.of(others.map { it.points })
+        // Priority order on ties: the blind route (shortest by construction), then the
+        // first-pass route, then the second-pass one — a detour must strictly earn its keep.
+        val candidates = buildList {
+            routeOne(edge, null)?.let(::add)
+            first[index]?.let(::add)
+            add(aware)
+        }
+        var best = candidates.first()
+        var bestScore = routeScore(best.points, snapshot, options)
+        for (candidate in candidates.drop(1)) {
+            if (candidate.points == best.points) continue
+            val score = routeScore(candidate.points, snapshot, options)
+            if (score < bestScore - GEOMETRY_EPSILON) {
+                best = candidate
+                bestScore = score
+            }
+        }
+        best
+    }
+}
+
+/**
+ * The batch router's own objective applied to a finished polyline: total length, plus
+ * [RoutingOptions.turnPenalty] per bend, plus [RoutingOptions.crossingPenalty] per real
+ * crossing with the [crossings] snapshot. Used by the regret pass to compare candidate
+ * routes on equal terms.
+ */
+private fun routeScore(
+    points: List<DiagramPoint>,
+    crossings: RouteCrossingIndex,
+    options: RoutingOptions,
+): Double {
+    var length = 0.0
+    var turns = 0
+    var crossed = 0
+    var previousHorizontal: Boolean? = null
+    for ((a, b) in points.zipWithNext()) {
+        val dx = abs(a.x - b.x)
+        val dy = abs(a.y - b.y)
+        if (dx < GEOMETRY_EPSILON && dy < GEOMETRY_EPSILON) continue
+        length += dx + dy
+        val horizontal = dx >= dy
+        if (previousHorizontal != null && horizontal != previousHorizontal) turns++
+        previousHorizontal = horizontal
+        crossed += if (horizontal) {
+            crossings.crossingsOfHorizontal(a.y, minOf(a.x, b.x), maxOf(a.x, b.x))
+        } else {
+            crossings.crossingsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
+        }
+    }
+    return length + turns * options.turnPenalty + crossed * options.crossingPenalty
 }
 
 /** Crossing index over the routes placed so far, or `null` when the awareness is off. */
@@ -399,7 +466,7 @@ private fun routeOrthogonal(
     return RoutedEdge(
         edgeId = edge.id,
         routing = edge.routing,
-        points = atLeastTwo(simplifyPolyline(points)),
+        points = atLeastTwo(simplifyPolyline(collapseLoops(collapseSpurs(dedupePoints(points))))),
         sourceSide = source.side,
         targetSide = target.side,
         sourceReach = if (source.side == null) 0.0 else sourceReach,
@@ -1166,6 +1233,72 @@ private fun collapseJogs(
             changed = true
             break
         }
+    }
+    return result
+}
+
+/**
+ * Removes zero-width spurs from an orthogonal polyline: an interior point where the
+ * route reverses 180° back over the segment it just drew. The A* bans immediate
+ * reversals, but leg BOUNDARIES do not — a stale authored via (its node moved since
+ * authoring) makes the leg into the via and the leg out of it retrace the same lane,
+ * leaving a dead-end whisker past the real corner (the straight-leg shortcut and the
+ * Manhattan fallback are direction-blind too). The collapsed route is a strict spatial
+ * subset of the original — the union of the two reversing segments collapses to their
+ * difference — so no obstacle or crossing can be newly hit. Repeats until no reversal
+ * remains (a collapse can bring an earlier and a later segment into a new reversal).
+ */
+internal fun collapseSpurs(points: List<DiagramPoint>): List<DiagramPoint> {
+    if (points.size < 3) return points
+    val result = points.toMutableList()
+    var index = 1
+    while (index < result.size - 1) {
+        val a = result[index - 1]
+        val b = result[index]
+        val c = result[index + 1]
+        val reversal =
+            (isHorizontalSegment(a, b) && isHorizontalSegment(b, c) && (b.x - a.x) * (c.x - b.x) < 0.0) ||
+                (isVerticalSegment(a, b) && isVerticalSegment(b, c) && (b.y - a.y) * (c.y - b.y) < 0.0)
+        if (reversal) {
+            result.removeAt(index)
+            if (a.nearlyEquals(c)) {
+                // The retrace was exact: drop the duplicate and re-check around the seam.
+                result.removeAt(index)
+            }
+            if (index > 1) index--
+        } else {
+            index++
+        }
+    }
+    return result
+}
+
+/**
+ * Excises closed loops from an orthogonal polyline: when the route revisits a point it
+ * already passed through, everything between the two visits is a lasso — pure ink that
+ * adds zero connectivity. The A* leg leaving a healed via cannot reverse onto the leg
+ * that arrived (the seed direction bans a 180° first move), so when the only sane
+ * continuation is straight back it pays a full loop around a grid cell instead; the
+ * ghost of a twice-displaced via is not worth that loop. Only exact revisits collapse —
+ * a U-detour never returns to the same point.
+ */
+internal fun collapseLoops(points: List<DiagramPoint>): List<DiagramPoint> {
+    if (points.size < 4) return points
+    val result = points.toMutableList()
+    var index = 0
+    while (index < result.size - 2) {
+        // The LAST revisit wins: one excision removes the largest loop through this point.
+        var revisit = -1
+        for (later in result.size - 1 downTo index + 2) {
+            if (result[later].nearlyEquals(result[index])) {
+                revisit = later
+                break
+            }
+        }
+        if (revisit > index) {
+            result.subList(index + 1, revisit + 1).clear()
+        }
+        index++
     }
     return result
 }
