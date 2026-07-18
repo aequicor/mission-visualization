@@ -257,8 +257,11 @@ A short label is `label «text»`. The grouped form is
 `label («text» [markdown] [at source|target] [dx N] [dy N])`; use at most one label
 per source/middle/target position.
 
-Line jumps at crossings with lower edges default to `arc` (omitted in canonical
-form); `jumps none` turns them off.
+Edge crossings render plain by default (`jumps none`, omitted in canonical form).
+`jumps arc|gap|sharp` opts a single edge into crossing decor; when enabled, only
+the horizontal side of a crossing hops and the bump always bows up, so do not
+author jumps to signal direction. Prefer the plain default — dense surfaces stay
+quiet — and reserve `jumps arc` for genuinely ambiguous long parallel runs.
 
 Arrowheads are `none`, `open`, `block`, `block-filled`, `diamond`,
 `diamond-filled`, `triangle`, `triangle-filled`, `oval`, `oval-filled`, `cross`,
@@ -270,7 +273,7 @@ Edge extends from circle to shape relation generalization
 Edge owns from drawing to circle relation composition label «owns»
 Edge places from customer to order relation er one to zero-or-many label («places» at source dx 4 dy -6)
 Edge fixed from gateway.out to service.in routing straight via (420 160) via (420 240)
-Edge flow from intake to review relation transition jumps none mode link animated yes layer wiring
+Edge flow from intake to review relation transition jumps arc mode link animated yes layer wiring
 ```
 
 ## Groups
