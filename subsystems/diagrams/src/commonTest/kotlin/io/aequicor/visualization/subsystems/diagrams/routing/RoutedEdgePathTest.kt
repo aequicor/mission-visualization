@@ -239,6 +239,57 @@ class RoutedEdgePathTest {
     }
 
     @Test
+    fun onlyTheHorizontalEdgeHopsAtACrossing() {
+        // Lucid-style single jumper: the vertical line stays straight, no O-shaped pill.
+        val vertical = polyline(50.0 to 0.0, 50.0 to 100.0)
+        val horizontal = RoutedEdge(
+            edgeId = DiagramEdgeId("other"),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(DiagramPoint(0.0, 50.0), DiagramPoint(100.0, 50.0)),
+        )
+        val path = routedEdgeToPath(
+            vertical,
+            lineJumps = LineJumpStyle.ARC,
+            otherEdges = listOf(horizontal),
+        )
+        assertTrue(path.segments.none { it is DiagramPathSegment.ArcTo })
+    }
+
+    @Test
+    fun equalOrientationCrossingTieBreaksOnEdgeIds() {
+        val down = listOf(DiagramPoint(0.0, 0.0), DiagramPoint(100.0, 100.0))
+        val up = listOf(DiagramPoint(0.0, 100.0), DiagramPoint(100.0, 0.0))
+        fun edge(id: String, points: List<DiagramPoint>) = RoutedEdge(
+            edgeId = DiagramEdgeId(id),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = points,
+        )
+        val first = routedEdgeToPath(edge("a", down), lineJumps = LineJumpStyle.ARC, otherEdges = listOf(edge("b", up)))
+        val second = routedEdgeToPath(edge("b", up), lineJumps = LineJumpStyle.ARC, otherEdges = listOf(edge("a", down)))
+        assertEquals(1, first.segments.count { it is DiagramPathSegment.ArcTo })
+        assertEquals(0, second.segments.count { it is DiagramPathSegment.ArcTo })
+    }
+
+    @Test
+    fun hopKeepsAStraightStubBeforeItsOwnCorner() {
+        // L-shaped route, rounded corner radius 8 at (100,50); jumpSize 6.
+        fun vertical(x: Double) = RoutedEdge(
+            edgeId = DiagramEdgeId("other"),
+            routing = DiagramRoutingStyle.ORTHOGONAL,
+            points = listOf(DiagramPoint(x, 0.0), DiagramPoint(x, 100.0)),
+        )
+        val bend = polyline(0.0 to 50.0, 100.0 to 50.0, 100.0 to 150.0)
+        // At the old window edge (100 - 8 - 6 = 86) the hop arc fused with the corner
+        // curve into a loop; the stub margin now drops it.
+        val fused = routedEdgeToPath(bend, lineJumps = LineJumpStyle.ARC, otherEdges = listOf(vertical(86.0)))
+        assertTrue(fused.segments.none { it is DiagramPathSegment.ArcTo })
+        // A crossing two units earlier keeps its hop and a straight stub after it.
+        val kept = routedEdgeToPath(bend, lineJumps = LineJumpStyle.ARC, otherEdges = listOf(vertical(84.0)))
+        val arc = kept.segments.filterIsInstance<DiagramPathSegment.ArcTo>().single()
+        assertEquals(DiagramPoint(90.0, 50.0), arc.end)
+    }
+
+    @Test
     fun curveRouteBuildsSmoothSpline() {
         val routed = RoutedEdge(
             edgeId = DiagramEdgeId("edge"),

@@ -86,6 +86,11 @@ private fun DiagramPathBuilder.emitJump(
     jumpSize: Double,
     halfWidth: Double,
 ) {
+    // The bump side must not depend on travel direction: two opposite-direction lines
+    // crossing the same riser otherwise bow apart into an O-shaped pill. Normalize to
+    // "up" (and "left" for vertical runs), like the reference tools.
+    val sweepNormal = DiagramPoint(direction.y, -direction.x)
+    val flip = sweepNormal.y > 0.0 || (sweepNormal.y == 0.0 && sweepNormal.x > 0.0)
     when (kind) {
         LineJumpStyle.NONE -> lineTo(after)
 
@@ -94,7 +99,7 @@ private fun DiagramPathBuilder.emitJump(
         LineJumpStyle.ARC -> arcTo(
             radiusX = halfWidth,
             radiusY = jumpSize,
-            sweep = true,
+            sweep = !flip,
             endX = after.x,
             endY = after.y,
         )
@@ -102,8 +107,7 @@ private fun DiagramPathBuilder.emitJump(
         LineJumpStyle.GAP -> moveTo(after)
 
         LineJumpStyle.SHARP -> {
-            // Peak perpendicular to the travel direction (deterministic side).
-            val normal = DiagramPoint(direction.y, -direction.x)
+            val normal = if (flip) sweepNormal * -1.0 else sweepNormal
             val center = DiagramPoint((before.x + after.x) / 2.0, (before.y + after.y) / 2.0)
             val apex = center + normal * jumpSize
             lineTo(apex)
@@ -127,11 +131,19 @@ private fun cornerRadii(points: List<DiagramPoint>, baseRadius: Double): DoubleA
 /** A hop over one or more merged crossings: center distance from the segment start. */
 private data class JumpSpan(val center: Double, val halfWidth: Double)
 
+/** A hop and its own corner curve fuse into a loop without a straight run between them. */
+private const val JUMP_CORNER_STUB = 2.0
+
 /**
  * For each segment of [routed], hop spans over crossings with [otherEdges], sorted
  * ascending and kept clear of the segment ends and rounded corner zones. Crossings
  * whose hops would overlap merge into one wide span (draw.io-style) instead of some
  * of them silently losing their hop.
+ *
+ * Exactly ONE of the two edges hops at any crossing (Lucid-style): the horizontal
+ * segment hops over the vertical one, so bumps read consistently as "riding over
+ * risers"; equal orientations tie-break on the edge ids. Both edges hopping drew an
+ * O-shaped pill around every crossing.
  */
 private fun segmentJumpSpans(
     routed: RoutedEdge,
@@ -151,18 +163,26 @@ private fun segmentJumpSpans(
             result += emptyList<JumpSpan>()
             continue
         }
+        val myHorizontal = abs(segment.y) <= abs(segment.x)
         val crossings = mutableListOf<Double>()
         for (other in otherEdges) {
             if (other.edgeId == routed.edgeId) continue
             for ((otherStart, otherEnd) in other.points.zipWithNext()) {
+                val otherSegment = otherEnd - otherStart
+                val otherHorizontal = abs(otherSegment.y) <= abs(otherSegment.x)
+                val jumper = when {
+                    myHorizontal != otherHorizontal -> myHorizontal
+                    else -> routed.edgeId.value < other.edgeId.value
+                }
+                if (!jumper) continue
                 val t = segmentCrossingParameter(start, end, otherStart, otherEnd, otherEndClearance)
                     ?: continue
                 crossings += t * segmentLength
             }
         }
         crossings.sort()
-        val minCenter = radii[index] + jumpSize
-        val maxCenter = segmentLength - radii[index + 1] - jumpSize
+        val minCenter = radii[index] + jumpSize + JUMP_CORNER_STUB
+        val maxCenter = segmentLength - radii[index + 1] - jumpSize - JUMP_CORNER_STUB
         val inWindow = crossings.filter { it in minCenter..maxCenter }
         val spans = mutableListOf<JumpSpan>()
         var clusterFirst = Double.NaN
@@ -179,7 +199,7 @@ private fun segmentJumpSpans(
             if (clusterFirst.isNaN()) {
                 clusterFirst = center
                 clusterLast = center
-            } else if (center - clusterLast <= jumpSize * 2.0) {
+            } else if (center - clusterLast <= jumpSize * 2.0 + JUMP_CORNER_STUB) {
                 clusterLast = center
             } else {
                 flush()

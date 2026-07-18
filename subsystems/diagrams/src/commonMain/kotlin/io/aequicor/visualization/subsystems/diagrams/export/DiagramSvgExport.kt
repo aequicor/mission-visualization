@@ -115,17 +115,18 @@ fun diagramToSvg(
             .append("\" fill=\"").append(background.toSvgHex()).append("\"/>\n")
     }
     for (node in nodes) svg.appendNode(node, options, measurer)
-    // Edges accumulate in draw order so each edge line-jumps only over lines below it
+    // Line jumps see every other route; which side of a crossing hops is decided by
+    // orientation inside routedEdgeToPath (horizontal over vertical), not by z-order
     // (matches the on-canvas renderer).
     val routePoints = routedById.mapValues { it.value.points }
-    val drawnRoutes = mutableListOf<RoutedEdge>()
+    val allRoutes = routedById.values.toList()
     for (edge in edges) {
         val route = routedById.getValue(edge.id)
         svg.appendEdge(
             edge,
             route,
             options,
-            jumpOverRoutes = drawnRoutes.toList(),
+            jumpOverRoutes = allRoutes,
             labelObstacleRoutes = if (edge.labels.isEmpty()) {
                 emptyList()
             } else {
@@ -137,7 +138,6 @@ fun diagramToSvg(
                 edgeLabelAvoidRects(graph, edge.id)
             },
         )
-        drawnRoutes += route
     }
     svg.append("</svg>")
     return svg.toString()

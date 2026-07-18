@@ -144,8 +144,9 @@ fun DrawScope.drawDiagramGraph(
     val routePoints = routes.mapValues { it.value.points }
 
     // Implicit default layer below all explicit layers, then explicit layers bottom->top.
-    // Edges accumulate in draw order so each edge line-jumps only over lines below it.
-    val drawnRoutes = mutableListOf<RoutedEdge>()
+    // Line jumps see every other route; which side of a crossing hops is decided by
+    // orientation inside routedEdgeToPath (horizontal over vertical), not by z-order.
+    val allRoutes = routes.values.toList()
     val order: List<DiagramLayerId?> = listOf<DiagramLayerId?>(null) + graph.layers.map { it.id }
     order.forEach { layerId ->
         val layer = layerId?.let { graph.layerById(it) }
@@ -162,7 +163,7 @@ fun DrawScope.drawDiagramGraph(
                 colors,
                 measurer,
                 flowPhase,
-                jumpOverRoutes = drawnRoutes.toList(),
+                jumpOverRoutes = allRoutes,
                 labelObstacleRoutes = if (edge.labels.isEmpty()) {
                     emptyList()
                 } else {
@@ -174,7 +175,6 @@ fun DrawScope.drawDiagramGraph(
                     edgeLabelAvoidRects(graph, edge.id)
                 },
             )
-            drawnRoutes += routed
         }
     }
 }

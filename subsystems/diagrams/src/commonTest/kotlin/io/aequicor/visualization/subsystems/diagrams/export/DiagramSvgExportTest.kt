@@ -95,7 +95,7 @@ class DiagramSvgExportTest {
     }
 
     @Test
-    fun upperEdgeArcsOverLowerAtCrossings() {
+    fun horizontalEdgeArcsOverVerticalAtCrossings() {
         val graph = diagramGraph {
             edge(
                 id = "horizontal",
@@ -125,9 +125,10 @@ class DiagramSvgExportTest {
 
         val svg = diagramToSvg(graph, routes)
 
-        // Only the edge drawn on top (later in z-order) jumps; the lower one stays straight.
-        assertTrue(svg.contains("d=\"M 0 50 L 100 50\""), svg)
-        assertTrue(svg.contains("d=\"M 50 0 L 50 44 A 6 6 0 0 1 50 56 L 50 100\""), svg)
+        // Exactly one side of the crossing jumps, and it is the horizontal one
+        // (Lucid-style, independent of draw order); the vertical stays straight.
+        assertTrue(svg.contains("d=\"M 50 0 L 50 100\""), svg)
+        assertTrue(svg.contains("d=\"M 0 50 L 44 50 A 6 6 0 0 1 56 50 L 100 50\""), svg)
     }
 
     @Test

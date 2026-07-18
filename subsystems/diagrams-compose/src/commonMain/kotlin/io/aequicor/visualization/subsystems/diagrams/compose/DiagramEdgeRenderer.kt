@@ -37,8 +37,9 @@ private const val SEQUENCE_MESSAGE_LABEL_LIFT = 9.0
  *
  * @param flowPhase animated 0..1 fraction driving [DiagramEdge.flowAnimation]; `null`
  *   disables the animation (static rendering).
- * @param jumpOverRoutes routes drawn *below* this edge; [DiagramEdge.lineJumps] jumps
- *   are emitted where this edge crosses them (only the upper line jumps, draw.io-style).
+ * @param jumpOverRoutes all other edges' routes; [DiagramEdge.lineJumps] jumps are
+ *   emitted where this edge crosses them (the horizontal side of a crossing hops over
+ *   the vertical one, Lucid-style — independent of z-order and travel direction).
  * @param labelObstacleRoutes all *other* edges' routes — undragged MIDDLE labels slide
  *   off crossings with them (must match the hit-test context, see [edgeLabelAnchorPoint]).
  */
