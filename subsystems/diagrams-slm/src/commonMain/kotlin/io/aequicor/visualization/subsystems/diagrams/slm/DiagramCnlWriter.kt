@@ -255,7 +255,7 @@ public object DiagramCnlWriter {
         styleGroup(edge.style)?.let { add("style $it") }
         arrowheadPhrase(edge.sourceArrowhead)?.let { add("arrow source $it") }
         arrowheadPhrase(edge.targetArrowhead)?.let { add("arrow target $it") }
-        if (edge.lineJumps != LineJumpStyle.ARC) add("jumps ${edge.lineJumps.cnlToken()}")
+        if (edge.lineJumps != LineJumpStyle.NONE) add("jumps ${edge.lineJumps.cnlToken()}")
         if (edge.connectionMode != DiagramConnectionMode.LINE) add("mode ${edge.connectionMode.cnlToken()}")
         if (edge.flowAnimation) add("animated yes")
         edge.layerId?.let { add("layer ${idToken(it.value)}") }

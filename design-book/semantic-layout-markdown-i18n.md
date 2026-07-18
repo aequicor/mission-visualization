@@ -980,15 +980,17 @@ Edge <id> from <endpoint> to <endpoint> [relation <…>] [routing <…>]
   kind-слово (`none|open|block|block-filled|diamond|diamond-filled|triangle|
   triangle-filled|oval|oval-filled|cross|dash|er-one|er-many|er-one-or-many|
   er-zero-or-one|er-zero-or-many`) или группа `(kind [size N] [inset N])`.
-- **jumps** — как ребро рисуется на пересечении с нижележащими рёбрами; дефолт
-  `arc` (дуга-перескок, опущен в каноне), `jumps none` выключает.
+- **jumps** — декор пересечений с другими рёбрами; дефолт `none` (опущен в
+  каноне — пересечения без декора). `jumps arc|gap|sharp` включает перескок;
+  прыгает всегда горизонтальная сторона пересечения (Lucid-style), горб смотрит
+  вверх независимо от направления хода.
 
 ```md
 Edge e_extends from circle to shape relation generalization
 Edge e_owns from drawing to circle relation composition label «owns»
 Edge e_er from customer to order relation er one to zero-or-many label («places» at source dx 4 dy -6)
 Edge e_fixed from gateway.out to service.in routing straight via (420 160) via (420 240)
-Edge e_flow from intake to review relation transition jumps none mode link animated yes layer wiring
+Edge e_flow from intake to review relation transition jumps arc mode link animated yes layer wiring
 ```
 
 ### `Group` — selection-группа

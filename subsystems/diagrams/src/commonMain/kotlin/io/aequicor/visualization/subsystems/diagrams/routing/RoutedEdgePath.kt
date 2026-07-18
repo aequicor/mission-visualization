@@ -30,7 +30,7 @@ fun routedEdgeToPath(
     style: DiagramStyle = DiagramStyle.Default,
     lineJumps: LineJumpStyle = LineJumpStyle.NONE,
     otherEdges: List<RoutedEdge> = emptyList(),
-    jumpSize: Double = 6.0,
+    jumpSize: Double = 4.0,
     cornerRadius: Double = 8.0,
     curvedCornerRadius: Double = 16.0,
 ): DiagramPath {

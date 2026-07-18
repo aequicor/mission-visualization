@@ -102,12 +102,14 @@ class DiagramSvgExportTest {
                 source = DiagramEndpoint.FreePoint(0.0, 50.0),
                 target = DiagramEndpoint.FreePoint(100.0, 50.0),
                 routing = DiagramRoutingStyle.STRAIGHT,
+                lineJumps = LineJumpStyle.ARC,
             )
             edge(
                 id = "vertical",
                 source = DiagramEndpoint.FreePoint(50.0, 0.0),
                 target = DiagramEndpoint.FreePoint(50.0, 100.0),
                 routing = DiagramRoutingStyle.STRAIGHT,
+                lineJumps = LineJumpStyle.ARC,
             )
         }
         val routes = listOf(
@@ -128,7 +130,7 @@ class DiagramSvgExportTest {
         // Exactly one side of the crossing jumps, and it is the horizontal one
         // (Lucid-style, independent of draw order); the vertical stays straight.
         assertTrue(svg.contains("d=\"M 50 0 L 50 100\""), svg)
-        assertTrue(svg.contains("d=\"M 0 50 L 44 50 A 6 6 0 0 1 56 50 L 100 50\""), svg)
+        assertTrue(svg.contains("d=\"M 0 50 L 46 50 A 4 4 0 0 1 54 50 L 100 50\""), svg)
     }
 
     @Test

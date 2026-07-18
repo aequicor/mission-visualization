@@ -98,7 +98,7 @@ class DiagramCnlDocExamplesTest {
                 "Edge e_owns from drawing to circle relation composition label «owns»",
                 "Edge e_er from customer to order relation er one to zero-or-many label («places» at source dx 4 dy -6)",
                 "Edge e_fixed from gateway.out to service.in routing straight via (420 160) via (420 240)",
-                "Edge e_flow from intake to review relation transition jumps none mode link animated yes layer wiring",
+                "Edge e_flow from intake to review relation transition jumps arc mode link animated yes layer wiring",
                 "Group g_uml «UML cluster» members (shape circle drawing)",
             ),
             canvasId = "edges_canvas",

@@ -1122,7 +1122,7 @@ internal object DiagramCnlReader {
         var style: DiagramStyle = DiagramStyle.Default
         var sourceArrowhead: DiagramArrowhead = DiagramArrowhead.None
         var targetArrowhead: DiagramArrowhead = DiagramArrowhead.None
-        var lineJumps = LineJumpStyle.ARC
+        var lineJumps = LineJumpStyle.NONE
         var mode = DiagramConnectionMode.LINE
         var animated = false
         var layerId: String? = null

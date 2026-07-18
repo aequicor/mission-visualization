@@ -82,7 +82,7 @@ class DiagramGraphBuilder internal constructor() {
         labels: List<DiagramEdgeLabel> = emptyList(),
         sourceArrowhead: DiagramArrowhead = DiagramArrowhead.None,
         targetArrowhead: DiagramArrowhead = DiagramArrowhead.None,
-        lineJumps: LineJumpStyle = LineJumpStyle.ARC,
+        lineJumps: LineJumpStyle = LineJumpStyle.NONE,
         connectionMode: DiagramConnectionMode = DiagramConnectionMode.LINE,
         flowAnimation: Boolean = false,
         layerId: DiagramLayerId? = null,

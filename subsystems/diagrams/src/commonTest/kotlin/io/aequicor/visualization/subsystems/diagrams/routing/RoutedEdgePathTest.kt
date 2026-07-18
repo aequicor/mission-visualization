@@ -98,7 +98,7 @@ class RoutedEdgePathTest {
         )
         val moves = path.segments.filterIsInstance<DiagramPathSegment.MoveTo>()
         assertEquals(2, moves.size)
-        assertEquals(DiagramPoint(56.0, 50.0), moves[1].point)
+        assertEquals(DiagramPoint(54.0, 50.0), moves[1].point)
         assertEquals(DiagramPoint(100.0, 50.0), lastPoint(path.segments.last()))
     }
 
@@ -116,7 +116,7 @@ class RoutedEdgePathTest {
             otherEdges = listOf(other),
         )
         val arc = path.segments.filterIsInstance<DiagramPathSegment.ArcTo>().single()
-        assertEquals(DiagramPoint(56.0, 50.0), arc.end)
+        assertEquals(DiagramPoint(54.0, 50.0), arc.end)
         assertEquals(DiagramPoint(100.0, 50.0), lastPoint(path.segments.last()))
     }
 
@@ -136,7 +136,7 @@ class RoutedEdgePathTest {
         // The apex sits above the line (deterministic side).
         assertTrue(
             path.segments.filterIsInstance<DiagramPathSegment.LineTo>()
-                .any { abs(it.point.y - 44.0) < 1e-9 },
+                .any { abs(it.point.y - 46.0) < 1e-9 },
         )
         assertEquals(DiagramPoint(100.0, 50.0), lastPoint(path.segments.last()))
     }
@@ -211,13 +211,13 @@ class RoutedEdgePathTest {
             lineJumps = LineJumpStyle.ARC,
             otherEdges = listOf(vertical("a", 50.0), vertical("b", 58.0)),
         )
-        // 8 apart < 2*jumpSize: one wide half-ellipse spanning both crossings.
+        // 8 apart: overlapping hops fold into one wide half-ellipse spanning both crossings.
         val arc = path.segments.filterIsInstance<DiagramPathSegment.ArcTo>().single()
-        assertEquals(DiagramPoint(64.0, 50.0), arc.end)
-        assertTrue(abs(arc.radiusX - 10.0) < 1e-9, "radiusX=${arc.radiusX}")
-        assertTrue(abs(arc.radiusY - 6.0) < 1e-9, "radiusY=${arc.radiusY}")
+        assertEquals(DiagramPoint(62.0, 50.0), arc.end)
+        assertTrue(abs(arc.radiusX - 8.0) < 1e-9, "radiusX=${arc.radiusX}")
+        assertTrue(abs(arc.radiusY - 4.0) < 1e-9, "radiusY=${arc.radiusY}")
         val before = path.segments[1] as DiagramPathSegment.LineTo
-        assertEquals(DiagramPoint(44.0, 50.0), before.point)
+        assertEquals(DiagramPoint(46.0, 50.0), before.point)
     }
 
     @Test
@@ -235,7 +235,7 @@ class RoutedEdgePathTest {
         )
         val arcs = path.segments.filterIsInstance<DiagramPathSegment.ArcTo>()
         assertEquals(2, arcs.size)
-        assertTrue(arcs.all { abs(it.radiusX - 6.0) < 1e-9 })
+        assertTrue(arcs.all { abs(it.radiusX - 4.0) < 1e-9 })
     }
 
     @Test
@@ -272,19 +272,19 @@ class RoutedEdgePathTest {
 
     @Test
     fun hopKeepsAStraightStubBeforeItsOwnCorner() {
-        // L-shaped route, rounded corner radius 8 at (100,50); jumpSize 6.
+        // L-shaped route, rounded corner radius 8 at (100,50); jumpSize 4.
         fun vertical(x: Double) = RoutedEdge(
             edgeId = DiagramEdgeId("other"),
             routing = DiagramRoutingStyle.ORTHOGONAL,
             points = listOf(DiagramPoint(x, 0.0), DiagramPoint(x, 100.0)),
         )
         val bend = polyline(0.0 to 50.0, 100.0 to 50.0, 100.0 to 150.0)
-        // At the old window edge (100 - 8 - 6 = 86) the hop arc fused with the corner
+        // At the old window edge (100 - 8 - 4 = 88) the hop arc fused with the corner
         // curve into a loop; the stub margin now drops it.
-        val fused = routedEdgeToPath(bend, lineJumps = LineJumpStyle.ARC, otherEdges = listOf(vertical(86.0)))
+        val fused = routedEdgeToPath(bend, lineJumps = LineJumpStyle.ARC, otherEdges = listOf(vertical(88.0)))
         assertTrue(fused.segments.none { it is DiagramPathSegment.ArcTo })
         // A crossing two units earlier keeps its hop and a straight stub after it.
-        val kept = routedEdgeToPath(bend, lineJumps = LineJumpStyle.ARC, otherEdges = listOf(vertical(84.0)))
+        val kept = routedEdgeToPath(bend, lineJumps = LineJumpStyle.ARC, otherEdges = listOf(vertical(86.0)))
         val arc = kept.segments.filterIsInstance<DiagramPathSegment.ArcTo>().single()
         assertEquals(DiagramPoint(90.0, 50.0), arc.end)
     }
