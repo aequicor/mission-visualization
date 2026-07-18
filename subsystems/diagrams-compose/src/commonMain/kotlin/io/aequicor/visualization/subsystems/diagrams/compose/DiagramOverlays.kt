@@ -281,7 +281,7 @@ fun DiagramWaypointOverlay(
                 )
 
                 edge.labels.forEach { label ->
-                    val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, id), edgeLabelAvoidRects(graph, id))
+                    val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, id), edgeLabelAvoidRects(graph, id, routePoints))
                     drawLabelHandle(
                         Offset(anchor.x.toFloat(), anchor.y.toFloat()),
                         style,

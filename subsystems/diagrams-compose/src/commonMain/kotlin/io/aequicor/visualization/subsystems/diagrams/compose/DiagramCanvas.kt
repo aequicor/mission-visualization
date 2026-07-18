@@ -172,7 +172,7 @@ fun DrawScope.drawDiagramGraph(
                 labelAvoidRects = if (edge.labels.isEmpty()) {
                     emptyList()
                 } else {
-                    edgeLabelAvoidRects(graph, edge.id)
+                    edgeLabelAvoidRects(graph, edge.id, routePoints)
                 },
             )
         }

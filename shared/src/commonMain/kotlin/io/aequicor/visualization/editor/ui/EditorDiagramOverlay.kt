@@ -2088,7 +2088,7 @@ private fun diagramTextEditRect(
         } else {
             val label = edge.labels.firstOrNull { it.position == target.position }
             val anchor = if (label != null) {
-                edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id))
+                edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id, routes))
             } else {
                 route[route.size / 2]
             }

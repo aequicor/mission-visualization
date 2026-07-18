@@ -36,8 +36,14 @@ internal fun endpointMarkerZones(
     edge: DiagramEdge,
     route: RoutedEdge,
     fitToRun: Boolean = false,
+): List<EndpointMarkerZone> = endpointMarkerZones(edge, route.points, fitToRun)
+
+/** [endpointMarkerZones] for surfaces that carry bare polylines instead of [RoutedEdge]s. */
+internal fun endpointMarkerZones(
+    edge: DiagramEdge,
+    points: List<DiagramPoint>,
+    fitToRun: Boolean = false,
 ): List<EndpointMarkerZone> {
-    val points = route.points
     if (points.size < 2) return emptyList()
     val heads = resolvedArrowheads(edge)
     return listOfNotNull(
