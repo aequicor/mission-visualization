@@ -422,6 +422,11 @@ private fun legObstacles(
  * else the other end), sweeping across the side's axis, so the fan does not cross itself
  * right at the port. A lone edge — and an edge not present in the graph, e.g. an
  * interactive preview — keeps the exact port point.
+ *
+ * A fan also keeps its lanes clear of ports facing it across the inter-node corridor
+ * (see [coordinatedPortLanes]): two fans on facing sides at the same height would
+ * otherwise put endpoint whiskers of different edges onto one lane, and nudging cannot
+ * separate segments glued to an anchor.
  */
 private fun fannedPortEnd(
     graph: DiagramGraph,
@@ -435,32 +440,277 @@ private fun fannedPortEnd(
     val port = endpoint as? DiagramEndpoint.FixedPort ?: return end
     val node = end.node ?: return end
     val side = end.side ?: return end
+    val lanes = coordinatedPortLanes(graph, port, options, HashMap())
+    if (lanes.size <= 1) return end
+    val lane = lanes.firstOrNull { it.edgeId == edge.id && it.atSource == atSource } ?: return end
+    return end.copy(anchor = anchorOnSide(node, side, lane.position))
+}
 
-    data class Slot(val edgeId: DiagramEdgeId, val atSource: Boolean, val heading: Double)
+/** Minimum distance kept between endpoint lanes of ports facing each other across a corridor. */
+private const val CROSS_PORT_LANE_CLEARANCE = 8.0
+
+/**
+ * One endpoint lane of a fixed port: the edge end occupying it and its coordinate along
+ * the side. [healRow] is the row of the end's authored via when [alignWaypointToPort]
+ * currently heals it onto this lane — a fan shift must keep such a slot within
+ * [PORT_LEG_ALIGNMENT_LIMIT] of the via, or the healing breaks and the edge's long leg
+ * snaps back to the authored row, right where the facing lanes it was avoiding live.
+ */
+private data class PortLane(
+    val edgeId: DiagramEdgeId,
+    val atSource: Boolean,
+    val position: Double,
+    val healRow: Double? = null,
+)
+
+private data class ResolvedPort(
+    val port: DiagramEndpoint.FixedPort,
+    val node: DiagramNode,
+    val side: DiagramNodeSide,
+    val anchor: DiagramPoint,
+)
+
+private fun resolveFixedPort(
+    graph: DiagramGraph,
+    port: DiagramEndpoint.FixedPort,
+): ResolvedPort? {
+    val node = graph.nodeById(port.nodeId) ?: return null
+    val nodePort = node.portById(port.portId) ?: return null
+    val anchor = anchorPoint(node, nodePort)
+    val side = (nodePort.anchor as? DiagramPortAnchor.SideOffset)?.side
+        ?: perimeterSide(node, anchor)
+    return ResolvedPort(port, node, side, anchor)
+}
+
+/**
+ * The lanes a fixed port's edge ends actually occupy along its side: the authored point
+ * for a lone edge, the spread fan for several — shifted as a whole when its lanes would
+ * collide with those of a port facing it across the corridor. Which of two facing ports
+ * moves is deterministic: a lone port never does (its authored point is exact user
+ * intent), and of two fans the one with the larger `(nodeId, portId)` key yields.
+ * Results are memoized in [cache]; recursion terminates because a fan only recurses
+ * into strictly smaller keys and lone ports do not recurse at all.
+ */
+private fun coordinatedPortLanes(
+    graph: DiagramGraph,
+    port: DiagramEndpoint.FixedPort,
+    options: RoutingOptions,
+    cache: MutableMap<DiagramEndpoint.FixedPort, List<PortLane>>,
+): List<PortLane> {
+    cache[port]?.let { return it }
+    val resolved = resolveFixedPort(graph, port)
+        ?: return emptyList<PortLane>().also { cache[port] = it }
+
+    data class Slot(
+        val edgeId: DiagramEdgeId,
+        val atSource: Boolean,
+        val heading: Double,
+        val viaRow: Double?,
+    )
 
     val slots = mutableListOf<Slot>()
     for (candidate in graph.edges) {
         if (!candidate.routing.routesOrthogonally) continue
         if (candidate.source == port) {
-            slots += Slot(candidate.id, true, portHeading(graph, candidate, atSource = true, end.anchor, side))
+            slots += Slot(
+                candidate.id,
+                true,
+                portHeading(graph, candidate, atSource = true, resolved.anchor, resolved.side),
+                adjacentViaRow(candidate, atSource = true, resolved.side),
+            )
         }
         if (candidate.target == port) {
-            slots += Slot(candidate.id, false, portHeading(graph, candidate, atSource = false, end.anchor, side))
+            slots += Slot(
+                candidate.id,
+                false,
+                portHeading(graph, candidate, atSource = false, resolved.anchor, resolved.side),
+                adjacentViaRow(candidate, atSource = false, resolved.side),
+            )
         }
     }
-    if (slots.size <= 1) return end
+    val base = if (resolved.side.exitsHorizontally) resolved.anchor.y else resolved.anchor.x
+    if (slots.size <= 1) {
+        val lanes = slots.map { PortLane(it.edgeId, it.atSource, base) }
+        cache[port] = lanes
+        return lanes
+    }
     val ordered = slots.sortedWith(
         compareBy({ it.heading }, { it.edgeId.value }, { it.atSource }),
     )
-    val index = ordered.indexOfFirst { it.edgeId == edge.id && it.atSource == atSource }
-    if (index < 0) return end
-    val base = if (side.exitsHorizontally) end.anchor.y else end.anchor.x
-    val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
+    val (low, high) = sideCoordinateRange(resolved.node.bounds, resolved.side, options.obstacleMargin)
     val ideals = List(ordered.size) { slot ->
         (base + options.portFanSeparation * (slot - (ordered.size - 1) / 2.0)).coerceIn(low, high)
     }
-    val positions = spreadPositions(ideals, low, high, options.portFanSeparation)
-    return end.copy(anchor = anchorOnSide(node, side, positions[index]))
+    val spread = spreadPositions(ideals, low, high, options.portFanSeparation)
+    val fanned = ordered.mapIndexed { index, slot ->
+        PortLane(
+            edgeId = slot.edgeId,
+            atSource = slot.atSource,
+            position = spread[index],
+            healRow = slot.viaRow?.takeIf { abs(it - spread[index]) <= PORT_LEG_ALIGNMENT_LIMIT },
+        )
+    }
+    val occupied = occupiedPortLanes(graph, resolved, options, cache)
+    val delta = fanAvoidanceDelta(fanned, occupied, low, high, options)
+    val lanes = if (delta == 0.0) fanned else fanned.map { it.copy(position = it.position + delta) }
+    cache[port] = lanes
+    return lanes
+}
+
+/** An endpoint lane the fan must keep clear of: the edge occupying it and its coordinate. */
+private data class OccupiedLane(val edgeId: DiagramEdgeId, val position: Double)
+
+/**
+ * Lanes that [resolved]'s fan must keep clear of: fixed ports facing it across the
+ * corridor plus its neighbors on the same node side (their whiskers leave through the
+ * same face, so a shifted fan may not land on their lanes either), and the planned
+ * anchors of floating ends on those same faces — the floating planner knows nothing
+ * about fans, so the fan is the one that dodges. Of the fixed ports only those that
+ * hold their ground are collected: lone ports (they never move) and fans with a
+ * smaller key. A contested fan with a larger key is skipped — it will dodge this
+ * port's lanes instead.
+ */
+private fun occupiedPortLanes(
+    graph: DiagramGraph,
+    resolved: ResolvedPort,
+    options: RoutingOptions,
+    cache: MutableMap<DiagramEndpoint.FixedPort, List<PortLane>>,
+): List<OccupiedLane> {
+    val lanes = mutableListOf<OccupiedLane>()
+    val seen = mutableSetOf<DiagramEndpoint.FixedPort>()
+    for (candidate in graph.edges) {
+        if (!candidate.routing.routesOrthogonally) continue
+        for (endpoint in listOf(candidate.source, candidate.target)) {
+            val other = endpoint as? DiagramEndpoint.FixedPort ?: continue
+            if (other == resolved.port || !seen.add(other)) continue
+            val otherResolved = resolveFixedPort(graph, other) ?: continue
+            val sameFace = otherResolved.node.id == resolved.node.id &&
+                otherResolved.side == resolved.side
+            val facing = otherResolved.side == resolved.side.oppositeSide() &&
+                facesAcrossCorridor(resolved.node, resolved.side, otherResolved.node)
+            if (!sameFace && !facing) continue
+            val otherYields = portEdgeEndCount(graph, other) > 1 && portKeyLess(resolved.port, other)
+            if (otherYields) continue
+            lanes += coordinatedPortLanes(graph, other, options, cache)
+                .map { OccupiedLane(it.edgeId, it.position) }
+        }
+    }
+    for (node in graph.nodes) {
+        val sameNode = node.id == resolved.node.id
+        if (!sameNode && !facesAcrossCorridor(resolved.node, resolved.side, node)) continue
+        val side = if (sameNode) resolved.side else resolved.side.oppositeSide()
+        lanes += sideAttachments(graph, options, node, side)
+            .map { OccupiedLane(it.edgeId, it.position) }
+    }
+    return lanes
+}
+
+private fun portEdgeEndCount(graph: DiagramGraph, port: DiagramEndpoint.FixedPort): Int {
+    var count = 0
+    for (candidate in graph.edges) {
+        if (!candidate.routing.routesOrthogonally) continue
+        if (candidate.source == port) count++
+        if (candidate.target == port) count++
+    }
+    return count
+}
+
+private fun portKeyLess(a: DiagramEndpoint.FixedPort, b: DiagramEndpoint.FixedPort): Boolean =
+    compareValuesBy(a, b, { it.nodeId.value }, { it.portId.value }) < 0
+
+/**
+ * Row (along the side's lane axis) of the authored via adjacent to this edge end —
+ * the one [alignWaypointToPort] may heal onto the port lane. `null` when the healing
+ * never touches this edge's waypoints: none at all, or a lone waypoint, which stays an
+ * exact mandatory pass-through point (see [alignedMandatoryPoints]) whatever the lane.
+ */
+private fun adjacentViaRow(
+    edge: DiagramEdge,
+    atSource: Boolean,
+    side: DiagramNodeSide,
+): Double? {
+    if (edge.waypoints.size < 2) return null
+    val via = if (atSource) edge.waypoints.first() else edge.waypoints.last()
+    return if (side.exitsHorizontally) via.y else via.x
+}
+
+/** Whether [other]'s opposing face looks back at [node]'s [side] from across the corridor. */
+private fun facesAcrossCorridor(
+    node: DiagramNode,
+    side: DiagramNodeSide,
+    other: DiagramNode,
+): Boolean {
+    if (other.id == node.id) return false
+    return when (side) {
+        DiagramNodeSide.RIGHT -> other.bounds.left >= node.bounds.right - GEOMETRY_EPSILON
+        DiagramNodeSide.LEFT -> other.bounds.right <= node.bounds.left + GEOMETRY_EPSILON
+        DiagramNodeSide.BOTTOM -> other.bounds.top >= node.bounds.bottom - GEOMETRY_EPSILON
+        DiagramNodeSide.TOP -> other.bounds.bottom <= node.bounds.top + GEOMETRY_EPSILON
+    }
+}
+
+private fun DiagramNodeSide.oppositeSide(): DiagramNodeSide = when (this) {
+    DiagramNodeSide.LEFT -> DiagramNodeSide.RIGHT
+    DiagramNodeSide.RIGHT -> DiagramNodeSide.LEFT
+    DiagramNodeSide.TOP -> DiagramNodeSide.BOTTOM
+    DiagramNodeSide.BOTTOM -> DiagramNodeSide.TOP
+}
+
+/**
+ * Shift applied to a whole fan so every lane stays [CROSS_PORT_LANE_CLEARANCE] away from
+ * every [occupied] lane of a different edge. Lanes of the same edge never conflict — an
+ * edge connecting the two facing ports may legitimately run straight through both.
+ * Candidates place some fan lane exactly one clearance off some occupied lane; the
+ * smallest shift that clears all conflicts inside `[low, high]` wins, and no shift may
+ * exceed twice [RoutingOptions.portFanSeparation] — the fan must stay recognizably
+ * centered near its authored port. A slot whose authored via is currently healed onto
+ * it ([PortLane.healRow]) must additionally stay within [PORT_LEG_ALIGNMENT_LIMIT] of
+ * that via, or the healing would break and the edge's long leg would snap back to the
+ * authored row. When the full clearance cannot be met it is halved once — the floor
+ * stays above the lint co-run threshold, a tighter fit could not silence a warning
+ * anyway — before giving up and leaving the fan where it was.
+ */
+private fun fanAvoidanceDelta(
+    lanes: List<PortLane>,
+    occupied: List<OccupiedLane>,
+    low: Double,
+    high: Double,
+    options: RoutingOptions,
+): Double {
+    if (occupied.isEmpty()) return 0.0
+    val maxShift = options.portFanSeparation * 2.0
+    var clearance = CROSS_PORT_LANE_CLEARANCE
+    while (clearance >= CROSS_PORT_LANE_CLEARANCE / 2.0 - GEOMETRY_EPSILON) {
+        val candidates = buildList {
+            add(0.0)
+            for (lane in lanes) {
+                for (occ in occupied) {
+                    if (occ.edgeId == lane.edgeId) continue
+                    add(occ.position + clearance - lane.position)
+                    add(occ.position - clearance - lane.position)
+                }
+            }
+        }.sortedWith(compareBy({ abs(it) }, { it }))
+        for (delta in candidates) {
+            if (abs(delta) > maxShift + GEOMETRY_EPSILON) continue
+            val inRange = lanes.all {
+                val position = it.position + delta
+                position >= low - GEOMETRY_EPSILON &&
+                    position <= high + GEOMETRY_EPSILON &&
+                    (it.healRow == null || abs(it.healRow - position) <= PORT_LEG_ALIGNMENT_LIMIT)
+            }
+            if (!inRange) continue
+            val clear = lanes.all { lane ->
+                occupied.all { occ ->
+                    occ.edgeId == lane.edgeId ||
+                        abs(lane.position + delta - occ.position) >= clearance - GEOMETRY_EPSILON
+                }
+            }
+            if (clear) return delta
+        }
+        clearance /= 2.0
+    }
+    return 0.0
 }
 
 /**
