@@ -4384,8 +4384,8 @@ private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
                 nodeId = targetId,
                 elementId = elementId,
                 payload = drag.payload,
-                x = docX - target.x - drag.width / 2,
-                y = docY - target.y - drag.height / 2,
+                x = snapToDiagramGrid(docX - target.x - drag.width / 2),
+                y = snapToDiagramGrid(docY - target.y - drag.height / 2),
                 width = drag.width,
                 height = drag.height,
             ),
@@ -4404,8 +4404,8 @@ private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
             DesignEditorIntent.CreateDiagramObject(
                 parentId = layout.node.sourceId,
                 payload = drag.payload,
-                x = (docX - layout.x - NewDiagramWidth / 2).coerceAtLeast(0.0),
-                y = (docY - layout.y - NewDiagramHeight / 2).coerceAtLeast(0.0),
+                x = snapToDiagramGrid((docX - layout.x - NewDiagramWidth / 2).coerceAtLeast(0.0)),
+                y = snapToDiagramGrid((docY - layout.y - NewDiagramHeight / 2).coerceAtLeast(0.0)),
                 width = NewDiagramWidth,
                 height = NewDiagramHeight,
                 elementWidth = drag.width,
@@ -4425,7 +4425,12 @@ private fun commitDiagramPaletteDrop(state: MissionEditorStateHolder) {
     }
 }
 
-/** Stamps [entry]'s shape into the diagram center (cascading), selects it in edit mode. */
+/**
+ * Stamps [entry]'s shape at the center of the VISIBLE viewport (cascading, snapped to
+ * the placement grid), selects it in edit mode. A palette click used to stamp into the
+ * diagram's geometric center — on a large ER surface that dropped the shape somewhere
+ * deep in the busy middle, far from where the user was looking.
+ */
 private fun insertDiagramElementFromPalette(
     state: MissionEditorStateHolder,
     diagramNodeId: String,
@@ -4434,15 +4439,28 @@ private fun insertDiagramElementFromPalette(
     val document = state.designState.document ?: return
     val node = document.nodeById(diagramNodeId) ?: return
     val graph = (node.kind as? DesignNodeKind.Diagram)?.graph ?: return
-    val cascade = (graph.nodes.size % 6) * 24.0
+    val cascade = (graph.nodes.size % 6) * 20.0
     val elementId = mintDiagramId(graph, "node")
+    val diagramWidth = node.size.width ?: entry.width
+    val diagramHeight = node.size.height ?: entry.height
+    // Visible-center placement when the canvas geometry is known; diagram center otherwise.
+    val bounds = state.canvasExportBounds
+    val box = state.artboardLayout?.allBoxes()?.firstOrNull { it.node.sourceId == diagramNodeId }
+    val (idealX, idealY) = if (bounds != null && box != null) {
+        val viewport = state.workspace.viewport
+        val docX = viewport.toDocumentX((bounds.width / 2.0).toFloat(), bounds.density)
+        val docY = viewport.toDocumentY((bounds.height / 2.0).toFloat(), bounds.density)
+        (docX - box.x - entry.width / 2 + cascade) to (docY - box.y - entry.height / 2 + cascade)
+    } else {
+        ((diagramWidth - entry.width) / 2 + cascade) to ((diagramHeight - entry.height) / 2 + cascade)
+    }
     state.dispatch(
         DiagramEditorIntent.AddDiagramNode(
             nodeId = diagramNodeId,
             elementId = elementId,
             payload = entry.payload,
-            x = (((node.size.width ?: entry.width) - entry.width) / 2 + cascade).coerceAtLeast(0.0),
-            y = (((node.size.height ?: entry.height) - entry.height) / 2 + cascade).coerceAtLeast(0.0),
+            x = snapToDiagramGrid(idealX).coerceIn(0.0, (diagramWidth - entry.width).coerceAtLeast(0.0)),
+            y = snapToDiagramGrid(idealY).coerceIn(0.0, (diagramHeight - entry.height).coerceAtLeast(0.0)),
             width = entry.width,
             height = entry.height,
         ),

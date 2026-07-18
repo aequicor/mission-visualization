@@ -166,6 +166,7 @@ import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenien
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 
@@ -695,8 +696,8 @@ internal fun DiagramEditOverlay(
                                 nodeId = editId,
                                 elementId = elementId,
                                 payload = tool.payload,
-                                x = point.x - width / 2,
-                                y = point.y - height / 2,
+                                x = snapToDiagramGrid(point.x - width / 2),
+                                y = snapToDiagramGrid(point.y - height / 2),
                                 width = width,
                                 height = height,
                             ),
@@ -1020,8 +1021,8 @@ internal fun DiagramEditOverlay(
                                         nodeId = editId,
                                         elementId = newId,
                                         payload = DiagramNodePayload.BasicShape(DiagramShapeKind.RECTANGLE),
-                                        x = point.x - width / 2,
-                                        y = point.y - height / 2,
+                                        x = snapToDiagramGrid(point.x - width / 2),
+                                        y = snapToDiagramGrid(point.y - height / 2),
                                         width = width,
                                         height = height,
                                     ),
@@ -2024,6 +2025,17 @@ private fun waypointInsertionIndex(
         } ?: 0
     return waypoints.count { nearestVertex(it) <= segmentIndex }
 }
+
+/** Logical placement grid for newly created diagram elements (draw.io's default step). */
+internal const val DIAGRAM_GRID_STEP = 10.0
+
+/**
+ * Snaps a creation coordinate to the placement grid: stamped and dropped shapes land on
+ * round positions instead of writing the pointer's fractional document coordinate into
+ * the source. Moves/resizes are not snapped here — the magnet owns those gestures.
+ */
+internal fun snapToDiagramGrid(value: Double): Double =
+    round(value / DIAGRAM_GRID_STEP) * DIAGRAM_GRID_STEP
 
 /** Fresh graph-unique id `prefix-N` across nodes, edges, layers and groups. */
 internal fun mintDiagramId(graph: DiagramGraph, prefix: String): String {
