@@ -28,7 +28,8 @@ fun routeAllEdgesLenient(
     val routed = crossingAwareRoutes(graph, options, sequence) { edge, crossings ->
         runCatching { routeEdgeConsidering(graph, edge, options, crossings) }.getOrNull()
     }.filterNotNull()
-    return nudgeRoutedEdges(routed, options, sequence.keys, nodeObstacles(graph), authoredWaypoints(graph))
+    val relaxed = slideEndJogs(graph, routed, options, sequence.keys)
+    return nudgeRoutedEdges(relaxed, options, sequence.keys, nodeObstacles(graph), authoredWaypoints(graph))
         .associateBy { it.edgeId }
 }
 
@@ -336,7 +337,7 @@ fun nudgeRoutedEdges(
 private const val WAYPOINT_PIN_CLEARANCE = PORT_LEG_ALIGNMENT_LIMIT + 1.0
 
 /** Whether [point] lies within [WAYPOINT_PIN_CLEARANCE] of the segment `a..b`. */
-private fun pointNearSegment(point: DiagramPoint, a: DiagramPoint, b: DiagramPoint): Boolean {
+internal fun pointNearSegment(point: DiagramPoint, a: DiagramPoint, b: DiagramPoint): Boolean {
     val dx = b.x - a.x
     val dy = b.y - a.y
     val lengthSquared = dx * dx + dy * dy

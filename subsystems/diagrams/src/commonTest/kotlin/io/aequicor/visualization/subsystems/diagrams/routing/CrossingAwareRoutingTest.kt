@@ -226,6 +226,50 @@ class CrossingAwareRoutingTest {
     }
 
     @Test
+    fun aTinyEndJogSlidesToTheCorridorMiddle() {
+        fun port(id: String, side: DiagramNodeSide, offset: Double): DiagramPort =
+            DiagramPort(DiagramPortId(id), DiagramPortAnchor.SideOffset(side, offset))
+
+        // Two facing fixed ports four pixels apart in row: the transition jog must exist
+        // somewhere, and the A*'s tie-break used to draw it right at the target marker.
+        val graph = diagramGraph {
+            val left = node(
+                "left",
+                x = 0.0,
+                y = 100.0,
+                width = 80.0,
+                height = 60.0,
+                ports = listOf(port("out", DiagramNodeSide.RIGHT, 0.6)),
+            )
+            val right = node(
+                "right",
+                x = 300.0,
+                y = 100.0,
+                width = 80.0,
+                height = 60.0,
+                ports = listOf(port("in", DiagramNodeSide.LEFT, 0.66667)),
+            )
+            edge(
+                "step",
+                source = DiagramEndpoint.FixedPort(left, DiagramPortId("out")),
+                target = DiagramEndpoint.FixedPort(right, DiagramPortId("in")),
+            )
+        }
+        val route = routeAllEdges(graph).single()
+        val jogXs = route.points.filter { point ->
+            route.points.count { other -> abs(other.x - point.x) < 1e-6 } == 2 &&
+                point.x > 80.0 && point.x < 300.0
+        }.map { it.x }.distinct()
+        assertTrue(jogXs.isNotEmpty(), "expected a transition jog between the ports: ${route.points}")
+        for (x in jogXs) {
+            assertTrue(
+                abs(x - 190.0) <= 40.0,
+                "the jog must sit near the corridor middle (~190), not at a port: got $x in ${route.points}",
+            )
+        }
+    }
+
+    @Test
     fun collapseLoopsExcisesALassoBackToItsRevisitPoint() {
         // The real shape from the reference ER file: the leg out of a twice-displaced
         // via cannot reverse onto the leg that arrived, so the A* paid a full loop

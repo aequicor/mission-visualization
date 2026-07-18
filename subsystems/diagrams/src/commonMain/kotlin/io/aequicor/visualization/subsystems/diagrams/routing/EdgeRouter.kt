@@ -95,7 +95,7 @@ fun routeAllEdges(
         routeEdgeConsidering(graph, edge, options, crossings)
     }.map { requireNotNull(it) }
     return nudgeRoutedEdges(
-        routes = routes,
+        routes = slideEndJogs(graph, routes, options, sequence.keys),
         options = options,
         pinnedEdgeIds = sequence.keys,
         obstacles = nodeObstacles(graph),
@@ -472,6 +472,166 @@ private fun routeOrthogonal(
         sourceReach = if (source.side == null) 0.0 else sourceReach,
         targetReach = if (target.side == null) 0.0 else targetReach,
     )
+}
+
+// --- End-jog relaxation ------------------------------------------------------------------
+
+/**
+ * Slides a short transition jog glued to a route end into the middle of its corridor.
+ * Two fixed anchors rarely share an axis exactly — a fan slot sits a few pixels off the
+ * facing port row — so SOME jog between the outer runs must exist; the grid A*'s
+ * deterministic tie-break tends to place it on the last grid column before the goal,
+ * which draws an S-hook right at the endpoint marker. Draw.io puts that transition
+ * mid-corridor, where it reads as a calm step instead.
+ *
+ * Batch-only (like nudging): the slide lengthens the jog's endpoint runs, and an
+ * endpoint run is immovable downstream — landed on another edge's immovable segment it
+ * would become an inseparable co-run (two sibling drops whose anchors the planner
+ * deliberately spread [RoutingOptions.anchorSeparation] apart share exactly that
+ * corridor). So a candidate is rejected unless its grown endpoint runs stay a nudge
+ * lane away from every other route's immovable segments. Only end-adjacent jogs move
+ * (an interior jog is usually a deliberate dodge), authored vias hold their corners,
+ * the ends' marker reservations stay intact, and all three replacement segments must
+ * stay clear of the route's obstacles.
+ */
+internal fun slideEndJogs(
+    graph: DiagramGraph,
+    routes: List<RoutedEdge>,
+    options: RoutingOptions,
+    pinnedEdgeIds: Set<DiagramEdgeId> = emptySet(),
+): List<RoutedEdge> {
+    val threshold = options.obstacleMargin * 2.0
+    val laneSpacing = options.obstacleMargin * 2.0 / 3.0
+    if (routes.isEmpty() || threshold <= 0.0) return routes
+    val waypointsByEdge = authoredWaypoints(graph)
+    val nodes = graph.nodes.filter {
+        it.visible && it.width > GEOMETRY_EPSILON && it.height > GEOMETRY_EPSILON
+    }
+
+    data class Lane(
+        val horizontal: Boolean,
+        val at: Double,
+        val from: Double,
+        val to: Double,
+        val immovable: Boolean,
+    )
+
+    fun lanesOf(route: RoutedEdge): List<Lane> = buildList {
+        val vias = waypointsByEdge[route.edgeId].orEmpty()
+        for (index in 0 until route.points.lastIndex) {
+            val a = route.points[index]
+            val b = route.points[index + 1]
+            val horizontal = isHorizontalSegment(a, b)
+            if (!horizontal && !isVerticalSegment(a, b)) continue
+            val endpointRun = index == 0 || index + 1 == route.points.lastIndex
+            val viaPinned = vias.any { pointNearSegment(it, a, b) }
+            add(
+                Lane(
+                    horizontal = horizontal,
+                    at = if (horizontal) a.y else a.x,
+                    from = if (horizontal) minOf(a.x, b.x) else minOf(a.y, b.y),
+                    to = if (horizontal) maxOf(a.x, b.x) else maxOf(a.y, b.y),
+                    immovable = endpointRun || viaPinned,
+                ),
+            )
+        }
+    }
+
+    fun collides(candidate: Lane, others: List<Lane>): Boolean = others.any { other ->
+        other.immovable && other.horizontal == candidate.horizontal &&
+            abs(other.at - candidate.at) < laneSpacing - GEOMETRY_EPSILON &&
+            minOf(other.to, candidate.to) - maxOf(other.from, candidate.from) >= laneSpacing
+    }
+
+    val result = routes.toMutableList()
+    for (routeIndex in result.indices) {
+        val route = result[routeIndex]
+        if (route.edgeId in pinnedEdgeIds || !route.routing.routesOrthogonally) continue
+        val edge = graph.edgeById(route.edgeId) ?: continue
+        if (route.points.size < 4) continue
+        val vias = waypointsByEdge[route.edgeId].orEmpty()
+        val obstacles = nodes.map { node ->
+            val inflation = when (node.id) {
+                edge.source.attachedNodeId -> route.sourceReach.coerceAtLeast(options.obstacleMargin)
+                edge.target.attachedNodeId -> route.targetReach.coerceAtLeast(options.obstacleMargin)
+                else -> options.obstacleMargin
+            }
+            node.bounds to inflate(node.bounds, inflation)
+        }
+        val otherLanes = result.indices
+            .filter { it != routeIndex }
+            .flatMap { lanesOf(result[it]) }
+        val points = route.points.toMutableList()
+        var changed = false
+        for (index in 0..points.size - 4) {
+            val atStart = index == 0
+            val atEnd = index + 3 == points.lastIndex
+            if (!atStart && !atEnd) continue
+            val p0 = points[index]
+            val p1 = points[index + 1]
+            val p2 = points[index + 2]
+            val p3 = points[index + 3]
+            val horizontalJog = isVerticalSegment(p0, p1) && isHorizontalSegment(p1, p2) &&
+                isVerticalSegment(p2, p3) && abs(p2.x - p1.x) <= threshold &&
+                (p1.y - p0.y) * (p3.y - p2.y) > 0.0
+            val verticalJog = isHorizontalSegment(p0, p1) && isVerticalSegment(p1, p2) &&
+                isHorizontalSegment(p2, p3) && abs(p2.y - p1.y) <= threshold &&
+                (p1.x - p0.x) * (p3.x - p2.x) > 0.0
+            if (!horizontalJog && !verticalJog) continue
+            // A via anywhere on the jog's three segments is an authored bend or a
+            // pass-through merged into a straight run — the jog stays where it is.
+            val viaHeld = vias.any { via ->
+                pointNearSegment(via, p0, p1) || pointNearSegment(via, p1, p2) ||
+                    pointNearSegment(via, p2, p3)
+            }
+            if (viaHeld) continue
+            val outerFrom = if (verticalJog) p0.x else p0.y
+            val outerTo = if (verticalJog) p3.x else p3.y
+            val lowReserve = if (atStart) {
+                maxOf(route.sourceReach, threshold / 2.0)
+            } else {
+                threshold / 2.0
+            }
+            val highReserve = if (atEnd) {
+                maxOf(route.targetReach, threshold / 2.0)
+            } else {
+                threshold / 2.0
+            }
+            val low = minOf(outerFrom, outerTo) +
+                (if (outerFrom <= outerTo) lowReserve else highReserve)
+            val high = maxOf(outerFrom, outerTo) -
+                (if (outerFrom <= outerTo) highReserve else lowReserve)
+            if (low >= high) continue
+            val ideal = ((outerFrom + outerTo) / 2.0).coerceIn(low, high)
+            val (newP1, newP2) = if (verticalJog) {
+                DiagramPoint(ideal, p1.y) to DiagramPoint(ideal, p2.y)
+            } else {
+                DiagramPoint(p1.x, ideal) to DiagramPoint(p2.x, ideal)
+            }
+            if (newP1.nearlyEquals(p1)) continue
+            val clearAgainst = legObstacles(obstacles, p0, p3)
+            val clear = segmentClear(p0, newP1, clearAgainst) &&
+                segmentClear(newP1, newP2, clearAgainst) &&
+                segmentClear(newP2, p3, clearAgainst)
+            if (!clear) continue
+            val grownRuns = listOf(p0 to newP1, newP2 to p3).map { (a, b) ->
+                val horizontal = abs(a.y - b.y) < GEOMETRY_EPSILON
+                Lane(
+                    horizontal = horizontal,
+                    at = if (horizontal) a.y else a.x,
+                    from = if (horizontal) minOf(a.x, b.x) else minOf(a.y, b.y),
+                    to = if (horizontal) maxOf(a.x, b.x) else maxOf(a.y, b.y),
+                    immovable = true,
+                )
+            }
+            if (grownRuns.any { collides(it, otherLanes) }) continue
+            points[index + 1] = newP1
+            points[index + 2] = newP2
+            changed = true
+        }
+        if (changed) result[routeIndex] = route.copy(points = points.toList())
+    }
+    return result
 }
 
 /**
