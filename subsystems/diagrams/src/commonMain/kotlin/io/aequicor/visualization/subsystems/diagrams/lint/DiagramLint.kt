@@ -174,6 +174,17 @@ sealed interface DiagramLintFinding {
             get() = "label of edge '${edgeId.value}' covers node '${nodeId.value}'"
     }
 
+    /** An edge label sits on top of another edge's endpoint marker glyph. */
+    data class LabelOverMarker(
+        val edgeId: DiagramEdgeId,
+        val markerEdgeId: DiagramEdgeId,
+        val at: DiagramPoint,
+    ) : DiagramLintFinding {
+        override val message: String
+            get() = "label of edge '${edgeId.value}' covers the endpoint marker of " +
+                "'${markerEdgeId.value}' near (${at.x.toInt()}, ${at.y.toInt()})"
+    }
+
     /**
      * A node's caption and its box disagree: the text does not fit, or the shape is far larger
      * than the caption needs. This is the rule that would have caught the 930x260 ellipse drawn
@@ -210,6 +221,7 @@ fun lintDiagram(
         addAll(markerCoveredFindings(graph, ordered))
         addAll(crossingHotspotFindings(ordered, options))
         addAll(labelOverNodeFindings(graph, routes, options))
+        addAll(labelOverMarkerFindings(graph, routes, options))
         addAll(nodeLabelFitFindings(graph, options))
     }
 }
@@ -593,7 +605,7 @@ private fun labelOverNodeFindings(
             val own = setOfNotNull(edge.source.attachedNodeId, edge.target.attachedNodeId)
             for (label in edge.labels) {
                 if (label.label.text.isBlank()) continue
-                val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, edge.id), edgeLabelAvoidRects(graph, edge.id))
+                val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routePoints, edge.id), edgeLabelAvoidRects(graph, edge.id, routePoints))
                 val halfWidth = label.label.text.length * options.labelCharWidth / 2.0
                 val halfHeight = options.labelHeight / 2.0
                 for (node in obstacles) {
@@ -604,6 +616,58 @@ private fun labelOverNodeFindings(
                         anchor.y + halfHeight > bounds.top + 1.0 &&
                         anchor.y - halfHeight < bounds.bottom - 1.0
                     if (overlaps) add(DiagramLintFinding.LabelOverNode(edge.id, node.id))
+                }
+            }
+        }
+    }
+}
+
+// --- rule: labels over endpoint markers -------------------------------------------------
+
+/**
+ * A label parked on another edge's endpoint marker glyph: the crow's foot (or arrow)
+ * stops reading through the text plate. Mirrors [labelOverNodeFindings] — the anchor is
+ * computed with the exact context every renderer uses, and only FOREIGN markers count
+ * (a SOURCE/TARGET label deliberately annotates its own end). Fitted zones, as drawn.
+ */
+private fun labelOverMarkerFindings(
+    graph: DiagramGraph,
+    routes: Map<DiagramEdgeId, RoutedEdge>,
+    options: DiagramLintOptions,
+): List<DiagramLintFinding> {
+    val routePoints = routes.mapValues { it.value.points }
+    return buildList {
+        for (edge in graph.edges) {
+            val route = routePoints[edge.id] ?: continue
+            if (route.size < 2) continue
+            for (label in edge.labels) {
+                if (label.label.text.isBlank()) continue
+                val anchor = edgeLabelAnchorPoint(
+                    route,
+                    label,
+                    edgeLabelObstacleRoutes(graph, routePoints, edge.id),
+                    edgeLabelAvoidRects(graph, edge.id, routePoints),
+                )
+                val halfWidth = label.label.text.length * options.labelCharWidth / 2.0
+                val halfHeight = options.labelHeight / 2.0
+                for (other in graph.edges) {
+                    if (other.id == edge.id) continue
+                    // Mirror the avoid context (edgeLabelAvoidRects): markers on hidden
+                    // layers are not painted, so a label sitting there is not a defect.
+                    // Unknown layer references behave as the implicit default layer.
+                    val layerVisible = other.layerId?.let(graph::layerById)?.visible ?: true
+                    if (!layerVisible) continue
+                    val otherRoute = routes[other.id] ?: continue
+                    for (zone in endpointMarkerZones(other, otherRoute, fitToRun = true)) {
+                        val rect = zone.rect
+                        val overlaps = anchor.x + halfWidth > rect.left + 1.0 &&
+                            anchor.x - halfWidth < rect.right - 1.0 &&
+                            anchor.y + halfHeight > rect.top + 1.0 &&
+                            anchor.y - halfHeight < rect.bottom - 1.0
+                        if (overlaps) {
+                            add(DiagramLintFinding.LabelOverMarker(edge.id, other.id, zone.tip))
+                        }
+                    }
                 }
             }
         }

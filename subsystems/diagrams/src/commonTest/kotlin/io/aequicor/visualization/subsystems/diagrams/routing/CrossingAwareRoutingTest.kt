@@ -230,8 +230,9 @@ class CrossingAwareRoutingTest {
         fun port(id: String, side: DiagramNodeSide, offset: Double): DiagramPort =
             DiagramPort(DiagramPortId(id), DiagramPortAnchor.SideOffset(side, offset))
 
-        // Two facing fixed ports four pixels apart in row: the transition jog must exist
-        // somewhere, and the A*'s tie-break used to draw it right at the target marker.
+        // Two facing fixed ports ten pixels apart in row — beyond the facing-pair snap
+        // tolerance, so the transition jog must exist somewhere, and the A*'s tie-break
+        // used to draw it right at the target marker.
         val graph = diagramGraph {
             val left = node(
                 "left",
@@ -247,7 +248,7 @@ class CrossingAwareRoutingTest {
                 y = 100.0,
                 width = 80.0,
                 height = 60.0,
-                ports = listOf(port("in", DiagramNodeSide.LEFT, 0.66667)),
+                ports = listOf(port("in", DiagramNodeSide.LEFT, 0.76667)),
             )
             edge(
                 "step",

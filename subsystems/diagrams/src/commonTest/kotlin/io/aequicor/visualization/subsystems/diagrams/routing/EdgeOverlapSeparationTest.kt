@@ -756,12 +756,14 @@ class EdgeOverlapSeparationTest {
             )
         }
         val routes = routeAllEdges(graph).associateBy { it.edgeId.value }
-        // The lone facing port keeps its exact point.
-        assertEquals(DiagramPoint(400.0, 60.0), routes.getValue("link").targetPoint)
-        // The fan's unrelated lane stays clear of the facing port's lane.
+        // The authored ports share row 60; the fan moves link's source onto a lane, and
+        // the facing lone port follows it (facing-pair snap), keeping the link straight.
+        val link = routes.getValue("link")
+        assertEquals(link.sourcePoint.y, link.targetPoint.y, "link must stay straight: ${link.points}")
+        // The fan's unrelated lane stays clear of the facing link lane.
         assertTrue(
-            abs(routes.getValue("unrelated").sourcePoint.y - 60.0) >= 8.0 - 1e-6,
-            "unrelated lane must clear the facing port, got ${routes.getValue("unrelated").sourcePoint}",
+            abs(routes.getValue("unrelated").sourcePoint.y - link.targetPoint.y) >= 8.0 - 1e-6,
+            "unrelated lane must clear the facing lane, got ${routes.getValue("unrelated").sourcePoint}",
         )
     }
 

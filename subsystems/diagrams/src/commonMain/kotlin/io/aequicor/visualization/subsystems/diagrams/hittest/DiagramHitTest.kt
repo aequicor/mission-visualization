@@ -21,6 +21,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.ops.DiagramEdgeEnd
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
+import io.aequicor.visualization.subsystems.diagrams.routing.endpointMarkerZones
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -187,7 +188,7 @@ fun hitTest(
     for (edge in edgesTopDown) {
         val route = edgeRoute(graph, edge, routes) ?: continue
         edge.labels.forEach { label ->
-            val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id))
+            val anchor = edgeLabelAnchorPoint(route, label, edgeLabelObstacleRoutes(graph, routes, edge.id), edgeLabelAvoidRects(graph, edge.id, routes))
             val halfWidth = maxOf(label.label.text.length * 3.5, 12.0) + 4.0
             val halfHeight = 9.0
             if (abs(point.x - anchor.x) <= halfWidth && abs(point.y - anchor.y) <= halfHeight) {
@@ -418,12 +419,20 @@ private fun segmentIntersectsRect(a: DiagramPoint, b: DiagramPoint, rect: Diagra
 }
 
 /**
- * Node bodies an edge label must stay out of — every visible node that participates in
- * an edge, except this edge's own endpoints (decorative containers with no connections
- * would otherwise swallow every candidate). The companion context to
- * [edgeLabelObstacleRoutes] for [edgeLabelAnchorPoint].
+ * Bodies an edge label must stay out of: every visible node that participates in an
+ * edge, except this edge's own endpoints (decorative containers with no connections
+ * would otherwise swallow every candidate) — plus the fitted endpoint-marker glyphs of
+ * every OTHER visible edge, so a pushed or slid label never parks on a crow's foot
+ * (this edge's own markers stay out: a SOURCE/TARGET label deliberately annotates its
+ * own end). The companion context to [edgeLabelObstacleRoutes] for
+ * [edgeLabelAnchorPoint]; every surface must pass the same [routes] map or labels and
+ * their hit areas drift apart.
  */
-fun edgeLabelAvoidRects(graph: DiagramGraph, edgeId: DiagramEdgeId): List<DiagramRect> {
+fun edgeLabelAvoidRects(
+    graph: DiagramGraph,
+    edgeId: DiagramEdgeId,
+    routes: Map<DiagramEdgeId, List<DiagramPoint>>,
+): List<DiagramRect> {
     val edge = graph.edges.firstOrNull { it.id == edgeId } ?: return emptyList()
     val own = setOfNotNull(edge.source.attachedNodeId, edge.target.attachedNodeId)
     val connected = buildSet {
@@ -432,9 +441,20 @@ fun edgeLabelAvoidRects(graph: DiagramGraph, edgeId: DiagramEdgeId): List<Diagra
             candidate.target.attachedNodeId?.let(::add)
         }
     }
-    return graph.nodes
+    val nodeRects = graph.nodes
         .filter { it.visible && it.id in connected && it.id !in own }
         .map { it.bounds }
+    val markerRects = graph.edges
+        .filter { other ->
+            other.id != edgeId &&
+                graph.effectiveLayerId(other.layerId)
+                    .let { id -> id == null || graph.layerById(id)?.visible == true }
+        }
+        .flatMap { other ->
+            val points = routes[other.id] ?: return@flatMap emptyList()
+            endpointMarkerZones(other, points, fitToRun = true).map { it.rect }
+        }
+    return nodeRects + markerRects
 }
 
 /**

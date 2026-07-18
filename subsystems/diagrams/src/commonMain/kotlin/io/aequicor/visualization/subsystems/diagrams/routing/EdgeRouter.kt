@@ -21,6 +21,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.DiagramGraph
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodeSide
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortAnchor
+import io.aequicor.visualization.subsystems.diagrams.model.DiagramPortId
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramRoutingStyle
 import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
@@ -525,14 +526,15 @@ private fun routeOrthogonal(
     val sourceRaw = rawEndpointPoint(graph, edge.source)
     val targetRaw = rawEndpointPoint(graph, edge.target)
     val planned = planFloatingEnds(graph, edge, options)
-    val source = (
+    val resolvedSource = (
         planned?.source
             ?: resolveOrthogonalEnd(graph, edge.source, edge.waypoints.firstOrNull() ?: targetRaw, options)
         ).let { fannedPortEnd(graph, edge, atSource = true, end = it, options = options) }
-    val target = (
+    val resolvedTarget = (
         planned?.target
             ?: resolveOrthogonalEnd(graph, edge.target, edge.waypoints.lastOrNull() ?: sourceRaw, options)
         ).let { fannedPortEnd(graph, edge, atSource = false, end = it, options = options) }
+    val (source, target) = alignFacingPortPair(graph, edge, resolvedSource, resolvedTarget, options)
     val margin = options.obstacleMargin
     val foreignBounds = if (avoidObstacles) {
         graph.nodes
@@ -963,6 +965,97 @@ private fun fannedPortEnd(
 private const val CROSS_PORT_LANE_CLEARANCE = 8.0
 
 /**
+ * Two fixed ports of one facing connector may sit this far apart on the shared axis and
+ * still be drawn as a single straight line. Table rows of hand-positioned nodes are
+ * routinely a few pixels off across nodes; the give stays well inside a row's height.
+ */
+private const val PORT_AXIS_SNAP_TOLERANCE = 6.0
+
+/**
+ * Snaps the two ends of a port-to-port connector onto one shared axis when its fixed
+ * ports sit almost — but not exactly — on the same row/column. Both ends being fixed,
+ * no downstream pass can remove the resulting 2-6px jog ([slideEndJogs] only moves it
+ * mid-corridor), yet the ports' rows visibly "face" each other and draw.io-parity wants
+ * one calm straight line. The snap is granted only when it buys the straight segment
+ * outright: no authored waypoints, directly facing sides, the shared coordinate inside
+ * both side ranges, the straight corridor clear of foreign bodies, and the moved end
+ * keeping [CROSS_PORT_LANE_CLEARANCE] from every other lane of its face (sibling ports
+ * and planned floating anchors). A fanned end owns its lane ([coordinatedPortLanes])
+ * and never moves: lone-vs-fan moves the lone end onto the lane, fan-vs-fan stays.
+ */
+private fun alignFacingPortPair(
+    graph: DiagramGraph,
+    edge: DiagramEdge,
+    source: ResolvedEnd,
+    target: ResolvedEnd,
+    options: RoutingOptions,
+): Pair<ResolvedEnd, ResolvedEnd> {
+    val unchanged = source to target
+    if (edge.waypoints.isNotEmpty()) return unchanged
+    val sourcePort = edge.source as? DiagramEndpoint.FixedPort ?: return unchanged
+    val targetPort = edge.target as? DiagramEndpoint.FixedPort ?: return unchanged
+    val sourceNode = source.node ?: return unchanged
+    val targetNode = target.node ?: return unchanged
+    val sourceSide = source.side ?: return unchanged
+    val targetSide = target.side ?: return unchanged
+    if (targetSide != sourceSide.oppositeSide()) return unchanged
+    if (!facesAcrossCorridor(sourceNode, sourceSide, targetNode)) return unchanged
+
+    fun axisOf(point: DiagramPoint) = if (sourceSide.exitsHorizontally) point.y else point.x
+    val sourceAxis = axisOf(source.anchor)
+    val targetAxis = axisOf(target.anchor)
+    val delta = abs(sourceAxis - targetAxis)
+    if (delta <= GEOMETRY_EPSILON || delta > PORT_AXIS_SNAP_TOLERANCE) return unchanged
+    val sourceFanned = portEdgeEndCount(graph, sourcePort) > 1
+    val targetFanned = portEdgeEndCount(graph, targetPort) > 1
+    if (sourceFanned && targetFanned) return unchanged
+    val shared = when {
+        sourceFanned -> sourceAxis
+        targetFanned -> targetAxis
+        else -> (sourceAxis + targetAxis) / 2.0
+    }
+
+    fun withinSide(node: DiagramNode, side: DiagramNodeSide): Boolean {
+        val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
+        return shared >= low - GEOMETRY_EPSILON && shared <= high + GEOMETRY_EPSILON
+    }
+
+    fun faceKeepsClear(node: DiagramNode, side: DiagramNodeSide, ownPortId: DiagramPortId): Boolean {
+        val siblingsClear = node.ports.filter { it.id != ownPortId }.all { sibling ->
+            val anchor = anchorPoint(node, sibling)
+            val siblingSide = (sibling.anchor as? DiagramPortAnchor.SideOffset)?.side
+                ?: perimeterSide(node, anchor)
+            siblingSide != side || abs(axisOf(anchor) - shared) >= CROSS_PORT_LANE_CLEARANCE
+        }
+        val plannedClear = sideAttachments(graph, options, node, side)
+            .filter { it.edgeId != edge.id }
+            .all { abs(it.position - shared) >= CROSS_PORT_LANE_CLEARANCE }
+        return siblingsClear && plannedClear
+    }
+
+    if (!sourceFanned && (!withinSide(sourceNode, sourceSide) || !faceKeepsClear(sourceNode, sourceSide, sourcePort.portId))) {
+        return unchanged
+    }
+    if (!targetFanned && (!withinSide(targetNode, targetSide) || !faceKeepsClear(targetNode, targetSide, targetPort.portId))) {
+        return unchanged
+    }
+    val newSource = if (sourceFanned) source else source.copy(anchor = anchorOnSide(sourceNode, sourceSide, shared))
+    val newTarget = if (targetFanned) target else target.copy(anchor = anchorOnSide(targetNode, targetSide, shared))
+    val obstacles = graph.nodes
+        .filter {
+            it.visible && it.width > GEOMETRY_EPSILON && it.height > GEOMETRY_EPSILON &&
+                it.id != sourceNode.id && it.id != targetNode.id
+        }
+        .map { it.bounds to inflate(it.bounds, options.obstacleMargin) }
+    val clear = segmentClear(
+        newSource.anchor,
+        newTarget.anchor,
+        legObstacles(obstacles, newSource.anchor, newTarget.anchor),
+    )
+    return if (clear) newSource to newTarget else unchanged
+}
+
+/**
  * One endpoint lane of a fixed port: the edge end occupying it and its coordinate along
  * the side. [healRow] is the row of the end's authored via when [alignWaypointToPort]
  * currently heals it onto this lane — a fan shift must keep such a slot within
@@ -1358,14 +1451,20 @@ private fun planFloatingEnds(
     val sides = facingSides(sourceNode.bounds, targetNode.bounds) ?: return null
     val source = (edge.source as? DiagramEndpoint.FloatingAnchor)?.let {
         ResolvedEnd(
-            plannedAnchor(graph, options, sourceNode, sides.sourceSide, targetNode, edge.id),
+            plannedAnchor(
+                graph, options, sourceNode, sides.sourceSide, targetNode, edge.id,
+                farEnd = edge.target,
+            ),
             sourceNode,
             sides.sourceSide,
         )
     }
     val target = (edge.target as? DiagramEndpoint.FloatingAnchor)?.let {
         ResolvedEnd(
-            plannedAnchor(graph, options, targetNode, sides.targetSide, sourceNode, edge.id),
+            plannedAnchor(
+                graph, options, targetNode, sides.targetSide, sourceNode, edge.id,
+                farEnd = edge.source,
+            ),
             targetNode,
             sides.targetSide,
         )
@@ -1423,15 +1522,40 @@ private fun plannedAnchor(
     side: DiagramNodeSide,
     other: DiagramNode,
     edgeId: DiagramEdgeId,
+    farEnd: DiagramEndpoint,
 ): DiagramPoint {
     val coordinate = sideAttachments(graph, options, node, side)
         .firstOrNull { it.edgeId == edgeId }
         ?.position
         ?: run {
             val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
-            idealSideCoordinate(node.bounds, other.bounds, side, low, high)
+            facingFixedPortAxis(graph, farEnd, side)?.coerceIn(low, high)
+                ?: idealSideCoordinate(node.bounds, other.bounds, side, low, high)
         }
     return anchorOnSide(node, side, coordinate)
+}
+
+/**
+ * Cross-axis coordinate to aim a floating end at when the far end of its edge is a
+ * fixed port on the directly facing side: the port's own row/column. The planner's
+ * node-projection midpoint sits a few pixels off such a port whenever the two nodes are
+ * not perfectly aligned, leaving an irreducible 2-5px jog mid-corridor between two
+ * otherwise straight runs — [slideEndJogs] can only move that jog, not remove it.
+ * Aiming at the port yields the straight connector outright. A far port on any other
+ * side keeps the midpoint ideal: that connector bends by construction, so there is
+ * nothing to straighten. The port POINT is deliberately used instead of its fan lane:
+ * the fan ([coordinatedPortLanes]) consults these planned lanes right back, so aiming
+ * at lanes would make the two definitions mutually recursive.
+ */
+private fun facingFixedPortAxis(
+    graph: DiagramGraph,
+    farEnd: DiagramEndpoint,
+    side: DiagramNodeSide,
+): Double? {
+    val port = farEnd as? DiagramEndpoint.FixedPort ?: return null
+    val resolved = resolveFixedPort(graph, port) ?: return null
+    if (resolved.side != side.oppositeSide()) return null
+    return if (side.exitsHorizontally) resolved.anchor.y else resolved.anchor.x
 }
 
 private data class SideAttachment(val edgeId: DiagramEdgeId, val position: Double)
@@ -1477,6 +1601,7 @@ private fun sideAttachments(
         }
         val thisEnd = if (isSourceEnd) candidate.source else candidate.target
         if (thisEnd !is DiagramEndpoint.FloatingAnchor) continue
+        val otherEnd = if (isSourceEnd) candidate.target else candidate.source
         val other = graph.nodeById(if (isSourceEnd) targetNodeId else sourceNodeId) ?: continue
         val otherCenter = if (side.exitsHorizontally) other.bounds.centerY else other.bounds.centerX
         if (candidate.waypoints.isEmpty()) {
@@ -1488,7 +1613,8 @@ private fun sideAttachments(
             if (candidateSide != side) continue
             pending += Pending(
                 edgeId = candidate.id,
-                ideal = idealSideCoordinate(node.bounds, other.bounds, side, low, high),
+                ideal = facingFixedPortAxis(graph, otherEnd, side)?.coerceIn(low, high)
+                    ?: idealSideCoordinate(node.bounds, other.bounds, side, low, high),
                 otherCenter = otherCenter,
                 pinned = false,
             )
@@ -1917,14 +2043,58 @@ private fun alignedMandatoryPoints(
         // authored corridor and collapse deliberately separated edges onto one grid
         // corridor. A lone waypoint remains an exact mandatory pass-through point
         // because it may intentionally define both endpoint bends.
-        aligned[1] = alignWaypointToPort(aligned[1], sourceStub, sourceSide)
-        aligned[aligned.lastIndex - 1] = alignWaypointToPort(
-            aligned[aligned.lastIndex - 1],
-            targetStub,
-            targetSide,
+        val sourceBefore = aligned[1]
+        aligned[1] = alignWaypointToPort(sourceBefore, sourceStub, sourceSide)
+        val targetBefore = aligned[aligned.lastIndex - 1]
+        aligned[aligned.lastIndex - 1] = alignWaypointToPort(targetBefore, targetStub, targetSide)
+        // A healed corner that broke away from a collinear authored run drags the run
+        // with it: an author draws a multi-via row a pixel or two off the port row, the
+        // heal moves only the endpoint-adjacent via, and the seam — a jog exactly the
+        // heal's size — reappears one via inward, right where the healing meant to
+        // remove it.
+        propagateHealAlongRun(aligned, index = 1, before = sourceBefore, side = sourceSide, step = 1)
+        propagateHealAlongRun(
+            aligned,
+            index = aligned.lastIndex - 1,
+            before = targetBefore,
+            side = targetSide,
+            step = -1,
         )
     }
     return dedupePoints(aligned)
+}
+
+/**
+ * Extends an endpoint-adjacent via's port heal over the collinear run it was part of:
+ * consecutive vias inward of [index] that shared the healed axis coordinate of [before]
+ * move by the same delta, so the whole authored row lands on the port row instead of
+ * leaving a jog at the first unhealed via. Propagation stops at the first via off the
+ * run and never touches the OTHER end's adjacent via — that one belongs to its own
+ * port's heal.
+ */
+private fun propagateHealAlongRun(
+    aligned: MutableList<DiagramPoint>,
+    index: Int,
+    before: DiagramPoint,
+    side: DiagramNodeSide?,
+    step: Int,
+) {
+    val healed = aligned[index]
+    if (side == null || healed == before) return
+    val healsY = side == DiagramNodeSide.LEFT || side == DiagramNodeSide.RIGHT
+    val lastAllowed = if (step > 0) aligned.lastIndex - 2 else 2
+    var next = index + step
+    while (if (step > 0) next <= lastAllowed else next >= lastAllowed) {
+        val point = aligned[next]
+        val collinear = if (healsY) {
+            abs(point.y - before.y) <= GEOMETRY_EPSILON
+        } else {
+            abs(point.x - before.x) <= GEOMETRY_EPSILON
+        }
+        if (!collinear) return
+        aligned[next] = if (healsY) point.copy(y = healed.y) else point.copy(x = healed.x)
+        next += step
+    }
 }
 
 private fun alignWaypointToPort(
