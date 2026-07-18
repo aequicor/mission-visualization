@@ -7,6 +7,8 @@ import io.aequicor.visualization.subsystems.diagrams.arrows.resolvedArrowheads
 import io.aequicor.visualization.subsystems.diagrams.geometry.labelBox
 import io.aequicor.visualization.subsystems.diagrams.geometry.labelPadding
 import io.aequicor.visualization.subsystems.diagrams.geometry.outlinePath
+import io.aequicor.visualization.subsystems.diagrams.hittest.EDGE_LABEL_HALF_CHAR
+import io.aequicor.visualization.subsystems.diagrams.hittest.EDGE_LABEL_HALF_HEIGHT
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAnchorPoint
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelAvoidRects
 import io.aequicor.visualization.subsystems.diagrams.hittest.edgeLabelObstacleRoutes
@@ -435,10 +437,24 @@ private fun StringBuilder.appendEdge(
         // Shared anchor logic (self-loop caption, perpendicular lift, crossing slide,
         // manual offsets) — the export must match the on-canvas label placement.
         val anchor = edgeLabelAnchorPoint(points, edgeLabel, labelObstacleRoutes, labelAvoidRects)
+        val text = edgeLabel.label.text
+        if (text.isNotEmpty()) {
+            // The canvas plates edge labels (85% surface behind the text) so a caption
+            // crossing a line or an attached node's rows stays readable; the export must
+            // show the same picture. Box estimated off the shared hit-test extents.
+            val halfWidth = text.length * EDGE_LABEL_HALF_CHAR
+            val plate = options.background ?: options.defaultFill
+            append("<rect x=\"").append(fmt(anchor.x - halfWidth))
+                .append("\" y=\"").append(fmt(anchor.y - EDGE_LABEL_HALF_HEIGHT))
+                .append("\" width=\"").append(fmt(halfWidth * 2.0))
+                .append("\" height=\"").append(fmt(EDGE_LABEL_HALF_HEIGHT * 2.0))
+                .append("\" fill=\"").append(plate.toSvgHex())
+                .append("\" fill-opacity=\"0.85\"/>\n")
+        }
         svgText(
             x = anchor.x,
             y = anchor.y,
-            text = edgeLabel.label.text,
+            text = text,
             options = options,
         )
     }
