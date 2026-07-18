@@ -25,9 +25,9 @@ fun routeAllEdgesLenient(
     options: RoutingOptions = RoutingOptions.Default,
 ): Map<DiagramEdgeId, RoutedEdge> {
     val sequence = sequenceMessageRoutes(graph)
-    val routed = graph.edges.mapNotNull { edge ->
-        sequence[edge.id] ?: runCatching { routeEdge(graph, edge, options) }.getOrNull()
-    }
+    val routed = crossingAwareRoutes(graph, options, sequence) { edge, crossings ->
+        runCatching { routeEdgeConsidering(graph, edge, options, crossings) }.getOrNull()
+    }.filterNotNull()
     return nudgeRoutedEdges(routed, options, sequence.keys, nodeObstacles(graph), authoredWaypoints(graph))
         .associateBy { it.edgeId }
 }

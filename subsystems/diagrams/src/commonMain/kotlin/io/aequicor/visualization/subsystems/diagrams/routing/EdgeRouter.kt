@@ -48,22 +48,40 @@ fun routeEdge(
     graph: DiagramGraph,
     edge: DiagramEdge,
     options: RoutingOptions = RoutingOptions.Default,
+): RoutedEdge = routeEdgeConsidering(graph, edge, options, crossings = null)
+
+/**
+ * [routeEdge] with awareness of the edges the batch router has already placed: the grid
+ * A* charges [RoutingOptions.crossingPenalty] per line of [crossings] a step would cross.
+ * `null` (every single-edge caller) routes crossing-blind, exactly as before.
+ */
+internal fun routeEdgeConsidering(
+    graph: DiagramGraph,
+    edge: DiagramEdge,
+    options: RoutingOptions,
+    crossings: RouteCrossingIndex?,
 ): RoutedEdge = when (edge.routing) {
     DiagramRoutingStyle.STRAIGHT -> routeThroughPoints(graph, edge, curve = false)
     // CURVED is a smoothed obstacle-aware route (draw.io semantics): the orthogonal
     // pipeline plans anchors and dodges nodes, the renderer splines through the bends.
-    DiagramRoutingStyle.CURVED -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
-    DiagramRoutingStyle.ORTHOGONAL -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
-    DiagramRoutingStyle.SIMPLE -> routeOrthogonal(graph, edge, options, avoidObstacles = false)
+    DiagramRoutingStyle.CURVED -> routeOrthogonal(graph, edge, options, avoidObstacles = true, crossings)
+    DiagramRoutingStyle.ORTHOGONAL -> routeOrthogonal(graph, edge, options, avoidObstacles = true, crossings)
+    DiagramRoutingStyle.SIMPLE -> routeOrthogonal(graph, edge, options, avoidObstacles = false, crossings)
     DiagramRoutingStyle.ISOMETRIC -> routeIsometric(graph, edge)
     // ER shares the full obstacle-aware orthogonal pipeline: grid A*, joint anchor
     // planning, and per-side anchor spreading.
-    DiagramRoutingStyle.ENTITY_RELATION -> routeOrthogonal(graph, edge, options, avoidObstacles = true)
+    DiagramRoutingStyle.ENTITY_RELATION -> routeOrthogonal(graph, edge, options, avoidObstacles = true, crossings)
 }
 
 /**
  * Routes every edge of the graph (input for line-jump computation and rendering) and
  * separates co-running collinear segments of different edges ([nudgeRoutedEdges]).
+ *
+ * Crossing awareness runs in two passes: a first pass routes in graph order, each edge
+ * seeing the routes placed before it, then every edge re-routes against ALL other
+ * first-pass routes — so whether a long leg dodges a dense bundle does not depend on
+ * where its edge happens to sit in the graph. Each pass charges
+ * [RoutingOptions.crossingPenalty] per line a step would cut.
  *
  * Sequence-diagram messages ([sequenceMessageRoutes]) are laid out top-to-bottom as
  * horizontal rows instead of going through the generic per-edge router.
@@ -73,13 +91,50 @@ fun routeAllEdges(
     options: RoutingOptions = RoutingOptions.Default,
 ): List<RoutedEdge> {
     val sequence = sequenceMessageRoutes(graph)
+    val routes = crossingAwareRoutes(graph, options, sequence) { edge, crossings ->
+        routeEdgeConsidering(graph, edge, options, crossings)
+    }.map { requireNotNull(it) }
     return nudgeRoutedEdges(
-        routes = graph.edges.map { sequence[it.id] ?: routeEdge(graph, it, options) },
+        routes = routes,
         options = options,
         pinnedEdgeIds = sequence.keys,
         obstacles = nodeObstacles(graph),
         waypointsByEdge = authoredWaypoints(graph),
     )
+}
+
+/**
+ * The two-pass crossing-aware batch: results align with `graph.edges` (an entry is null
+ * only when [routeOne] returned null — the lenient caller's failed edges). With the
+ * awareness off this is the plain single pass.
+ */
+internal fun crossingAwareRoutes(
+    graph: DiagramGraph,
+    options: RoutingOptions,
+    sequence: Map<DiagramEdgeId, RoutedEdge>,
+    routeOne: (DiagramEdge, RouteCrossingIndex?) -> RoutedEdge?,
+): List<RoutedEdge?> {
+    val placed = mutableListOf<RoutedEdge>().apply { addAll(sequence.values) }
+    val first = graph.edges.map { edge ->
+        sequence[edge.id] ?: routeOne(edge, crossingIndexOf(placed, options))?.also { placed += it }
+    }
+    if (options.crossingPenalty <= 0.0) return first
+    return graph.edges.mapIndexed { index, edge ->
+        sequence[edge.id] ?: run {
+            val others = first.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
+            val crossings = if (others.isEmpty()) null else RouteCrossingIndex.of(others.map { it.points })
+            routeOne(edge, crossings)
+        }
+    }
+}
+
+/** Crossing index over the routes placed so far, or `null` when the awareness is off. */
+internal fun crossingIndexOf(
+    placed: List<RoutedEdge>,
+    options: RoutingOptions,
+): RouteCrossingIndex? {
+    if (options.crossingPenalty <= 0.0 || placed.isEmpty()) return null
+    return RouteCrossingIndex.of(placed.map { it.points })
 }
 
 // --- Endpoint resolution -------------------------------------------------------------
@@ -241,6 +296,7 @@ private fun routeOrthogonal(
     edge: DiagramEdge,
     options: RoutingOptions,
     avoidObstacles: Boolean,
+    crossings: RouteCrossingIndex? = null,
 ): RoutedEdge {
     val sourceRaw = rawEndpointPoint(graph, edge.source)
     val targetRaw = rawEndpointPoint(graph, edge.target)
@@ -318,7 +374,15 @@ private fun routeOrthogonal(
                 if (axisAligned(from, to) && segmentClear(from, to, legObstacles)) {
                     listOf(from, to)
                 } else {
-                    orthogonalGridRoute(from, seedDirection, to, legObstacles, options.turnPenalty)
+                    orthogonalGridRoute(
+                        from,
+                        seedDirection,
+                        to,
+                        legObstacles,
+                        options.turnPenalty,
+                        crossings,
+                        options.crossingPenalty,
+                    )
                         ?.let { collapseJogs(it, legObstacles, jogThreshold) }
                         ?: manhattanLeg(from, to, seedDirection)
                 }

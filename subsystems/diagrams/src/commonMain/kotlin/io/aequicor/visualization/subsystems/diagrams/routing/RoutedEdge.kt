@@ -32,6 +32,14 @@ data class RoutingOptions(
     /** Extra path cost per 90° turn in the orthogonal router (higher = straighter routes). */
     val turnPenalty: Double = 4.0,
     /**
+     * Extra path cost for crossing an already-routed edge in the batch router
+     * ([routeAllEdges]): a later edge takes a detour up to this many units long per
+     * avoided crossing, so unrelated lines stop threading dense bundles (the classic
+     * pile-up: one long leg cutting a whole arrival comb). Zero disables the awareness;
+     * single-edge [routeEdge] calls are always crossing-blind.
+     */
+    val crossingPenalty: Double = 50.0,
+    /**
      * Minimum distance between anchors of orthogonal floating-to-floating edges attached
      * to the same node side (keeps fan-in/fan-out arrows visually separate).
      */
@@ -46,6 +54,9 @@ data class RoutingOptions(
             "portFanSeparation must be >= 0, got $portFanSeparation"
         }
         require(turnPenalty >= 0.0) { "turnPenalty must be >= 0, got $turnPenalty" }
+        require(crossingPenalty >= 0.0) {
+            "crossingPenalty must be >= 0, got $crossingPenalty"
+        }
         require(anchorSeparation >= 0.0) {
             "anchorSeparation must be >= 0, got $anchorSeparation"
         }
