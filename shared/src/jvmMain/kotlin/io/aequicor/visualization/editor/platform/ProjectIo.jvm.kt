@@ -400,6 +400,9 @@ private object JvmFolderSync {
         }
     }
 
+    /** Upper bound on external-edit latency: quiet-time rescan period of the watch loop. */
+    private const val WATCH_RESCAN_MS = 2000L
+
     private fun startWatcher(root: Path) {
         val watcher = FileSystems.getDefault().newWatchService()
         watchService = watcher
@@ -434,7 +437,22 @@ private object JvmFolderSync {
     private fun watchLoop(root: Path, watcher: WatchService) {
         try {
             while (watchService === watcher) {
-                val key = watcher.take()
+                val key = watcher.poll(WATCH_RESCAN_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                if (key == null) {
+                    // macOS ships a polling WatchService whose default period is ten
+                    // seconds, and any implementation may drop events under load — an
+                    // external edit could sit unnoticed long past the moment the user
+                    // expects the canvas to follow. This quiet-time rescan bounds that
+                    // latency: refreshSnapshot diffs against the cached snapshot and
+                    // publishes only when the disk content actually differs.
+                    synchronized(stateLock) {
+                        if (watchService === watcher && activeRoot == root) {
+                            runCatching { refreshSnapshot(root, suppressEditorEcho = true) }
+                                .onFailure { fail(it.message ?: "Unable to read folder") }
+                        }
+                    }
+                    continue
+                }
                 val directory = watchKeys[key] ?: root
                 var relevantExternalChange = false
                 key.pollEvents().forEach { event ->
