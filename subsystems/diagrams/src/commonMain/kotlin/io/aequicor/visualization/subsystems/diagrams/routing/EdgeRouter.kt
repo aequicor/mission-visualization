@@ -1598,10 +1598,12 @@ private fun spreadPositionsWithPins(
         val runLow = if (start > 0) ideals[start - 1] + separation else low
         val runHigh = if (end + 1 < ideals.size) ideals[end + 1] - separation else high
         if (runLow <= runHigh + GEOMETRY_EPSILON) {
-            // spreadPositions leaves a lone ideal untouched, so clamp explicitly: the
-            // run's interval is what keeps it a separation away from its pins.
-            val spread = spreadPositions(ideals.subList(start, end + 1), runLow, runHigh, separation)
-                .map { it.coerceIn(runLow, runHigh) }
+            // spreadPositions assumes its ideals already lie inside the range (the
+            // forward pass never raises the first entry to the floor), so clamp the
+            // run's ideals BEFORE spreading — clamping the output instead collapsed
+            // the separations the pass had just built into a stack at the pin.
+            val clamped = ideals.subList(start, end + 1).map { it.coerceIn(runLow, runHigh) }
+            val spread = spreadPositions(clamped, runLow, runHigh, separation)
             for (index in start..end) result[index] = spread[index - start]
         }
         start = end + 1
