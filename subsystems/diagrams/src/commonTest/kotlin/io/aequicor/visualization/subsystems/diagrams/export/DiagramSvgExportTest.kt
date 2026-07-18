@@ -58,6 +58,20 @@ class DiagramSvgExportTest {
     }
 
     @Test
+    fun edgeLabelsGetTheCanvasPlate() {
+        // The canvas draws an 85% surface plate behind every edge label so a caption
+        // crossing a line or an attached node's rows stays readable — the export must
+        // show the same picture, in document order (plate first, then the text).
+        val svg = diagramToSvg(simpleGraph())
+        val plate = Regex("<rect [^>]*fill-opacity=\"0.85\"/>").find(svg)
+        assertTrue(plate != null, "edge label must be plated: ${svg.take(400)}")
+        assertTrue(
+            svg.indexOf(plate!!.value) < svg.indexOf(">flows</text>"),
+            "plate must render underneath its label",
+        )
+    }
+
+    @Test
     fun escapesXmlInLabels() {
         val graph = diagramGraph {
             node("a", label = "<b> & \"q\"")

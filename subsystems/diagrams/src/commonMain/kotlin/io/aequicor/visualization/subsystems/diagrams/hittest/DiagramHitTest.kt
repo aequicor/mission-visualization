@@ -332,8 +332,8 @@ fun edgeLabelAnchorPoint(
 }
 
 /** Estimated half extents of a label's text box (matches the lint's defaults). */
-private const val EDGE_LABEL_HALF_CHAR = 3.5
-private const val EDGE_LABEL_HALF_HEIGHT = 8.0
+internal const val EDGE_LABEL_HALF_CHAR: Double = 3.5
+internal const val EDGE_LABEL_HALF_HEIGHT: Double = 8.0
 
 /**
  * Furthest a label anchor is corrected to get its box off a node body. Covers the common

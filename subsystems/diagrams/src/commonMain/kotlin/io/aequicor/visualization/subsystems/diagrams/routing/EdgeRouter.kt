@@ -30,6 +30,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
@@ -94,12 +95,14 @@ fun routeAllEdges(
     val routes = crossingAwareRoutes(graph, options, sequence) { edge, crossings ->
         routeEdgeConsidering(graph, edge, options, crossings)
     }.map { requireNotNull(it) }
+    val relaxed = slideEndJogs(graph, routes, options, sequence.keys)
     return nudgeRoutedEdges(
-        routes = slideEndJogs(graph, routes, options, sequence.keys),
+        routes = relaxed,
         options = options,
         pinnedEdgeIds = sequence.keys,
         obstacles = nodeObstacles(graph),
         waypointsByEdge = authoredWaypoints(graph),
+        markerObstaclesByEdge = markerRectsByEdge(graph, relaxed),
     )
 }
 
@@ -126,22 +129,25 @@ internal fun crossingAwareRoutes(
 ): List<RoutedEdge?> {
     val placed = mutableListOf<RoutedEdge>().apply { addAll(sequence.values) }
     val first = graph.edges.map { edge ->
-        sequence[edge.id] ?: routeOne(edge, crossingIndexOf(placed, options))?.also { placed += it }
+        sequence[edge.id] ?: routeOne(edge, crossingIndexOf(graph, placed, options))?.also { placed += it }
     }
     if (options.crossingPenalty <= 0.0) return first
     val second = graph.edges.mapIndexed { index, edge ->
         sequence[edge.id] ?: run {
             val others = first.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
-            val crossings = if (others.isEmpty()) null else RouteCrossingIndex.of(others.map { it.points })
+            val crossings = if (others.isEmpty()) null else crossingIndexOf(graph, others, options)
             routeOne(edge, crossings)
         }
     }
-    return graph.edges.mapIndexed { index, edge ->
+    val refined = graph.edges.mapIndexed { index, edge ->
         if (sequence[edge.id] != null) return@mapIndexed second[index]
         val aware = second[index] ?: return@mapIndexed null
         val others = second.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
         if (others.isEmpty()) return@mapIndexed aware
-        val snapshot = RouteCrossingIndex.of(others.map { it.points })
+        val snapshot = RouteCrossingIndex.of(
+            others.map { it.points },
+            markerRectsByEdge(graph, others).values.flatten(),
+        )
         // Priority order on ties: the blind route (shortest by construction), then the
         // first-pass route, then the second-pass one — a detour must strictly earn its keep.
         val candidates = buildList {
@@ -161,6 +167,136 @@ internal fun crossingAwareRoutes(
         }
         best
     }
+    return dissolveCrossingHotspots(graph, options, sequence, refined, routeOne)
+}
+
+/**
+ * Hotspot-dissolve pass: crossings piled into one small area (the CrossingHotspot lint
+ * cluster — chained closer than [HOTSPOT_RADIUS], at least [HOTSPOT_MEMBER_LIMIT]
+ * members) become crowd discs, and every edge actually crossing inside one is offered a
+ * re-route in which such crossings pay [CROWDED_CROSSING_PENALTY_FACTOR] extra. A
+ * candidate is kept only when it wins on that same crowd-aware score against the
+ * others' current routes, so a relocation that merely trades one pile for a longer
+ * detour — or for a new pile — is rejected. Bounded rounds: dissolving one disc can
+ * shift the picture, but the pass never chases it more than twice.
+ */
+private fun dissolveCrossingHotspots(
+    graph: DiagramGraph,
+    options: RoutingOptions,
+    sequence: Map<DiagramEdgeId, RoutedEdge>,
+    routes: List<RoutedEdge?>,
+    routeOne: (DiagramEdge, RouteCrossingIndex?) -> RoutedEdge?,
+): List<RoutedEdge?> {
+    if (options.crossingPenalty <= 0.0) return routes
+    val result = routes.toMutableList()
+    repeat(2) {
+        val discs = crowdDiscs(result.filterNotNull())
+        if (discs.isEmpty()) return result
+        var changed = false
+        for (index in graph.edges.indices) {
+            val edge = graph.edges[index]
+            if (sequence[edge.id] != null) continue
+            val current = result[index] ?: continue
+            val others = result.mapIndexedNotNull { j, routed -> routed.takeIf { j != index } }
+            if (others.isEmpty()) continue
+            val snapshot = RouteCrossingIndex.of(
+                others.map { it.points },
+                markerRectsByEdge(graph, others).values.flatten(),
+                discs,
+            )
+            val currentScore = routeScore(current.points, snapshot, options)
+            val crowdedNow = current.points.zipWithNext().sumOf { (a, b) ->
+                when {
+                    abs(a.y - b.y) < GEOMETRY_EPSILON ->
+                        snapshot.crowdedCrossingsOfHorizontal(a.y, minOf(a.x, b.x), maxOf(a.x, b.x))
+                    abs(a.x - b.x) < GEOMETRY_EPSILON ->
+                        snapshot.crowdedCrossingsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
+                    else -> 0
+                }
+            }
+            if (crowdedNow == 0) continue
+            val candidate = routeOne(edge, snapshot) ?: continue
+            if (candidate.points == current.points) continue
+            val candidateScore = routeScore(candidate.points, snapshot, options)
+            if (candidateScore < currentScore - GEOMETRY_EPSILON) {
+                result[index] = candidate
+                changed = true
+            }
+        }
+        if (!changed) return result
+    }
+    return result
+}
+
+/**
+ * Crowd discs of the current picture: pairwise route crossings clustered exactly like
+ * the CrossingHotspot lint rule, each qualifying cluster contributing a
+ * [HOTSPOT_RADIUS]-sized box around its centroid.
+ */
+private fun crowdDiscs(routes: List<RoutedEdge>): List<DiagramRect> {
+    val crossings = mutableListOf<DiagramPoint>()
+    for (first in routes.indices) {
+        for (second in first + 1 until routes.size) {
+            for ((a1, a2) in routes[first].points.zipWithNext()) {
+                for ((b1, b2) in routes[second].points.zipWithNext()) {
+                    crossings += properIntersection(a1, a2, b1, b2) ?: continue
+                }
+            }
+        }
+    }
+    if (crossings.size < HOTSPOT_MEMBER_LIMIT) return emptyList()
+    val clusterOf = IntArray(crossings.size) { it }
+    fun rootOf(index: Int): Int {
+        var current = index
+        while (clusterOf[current] != current) current = clusterOf[current]
+        return current
+    }
+    for (first in crossings.indices) {
+        for (second in first + 1 until crossings.size) {
+            val a = crossings[first]
+            val b = crossings[second]
+            if (hypot(a.x - b.x, a.y - b.y) <= HOTSPOT_RADIUS) {
+                clusterOf[rootOf(second)] = rootOf(first)
+            }
+        }
+    }
+    return buildList {
+        for ((_, members) in crossings.indices.groupBy(::rootOf)) {
+            if (members.size < HOTSPOT_MEMBER_LIMIT) continue
+            val centerX = members.sumOf { crossings[it].x } / members.size
+            val centerY = members.sumOf { crossings[it].y } / members.size
+            add(
+                DiagramRect(
+                    x = centerX - HOTSPOT_RADIUS,
+                    y = centerY - HOTSPOT_RADIUS,
+                    width = HOTSPOT_RADIUS * 2.0,
+                    height = HOTSPOT_RADIUS * 2.0,
+                ),
+            )
+        }
+    }
+}
+
+/** Strict-interior intersection of two segments (T-junctions and co-runs excluded). */
+private fun properIntersection(
+    a1: DiagramPoint,
+    a2: DiagramPoint,
+    b1: DiagramPoint,
+    b2: DiagramPoint,
+): DiagramPoint? {
+    val rx = a2.x - a1.x
+    val ry = a2.y - a1.y
+    val sx = b2.x - b1.x
+    val sy = b2.y - b1.y
+    val denominator = rx * sy - ry * sx
+    if (abs(denominator) < 1e-9) return null
+    val dx = b1.x - a1.x
+    val dy = b1.y - a1.y
+    val t = (dx * sy - dy * sx) / denominator
+    val u = (dx * ry - dy * rx) / denominator
+    val margin = 1e-3
+    if (t <= margin || t >= 1.0 - margin || u <= margin || u >= 1.0 - margin) return null
+    return DiagramPoint(a1.x + rx * t, a1.y + ry * t)
 }
 
 /**
@@ -177,6 +313,8 @@ private fun routeScore(
     var length = 0.0
     var turns = 0
     var crossed = 0
+    var markerCuts = 0
+    var crowded = 0
     var previousHorizontal: Boolean? = null
     for ((a, b) in points.zipWithNext()) {
         val dx = abs(a.x - b.x)
@@ -191,17 +329,36 @@ private fun routeScore(
         } else {
             crossings.crossingsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
         }
+        markerCuts += if (horizontal) {
+            crossings.markerCutsOfHorizontal(a.y, minOf(a.x, b.x), maxOf(a.x, b.x))
+        } else {
+            crossings.markerCutsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
+        }
+        crowded += if (horizontal) {
+            crossings.crowdedCrossingsOfHorizontal(a.y, minOf(a.x, b.x), maxOf(a.x, b.x))
+        } else {
+            crossings.crowdedCrossingsOfVertical(a.x, minOf(a.y, b.y), maxOf(a.y, b.y))
+        }
     }
-    return length + turns * options.turnPenalty + crossed * options.crossingPenalty
+    return length + turns * options.turnPenalty + crossed * options.crossingPenalty +
+        markerCuts * options.crossingPenalty * MARKER_CUT_PENALTY_FACTOR +
+        crowded * options.crossingPenalty * CROWDED_CROSSING_PENALTY_FACTOR
 }
 
-/** Crossing index over the routes placed so far, or `null` when the awareness is off. */
+/**
+ * Crossing index over the routes placed so far — segment lanes plus their endpoint-marker
+ * boxes — or `null` when the awareness is off.
+ */
 internal fun crossingIndexOf(
+    graph: DiagramGraph,
     placed: List<RoutedEdge>,
     options: RoutingOptions,
 ): RouteCrossingIndex? {
     if (options.crossingPenalty <= 0.0 || placed.isEmpty()) return null
-    return RouteCrossingIndex.of(placed.map { it.points })
+    return RouteCrossingIndex.of(
+        placed.map { it.points },
+        markerRectsByEdge(graph, placed).values.flatten(),
+    )
 }
 
 // --- Endpoint resolution -------------------------------------------------------------
@@ -449,6 +606,8 @@ private fun routeOrthogonal(
                         options.turnPenalty,
                         crossings,
                         options.crossingPenalty,
+                        options.crossingPenalty * MARKER_CUT_PENALTY_FACTOR,
+                        options.crossingPenalty * CROWDED_CROSSING_PENALTY_FACTOR,
                     )
                         ?.let { collapseJogs(it, legObstacles, jogThreshold) }
                         ?: manhattanLeg(from, to, seedDirection)
@@ -690,6 +849,28 @@ private fun endpointReach(head: DiagramArrowhead, options: RoutingOptions): Doub
 
 /** Gap kept between an endpoint marker's back edge and the route's first bend. */
 private const val MARKER_BREATHING = 4.0
+
+/**
+ * A foreign lane through an endpoint-marker box, priced in crossings: slicing a crow's
+ * foot or circle destroys the glyph outright, so it must cost more than crossing the
+ * plain line ever does — the router detours or crosses elsewhere instead.
+ */
+private const val MARKER_CUT_PENALTY_FACTOR = 2.0
+
+/**
+ * Surcharge for a crossing inside a crowd disc (see the hotspot-dissolve pass), in
+ * crossing penalties: a crossing there costs double, so relocating it anywhere else
+ * pays for a detour up to one more crossing's worth of length.
+ */
+private const val CROWDED_CROSSING_PENALTY_FACTOR = 1.0
+
+/**
+ * Crossing pile-up clustering, mirroring the CrossingHotspot lint rule's defaults
+ * (`DiagramLintOptions.hotspotRadius` / `hotspotLimit`): crossings chained closer than
+ * the radius form one cluster, and a cluster of at least the limit is a hotspot.
+ */
+private const val HOTSPOT_RADIUS = 32.0
+private const val HOTSPOT_MEMBER_LIMIT = 3
 
 /**
  * Perpendicular exit-stub length at an anchor: [reach], shortened when a foreign node
@@ -1262,6 +1443,12 @@ private data class SideAttachment(val edgeId: DiagramEdgeId, val position: Doubl
  * with a corner inset), then the sorted ideals are spread to at least
  * [RoutingOptions.anchorSeparation] apart. Edges whose other end sits on a fixed port
  * take part too — their floating end must not stack on the planned ones.
+ *
+ * Waypointed edges never get a plan, but their floating ends still land on the side via
+ * the per-end fallback ([resolveOrthogonalEnd] aimed at the adjacent via). Those lanes
+ * join the layout as PINNED entries: the via dictates them, so the planner spreads its
+ * own anchors around them instead of stacking a planned arrival onto a via-dictated
+ * departure (the classic same-port fork: two edges sharing one perimeter point).
  */
 private fun sideAttachments(
     graph: DiagramGraph,
@@ -1269,12 +1456,16 @@ private fun sideAttachments(
     node: DiagramNode,
     side: DiagramNodeSide,
 ): List<SideAttachment> {
-    data class Pending(val edgeId: DiagramEdgeId, val ideal: Double, val otherCenter: Double)
+    data class Pending(
+        val edgeId: DiagramEdgeId,
+        val ideal: Double,
+        val otherCenter: Double,
+        val pinned: Boolean,
+    )
 
     val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
     val pending = mutableListOf<Pending>()
     for (candidate in graph.edges) {
-        if (candidate.waypoints.isNotEmpty()) continue
         if (!candidate.routing.routesOrthogonally) continue
         val sourceNodeId = candidate.source.attachedNodeId
         val targetNodeId = candidate.target.attachedNodeId
@@ -1287,22 +1478,42 @@ private fun sideAttachments(
         val thisEnd = if (isSourceEnd) candidate.source else candidate.target
         if (thisEnd !is DiagramEndpoint.FloatingAnchor) continue
         val other = graph.nodeById(if (isSourceEnd) targetNodeId else sourceNodeId) ?: continue
-        val candidateSide = if (isSourceEnd) {
-            facingSides(node.bounds, other.bounds)?.sourceSide
+        val otherCenter = if (side.exitsHorizontally) other.bounds.centerY else other.bounds.centerX
+        if (candidate.waypoints.isEmpty()) {
+            val candidateSide = if (isSourceEnd) {
+                facingSides(node.bounds, other.bounds)?.sourceSide
+            } else {
+                facingSides(other.bounds, node.bounds)?.targetSide
+            }
+            if (candidateSide != side) continue
+            pending += Pending(
+                edgeId = candidate.id,
+                ideal = idealSideCoordinate(node.bounds, other.bounds, side, low, high),
+                otherCenter = otherCenter,
+                pinned = false,
+            )
         } else {
-            facingSides(other.bounds, node.bounds)?.targetSide
+            // Mirror the fallback resolution exactly: the end aims at its adjacent via.
+            val reference = if (isSourceEnd) candidate.waypoints.first() else candidate.waypoints.last()
+            if (dominantSide(node.bounds.center, reference) != side) continue
+            pending += Pending(
+                edgeId = candidate.id,
+                ideal = (if (side.exitsHorizontally) reference.y else reference.x).coerceIn(low, high),
+                otherCenter = otherCenter,
+                pinned = true,
+            )
         }
-        if (candidateSide != side) continue
-        pending += Pending(
-            edgeId = candidate.id,
-            ideal = idealSideCoordinate(node.bounds, other.bounds, side, low, high),
-            otherCenter = if (side.exitsHorizontally) other.bounds.centerY else other.bounds.centerX,
-        )
     }
     val sorted = pending.sortedWith(
         compareBy({ it.ideal }, { it.otherCenter }, { it.edgeId.value }),
     )
-    val positions = spreadPositions(sorted.map { it.ideal }, low, high, options.anchorSeparation)
+    val positions = spreadPositionsWithPins(
+        sorted.map { it.ideal },
+        sorted.map { it.pinned },
+        low,
+        high,
+        options.anchorSeparation,
+    )
     return sorted.mapIndexed { index, entry -> SideAttachment(entry.edgeId, positions[index]) }
 }
 
@@ -1358,6 +1569,46 @@ private fun spreadPositions(
         }
     }
     return positions.toList()
+}
+
+/**
+ * [spreadPositions] with immovable entries: a pinned position holds exactly its ideal —
+ * a via-dictated lane is authored intent — and each run of movable entries between pins
+ * spreads inside the interval the pins leave for it. Pins packed too tight to leave a
+ * movable entry any room degrade to the raw ideal: a stacked lane beats an anchor pushed
+ * off the side.
+ */
+private fun spreadPositionsWithPins(
+    ideals: List<Double>,
+    pinned: List<Boolean>,
+    low: Double,
+    high: Double,
+    separation: Double,
+): List<Double> {
+    if (pinned.none { it }) return spreadPositions(ideals, low, high, separation)
+    val result = ideals.toMutableList()
+    var start = 0
+    while (start < ideals.size) {
+        if (pinned[start]) {
+            start++
+            continue
+        }
+        var end = start
+        while (end + 1 < ideals.size && !pinned[end + 1]) end++
+        val runLow = if (start > 0) ideals[start - 1] + separation else low
+        val runHigh = if (end + 1 < ideals.size) ideals[end + 1] - separation else high
+        if (runLow <= runHigh + GEOMETRY_EPSILON) {
+            // spreadPositions assumes its ideals already lie inside the range (the
+            // forward pass never raises the first entry to the floor), so clamp the
+            // run's ideals BEFORE spreading — clamping the output instead collapsed
+            // the separations the pass had just built into a stack at the pin.
+            val clamped = ideals.subList(start, end + 1).map { it.coerceIn(runLow, runHigh) }
+            val spread = spreadPositions(clamped, runLow, runHigh, separation)
+            for (index in start..end) result[index] = spread[index - start]
+        }
+        start = end + 1
+    }
+    return result
 }
 
 /**

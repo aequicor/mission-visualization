@@ -243,6 +243,32 @@ fun arrowheadExtent(arrowhead: DiagramArrowhead): Double {
 }
 
 /**
+ * How far the marker for [arrowhead] reaches to either side of the edge line — the
+ * lateral half-width of the glyph. Measured off the real geometry like
+ * [arrowheadExtent]; arc segments account for their radius, since a circle's lateral
+ * bulge is invisible from its on-axis endpoints.
+ */
+fun arrowheadHalfWidth(arrowhead: DiagramArrowhead): Double {
+    val geometry = arrowheadPath(arrowhead, tip = DiagramPoint.Zero, direction = DiagramPoint(1.0, 0.0))
+    var half = 0.0
+    for (segment in geometry.path.segments) {
+        val point = when (segment) {
+            is DiagramPathSegment.MoveTo -> segment.point
+            is DiagramPathSegment.LineTo -> segment.point
+            is DiagramPathSegment.QuadTo -> segment.end
+            is DiagramPathSegment.CubicTo -> segment.end
+            is DiagramPathSegment.ArcTo -> {
+                half = maxOf(half, kotlin.math.abs(segment.end.y) + segment.radiusY)
+                segment.end
+            }
+            DiagramPathSegment.Close -> continue
+        }
+        half = maxOf(half, kotlin.math.abs(point.y))
+    }
+    return half
+}
+
+/**
  * This arrowhead scaled down so its marker fits on a [run]-long straight segment, or
  * unchanged when it already fits. Routing reserves that run
  * (`RoutingOptions.endpointClearance`); this is the fallback for the ends it cannot honor

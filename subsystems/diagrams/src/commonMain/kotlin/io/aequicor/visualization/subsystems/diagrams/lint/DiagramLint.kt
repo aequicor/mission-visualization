@@ -10,6 +10,7 @@ import io.aequicor.visualization.subsystems.diagrams.model.attachedNodeId
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramPoint
 import io.aequicor.visualization.subsystems.diagrams.path.DiagramRect
 import io.aequicor.visualization.subsystems.diagrams.routing.RoutedEdge
+import io.aequicor.visualization.subsystems.diagrams.routing.endpointMarkerZones
 import io.aequicor.visualization.subsystems.diagrams.routing.routeAllEdgesLenient
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -138,6 +139,22 @@ sealed interface DiagramLintFinding {
                 "near (${at.x.toInt()}, ${at.y.toInt()})"
     }
 
+    /**
+     * A foreign edge's line slices through the rendered endpoint marker of another edge
+     * — a crow's foot, cardinality circle, or arrowhead with a stranger's lane across it
+     * stops reading as a glyph. The crossing-aware router prices marker boxes above
+     * plain crossings; this rule is the tripwire for the cuts that still slip through.
+     */
+    data class MarkerCovered(
+        val edgeId: DiagramEdgeId,
+        val markerEdgeId: DiagramEdgeId,
+        val at: DiagramPoint,
+    ) : DiagramLintFinding {
+        override val message: String
+            get() = "edge '${edgeId.value}' cuts the endpoint marker of '${markerEdgeId.value}' " +
+                "near (${at.x.toInt()}, ${at.y.toInt()})"
+    }
+
     /** Many crossings piled into one small area. */
     data class CrossingHotspot(
         val at: DiagramPoint,
@@ -190,6 +207,7 @@ fun lintDiagram(
         addAll(anchorBunchFindings(graph, ordered, options))
         addAll(edgeOverlapFindings(ordered, options))
         addAll(edgeSpurFindings(graph, ordered))
+        addAll(markerCoveredFindings(graph, ordered))
         addAll(crossingHotspotFindings(ordered, options))
         addAll(labelOverNodeFindings(graph, routes, options))
         addAll(nodeLabelFitFindings(graph, options))
@@ -438,6 +456,46 @@ private fun edgeSpurFindings(
         }
     }
 }
+
+// --- rule: covered endpoint markers ------------------------------------------------------
+
+private fun markerCoveredFindings(
+    graph: DiagramGraph,
+    routes: List<RoutedEdge>,
+): List<DiagramLintFinding> {
+    val edgesById = graph.edges.associateBy { it.id }
+    return buildList {
+        for (route in routes) {
+            val edge = edgesById[route.edgeId] ?: continue
+            // Fitted zones: exactly the glyphs the renderers draw, so a finding always
+            // corresponds to a visible cut.
+            for (zone in endpointMarkerZones(edge, route, fitToRun = true)) {
+                for (foreign in routes) {
+                    if (foreign.edgeId == route.edgeId) continue
+                    // Edges sharing this funnel point touch the marker legitimately —
+                    // that is AnchorBunch's domain, not a covered glyph.
+                    val sharesTip = distance(foreign.points.first(), zone.tip) < 1.0 ||
+                        distance(foreign.points.last(), zone.tip) < 1.0
+                    if (sharesTip) continue
+                    val cuts = foreign.points.zipWithNext().any { (a, b) ->
+                        segmentCrossesInterior(a, b, zone.rect)
+                    }
+                    if (cuts) {
+                        add(
+                            DiagramLintFinding.MarkerCovered(
+                                edgeId = foreign.edgeId,
+                                markerEdgeId = route.edgeId,
+                                at = zone.tip,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun distance(a: DiagramPoint, b: DiagramPoint): Double = hypot(a.x - b.x, a.y - b.y)
 
 // --- rule: crossing hotspots ------------------------------------------------------------
 
