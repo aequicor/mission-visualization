@@ -150,7 +150,10 @@ undo/redo. Cmd/Ctrl+C/V is an internal clipboard for canvas nodes (deep subtree
 snapshots that survive edits/deletion of the originals; paste mints fresh ids, lands
 under the copy-time parent, writes back structurally and fans repeated pastes out as a
 staircase), Cmd/Ctrl+D duplicates in place; inside diagram edit the diagram-element
-clipboard takes priority with the same C/V/D semantics.
+clipboard owns C/V/D and the canvas cases stand down. Known limit: a SCREEN ROOT frame
+cannot be copied/duplicated beside itself — a screen source holds exactly one top-level
+section (any later `#` heading compiles as a child of the first), so both operations
+refuse with a diagnostic pointing at Duplicate Screen.
 
 **Advanced positioning preview (ch. 18)** — central anchor lines (dashed at rest, emphasized
 solid while dragging) through the selected component's center, extended to its parent frame
