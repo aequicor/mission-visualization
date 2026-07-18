@@ -1289,6 +1289,12 @@ private data class SideAttachment(val edgeId: DiagramEdgeId, val position: Doubl
  * with a corner inset), then the sorted ideals are spread to at least
  * [RoutingOptions.anchorSeparation] apart. Edges whose other end sits on a fixed port
  * take part too — their floating end must not stack on the planned ones.
+ *
+ * Waypointed edges never get a plan, but their floating ends still land on the side via
+ * the per-end fallback ([resolveOrthogonalEnd] aimed at the adjacent via). Those lanes
+ * join the layout as PINNED entries: the via dictates them, so the planner spreads its
+ * own anchors around them instead of stacking a planned arrival onto a via-dictated
+ * departure (the classic same-port fork: two edges sharing one perimeter point).
  */
 private fun sideAttachments(
     graph: DiagramGraph,
@@ -1296,12 +1302,16 @@ private fun sideAttachments(
     node: DiagramNode,
     side: DiagramNodeSide,
 ): List<SideAttachment> {
-    data class Pending(val edgeId: DiagramEdgeId, val ideal: Double, val otherCenter: Double)
+    data class Pending(
+        val edgeId: DiagramEdgeId,
+        val ideal: Double,
+        val otherCenter: Double,
+        val pinned: Boolean,
+    )
 
     val (low, high) = sideCoordinateRange(node.bounds, side, options.obstacleMargin)
     val pending = mutableListOf<Pending>()
     for (candidate in graph.edges) {
-        if (candidate.waypoints.isNotEmpty()) continue
         if (!candidate.routing.routesOrthogonally) continue
         val sourceNodeId = candidate.source.attachedNodeId
         val targetNodeId = candidate.target.attachedNodeId
@@ -1314,22 +1324,42 @@ private fun sideAttachments(
         val thisEnd = if (isSourceEnd) candidate.source else candidate.target
         if (thisEnd !is DiagramEndpoint.FloatingAnchor) continue
         val other = graph.nodeById(if (isSourceEnd) targetNodeId else sourceNodeId) ?: continue
-        val candidateSide = if (isSourceEnd) {
-            facingSides(node.bounds, other.bounds)?.sourceSide
+        val otherCenter = if (side.exitsHorizontally) other.bounds.centerY else other.bounds.centerX
+        if (candidate.waypoints.isEmpty()) {
+            val candidateSide = if (isSourceEnd) {
+                facingSides(node.bounds, other.bounds)?.sourceSide
+            } else {
+                facingSides(other.bounds, node.bounds)?.targetSide
+            }
+            if (candidateSide != side) continue
+            pending += Pending(
+                edgeId = candidate.id,
+                ideal = idealSideCoordinate(node.bounds, other.bounds, side, low, high),
+                otherCenter = otherCenter,
+                pinned = false,
+            )
         } else {
-            facingSides(other.bounds, node.bounds)?.targetSide
+            // Mirror the fallback resolution exactly: the end aims at its adjacent via.
+            val reference = if (isSourceEnd) candidate.waypoints.first() else candidate.waypoints.last()
+            if (dominantSide(node.bounds.center, reference) != side) continue
+            pending += Pending(
+                edgeId = candidate.id,
+                ideal = (if (side.exitsHorizontally) reference.y else reference.x).coerceIn(low, high),
+                otherCenter = otherCenter,
+                pinned = true,
+            )
         }
-        if (candidateSide != side) continue
-        pending += Pending(
-            edgeId = candidate.id,
-            ideal = idealSideCoordinate(node.bounds, other.bounds, side, low, high),
-            otherCenter = if (side.exitsHorizontally) other.bounds.centerY else other.bounds.centerX,
-        )
     }
     val sorted = pending.sortedWith(
         compareBy({ it.ideal }, { it.otherCenter }, { it.edgeId.value }),
     )
-    val positions = spreadPositions(sorted.map { it.ideal }, low, high, options.anchorSeparation)
+    val positions = spreadPositionsWithPins(
+        sorted.map { it.ideal },
+        sorted.map { it.pinned },
+        low,
+        high,
+        options.anchorSeparation,
+    )
     return sorted.mapIndexed { index, entry -> SideAttachment(entry.edgeId, positions[index]) }
 }
 
@@ -1385,6 +1415,44 @@ private fun spreadPositions(
         }
     }
     return positions.toList()
+}
+
+/**
+ * [spreadPositions] with immovable entries: a pinned position holds exactly its ideal —
+ * a via-dictated lane is authored intent — and each run of movable entries between pins
+ * spreads inside the interval the pins leave for it. Pins packed too tight to leave a
+ * movable entry any room degrade to the raw ideal: a stacked lane beats an anchor pushed
+ * off the side.
+ */
+private fun spreadPositionsWithPins(
+    ideals: List<Double>,
+    pinned: List<Boolean>,
+    low: Double,
+    high: Double,
+    separation: Double,
+): List<Double> {
+    if (pinned.none { it }) return spreadPositions(ideals, low, high, separation)
+    val result = ideals.toMutableList()
+    var start = 0
+    while (start < ideals.size) {
+        if (pinned[start]) {
+            start++
+            continue
+        }
+        var end = start
+        while (end + 1 < ideals.size && !pinned[end + 1]) end++
+        val runLow = if (start > 0) ideals[start - 1] + separation else low
+        val runHigh = if (end + 1 < ideals.size) ideals[end + 1] - separation else high
+        if (runLow <= runHigh + GEOMETRY_EPSILON) {
+            // spreadPositions leaves a lone ideal untouched, so clamp explicitly: the
+            // run's interval is what keeps it a separation away from its pins.
+            val spread = spreadPositions(ideals.subList(start, end + 1), runLow, runHigh, separation)
+                .map { it.coerceIn(runLow, runHigh) }
+            for (index in start..end) result[index] = spread[index - start]
+        }
+        start = end + 1
+    }
+    return result
 }
 
 /**
