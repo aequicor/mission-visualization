@@ -4,6 +4,7 @@ import io.aequicor.visualization.engine.ir.model.AlignItems
 import io.aequicor.visualization.engine.ir.model.ContainerKind
 import io.aequicor.visualization.subsystems.figures.BooleanOperationKind
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.engine.ir.model.DesignPaint
 import io.aequicor.visualization.engine.ir.model.DesignPoint
 import io.aequicor.visualization.engine.ir.model.DesignSize
@@ -123,6 +124,20 @@ sealed interface DesignEditorIntent {
     data class DeleteNodes(val nodeIds: Set<String>) : DesignEditorIntent
 
     data class DuplicateNodes(val nodeIds: Set<String>) : DesignEditorIntent
+
+    /**
+     * Pastes deep canvas-node snapshots from the internal clipboard: each subtree lands
+     * under its copy-time parent from [parentIds] (falling back to the selected page when
+     * that parent is gone) with fresh ids and an ([offsetX], [offsetY]) visual shift; the
+     * selection switches to the copies as one undoable step. Snapshots are detached IR
+     * values, so pasting works after the originals were edited or deleted.
+     */
+    data class PasteNodes(
+        val nodes: List<DesignNode>,
+        val parentIds: Map<String, String> = emptyMap(),
+        val offsetX: Double = 16.0,
+        val offsetY: Double = 16.0,
+    ) : DesignEditorIntent
 
     /**
      * Wraps sibling objects in a transparent free-positioned group. Canvas callers may provide

@@ -1,6 +1,7 @@
 package io.aequicor.visualization.editor.presentation
 
 import io.aequicor.visualization.engine.ir.model.DesignColor
+import io.aequicor.visualization.engine.ir.model.DesignNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramEdge
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNode
 import io.aequicor.visualization.subsystems.diagrams.model.DiagramNodePayload
@@ -115,6 +116,12 @@ data class EditorWorkspaceState(
      * document, survives switching diagrams, lost with the session.
      */
     val diagramClipboard: DiagramClipboard? = null,
+    /**
+     * Internal clipboard for canvas nodes outside diagram edit, filled by Ctrl/Cmd+C:
+     * deep subtree snapshots that stay pasteable after the originals change or die.
+     * A view concern like [diagramClipboard] — never part of the document.
+     */
+    val canvasClipboard: CanvasClipboard? = null,
 ) {
     val isMainOnly: Boolean get() = focusMode == FocusMode.MainOnly
 
@@ -169,6 +176,22 @@ data class DiagramClipboard(
     val edges: List<DiagramEdge>,
 ) {
     val isEmpty: Boolean get() = nodes.isEmpty() && edges.isEmpty()
+}
+
+/**
+ * Canvas-node clipboard content (nodes OUTSIDE diagram edit): deep snapshots of the
+ * copied subtrees plus each root's parent at copy time. Snapshots are immutable IR
+ * values, so they survive later edits and deletion of the originals; paste re-identifies
+ * everything and falls back to the selected page when a parent is gone. [pasteCount]
+ * grows the visual offset of each successive paste from the same clipboard, so repeated
+ * Ctrl+V lays copies out as a staircase instead of a stack; a fresh Copy resets it.
+ */
+data class CanvasClipboard(
+    val nodes: List<DesignNode>,
+    val parentIds: Map<String, String> = emptyMap(),
+    val pasteCount: Int = 0,
+) {
+    val isEmpty: Boolean get() = nodes.isEmpty()
 }
 
 /** Selected elements of the diagram graph being edited (ids are graph-local strings). */

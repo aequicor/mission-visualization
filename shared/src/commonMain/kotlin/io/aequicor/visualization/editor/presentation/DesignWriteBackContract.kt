@@ -94,6 +94,7 @@ internal fun DesignEditorIntent.persistenceCategory(): DesignIntentPersistence =
     is DesignEditorIntent.RenameNode,
     is DesignEditorIntent.DeleteNodes,
     is DesignEditorIntent.DuplicateNodes,
+    is DesignEditorIntent.PasteNodes,
     is DesignEditorIntent.GroupNodes,
     is DesignEditorIntent.ReorderNode,
     is DesignEditorIntent.ReparentNode,

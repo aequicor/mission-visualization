@@ -146,8 +146,11 @@ import io.aequicor.visualization.editor.presentation.CanvasScrollbarsMetrics
 import io.aequicor.visualization.editor.presentation.CanvasScrollbarAxisMetrics
 import io.aequicor.visualization.editor.presentation.DesignEditorIntent
 import io.aequicor.visualization.editor.presentation.DesignEditorState
+import io.aequicor.visualization.editor.presentation.CanvasClipboard
 import io.aequicor.visualization.editor.presentation.DiagramClipboard
 import io.aequicor.visualization.editor.presentation.DiagramEditorIntent
+import io.aequicor.visualization.editor.presentation.parentNodeOf
+import io.aequicor.visualization.editor.presentation.topLevelOwnerPage
 import io.aequicor.visualization.editor.presentation.DiagramSelection
 import io.aequicor.visualization.editor.presentation.DiagramTool
 import io.aequicor.visualization.editor.presentation.DocumentRect
@@ -3193,6 +3196,17 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
             !state.workspace.diagramSelection.isEmpty ->
             diagramSelectionSnapshot(state)?.let { pasteDiagramClipboard(state, it) } ?: false
         ctrl && key == Key.D && selection.isNotEmpty() -> { state.dispatch(DesignEditorIntent.DuplicateNodes(selection)); true }
+        // Canvas-node clipboard (outside diagram edit; the diagram cases above already
+        // consumed C/V while editing a diagram): Ctrl/Cmd+C deep-snapshots the selected
+        // subtrees — the copies stay pasteable after the originals change or die — and V
+        // pastes them with fresh ids at a growing offset, selecting the copies.
+        ctrl && key == Key.C && selection.isNotEmpty() -> {
+            canvasSelectionSnapshot(state)?.let { clip ->
+                state.updateWorkspace { it.copy(canvasClipboard = clip) }
+            } != null
+        }
+        ctrl && key == Key.V && state.workspace.canvasClipboard?.isEmpty == false ->
+            pasteCanvasClipboard(state)
         ctrl && key == Key.RightBracket -> zorder(ZOrderMove.Forward)
         ctrl && key == Key.LeftBracket -> zorder(ZOrderMove.Backward)
         key == Key.RightBracket -> zorder(ZOrderMove.ToFront)
@@ -3239,6 +3253,73 @@ private fun handleCanvasKey(state: MissionEditorStateHolder, key: Key, shift: Bo
         }
         else -> false
     }
+}
+
+/**
+ * Deep snapshot of the selected canvas subtrees for the internal clipboard. Nested
+ * selections collapse to their outermost roots (a copied parent already carries its
+ * children), roots keep document order, and each remembers its parent at copy time so
+ * paste lands the copy where the original lived — even after the original is edited or
+ * deleted (the paste falls back to the selected page when the parent is gone too).
+ */
+private fun canvasSelectionSnapshot(state: MissionEditorStateHolder): CanvasClipboard? {
+    val document = state.designState.document ?: return null
+    val selection = state.designState.selectedNodeIds
+    if (selection.isEmpty()) return null
+
+    fun hasSelectedAncestor(id: String): Boolean {
+        var current = document.parentNodeOf(id)?.id
+        while (current != null) {
+            if (current in selection) return true
+            current = document.parentNodeOf(current)?.id
+        }
+        return false
+    }
+
+    val roots = buildList {
+        document.pages.forEach { page ->
+            fun walk(node: io.aequicor.visualization.engine.ir.model.DesignNode) {
+                if (node.id in selection && !hasSelectedAncestor(node.id)) {
+                    add(node)
+                    return
+                }
+                node.children.forEach(::walk)
+            }
+            page.children.forEach(::walk)
+        }
+    }
+    if (roots.isEmpty()) return null
+    val parentIds = roots.mapNotNull { root ->
+        val parent = document.parentNodeOf(root.id)?.id
+            ?: document.topLevelOwnerPage(root.id)?.id
+            ?: return@mapNotNull null
+        root.id to parent
+    }.toMap()
+    return CanvasClipboard(nodes = roots, parentIds = parentIds)
+}
+
+/** Visual offset of the first paste from a canvas clipboard; grows with each repeat. */
+private const val CANVAS_PASTE_OFFSET = 16.0
+
+/**
+ * Pastes the canvas clipboard with fresh ids at a cumulative offset (each successive
+ * paste of the same clipboard steps another [CANVAS_PASTE_OFFSET] down-right, so copies
+ * fan out as a staircase instead of stacking) and bumps the clipboard's paste counter.
+ */
+private fun pasteCanvasClipboard(state: MissionEditorStateHolder): Boolean {
+    val clipboard = state.workspace.canvasClipboard ?: return false
+    if (clipboard.isEmpty) return false
+    val step = clipboard.pasteCount + 1
+    state.dispatch(
+        DesignEditorIntent.PasteNodes(
+            nodes = clipboard.nodes,
+            parentIds = clipboard.parentIds,
+            offsetX = CANVAS_PASTE_OFFSET * step,
+            offsetY = CANVAS_PASTE_OFFSET * step,
+        ),
+    )
+    state.updateWorkspace { it.copy(canvasClipboard = clipboard.copy(pasteCount = step)) }
+    return true
 }
 
 /** The live graph of the diagram node currently being edited, or null. */
