@@ -2043,14 +2043,58 @@ private fun alignedMandatoryPoints(
         // authored corridor and collapse deliberately separated edges onto one grid
         // corridor. A lone waypoint remains an exact mandatory pass-through point
         // because it may intentionally define both endpoint bends.
-        aligned[1] = alignWaypointToPort(aligned[1], sourceStub, sourceSide)
-        aligned[aligned.lastIndex - 1] = alignWaypointToPort(
-            aligned[aligned.lastIndex - 1],
-            targetStub,
-            targetSide,
+        val sourceBefore = aligned[1]
+        aligned[1] = alignWaypointToPort(sourceBefore, sourceStub, sourceSide)
+        val targetBefore = aligned[aligned.lastIndex - 1]
+        aligned[aligned.lastIndex - 1] = alignWaypointToPort(targetBefore, targetStub, targetSide)
+        // A healed corner that broke away from a collinear authored run drags the run
+        // with it: an author draws a multi-via row a pixel or two off the port row, the
+        // heal moves only the endpoint-adjacent via, and the seam — a jog exactly the
+        // heal's size — reappears one via inward, right where the healing meant to
+        // remove it.
+        propagateHealAlongRun(aligned, index = 1, before = sourceBefore, side = sourceSide, step = 1)
+        propagateHealAlongRun(
+            aligned,
+            index = aligned.lastIndex - 1,
+            before = targetBefore,
+            side = targetSide,
+            step = -1,
         )
     }
     return dedupePoints(aligned)
+}
+
+/**
+ * Extends an endpoint-adjacent via's port heal over the collinear run it was part of:
+ * consecutive vias inward of [index] that shared the healed axis coordinate of [before]
+ * move by the same delta, so the whole authored row lands on the port row instead of
+ * leaving a jog at the first unhealed via. Propagation stops at the first via off the
+ * run and never touches the OTHER end's adjacent via — that one belongs to its own
+ * port's heal.
+ */
+private fun propagateHealAlongRun(
+    aligned: MutableList<DiagramPoint>,
+    index: Int,
+    before: DiagramPoint,
+    side: DiagramNodeSide?,
+    step: Int,
+) {
+    val healed = aligned[index]
+    if (side == null || healed == before) return
+    val healsY = side == DiagramNodeSide.LEFT || side == DiagramNodeSide.RIGHT
+    val lastAllowed = if (step > 0) aligned.lastIndex - 2 else 2
+    var next = index + step
+    while (if (step > 0) next <= lastAllowed else next >= lastAllowed) {
+        val point = aligned[next]
+        val collinear = if (healsY) {
+            abs(point.y - before.y) <= GEOMETRY_EPSILON
+        } else {
+            abs(point.x - before.x) <= GEOMETRY_EPSILON
+        }
+        if (!collinear) return
+        aligned[next] = if (healsY) point.copy(y = healed.y) else point.copy(x = healed.x)
+        next += step
+    }
 }
 
 private fun alignWaypointToPort(
